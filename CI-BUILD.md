@@ -4,42 +4,63 @@
 > 好处是彻底绕开本机的 JDK / Android SDK / Gradle / 网络代理环境问题，
 > 而且每次构建环境一致、可复现。
 
+**仓库地址**：https://github.com/puretaoist/PenguinChat
+**当前状态**：代码已推送（48 文件），CI 已就绪，推送到 main 即自动构建。
+
 ---
 
 ## 为什么走这条路
 
-本机构建踩到的问题（已解决，但值得记录）：
+本机构建踩到的坑（诊断记录，供后续参考）：
 
 | 问题 | 根因 | 处理 |
 |---|---|---|
-| 依赖下载极慢（25 分钟 15 MB） | Gradle 是独立 JVM 进程，**不继承 shell 的 `http_proxy` 环境变量** | 改用阿里云 Maven 镜像直连（实测 12.8 MB/s） |
-| `fileHashes.lock 拒绝访问` | 旧 Gradle daemon 残留进程占着文件锁，沙箱下杀不掉 | 用 `taskkill /F` 强杀 + 删除 `android/.gradle` |
-| `PKIX path building failed` | gradle-wrapper 走 HTTPS 下载时证书链校验失败 | wrapper 指向本地已缓存的分发版本 |
-| 构建耗时 73 分钟仍失败 | 上述问题叠加 | — |
+| 依赖下载极慢（25 分钟 15 MB） | 宿主设了 `HTTP_PROXY/HTTPS_PROXY=127.0.0.1:59518`，**Gradle daemon 会继承这些变量**，Maven 流量全走慢代理 | `~/.gradle/gradle.properties` 里把 `systemProp.http.proxyHost=` 置空 + `nonProxyHosts=*` |
+| `fileHashes.lock 拒绝访问` | 旧 Gradle daemon 残留进程占文件锁 | `taskkill /F /PID <pid>` + 删 `android/.gradle` |
+| `PKIX path building failed` | gradle-wrapper HTTPS 下载证书链校验失败 | wrapper 指向本地已缓存分发版本 |
+| **构建卡死 10 分钟无输出** | Flutter Gradle 插件调 `forceNdkDownload()` → `sdkmanager --install ndk;28.2.13676358` 从 `dl.google.com` 拉 ~1GB | 见下方「NDK 问题」 |
+| `dl.google.com` 直连 **Connection reset** | 网络对 Google 域直连做了重置 | NDK/Google 系必须走代理，**不能一刀切去代理** |
+| 阿里云镜像直连 | 实测 **12.8–13.5 MB/s** | Maven 依赖走阿里云，绕过代理 |
 
-云端构建没有这些问题：环境干净、直连官方源、无残留进程。
+### NDK 问题（最隐蔽的一个）
+
+项目**没有任何 C/C++ 源码**，但仍需要 NDK：
+
+```
+Flutter 自带的空 CMakeLists.txt 原文注释：
+# Empty file to trick the Android Gradle Plugin to download the NDK. This is because
+# AGP requires the NDK in order to strip debug symbols from native libraries, ...
+```
+
+即：AGP 需要 NDK 来 **strip Flutter 引擎自带 .so 的调试符号**，不是用来编译。
+Flutter 的 `FlutterPluginUtils.forceNdkDownload()` 检测到 NDK 缺失就现场用 `sdkmanager` 下载，
+而这一步走 `dl.google.com`，在国内网络下必然卡死。
+
+**在 CI 上这不是问题**——GitHub runner 预装了 NDK，工作流里还有一步显式确保版本存在。
 
 ---
 
-## 一、准备仓库
+## 一、仓库
 
-在 GitHub 网页上创建一个**空仓库**（不要勾选 "Add a README" / ".gitignore" / "license"），
-假设用户名为 `puretaoist`，仓库名为 `qqclient`。
+已创建：`https://github.com/puretaoist/PenguinChat`（**私有仓库**）
 
 ## 二、推送代码
 
+代码已在仓库里。后续改动：
+
 ```bash
 cd C:/Users/Administrator/penguis/qqclient
-bash scripts/push-to-github.sh puretaoist qqclient
+git add -A
+git commit -m "feat: xxx"
+git push origin main
 ```
 
-脚本会自动完成：`git init` → 确认 `local.properties` 被忽略 → 提交 → 添加 remote → 推送。
-
-> **关于认证**：HTTPS 推送需要 Personal Access Token（GitHub → Settings → Developer settings
-> → Personal access tokens → 勾选 `repo` + `workflow` 权限）。
-> 也可以用 SSH key，把 remote 换成 `git@github.com:...` 即可。
+> 首次推送可用 `bash scripts/push-to-github.sh <用户名> <仓库名>` 一键完成初始化。
 >
-> ⚠️ PAT 属于凭据，请自己保管，**不要写进任何提交的文件里**。
+> **认证**：HTTPS 推送需要 Personal Access Token（Settings → Developer settings →
+> Personal access tokens，勾选 `repo` + `workflow`）。
+>
+> ⚠️ PAT 属凭据，**不要写进任何提交的文件里**。
 
 ## 三、触发构建
 
@@ -66,19 +87,22 @@ bash scripts/push-to-github.sh puretaoist qqclient
 
 ## 工作流做了什么
 
-`.github/workflows/build.yml` 的步骤：
+`.github/workflows/build.yml` 的步骤（共 15 步）：
 
 1. `actions/checkout` 拉代码
 2. `actions/setup-java` 装 JDK 17
 3. `subosito/flutter-action` 装 Flutter stable 并开启缓存
-4. `flutter pub get` 拉 Dart 依赖
-5. `flutter analyze` 静态检查（失败不阻断）
-6. `dart run tool/selftest.dart` **协议自检**（TLV / TEA 编解码，19 项）
-7. `flutter test` 标准单测（失败不阻断）
-8. **动态生成 `android/local.properties`** ← 关键步骤，见下
-9. `gradle/actions/setup-gradle` 开启 Gradle 缓存
-10. `flutter build apk` 打包
-11. `actions/upload-artifact` 上传产物
+4. `flutter doctor -v` 打印环境
+5. `flutter pub get` 拉 Dart 依赖
+6. `flutter analyze` 静态检查（失败不阻断）
+7. `dart run tool/selftest.dart` **协议自检**（TLV / TEA，19 项）
+8. `flutter test` 标准单测（失败不阻断）
+9. **动态生成 `android/local.properties`** ← 关键，见下
+10. **确保 NDK 存在**（避免构建中途触发下载）
+11. `gradle/actions/setup-gradle` 开启 Gradle 缓存
+12. `flutter build apk --debug` 打包
+13. `actions/upload-artifact` 上传产物
+14. `softprops/action-gh-release`（仅打 tag 时附到 Release）
 
 ### 关键工程点：`local.properties`
 
