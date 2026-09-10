@@ -1,0 +1,127 @@
+name: build
+
+# 触发条件：
+#  - 手动触发（Actions 页面 Run workflow，可选 build_mode）
+#  - push 到 main / master
+#  - 打 tag（v*）时自动附加到 Release
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "构建类型 (debug / release)"
+        required: true
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------- 环境准备 ----------
+      # JDK 17：AGP 9.x 要求 JDK 17+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Flutter SDK：用 stable 频道；子动作自带 pub-cache / SDK 缓存
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      # ---------- 依赖 ----------
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ---------- 静态检查 ----------
+      - name: Analyze
+        run: flutter analyze || true
+
+      # ---------- 协议自检 ----------
+      # 纯 Dart 自检（TLV / TEA 编解码），不需要 flutter_tester，CI 上稳定可跑
+      - name: Protocol self-test
+        run: dart run tool/selftest.dart
+
+      # 标准单元测试（失败不阻断打包，仅作记录）
+      - name: Unit tests
+        run: flutter test --reporter expanded || true
+
+      # ---------- 工程修正 ----------
+      # 1) 仓库不提交 android/local.properties（本机绝对路径），
+      #    Flutter 的 Gradle 插件从这里读 flutter.sdk，缺失会直接报错，故动态生成。
+      # 2) gradlew 从 Windows 入库时可能带 CRLF 或缺失可执行位，统一修正。
+      - name: Prepare Android build
+        run: |
+          FLUTTER_ROOT="$(dirname "$(dirname "$(which flutter)")")"
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+          echo "sdk.dir=${ANDROID_SDK_ROOT:-${ANDROID_HOME}}" >> android/local.properties
+          echo "--- android/local.properties ---"
+          cat android/local.properties
+          chmod +x android/gradlew
+
+      # 预装 NDK：Flutter Gradle 插件需要它来 strip 引擎 .so 的调试符号。
+      # ubuntu-latest 的 runner 通常已带，这里显式确保版本一致，避免构建中途触发下载。
+      - name: Ensure NDK
+        run: |
+          NDK_VER="28.2.13676358"
+          SDKM="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -f "${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/ndk/$NDK_VER/source.properties" ]; then
+            echo "Installing NDK $NDK_VER ..."
+            yes | "$SDKM" --install "ndk;$NDK_VER" || true
+          else
+            echo "NDK $NDK_VER already present"
+          fi
+          ls "${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/ndk" || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # ---------- 打包 ----------
+      - name: Build APK (debug)
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode == 'debug' }}
+        run: flutter build apk --debug
+
+      - name: Build APK (release, split per ABI)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release' }}
+        run: flutter build apk --release --split-per-abi
+
+      # ---------- 产物上传 ----------
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.sha }}
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ---------- Release 附件（仅打 tag 时） ----------
+      - name: Attach APKs to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/app/outputs/flutter-apk/*.apk
+          generate_release_notes: true

@@ -1,0 +1,16 @@
+# 统一换行符，避免跨平台构建问题
+* text=auto eol=lf
+
+# Gradle wrapper 脚本在 Linux CI 上必须是 LF，否则报 bad interpreter
+*.sh text eol=lf
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# 二进制文件不做换行转换
+*.jar binary
+*.png binary
+*.jpg binary
+
+# 让 GitHub 正确统计语言构成
+*.dart linguist-language=Dart
+*.kts linguist-language=Kotlin

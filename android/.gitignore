@@ -1,0 +1,16 @@
+/.gradle
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# 注意：gradle-wrapper.jar / gradlew / gradlew.bat 必须入库。
+# GitHub Actions 里没有预装 gradlew，Flutter 构建会调用它；
+# 若忽略，CI 会报 "gradlew: No such file or directory"。
+# （原模板默认忽略这三项，本项目为云端构建需要，已显式放开）
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks

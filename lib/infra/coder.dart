@@ -1,0 +1,141 @@
+/// L1 基础设施：字节流读写器
+///
+/// QQ 协议全部字段按小端序（Little-Endian）编码，这是 WLogin/TLV 与 MSF 的约定。
+/// 本文件提供与 C 结构体语义对齐的读写原语，供 kernel 各层复用。
+///
+/// 对应 Python 实现：qqclient-python/infra/coder.py
+library;
+
+import 'dart:typed_data';
+
+/// 顺序读字节流，越界抛出 [FormatException]（协议解析失败即视为报文损坏）。
+class ByteReader {
+  final Uint8List _buf;
+  int _pos = 0;
+
+  ByteReader(List<int> data)
+      : _buf = data is Uint8List ? data : Uint8List.fromList(data);
+
+  int get pos => _pos;
+  int get remaining => _buf.length - _pos;
+  int get length => _buf.length;
+
+  /// 读取 n 字节
+  Uint8List read(int n) {
+    if (_pos + n > _buf.length) {
+      throw FormatException('read $n bytes overflow at $_pos/${_buf.length}');
+    }
+    final out = Uint8List.sublistView(_buf, _pos, _pos + n);
+    _pos += n;
+    return out;
+  }
+
+  int readUint8() => read(1)[0];
+
+  /// QQ 惯例：uint16 小端
+  int readUint16() {
+    final b = read(2);
+    return b[0] | (b[1] << 8);
+  }
+
+  int readUint32() {
+    final b = read(4);
+    return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
+  }
+
+  int readInt32() {
+    final v = readUint32();
+    return v >= 0x80000000 ? v - 0x100000000 : v;
+  }
+
+  /// Dart 的 int 为 64 位，可直接承载 uint64
+  int readUint64() {
+    final b = read(8);
+    var v = 0;
+    for (var i = 7; i >= 0; i--) {
+      v = (v << 8) | b[i];
+    }
+    return v;
+  }
+
+  /// WLogin 常见的长度前缀字节串：uint16 长度 + 内容
+  Uint8List readBytesWithLen16() => read(readUint16());
+
+  Uint8List readBytesWithLen32() => read(readUint32());
+
+  Uint8List peek(int n) => Uint8List.sublistView(
+        _buf,
+        _pos,
+        (_pos + n).clamp(0, _buf.length),
+      );
+
+  /// 剩余全部字节
+  Uint8List readRest() => read(remaining);
+}
+
+/// 顺序写字节流，方法链式调用。
+class ByteWriter {
+  final BytesBuilder _bb = BytesBuilder(copy: false);
+
+  ByteWriter u8(int v) {
+    _bb.addByte(v & 0xFF);
+    return this;
+  }
+
+  ByteWriter u16(int v) {
+    _bb.add([v & 0xFF, (v >> 8) & 0xFF]);
+    return this;
+  }
+
+  ByteWriter u32(int v) {
+    _bb.add([
+      v & 0xFF,
+      (v >> 8) & 0xFF,
+      (v >> 16) & 0xFF,
+      (v >> 24) & 0xFF,
+    ]);
+    return this;
+  }
+
+  ByteWriter u64(int v) {
+    final b = Uint8List(8);
+    for (var i = 0; i < 8; i++) {
+      b[i] = (v >> (8 * i)) & 0xFF;
+    }
+    _bb.add(b);
+    return this;
+  }
+
+  ByteWriter raw(List<int> b) {
+    _bb.add(b);
+    return this;
+  }
+
+  /// uint16 长度前缀 + 内容，配合 [ByteReader.readBytesWithLen16]
+  ByteWriter bytes16(List<int> b) => u16(b.length).raw(b);
+
+  ByteWriter bytes32(List<int> b) => u32(b.length).raw(b);
+
+  Uint8List build() => _bb.toBytes();
+
+  int get length => _bb.length;
+}
+
+/// 协议调试必备：十六进制 + ASCII 双栏
+String hexdump(List<int> data, {int width = 16, String prefix = ''}) {
+  final sb = StringBuffer();
+  for (var off = 0; off < data.length; off += width) {
+    final end = (off + width).clamp(0, data.length);
+    final chunk = data.sublist(off, end);
+    final hexpart = chunk
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join(' ')
+        .padRight(width * 3 - 1);
+    final asc = chunk
+        .map((b) => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.')
+        .join();
+    sb.writeln(
+        '$prefix${off.toRadixString(16).padLeft(8, '0')}  $hexpart  |$asc|');
+  }
+  return sb.toString();
+}

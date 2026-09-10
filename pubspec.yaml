@@ -1,0 +1,36 @@
+name: qqclient
+description: "QQ protocol client (Telegram-style UI) for software security coursework"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.13.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 状态管理：Riverpod（编译期安全，替代 Provider）
+  flutter_riverpod: ^2.6.1
+
+  # 网络：HTTP 配置拉取（长连接用 dart:io Socket，无需依赖）
+  dio: ^5.7.0
+
+  # 加密：AES / RSA / SHA（TEA 为 QQ 专用算法，自研实现见 kernel/crypto/tea.dart）
+  pointycastle: ^3.9.1
+  cryptography: ^2.7.0
+
+  # 本地存储：轻量 KV（会话缓存 / 配置）
+  shared_preferences: ^2.3.3
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/theme.json
