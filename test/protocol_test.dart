@@ -1,7 +1,10 @@
-/// 协议内核单元测试（M1 验收）
+/// 协议内核单元测试
 ///
-/// 覆盖：字节读写器往返、TLV 编解码、TEA/XXTEA 加解密。
+/// 覆盖：字节读写器往返、TLV 编解码、TEA/QQ TEA 加解密。
 /// 运行：flutter test
+///
+/// 注：字节序断言依据 M2 反编译结论（`oicq.wlogin_sdk.tools.util`）——
+/// WLogin 层一律**大端**。早期版本按小端断言，已修正。
 library;
 
 import 'dart:typed_data';
@@ -13,7 +16,7 @@ import 'package:qqclient/kernel/wlogin/tlv.dart';
 
 void main() {
   group('L1 字节读写器', () {
-    test('小端序往返一致', () {
+    test('大端序往返一致', () {
       final w = ByteWriter()
         ..u8(0x12)
         ..u16(0x3456)
@@ -34,15 +37,15 @@ void main() {
   });
 
   group('L2 TLV 编解码', () {
-    test('编码后字节布局符合小端约定，且能解码还原', () {
+    test('编码后字节布局符合大端约定，且能解码还原', () {
       final pkt = TlvPacket()
         ..add(0x104, [0x01, 0x02, 0x03, 0x04])
         ..add(0x106, List.filled(16, 0xAA))
         ..add(0x116, 'device-id-test'.codeUnits);
 
       final data = pkt.encode();
-      // 首字段：type=0x104 -> 04 01, len=4 -> 04 00
-      expect(data.sublist(0, 4), [0x04, 0x01, 0x04, 0x00]);
+      // 首字段：cmd=0x0104 -> 01 04，len=4 -> 00 04
+      expect(data.sublist(0, 4), [0x01, 0x04, 0x00, 0x04]);
 
       final back = TlvPacket.decode(data);
       expect(back.length, 3);
@@ -90,6 +93,68 @@ void main() {
       final enc = xxteaEncrypt(plain, key);
       final dec = xxteaDecrypt(enc, key);
       expect(dec.sublist(0, plain.length), equals(plain));
+    });
+  });
+
+  group('QQ TEA（填充 + CBC，反编译证实）', () {
+    final key = '0123456789abcdef'.codeUnits;
+
+    test('填充长度公式 pad = (8 - (len+10) % 8) % 8', () {
+      expect(qqTeaPadLength(0), 6);
+      expect(qqTeaPadLength(1), 5);
+      expect(qqTeaPadLength(6), 0);
+      expect(qqTeaPadLength(7), 7);
+    });
+
+    test('密文长度 = pad + len + 10 且为 8 的倍数', () {
+      for (final len in [1, 5, 16, 40, 100]) {
+        final plain = List<int>.filled(len, 0x41);
+        final pad = qqTeaPadLength(len);
+        final enc = qqTeaEncrypt(plain, key,
+            paddingBytes: List.filled(pad + 3, 0));
+        expect(enc.length, pad + len + 10);
+        expect(enc.length % 8, 0);
+      }
+    });
+
+    test('加解密往返一致', () {
+      const text = 'hello qq protocol';
+      final plain = text.codeUnits;
+      final pad = qqTeaPadLength(plain.length);
+      final enc = qqTeaEncrypt(plain, key,
+          paddingBytes: List.filled(pad + 3, 0x11));
+      expect(String.fromCharCodes(qqTeaDecrypt(enc, key)), text);
+    });
+
+    test('CBC 链式：相邻同内容块密文不同（排除 ECB）', () {
+      final plain = List<int>.filled(40, 0x41);
+      final pad = qqTeaPadLength(40);
+      final enc = qqTeaEncrypt(plain, key,
+          paddingBytes: List.filled(pad + 3, 0));
+      expect(enc.sublist(8, 16), isNot(equals(enc.sublist(16, 24))));
+    });
+
+    test('错误密钥解密失败', () {
+      final plain = 'hello qq protocol'.codeUnits;
+      final pad = qqTeaPadLength(plain.length);
+      final enc = qqTeaEncrypt(plain, key,
+          paddingBytes: List.filled(pad + 3, 0));
+      expect(() => qqTeaDecrypt(enc, 'fedcba9876543210'.codeUnits),
+          throwsFormatException);
+    });
+
+    test('长度非法时报错', () {
+      expect(() => qqTeaDecrypt([1, 2, 3], key), throwsFormatException);
+    });
+
+    test('尾部篡改被校验发现', () {
+      final plain = 'hello qq protocol'.codeUnits;
+      final pad = qqTeaPadLength(plain.length);
+      final enc = qqTeaEncrypt(plain, key,
+          paddingBytes: List.filled(pad + 3, 0));
+      final tampered = List<int>.from(enc);
+      tampered[tampered.length - 1] ^= 0xFF;
+      expect(() => qqTeaDecrypt(tampered, key), throwsFormatException);
     });
   });
 

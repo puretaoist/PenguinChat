@@ -1,9 +1,27 @@
 /// L1 基础设施：字节流读写器
 ///
-/// QQ 协议全部字段按小端序（Little-Endian）编码，这是 WLogin/TLV 与 MSF 的约定。
-/// 本文件提供与 C 结构体语义对齐的读写原语，供 kernel 各层复用。
+/// ## 字节序：默认大端（已由反编译证实）
 ///
-/// 对应 Python 实现：qqclient-python/infra/coder.py
+/// 证据来源：`oicq.wlogin_sdk.tools.util`
+/// ```java
+/// // 读：首字节是高位
+/// public static int buf_to_int16(byte[] b, int i) {
+///     return ((b[i] << 8) & 0xFF00) + ((b[i+1] << 0) & 0xFF);
+/// }
+/// // 写：高字节写到低位偏移
+/// public static void int16_to_buf(byte[] b, int i, int v) {
+///     b[i + 1] = (byte) (v >> 0);
+///     b[i + 0] = (byte) (v >> 8);
+/// }
+/// ```
+/// `int32_to_buf` / `int64_to_buf` 同为高字节在前。
+///
+/// 因此 WLogin 层（TLV 头、长度字段）一律 **大端（Big-Endian）**。
+///
+/// ⚠️ 本实现早期版本误用小端，已于 M2 依据上述证据修正。
+/// 由于 QQ 协议栈各层字节序未必一致（native MSF 层可能不同），
+/// 本文件同时提供显式的小端方法 [u16le] / [u32le] / `readUint16Le` 等，
+/// 供其他层按各自证据选用——不依赖「默认值恰好对」。
 library;
 
 import 'dart:typed_data';
@@ -32,35 +50,50 @@ class ByteReader {
 
   int readUint8() => read(1)[0];
 
-  /// QQ 惯例：uint16 小端
+  /// 大端 uint16（WLogin 默认）
   int readUint16() {
+    final b = read(2);
+    return (b[0] << 8) | b[1];
+  }
+
+  /// 显式小端 uint16
+  int readUint16Le() {
     final b = read(2);
     return b[0] | (b[1] << 8);
   }
 
+  /// 大端 uint32（WLogin 默认）
   int readUint32() {
     final b = read(4);
-    return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
+    return ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) & 0xFFFFFFFF;
   }
 
+  /// 显式小端 uint32
+  int readUint32Le() {
+    final b = read(4);
+    return (b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)) & 0xFFFFFFFF;
+  }
+
+  /// 大端有符号 int32
   int readInt32() {
     final v = readUint32();
     return v >= 0x80000000 ? v - 0x100000000 : v;
   }
 
-  /// Dart 的 int 为 64 位，可直接承载 uint64
+  /// 大端 uint64（Dart 的 int 为 64 位，可直接承载）
   int readUint64() {
     final b = read(8);
     var v = 0;
-    for (var i = 7; i >= 0; i--) {
+    for (var i = 0; i < 8; i++) {
       v = (v << 8) | b[i];
     }
     return v;
   }
 
-  /// WLogin 常见的长度前缀字节串：uint16 长度 + 内容
+  /// 长度前缀字节串：uint16 长度 + 内容（大端长度）
   Uint8List readBytesWithLen16() => read(readUint16());
 
+  /// 长度前缀字节串：uint32 长度 + 内容（大端长度）
   Uint8List readBytesWithLen32() => read(readUint32());
 
   Uint8List peek(int n) => Uint8List.sublistView(
@@ -73,7 +106,7 @@ class ByteReader {
   Uint8List readRest() => read(remaining);
 }
 
-/// 顺序写字节流，方法链式调用。
+/// 顺序写字节流，方法链式调用。默认大端。
 class ByteWriter {
   final BytesBuilder _bb = BytesBuilder(copy: false);
 
@@ -82,12 +115,31 @@ class ByteWriter {
     return this;
   }
 
+  /// 大端 uint16
   ByteWriter u16(int v) {
+    _bb.add([(v >> 8) & 0xFF, v & 0xFF]);
+    return this;
+  }
+
+  /// 显式小端 uint16
+  ByteWriter u16le(int v) {
     _bb.add([v & 0xFF, (v >> 8) & 0xFF]);
     return this;
   }
 
+  /// 大端 uint32
   ByteWriter u32(int v) {
+    _bb.add([
+      (v >> 24) & 0xFF,
+      (v >> 16) & 0xFF,
+      (v >> 8) & 0xFF,
+      v & 0xFF,
+    ]);
+    return this;
+  }
+
+  /// 显式小端 uint32
+  ByteWriter u32le(int v) {
     _bb.add([
       v & 0xFF,
       (v >> 8) & 0xFF,
@@ -97,10 +149,11 @@ class ByteWriter {
     return this;
   }
 
+  /// 大端 uint64
   ByteWriter u64(int v) {
     final b = Uint8List(8);
     for (var i = 0; i < 8; i++) {
-      b[i] = (v >> (8 * i)) & 0xFF;
+      b[i] = (v >> (8 * (7 - i))) & 0xFF;
     }
     _bb.add(b);
     return this;
@@ -114,6 +167,7 @@ class ByteWriter {
   /// uint16 长度前缀 + 内容，配合 [ByteReader.readBytesWithLen16]
   ByteWriter bytes16(List<int> b) => u16(b.length).raw(b);
 
+  /// uint32 长度前缀 + 内容，配合 [ByteReader.readBytesWithLen32]
   ByteWriter bytes32(List<int> b) => u32(b.length).raw(b);
 
   Uint8List build() => _bb.toBytes();

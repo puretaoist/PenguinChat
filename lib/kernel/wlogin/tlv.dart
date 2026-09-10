@@ -1,16 +1,46 @@
 /// L2 协议内核：WLogin TLV 编解码器
 ///
-/// WLogin（oicq.wlogin_sdk）是 QQ 登录鉴权的核心协议。基于对目标 APK 全 41 个
-/// dex 的静态扫描结果，本文件实现 TLV 容器的通用编解码，用于还原登录报文布局。
+/// WLogin（oicq.wlogin_sdk）是 QQ 登录鉴权的核心协议。
 ///
-/// TLV 结构（逆向共识 + 本项目扫描证据 tlv_t104/t106/t116/t126/...）：
+/// ## TLV 布局（已由反编译证实）
+///
+/// ```
 ///     +--------+--------+------------------+
-///     | type   | len    | value            |
+///     | cmd    | len    | body             |
 ///     | uint16 | uint16 | len 字节          |
 ///     +--------+--------+------------------+
-///     全部小端序（LE）
+/// ```
 ///
-/// 对应 Python 实现：qqclient-python/kernel/wlogin/tlv.py
+/// 证据一——头部长度固定 4 字节（`oicq.wlogin_sdk.tlv_type.tlv_t`）：
+/// ```java
+/// this._head_len = 4;
+/// public void fill_head(int cmd) {
+///     util.int16_to_buf(this._buf, this._pos, cmd);      // offset 0: cmd
+///     util.int16_to_buf(this._buf, this._pos + 2, 0);    // offset 2: len 占位
+/// }
+/// public void set_length() {
+///     // len 只计 body，不含 4 字节头
+///     util.int16_to_buf(this._buf, 2, this._pos - this._head_len);
+/// }
+/// ```
+///
+/// 证据二——**大端序**（`oicq.wlogin_sdk.tools.util`）：
+/// ```java
+/// public static void int16_to_buf(byte[] b, int i, int v) {
+///     b[i + 1] = (byte) (v >> 0);
+///     b[i + 0] = (byte) (v >> 8);   // 高字节在前
+/// }
+/// ```
+///
+/// 证据三——编号即类名后缀（`C` 侧常量）：
+/// ```java
+/// public class tlv_t104 extends tlv_t {
+///     public static final int CMD_104 = 260;   // 260 == 0x0104
+/// }
+/// ```
+///
+/// ⚠️ 本实现早期版本误用小端，已于 M2 依据上述证据修正。
+/// 全部 113 个已确认 TLV 编号见 `tlv_types.dart`。
 library;
 
 import 'dart:typed_data';
