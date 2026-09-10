@@ -51,6 +51,8 @@ app.*.map.json
 .widget_preview/
 
 # ---- 本项目补充 ----
+# Flutter 工具本机状态（不含项目信息，不应入库）
+/.flutter_tool_state
 # 本机路径文件（绝对路径不能在 CI 上复用，由工作流动态生成）
 /android/local.properties
 # Gradle 各类中间产物 / 日志 / 独立 GRADLE_USER_HOME
