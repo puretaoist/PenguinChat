@@ -66,6 +66,10 @@ jobs:
       - name: Protocol self-test
         run: dart run tool/selftest.dart
 
+      # 存储层自检：去重、预算淘汰、收藏保护
+      - name: Storage self-test
+        run: dart run tool/storage_selftest.dart
+
       # 标准单元测试（失败不阻断打包，仅作记录）
       - name: Unit tests
         run: flutter test --reporter expanded || true

@@ -44,11 +44,22 @@ bash scripts/push-to-github.sh <你的GitHub用户名> qqclient
 
 ```bash
 flutter pub get
-dart run tool/selftest.dart     # 协议内核自测（19 项，不依赖 flutter_tester）
-flutter analyze                 # 静态分析
-flutter build apk --debug       # 本机构建（需配好 Android SDK + 镜像源）
-flutter run                     # 连接设备运行
+dart run tool/selftest.dart           # 协议内核自测（57 项）
+dart run tool/storage_selftest.dart   # 存储层自测（48 项）
+flutter analyze                       # 静态分析
+flutter build apk --debug             # 本机构建（需配好 Android SDK + 镜像源）
+flutter run                           # 连接设备运行
 ```
+
+## 存储设计（体积控制）
+
+目标：**装完几百 MB，用一年还是几百 MB。**
+
+针对官方 QQ「越用越大到几十 G」的问题，本项目的存储层按
+**内容寻址 + 单一预算 + 两级语义**设计，而非官方的「每业务一套目录与配额」。
+预期占用从官方的 10GB+ 降到 **≤ 512MB（硬约束，非估计）**。
+
+详见 [`STORAGE-DESIGN.md`](STORAGE-DESIGN.md)。
 
 ## 架构（对标 Telegram TDLib 的分层设计）
 
@@ -56,7 +67,11 @@ flutter run                     # 连接设备运行
 lib/
 ├── main.dart                 应用入口
 ├── infra/                    L1 基础设施
-│   └── coder.dart            字节流读写器（默认大端；显式提供小端变体）
+│   ├── coder.dart            字节流读写器（默认大端；显式提供小端变体）
+│   └── storage/              存储层（内容寻址，控体积）
+│       ├── blob_store.dart        CAS：SHA-256 落盘 + 两级分桶
+│       ├── cache_policy.dart      全局预算 + LRU 淘汰
+│       └── storage_manager.dart   两级语义 + 引用清单
 ├── kernel/                   L2 协议内核
 │   ├── wlogin/
 │   │   ├── tlv.dart          TLV 编解码（4 字节头，大端）
