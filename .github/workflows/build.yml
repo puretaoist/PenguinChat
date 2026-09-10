@@ -70,6 +70,10 @@ jobs:
       - name: Storage self-test
         run: dart run tool/storage_selftest.dart
 
+      # 安全防护自检：尝试限制持久化、默认离线、禁止自动重试
+      - name: Safety self-test
+        run: dart run tool/safety_selftest.dart
+
       # 标准单元测试（失败不阻断打包，仅作记录）
       - name: Unit tests
         run: flutter test --reporter expanded || true

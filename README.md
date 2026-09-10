@@ -2,6 +2,17 @@
 
 软件安全课程作业：**反编译官方 QQ APK → 提取协议与加密机制 → 自研 Android 客户端**（UI 向 Telegram 靠齐）。
 
+> ## ⚠️ 先读这个
+>
+> 本项目会连接**真实腾讯服务器**，这**违反《QQ 用户协议》**，
+> 且存在**账号被永久封禁**的风险。
+>
+> 客户端默认运行在**离线模式**，连接真实服务器需逐条确认风险。
+> 项目**不提供**任何设备指纹伪造、验证码绕过、设备锁绕过能力。
+>
+> 完整风险说明与安全建议见 **[`SAFETY.md`](SAFETY.md)**。
+> **请勿使用主账号测试。**
+
 ## 当前状态
 
 | 里程碑 | 内容 | 状态 |
@@ -46,10 +57,29 @@ bash scripts/push-to-github.sh <你的GitHub用户名> qqclient
 flutter pub get
 dart run tool/selftest.dart           # 协议内核自测（57 项）
 dart run tool/storage_selftest.dart   # 存储层自测（48 项）
+dart run tool/safety_selftest.dart    # 安全防护自测（53 项）
 flutter analyze                       # 静态分析
 flutter build apk --debug             # 本机构建（需配好 Android SDK + 镜像源）
 flutter run                           # 连接设备运行
 ```
+
+## 运行模式与安全约束
+
+| 模式 | 行为 | 风险 |
+|---|---|---|
+| `offline`（**默认**） | 不联网，UI 使用内置样例数据 | 无 |
+| `loopback` | 内存回环，协议链路完整可跑 | 无 |
+| `realServer` | 连腾讯生产服务器 | **有，不可完全消除** |
+
+安全约束（代码层强制，非文档约定）：
+
+- 默认离线，开启真实服务器需**逐条复述** 4 条风险要点（关键词校验，防随手点过）
+- 登录尝试**硬限制**：10 分钟 3 次；递增冷却；连续 5 次失败锁 24 小时
+- 尝试计数**持久化**——重启应用不清零
+- **禁止自动重试**：除「无信号」外任何服务端拒绝都立即中止
+- 一键切断（`killSwitch`）随时回到离线
+
+详见 [`SAFETY.md`](SAFETY.md)。
 
 ## 存储设计（体积控制）
 
@@ -79,6 +109,9 @@ lib/
 │   │   └── login_commands.dart  14 条登录命令字 + 阶段/结果码模型
 │   ├── crypto/tea.dart       TEA 分组原语 + QQ TEA（填充+CBC）
 │   ├── transport/transport.dart  长连接抽象 + 回环实现（M3 接真实 MSF）
+│   ├── safety/              账号风险防护（见 SAFETY.md）
+│   │   ├── safety_gate.dart      连接模式闸门 + 知情同意 + 风控信号判定
+│   │   └── attempt_limiter.dart  登录尝试限制（持久化 + 递增冷却）
 │   └── trpc/                 trpc 服务 / SSO 命令字（M4）
 ├── client_api/               L3 客户端 API 层（对标 td_api）
 │   └── objects.dart          Chat / ChatMessage 数据对象
