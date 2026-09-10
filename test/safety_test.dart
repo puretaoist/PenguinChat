@@ -10,7 +10,32 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qqclient/kernel/safety/attempt_limiter.dart';
+import 'package:qqclient/kernel/safety/environment_probe.dart';
 import 'package:qqclient/kernel/safety/safety_gate.dart';
+
+/// 完整的风险确认内容（覆盖全部要点）。
+const _fullAck = [
+  '我理解，账号可能被限制登录或永久封禁',
+  '我理解，设备指纹 Qimei 会被采集，登录失败会上报',
+  '我理解，本客户端不会伪造设备指纹、不绕过验证码',
+  '我理解，我会用专门注册的测试账号，不用主账号',
+  '我理解，检测在 native 层，用户态隐藏不可靠，应在干净设备上操作',
+];
+
+EnvironmentReport _cleanEnv() =>
+    EnvironmentReport(findings: const [], probedAt: DateTime.now());
+
+EnvironmentReport _riskyEnv() => EnvironmentReport(
+      findings: const [
+        EnvFinding(
+          id: 'magisk',
+          label: 'Magisk 痕迹',
+          severity: EnvRiskLevel.high,
+          detail: '单元测试注入',
+        ),
+      ],
+      probedAt: DateTime.now(),
+    );
 
 void main() {
   late Directory tmp;
@@ -108,32 +133,54 @@ void main() {
       expect(g.hasValidConsent, isFalse);
     });
 
-    test('确认条目不足时拒绝开启真实服务器', () async {
-      final g = SafetyGate(persistFile: File('${tmp.path}/g2.json'));
+    test('未做环境检测时拒绝开启真实服务器', () async {
+      final g = SafetyGate(persistFile: File('${tmp.path}/g0.json'));
       await g.load();
-      expect(await g.enableRealServer(['我同意']), isNotNull);
+      final r = await g.enableRealServer(_fullAck);
+      expect(r, isNotNull);
       expect(g.mode, ConnectionMode.offline);
     });
 
-    test('敷衍确认（缺关键词）被拒绝', () async {
-      final g = SafetyGate(persistFile: File('${tmp.path}/g3.json'));
+    test('环境高危时直接拒绝（不是警告）', () async {
+      final g = SafetyGate(persistFile: File('${tmp.path}/g1.json'));
       await g.load();
-      final lazy = List.filled(kRiskPoints.length, '我知道');
-      expect(await g.enableRealServer(lazy), isNotNull);
+      final r = await g.enableRealServer(_fullAck, environment: _riskyEnv());
+      expect(r, isNotNull);
+      expect(r, contains('干净设备'), reason: '正确做法是换设备而非隐藏环境');
+      expect(r, contains('libfekit'), reason: '说明用户态隐藏对 native 检测无效');
+      expect(g.mode, ConnectionMode.offline);
     });
 
-    test('完整确认后开启并持久化', () async {
-      final f = File('${tmp.path}/g4.json');
-      final g = SafetyGate(persistFile: f);
+    test('环境干净 + 完整确认 -> 开启', () async {
+      final g = SafetyGate(persistFile: File('${tmp.path}/g2.json'));
       await g.load();
-      final ok = await g.enableRealServer([
-        '可能被限制登录或封禁',
-        '设备指纹 Qimei 会上报',
-        '我不会伪造设备指纹、不绕过',
-        '用专门注册的测试账号',
-      ]);
-      expect(ok, isNull);
+      expect(
+          await g.enableRealServer(_fullAck, environment: _cleanEnv()), isNull);
       expect(g.isRealServer, isTrue);
+    });
+
+    test('确认条目不足时拒绝', () async {
+      final g = SafetyGate(persistFile: File('${tmp.path}/g3.json'));
+      await g.load();
+      expect(
+          await g.enableRealServer(['我同意'], environment: _cleanEnv()),
+          isNotNull);
+    });
+
+    test('敷衍确认（缺关键词）被拒绝', () async {
+      final g = SafetyGate(persistFile: File('${tmp.path}/g4.json'));
+      await g.load();
+      final lazy = List.filled(kRiskPoints.length, '我知道');
+      expect(
+          await g.enableRealServer(lazy, environment: _cleanEnv()), isNotNull);
+    });
+
+    test('开启后跨实例持久化', () async {
+      final f = File('${tmp.path}/g5.json');
+      final g1 = SafetyGate(persistFile: f);
+      await g1.load();
+      expect(
+          await g1.enableRealServer(_fullAck, environment: _cleanEnv()), isNull);
 
       final g2 = SafetyGate(persistFile: f);
       await g2.load();
@@ -142,16 +189,63 @@ void main() {
     });
 
     test('紧急切断回到离线', () async {
-      final g = SafetyGate(persistFile: File('${tmp.path}/g5.json'));
+      final g = SafetyGate(persistFile: File('${tmp.path}/g6.json'));
       await g.load();
-      await g.enableRealServer([
-        '可能被限制登录或封禁',
-        '设备指纹 Qimei 会上报',
-        '我不会伪造设备指纹、不绕过',
-        '用专门注册的测试账号',
-      ]);
+      await g.enableRealServer(_fullAck, environment: _cleanEnv());
       await g.killSwitch();
       expect(g.isOffline, isTrue);
+    });
+  });
+
+  group('EnvironmentReport', () {
+    test('无发现 -> clean 且不阻断', () {
+      final r = _cleanEnv();
+      expect(r.level, EnvRiskLevel.clean);
+      expect(r.blocksRealServer, isFalse);
+    });
+
+    test('单项 high -> 阻断', () {
+      expect(_riskyEnv().level, EnvRiskLevel.high);
+      expect(_riskyEnv().blocksRealServer, isTrue);
+    });
+
+    test('两项 high -> critical', () {
+      final r = EnvironmentReport(
+        findings: const [
+          EnvFinding(id: 'a', label: 'A', severity: EnvRiskLevel.high, detail: 'x'),
+          EnvFinding(id: 'b', label: 'B', severity: EnvRiskLevel.high, detail: 'y'),
+        ],
+        probedAt: DateTime.now(),
+      );
+      expect(r.level, EnvRiskLevel.critical);
+    });
+
+    test('单项 medium 不阻断（给用户判断空间）', () {
+      final r = EnvironmentReport(
+        findings: const [
+          EnvFinding(
+              id: 'd', label: '可调试', severity: EnvRiskLevel.medium, detail: 'x'),
+        ],
+        probedAt: DateTime.now(),
+      );
+      expect(r.level, EnvRiskLevel.medium);
+      expect(r.blocksRealServer, isFalse);
+    });
+
+    test('发现列表按严重度排序', () {
+      expect(_riskyEnv().sortedFindings.first.severity, EnvRiskLevel.high);
+    });
+
+    test('真实探针可运行且如实列出局限', () async {
+      final rep =
+          await EnvironmentProbe(perCheckTimeout: const Duration(milliseconds: 500))
+              .probe();
+      expect(rep.undetectable, isNotEmpty);
+      expect(
+        rep.undetectable.any((u) => u.contains('maps')),
+        isTrue,
+        reason: 'libfekit 读 /proc/self/maps 的深度检测需 native，必须如实说明',
+      );
     });
   });
 

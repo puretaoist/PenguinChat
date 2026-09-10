@@ -28,6 +28,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'environment_probe.dart';
+
 /// 连接模式。
 enum ConnectionMode {
   /// 完全离线：不发起任何网络请求。
@@ -81,6 +83,9 @@ const List<String> kRiskPoints = [
       '因此它的行为特征与官方客户端不同，更容易被识别。',
   '我理解：我不会用主账号测试。若账号对我重要，我应使用专门注册的'
       '测试账号，并接受该账号可能损失的全部后果。',
+  '我理解：腾讯的安全 SDK（libfekit）在 native 层检测 root / hook 框架，'
+      '用户态隐藏已被证明不可靠；我应在环境干净的设备上操作，'
+      '而不是指望把环境藏起来。',
 ];
 
 /// 连接模式闸门。
@@ -148,11 +153,39 @@ class SafetyGate {
 
   /// 启用真实服务器模式。
   ///
-  /// [acknowledged] 必须是用户逐条确认后的复述内容，且必须覆盖
-  /// [kRiskPoints] 的全部要点（用关键词匹配）。
+  /// 两道关：
+  ///   1. **环境关**：设备环境高危时直接拒绝（不是警告）。
+  ///      依据是「官方 QQ + 隐藏 root 仍被封」的反馈——
+  ///      判定基准是设备环境本身，环境不干净时做什么补救都没用。
+  ///   2. **同意关**：必须逐条复述 [kRiskPoints] 的全部要点。
+  ///
+  /// [acknowledged] 必须是用户逐条确认后的复述内容。
+  /// [environment] 为环境探测报告；为 null 表示未探测（会拒绝，要求先探测）。
   ///
   /// 返回 null 表示成功；非 null 为失败原因。
-  Future<String?> enableRealServer(List<String> acknowledged) async {
+  Future<String?> enableRealServer(
+    List<String> acknowledged, {
+    EnvironmentReport? environment,
+  }) async {
+    // ---- 第一道关：环境 ----
+    if (environment == null) {
+      return '必须先完成环境检测（EnvironmentProbe.probe）';
+    }
+    _lastEnvironment = environment;
+    if (environment.blocksRealServer) {
+      final worst = environment.sortedFindings
+          .where((f) => f.severity.blocksRealServer)
+          .map((f) => f.label)
+          .take(3)
+          .join('、');
+      return '设备环境风险等级「${environment.level.label}」，已拒绝开启'
+          '（命中：$worst）。\n\n'
+          '注意：正确做法不是在这样一台设备上隐藏环境，而是换一台干净设备。'
+          '用户态隐藏对 native 层检测（libfekit 读 /proc/self/maps）无效，'
+          '且「藏了但藏不干净」的状态反而更可疑。';
+    }
+
+    // ---- 第二道关：知情同意 ----
     if (acknowledged.length < kRiskPoints.length) {
       return '必须逐条确认全部 ${kRiskPoints.length} 项风险';
     }
@@ -163,6 +196,7 @@ class SafetyGate {
       ['设备指纹', 'Qimei', 'qimei'],
       ['伪造', '绕过'],
       ['测试账号', '专门注册'],
+      ['native', 'libfekit', '隐藏', '干净设备'],
     ];
     final joined = acknowledged.join(' ');
     for (final group in requiredKeywords) {
@@ -180,6 +214,11 @@ class SafetyGate {
     await _save();
     return null;
   }
+
+  EnvironmentReport? _lastEnvironment;
+
+  /// 最近一次用于开启判定的环境报告。
+  EnvironmentReport? get lastEnvironment => _lastEnvironment;
 
   /// 立即切断：回到离线模式。
   Future<void> killSwitch() async {
