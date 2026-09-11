@@ -64,15 +64,7 @@ jobs:
         run: flutter analyze || true
 
       # ---------- 自检 ----------
-      # 全部纯 Dart 自检，逐个跑并汇总：
-      #   qq8_tlv / qq8_sso / qq8_selftest   协议编解码（含 oicq 黄金向量）
-      #   qq8_tran                            传输层（本地 mock TCP 服务器）
-      #   qq8_login / qq8_profile             登录主流程、多版本档案
-      #   onebot / segment / session          日用线
-      #   chat_store / session_providers      L3 数据层与接线层（闸门拒绝路径）
-      #   storage / safety                    存储预算、账号防护
-      #   log                                 日志脱敏与体积闸门
-      #   tea_compat_check / selftest         TEA 编解码、内核基础
+      # 全部纯 Dart 自检，逐个跑并汇总，任一失败即中断。
       #
       # 用通配遍历而不是逐条列举——新增自检不必再改工作流，
       # 也就不会出现"写了测试但 CI 没跑"的情况。
@@ -97,10 +89,9 @@ jobs:
           fi
           echo "全部自检通过"
 
-      # ---------- 登录组包 dry-run ----------
-      # 不联网、不需要账号。验证三层信封都能组装出来，且首 4 字节声明的
-      # 长度与实体一致（组包长度算错是登录失败最常见的隐蔽原因）。
-      - name: Login dry-run
+      # ---------- 离线组包校验 ----------
+      # 不联网、不需要账号。校验组包结果的长度自洽性。
+      - name: Offline pack check
         run: |
           out=$(dart run tool/qq8_live_smoke.dart)
           echo "$out"

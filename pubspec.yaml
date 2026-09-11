@@ -1,5 +1,5 @@
 name: qqclient
-description: "QQ protocol client (Telegram-style UI) for software security coursework"
+description: "Flutter client for Android"
 publish_to: 'none'
 version: 0.1.0+1
 
