@@ -2,12 +2,14 @@
 ///
 /// **不需要网络、不需要 QQ 账号、不碰真实服务器**。
 /// 用一个真实的本地 `ServerSocket` 当 mock 服务端，走完整的
-/// 「加分帧 → 过 TCP → 收字节 → 解帧」链路。
+/// 「客户端原样写出完整包 → 过 TCP → 服务端解帧 → 回包 → 客户端解帧」链路。
 ///
-/// 覆盖三类容易写错的地方：
+/// 覆盖四类容易写错的地方：
 /// * **半包** —— 一次 data 事件只到一部分；
 /// * **粘包** —— 一次 data 事件含多个包；
-/// * **非法长度** —— 流错位时必须报错，而不是静默卡死。
+/// * **非法长度** —— 流错位时必须报错，而不是静默卡死；
+/// * **发送不加前缀** —— 线上字节必须与调用方给的完整包**逐字节相同**
+///   （登录包自带 u32 帧头；多包一层会让服务端静默不回，2026-09-11 踩过）。
 ///
 /// 运行：
 /// ```bash
@@ -45,6 +47,10 @@ class MockServer {
   final List<Uint8List> _script;
   final List<Uint8List> received = <Uint8List>[];
 
+  /// 收到的**原始线上字节**（未解帧）。用来断言客户端写出的就是它给的包，
+  /// 传输层没有多加前缀。
+  final List<int> receivedRaw = <int>[];
+
   /// 已接受的连接，[stop] 时要一并销毁 —— 只关 ServerSocket 的话，
   /// 已建立的 socket 仍会让 Dart 事件循环活着，进程不会退出。
   final List<Socket> _clients = <Socket>[];
@@ -79,6 +85,7 @@ class MockServer {
 
       socket.listen(
         (chunk) {
+          receivedRaw.addAll(chunk);
           List<Uint8List> frames;
           try {
             frames = decoder.add(chunk);
@@ -226,13 +233,23 @@ Future<void> main() async {
     try {
       await tran.connect();
       check('已连上', tran.isConnected);
-      final got = await tran.send(_bytes([0x11, 0x22]));
+      // 请求必须是"完整线上包"（自带 u32 帧头，与真实登录包同构）
+      final req = framePacket(_bytes([0x11, 0x22]));
+      final got = await tran.send(req);
       check('响应字节完全一致', got.join(',') == resp.join(','), _hex(got));
       check('服务器收到 1 个请求', srv.received.length == 1, '${srv.received.length}');
       check(
         '服务器收到的 payload 正确（帧头已被剥掉）',
         srv.received.first.join(',') == '17,34',
         _hex(srv.received.first),
+      );
+      check(
+        '线上字节 = 传入的完整包（传输层不得再加前缀）',
+        srv.receivedRaw.length == req.length &&
+            List<int>.generate(req.length, (i) => srv.receivedRaw[i])
+                .join(',') ==
+                req.join(','),
+        '线上 ${srv.receivedRaw.length} 字节 vs 包 ${req.length} 字节',
       );
     } finally {
       await tran.close();
@@ -251,7 +268,11 @@ Future<void> main() async {
       port: srv.port,
     );
     try {
-      final got = await tran.send(_bytes([0x01]));
+      final got = await tran.send(
+        // 测试自己构造"完整线上包"（自带 u32 帧头，与真实登录包同构）：
+        // 传输层必须**原样写出**，这个包才是客户端的全部字节。
+        framePacket(_bytes([0x01])),
+      );
       check('逐字节发送仍能拼出完整响应', got.join(',') == resp.join(','));
       check('长度正确', got.length == 40, '${got.length}');
     } finally {
@@ -271,7 +292,11 @@ Future<void> main() async {
       port: srv.port,
     );
     try {
-      final got = await tran.send(_bytes([0x01]));
+      final got = await tran.send(
+        // 测试自己构造"完整线上包"（自带 u32 帧头，与真实登录包同构）：
+        // 传输层必须**原样写出**，这个包才是客户端的全部字节。
+        framePacket(_bytes([0x01])),
+      );
       check(
         '只取第一个包，多余的不串味',
         got.join(',') == r1.join(','),
@@ -295,7 +320,7 @@ Future<void> main() async {
     var threw = false;
     try {
       await tran.send(
-        _bytes([0x01]),
+        framePacket(_bytes([0x01])), // 完整线上包（自带 u32 帧头）
         timeout: const Duration(milliseconds: 300),
       );
     } on Qq8TransportException catch (e) {
@@ -334,9 +359,15 @@ Future<void> main() async {
     );
     var threw = false;
     try {
-      final f1 = tran.send(_bytes([0x01]), timeout: const Duration(seconds: 2));
+      final f1 = tran.send(
+        framePacket(_bytes([0x01])), // 完整线上包（自带 u32 帧头）
+        timeout: const Duration(seconds: 2),
+      );
       try {
-        await tran.send(_bytes([0x02]), timeout: const Duration(seconds: 2));
+        await tran.send(
+          framePacket(_bytes([0x02])), // 完整线上包（自带 u32 帧头）
+          timeout: const Duration(seconds: 2),
+        );
       } on Qq8TransportException catch (e) {
         threw = e.message.contains('并发');
       }

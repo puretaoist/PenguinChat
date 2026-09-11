@@ -28,8 +28,26 @@
 /// });
 /// ```
 ///
-/// ⚠️ 注意这与 OICQ 信封自己的 `0x02` + u16 头是**两层**，不要混：
-/// 传输层先加 u32，OICQ 层再加 `0x02` + u16。
+/// ⚠️ 注意这与 OICQ 信封自己的 `0x02` + u16 头是**两层**，不要混。
+///
+/// ## 谁负责这个 u32（踩过坑）
+///
+/// **发送侧：调用方给的必须是"完整线上包"** —— 登录包自带这个 u32
+/// （`Qq8Sso.buildLoginPacket` 返回值的第一个字段就是自己的总长），
+/// 传输层**原样写出、不再加任何前缀**。对应 oicq 的发送路径
+/// （`lib/core/base-client.ts` 的 `FN_SEND`；`Network extends net.Socket`，
+/// `write` 就是字节原样）：
+///
+/// ```ts
+/// private [FN_SEND](pkt: Uint8Array, timeout = 5) { … this[NET].write(pkt, …) … }
+/// ```
+///
+/// **接收侧：解码器把这个 u32 剥掉**，交给上层的 payload 不含帧头。
+///
+/// ⚠️ 血泪注记：发送侧曾画蛇添足地又 `framePacket()` 了一次 →
+/// 线上多 4 字节，服务端按错位长度解析、**静默不回**
+/// （2026-09-11 真机实测：TCP 连上、1388 字节发出、15s 无任何响应）。
+/// 别再犯——`framePacket` 只用于构造 mock 服务端的响应帧。
 ///
 /// ## 为什么要抽象
 ///
@@ -125,7 +143,11 @@ class Qq8FrameDecoder {
   void reset() => _buf.clear();
 }
 
-/// 给 payload 套上 4 字节长度头。分帧的**唯一**写入处。
+/// 给 payload 套上 4 字节长度头，得到**线上字节**。
+///
+/// 只用于构造/模拟线上的帧（自测里的 mock 服务端、脚本传输）——
+/// **生产发送路径不调用它**：登录包自己已经带了同样的 u32
+/// （见文件头"谁负责这个 u32"），再套一层就是把流写错位。
 Uint8List framePacket(List<int> payload) {
   final body = payload is Uint8List ? payload : Uint8List.fromList(payload);
   final out = Uint8List(4 + body.length);
@@ -146,7 +168,8 @@ abstract class Qq8Transport {
   /// 建立连接。已连接时应为幂等。
   Future<void> connect();
 
-  /// 发一个 payload（自动加分帧头），等一个完整的响应 payload（已去头）。
+  /// 发一个**完整线上包**（自带 u32 分帧头，原样写出），
+  /// 等一个完整的响应 payload（帧头已在接收侧剥掉）。
   Future<Uint8List> send(Uint8List payload, {Duration? timeout});
 
   /// 关闭连接。
@@ -239,7 +262,9 @@ class Qq8TcpTransport implements Qq8Transport {
     _pending = completer;
 
     try {
-      _socket!.add(framePacket(payload));
+      // 原样写出：包自己带的 u32 长度头就是分帧头（对应 oicq `net.write(pkt)`）。
+      // 千万不能再 `framePacket()` —— 多一层会让服务端静默丢弃（见文件头）。
+      _socket!.add(payload);
       await _socket!.flush();
     } on Object catch (e) {
       _pending = null;
