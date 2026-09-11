@@ -25,6 +25,7 @@ import 'dart:typed_data';
 import 'package:qqclient/kernel/crypto/digest.dart';
 import 'package:qqclient/kernel/crypto/tea.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_tlv.dart';
 
@@ -329,13 +330,16 @@ void main() {
     '${q8211.length} vs ${q8950.length}',
   );
   for (final p in _all) {
-    final empty = Qq8Tlv.body(_context(p), 0x545);
     check(
-      '${p.label}：拿不到 QIMEI 时 0x545 为空 body（同官方 listener==null 行为）',
-      empty.isEmpty,
-      'len=${empty.length}',
+      '${p.label}：拿不到 QIMEI → 0x545 被 guard 整条滤掉（官方取不到也不发）',
+      !Qq8LoginConditions.firstPasswordLogin.applies(0x545),
+      'body len=${Qq8Tlv.body(_context(p), 0x545).length}',
     );
   }
+  check(
+    '给出 QIMEI 时才进入发送计划',
+    const Qq8LoginConditions(qimei: 'sample').applies(0x545),
+  );
 
   // -- 5. 灯塔 appkey ----------------------------------------------------
   stdout.writeln('\n【5】灯塔 appkey（旧 Beacon）');

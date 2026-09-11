@@ -139,6 +139,14 @@ class Qq8LoginConditions {
   /// 故**首登不发**，只有票据续期时才发。
   final bool hasSig;
 
+  /// `0x545`（QIMEI）的源串（官方 `u.T` / `t.T`）。
+  ///
+  /// **取不到就整条不发**——官方 `j.java` case 1349 只在 QIMEI 非空时才
+  /// `new tlv_t545().get_tlv_545(...)`，为空时仅上报一个错误事件、不产出
+  /// TLV。所以我们用"有没有 QIMEI"做 guard，而不是发一个空 body
+  /// （那是与官方不一致的偏差，2026-09-11 修正）。
+  final String? qimei;
+
   const Qq8LoginConditions({
     this.accountIsUin = true,
     this.flags = 0,
@@ -150,12 +158,15 @@ class Qq8LoginConditions {
     this.tgtQR,
     this.t16a,
     this.hasSig = false,
+    this.qimei,
   });
 
   /// 密码首登的默认条件：一律取"取不到"的分支，等价于官方首次登录的情形。
   static const Qq8LoginConditions firstPasswordLogin = Qq8LoginConditions();
 
   static bool _nonEmpty(Uint8List? v) => v != null && v.isNotEmpty;
+
+  static bool _nonEmptyStr(String? v) => v != null && v.isNotEmpty;
 
   /// 该 TLV 在当前条件下是否应当出现在包里。
   ///
@@ -191,6 +202,8 @@ class Qq8LoginConditions {
         return hasSig; // 首登无票据 → 发给服务端只会被拒
       case 0x529:
         return false; // 三版本都无构建点，永不发
+      case 0x545:
+        return _nonEmptyStr(qimei); // 取不到 QIMEI → 官方整条不发（j.java case 1349）
       case 0x548:
         return _nonEmpty(an);
       default:

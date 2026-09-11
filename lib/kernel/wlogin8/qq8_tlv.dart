@@ -149,8 +149,10 @@ const List<int> qq8LoginTlvMissing = <int>[
 ///
 /// ## `0x545`（1349）—— 依赖 `libQimei.so`
 ///
-/// `t.T = util.get_qimei(context)`，取不到就跳过（`k.java:383-393`）。
-/// 官方行为即"取不到不发"，所以本模块同样跳过即可，**不算缺失**。
+/// `t.T = util.get_qimei(context)`，取不到就跳过（8.2.11 `k.java:383-393`；
+/// 8.9.50 同款在 `j.java` case 1349，为空时只上报错误事件、不产出 TLV）。
+/// 官方行为即"取不到不发"，所以本模块同样跳过即可，**不算缺失**——
+/// guard 见 `Qq8LoginConditions.applies` 的 `case 0x545`。
 const List<int> qq8LoginTlvNativeBound = <int>[0x544, 0x545];
 
 /// `0x544` 的降级 body（4 个零字节），出处见 `qq8LoginTlvNativeBound` 注释。
@@ -630,9 +632,10 @@ abstract final class Qq8Tlv {
         //   8.2.11  body = MD5(qimei 字符串)        —— 16 字节
         //   8.9.50+ body = qimei 字符串原文的 UTF-8
         //
-        // 拿不到就发空 body —— 官方同样是这个行为：
-        //   listener 为 null / 取到空串 → return new byte[0]
-        // 即"设备上没注册 QIMEI 时，官方自己也不发这个 TLV"。
+        // ⚠️ 拿不到 QIMEI 时官方**整条不发**（8.9.50 `j.java` case 1349 /
+        // 8.2.11 `k.java` case 1349 都只在非空时才组 TLV），滤除由
+        // `Qq8LoginConditions.qimei` 的 guard 负责——这里不该产出空 body
+        // （那是与官方不一致的偏差，2026-09-11 修正）。
         final qimeiArg = args.isNotEmpty ? args[0] : null;
         final qimei = qimeiArg is String && qimeiArg.isNotEmpty ? qimeiArg : null;
         if (qimei != null) {

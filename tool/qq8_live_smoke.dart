@@ -364,8 +364,6 @@ String _skippedNote(int tag, Qq8ClientProfile p) {
   switch (tag) {
     case 0x544:
       return '  (安全 SDK 降级 body)';
-    case 0x545:
-      return '  (QIMEI，本次为空 = 官方降级行为)';
     case 0x553:
       return '  (fekit attach 降级 body)';
     default:

@@ -191,6 +191,14 @@ Future<void> main() async {
   check('0x106：恒发', first.applies(0x106));
   check('0x544：恒发（即使 body 为空，见 8.9.50）', first.applies(0x544));
   check(
+    '0x545：拿不到 QIMEI → 整条不发（官方 8.9.50 j.java case 1349 同）',
+    !first.applies(0x545),
+  );
+  check(
+    '0x545：拿到 QIMEI 才发',
+    const Qq8LoginConditions(qimei: 'sample').applies(0x545),
+  );
+  check(
     '0x104：首登无缓存盐 → 官方整条跳过（不是发空包）',
     !first.applies(0x104),
   );
@@ -251,12 +259,13 @@ Future<void> main() async {
       tlvs.containsKey(0x106),
     );
     check(
-      '${p.label}：0x104 / 0x112 / 0x172 / 0x185 / 0x201 / 0x548 被正确滤掉',
+      '${p.label}：0x104 / 0x112 / 0x172 / 0x185 / 0x201 / 0x545 / 0x548 被正确滤掉',
       !tlvs.containsKey(0x104) &&
           !tlvs.containsKey(0x112) &&
           !tlvs.containsKey(0x172) &&
           !tlvs.containsKey(0x185) &&
           !tlvs.containsKey(0x201) &&
+          !tlvs.containsKey(0x545) &&
           !tlvs.containsKey(0x548),
     );
     check(
@@ -302,6 +311,27 @@ Future<void> main() async {
     check(
       '8.9.50：0x553 不在包里（该版本顺序表没有它）',
       !tlvs.containsKey(0x553),
+    );
+  }
+  // 给出 QIMEI 时 0x545 必须真的进包（guard 与 body 两侧都要接上）
+  {
+    const sample = '3F2A9C8B1D4E6075A1B2C3D4E5F60718ABCD';
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final body = Qq8LoginBody.build(
+      ctx,
+      Qq8SubCmd.password,
+      qq8ProfileQQ8950.apk.loginTlvOrder,
+      cond: const Qq8LoginConditions(qimei: sample),
+      args: const <int, List<Object?>>{
+        0x545: <Object?>[sample],
+      },
+    );
+    final tlvs = qq8ReadTlv(body, offset: 4);
+    check(
+      '8.9.50：给出 QIMEI → 0x545 进包且 body = 原文（rawSource）',
+      tlvs[0x545] != null &&
+          String.fromCharCodes(tlvs[0x545]!) == sample,
+      'len=${tlvs[0x545]?.length}',
     );
   }
   // 9.3.60 的 0x553 是 1 字节
