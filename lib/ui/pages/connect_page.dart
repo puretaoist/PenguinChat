@@ -576,27 +576,38 @@ class _Card extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-      decoration: BoxDecoration(
-        color: TelegramColors.bgSidebar,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: TelegramColors.textSecondary,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
+    // ⚠️ 这里必须用 Material 而不是带背景色的 Container。
+    //
+    // ListTile 系（CheckboxListTile / SwitchListTile / RadioListTile）把背景与
+    // ink 水波画在**最近的 Material 祖先**上。如果中间隔了一个有背景色的
+    // DecoratedBox，那一层会把它们盖住——debug 构建下 Flutter 直接断言：
+    //
+    //   ListTile background color or ink splashes may be invisible.
+    //
+    // Material 同时承担了"卡片底色 + ink 宿主"两个角色，视觉效果与原来的
+    // Container 一致，而且 clipBehavior 还能把 ink 裁进圆角。
+    return Material(
+      color: TelegramColors.bgSidebar,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: TelegramColors.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
             ),
-          ),
-          const SizedBox(height: 10),
-          ...children,
-        ],
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
       ),
     );
   }

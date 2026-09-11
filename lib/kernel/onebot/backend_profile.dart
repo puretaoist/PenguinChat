@@ -189,6 +189,19 @@ class BackendProfile {
     this.segmentValues = const {},
   });
 
+  /// 内置兜底表：**所有适配表资源都加载失败时的最后防线**。
+  ///
+  /// 没有任何字段映射，所以它不能替代真表——但它能保证客户端**起得来**：
+  /// 连接、会话列表、收发消息这些不依赖字段映射的能力仍然可用，
+  /// 只有字段归一化会退化成"直接用原始字段名"。
+  ///
+  /// 这比启动即崩要好：适配表读不到是打包/资源问题，
+  /// 不该表现成用户点一下就闪退。
+  static const BackendProfile builtinFallback = BackendProfile(
+    name: 'Builtin.Fallback',
+    knownAs: <String>['NapCat.Onebot', 'Lagrange.OneBot', 'LLOneBot'],
+  );
+
   factory BackendProfile.fromJson(Map<String, dynamic> json) {
     final name = json['name'];
     if (name is! String || name.isEmpty) {
@@ -304,8 +317,18 @@ class BackendProfileRegistry {
   }
 
   /// 同 [resolve]，但找不到时回落到 [fallbackName]。
+  ///
+  /// 如果连兜底表都不在（**注册表为空**，即适配表资源全部加载失败，
+  /// 见 `main.dart` 的 `_loadBackendRegistry`），退到
+  /// [BackendProfile.builtinFallback]。
+  ///
+  /// ⚠️ 原来是 `_byName[fallbackName]!`，在空注册表上会崩成
+  /// `Null check operator used on a null value`——既不是给用户看的错误，
+  /// 也没指出哪里坏了。而调用方的契约是"未知后端不应该让客户端不可用"。
   BackendProfile resolveOrDefault(String? appName) =>
-      resolve(appName) ?? _byName[fallbackName]!;
+      resolve(appName) ??
+      _byName[fallbackName] ??
+      BackendProfile.builtinFallback;
 
   BackendProfile? byName(String name) {
     final p = _byName[name];

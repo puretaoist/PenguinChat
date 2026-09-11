@@ -113,7 +113,11 @@ Future<BackendProfileRegistry> _loadBackendRegistry() async {
   try {
     return BackendProfileRegistry.fromJsonStrings(sources);
   } catch (e) {
-    Log.get('Main').e('适配表解析失败，全部回落到兜底表', error: e);
+    // 这里返回的是**空**注册表——它里面连 NapCat 表都没有，所以这句日志
+    // 不能写成"回落到兜底表"。真正的最后防线在
+    // `BackendProfileRegistry.resolveOrDefault`，它会在注册表为空时退到
+    // `BackendProfile.builtinFallback`（无字段映射，但保证客户端起得来）。
+    Log.get('Main').e('适配表解析失败，将退到内置兜底表（字段映射不可用）', error: e);
     return BackendProfileRegistry(const []);
   }
 }

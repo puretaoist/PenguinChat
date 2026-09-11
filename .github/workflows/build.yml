@@ -113,9 +113,16 @@ jobs:
             exit 1
           fi
 
-      # 标准单元测试（失败不阻断打包，仅作记录）
+      # 标准单元测试（含 UI widget 测试）。
+      #
+      # ⚠️ 这里**不再带 `|| true`**。
+      # `tool/` 下的自测是纯 Dart，跑不了 Widget；能覆盖 UI 接线的只有这一条。
+      # 之前让它带 `|| true`，等于「唯一验证 UI 的东西挂了也不阻断构建」——
+      # 于是 test/ui_test.dart 一加进来就抓到两个真实缺陷
+      # （ListTile 被带背景色的 DecoratedBox 包住 / 空注册表下崩溃），
+      # 而它们此前完全无声。
       - name: Unit tests
-        run: flutter test --reporter expanded || true
+        run: flutter test --reporter expanded
 
       # ---------- 工程修正 ----------
       # 1) 仓库不提交 android/local.properties（本机绝对路径），

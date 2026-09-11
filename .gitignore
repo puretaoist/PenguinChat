@@ -65,3 +65,8 @@ app.*.map.json
 *.apk
 *.dex
 !android/gradle/wrapper/gradle-wrapper.jar
+
+# 调试输出（临时抓的测试日志）
+ui_out.txt
+ui2.txt
+*_out.txt
