@@ -1,0 +1,5 @@
+{
+  "name": "LLOneBot",
+  "redirect": "NapCat.Onebot",
+  "_comment": "LLOneBot 是 LiteLoaderQQNT 插件，API 表面与 NapCat 高度重合，直接继承其适配表。这里只保留一个入口，避免重复维护——这正是不把适配写成代码的理由。"
+}

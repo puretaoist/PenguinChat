@@ -34,3 +34,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/theme.json
+    # 后端适配表（OneBot 各实现的字段差异，数据驱动；见 lib/kernel/onebot/backend_profile.dart）
+    - assets/backends/

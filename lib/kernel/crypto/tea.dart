@@ -202,33 +202,39 @@ Uint8List xxteaDecrypt(List<int> data, List<int> key) {
   return u32ToBytesBE(v);
 }
 
-/// 单个 8 字节分组的 CBC 链式加密（内部使用）。
-Uint8List _cbcEncryptBlock(Uint8List block, Uint8List prev, List<int> k) {
-  final x = Uint8List(8);
-  for (var i = 0; i < 8; i++) {
-    x[i] = block[i] ^ prev[i];
-  }
-  final v = bytesToU32BE(x);
-  final r = teaEncryptBlock(v[0], v[1], k);
-  return u32ToBytesBE([r.v0, r.v1]);
-}
-
-/// 单个 8 字节分组的 CBC 链式解密（内部使用）。
-Uint8List _cbcDecryptBlock(Uint8List block, Uint8List prev, List<int> k) {
-  final v = bytesToU32BE(block);
-  final r = teaDecryptBlock(v[0], v[1], k);
-  final dec = u32ToBytesBE([r.v0, r.v1]);
+/// XOR 两个 8 字节块。
+Uint8List _xor8(Uint8List a, Uint8List b) {
   final out = Uint8List(8);
   for (var i = 0; i < 8; i++) {
-    out[i] = dec[i] ^ prev[i];
+    out[i] = a[i] ^ b[i];
   }
   return out;
 }
 
 // ============================================================
-//  以下为 QQ 实际使用的「填充 + CBC」模式实现。
+//  以下为 QQ 实际使用的「填充 + 分组链」模式实现。
 //
-//  证据：oicq.wlogin_sdk.tools.cryptor.encrypt / decrypt
+//  证据：oicq.wlogin_sdk.tools.a（8.2.11 APK classes.dex 反编译）
+//    加密的分组步骤（方法 a()）：
+//      if (this.i) a ^= b;                     // 首块 b = 0
+//      else        a ^= c[e + f];              // a ^= 前一块密文
+//      System.arraycopy(a(this.a), 0, c, d, 8);    // c = TEA(a)
+//      c[d + f] ^= b[f];                       // ★ c ^= 前一块的「加密前 a」
+//      System.arraycopy(this.a, 0, this.b, 0, 8);  // b = a
+//
+//    展开为：
+//      B_i = P_i ^ C_{i-1}
+//      C_i = E(B_i) ^ B_{i-1}          ← 这一项是标准 CBC 没有的
+//
+//    解密（方法 b(...) + 明文抽取）：
+//      b ^= C_i;  b = D_TEA(b);  P_i = C_{i-1} ^ b
+//      → B_i = D(C_i ^ B_{i-1});  P_i = B_i ^ C_{i-1}
+//
+//  ⚠️ 历史修正：本文件早期版本按标准 CBC（C_i = E(P_i ^ C_{i-1})）实现，
+//     首块的结果恰好相同，但从第二块起必然分叉，导致**无法解密任何
+//     真实报文**。已由 tool/tea_compat_check.dart 用 oicq 的密文实测确认
+//     并修正。轮函数与填充公式当时就是对的，只有链式部分错。
+//
 //    加密：pad = (8 - (len + 10) % 8) % 8
 //          输出长度 = pad + len + 10
 //          明文布局 = [ (rand&0xF8)|pad ][ pad 字节随机 ][ 2 字节随机 ]
@@ -283,15 +289,20 @@ Uint8List qqTeaEncrypt(
   buf.setRange(pad + 3, pad + 3 + len, plain);
   // 末尾 7 字节保持 0
 
-  // CBC 链式加密
+  // 分组链加密：B_i = P_i ^ C_{i-1}；C_i = E(B_i) ^ B_{i-1}
+  // 需要同时维护前一块的密文（C）与加密前的中间值（B）。
   final out = Uint8List(total);
-  final prev = Uint8List(8); // 零 IV
-  final block = Uint8List(8);
+  var bPrev = Uint8List(8); // B_{i-1}，首块为全零
+  var cPrev = Uint8List(8); // C_{i-1}，首块为全零
   for (var off = 0; off < total; off += 8) {
-    block.setRange(0, 8, buf, off);
-    final c = _cbcEncryptBlock(block, prev, k);
+    final p = Uint8List.sublistView(buf, off, off + 8);
+    final b = _xor8(p, cPrev);
+    final v = bytesToU32BE(b);
+    final r = teaEncryptBlock(v[0], v[1], k);
+    final c = _xor8(u32ToBytesBE([r.v0, r.v1]), bPrev);
     out.setRange(off, off + 8, c);
-    prev.setRange(0, 8, c);
+    bPrev = b;
+    cPrev = c;
   }
   return out;
 }
@@ -304,24 +315,34 @@ Uint8List qqTeaDecrypt(List<int> cipher, List<int> key) {
     throw FormatException('密文长度必须为 8 的倍数且 >= 16，实际 $total');
   }
 
-  // 先解出首块以取填充长度
-  final first = Uint8List.fromList(cipher.sublist(0, 8));
-  final firstPlain = _cbcDecryptBlock(first, Uint8List(8), k);
+  // 统一成 Uint8List，便于零拷贝切片
+  final cBytes = cipher is Uint8List ? cipher : Uint8List.fromList(cipher);
+
+  // 先解出首块以取填充长度。
+  // 首块 B_0 = 0、C_0 = 0，故 P_1 = D(C_1)，可单独算出。
+  final v0 = bytesToU32BE(Uint8List.sublistView(cBytes, 0, 8));
+  final r0 = teaDecryptBlock(v0[0], v0[1], k);
+  final firstPlain = u32ToBytesBE([r0.v0, r0.v1]);
   final pad = firstPlain[0] & 0x07;
   final dataLen = total - pad - 10;
   if (dataLen < 0) {
     throw const FormatException('填充长度非法，报文损坏');
   }
 
-  // 全量 CBC 解密
+  // 全量分组链解密：
+  //   B_i = D(C_i ^ B_{i-1})
+  //   P_i = B_i ^ C_{i-1}
   final plain = Uint8List(total);
-  final prev = Uint8List(8);
-  final block = Uint8List(8);
+  var bPrev = Uint8List(8); // B_{i-1}
+  var cPrev = Uint8List(8); // C_{i-1}
   for (var off = 0; off < total; off += 8) {
-    block.setRange(0, 8, cipher, off);
-    final p = _cbcDecryptBlock(block, prev, k);
-    plain.setRange(off, off + 8, p);
-    prev.setRange(0, 8, cipher, off);
+    final c = Uint8List.sublistView(cBytes, off, off + 8);
+    final v = bytesToU32BE(_xor8(c, bPrev));
+    final r = teaDecryptBlock(v[0], v[1], k);
+    final b = u32ToBytesBE([r.v0, r.v1]);
+    plain.setRange(off, off + 8, _xor8(b, cPrev));
+    bPrev = b;
+    cPrev = c;
   }
 
   // 校验末尾 7 字节为 0（数据完整性检查）

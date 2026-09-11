@@ -1,0 +1,336 @@
+{
+  "name": "NapCat.Onebot",
+  "known_as": ["NapCat", "NapCatQQ", "NapCat.Onebot", "LLOneBot", "LLOneBot.Onebot"],
+  "redirect": null,
+  "_comment": "路径以 OneBotClient.call() 的返回值（响应信封的 data 字段）为根。字段来源见 https://napneko.github.io/zh-CN/develop/api。值为 null 表示该后端不提供此字段。",
+
+  "segment_values": {
+    "file": { "name": "$.file" }
+  },
+
+  "apis": {
+    "version_info": {
+      "action": "get_version_info",
+      "map": {
+        "app_name": "$.app_name",
+        "app_version": "$.app_version",
+        "protocol_version": "$.protocol_version",
+        "runtime_os": "$.runtime_os"
+      }
+    },
+
+    "login_info": {
+      "action": "get_login_info",
+      "map": {
+        "uin": "$.user_id",
+        "nickname": "$.nickname"
+      }
+    },
+
+    "status": {
+      "action": "get_status",
+      "map": {
+        "online": "$.online",
+        "good": "$.good"
+      }
+    },
+
+    "friend_list": {
+      "action": "get_friends_with_category",
+      "source": "$[*].buddyList[*]",
+      "map": {
+        "user_id": "/user_id",
+        "nickname": "/nickname",
+        "remark": "/remark",
+        "longNick": "/longNick",
+        "category_id": null,
+        "category_name": null
+      }
+    },
+
+    "friend_categories": {
+      "action": "get_friends_with_category",
+      "source": "$[*]",
+      "map": {
+        "category_id": "/categoryId",
+        "category_name": "/categoryName",
+        "sort_id": "/categorySortId",
+        "users": "/buddyList[*].user_id"
+      }
+    },
+
+    "group_list": {
+      "action": "get_group_list",
+      "source": "$[*]",
+      "map": {
+        "group_id": "/group_id",
+        "group_name": "/group_name",
+        "member_count": "/member_count",
+        "max_member_count": "/max_member_count"
+      }
+    },
+
+    "group_member_list": {
+      "action": "get_group_member_list",
+      "source": "$[*]",
+      "map": {
+        "group_id": "/group_id",
+        "user_id": "/user_id",
+        "nickname": "/nickname",
+        "card": "/card",
+        "sex": "/sex",
+        "age": "/age",
+        "role": "/role",
+        "level": "/level",
+        "join_time": "/join_time",
+        "last_sent_time": "/last_sent_time",
+        "shut_up_timestamp": "/shut_up_timestamp",
+        "title": "/title"
+      }
+    },
+
+    "group_member_info": {
+      "action": "get_group_member_info",
+      "map": {
+        "group_id": "$.group_id",
+        "user_id": "$.user_id",
+        "nickname": "$.nickname",
+        "card": "$.card",
+        "sex": "$.sex",
+        "age": "$.age",
+        "role": "$.role",
+        "level": "$.level",
+        "join_time": "$.join_time",
+        "last_sent_time": "$.last_sent_time",
+        "shut_up_timestamp": "$.shut_up_timestamp",
+        "title": "$.title"
+      }
+    },
+
+    "stranger_info": {
+      "action": "get_stranger_info",
+      "map": {
+        "user_id": "$.user_id",
+        "nickname": "$.nickname",
+        "sex": "$.sex",
+        "age": "$.age",
+        "longNick": "$.longNick",
+        "qid": "$.qid",
+        "qqLevel": "$.qqLevel",
+        "country": "$.country",
+        "province": "$.province",
+        "city": "$.city",
+        "regTime": "$.regTime",
+        "birthday_year": "$.birthday_year",
+        "birthday_month": "$.birthday_month",
+        "birthday_day": "$.birthday_day"
+      }
+    },
+
+    "recent_contact": {
+      "action": "get_recent_contact",
+      "source": "$[*]",
+      "map": {
+        "user_id": "/peerUin",
+        "time": "/msgTime",
+        "chat_type": "/chatType",
+        "name": "/peerName"
+      }
+    },
+
+    "message_history": {
+      "action": "get_group_msg_history",
+      "private_action": "get_friend_msg_history",
+      "source": "$.messages[*]",
+      "pager": "full",
+      "map": {
+        "message_id": "/message_id",
+        "seq": "/real_seq",
+        "target_id": "/target_id",
+        "message_type": "/message_type",
+        "time": "/time",
+        "post_type": "/post_type",
+        "group_id": "/group_id",
+        "user_id": "/sender/user_id",
+        "sender": "/sender",
+        "message": "/message",
+        "raw_message": "/raw_message"
+      }
+    },
+
+    "forward_msg": {
+      "action": "get_forward_msg",
+      "source": "$.messages[*]",
+      "map": {
+        "message_id": "/message_id",
+        "target_id": null,
+        "message_type": "/message_type",
+        "time": "/time",
+        "post_type": "/post_type",
+        "group_id": "/group_id",
+        "sender": "/sender",
+        "message": "/message",
+        "raw_message": null
+      }
+    },
+
+    "get_msg": {
+      "action": "get_msg",
+      "map": {
+        "message_id": "$.message_id",
+        "real_id": "$.real_id",
+        "message_type": "$.message_type",
+        "group_id": "$.group_id",
+        "user_id": "$.sender.user_id",
+        "sender": "$.sender",
+        "time": "$.time",
+        "message": "$.message",
+        "raw_message": "$.raw_message"
+      }
+    },
+
+    "send_group_msg": {
+      "action": "send_group_msg",
+      "map": { "message_id": "$.message_id" }
+    },
+
+    "send_private_msg": {
+      "action": "send_private_msg",
+      "map": { "message_id": "$.message_id" }
+    },
+
+    "send_temp_msg": {
+      "action": "send_private_msg",
+      "map": { "message_id": "$.message_id" }
+    },
+
+    "delete_msg": {
+      "action": "delete_msg",
+      "map": {}
+    },
+
+    "set_message_read": {
+      "action": "mark_group_msg_as_read",
+      "private_action": "mark_private_msg_as_read",
+      "map": {}
+    },
+
+    "send_respond": {
+      "action": "set_msg_emoji_like",
+      "map": {}
+    },
+
+    "poke": {
+      "action": "group_poke",
+      "private_action": "friend_poke",
+      "map": {}
+    },
+
+    "custom_face": {
+      "action": "fetch_custom_face",
+      "pager": "full",
+      "map": {}
+    },
+
+    "group_notices": {
+      "action": "_get_group_notice",
+      "source": "$[*]",
+      "map": {
+        "content": "$.message.text",
+        "sender": "/sender_id",
+        "time": "/publish_time",
+        "img_id": "$.message.image.0.id",
+        "is_read": null,
+        "read_num": null
+      }
+    },
+
+    "group_essence": {
+      "action": "get_essence_msg_list",
+      "source": "$[*]",
+      "map": {
+        "sender_uin": "/sender_id",
+        "sender_nick": "/sender_nick",
+        "sender_time": "/sender_time",
+        "content": "/content",
+        "operator_id": "/operator_id",
+        "operator_nick": "/operator_nick",
+        "operator_time": "/operator_time"
+      }
+    },
+
+    "group_files": {
+      "action": "get_group_root_files",
+      "source": "$.*[*]",
+      "map": {
+        "file_id": "/file_id",
+        "file_name": "/file_name",
+        "size": "/size",
+        "download_times": "/download_times",
+        "dead_time": "/dead_time",
+        "modify_time": "/modify_time",
+        "uploader_name": "/uploader_name",
+        "folder_id": "/folder_id",
+        "folder_name": "/folder_name",
+        "total_file_count": "/total_file_count",
+        "create_time": "/create_time",
+        "creator_name": "/creator_name"
+      }
+    },
+
+    "group_folder_files": {
+      "action": "get_group_files_by_folder",
+      "map": {}
+    },
+
+    "file_download": {
+      "action": "get_group_file_url",
+      "private_action": "get_private_file_url",
+      "map": { "file_url": "$.url" }
+    },
+
+    "get_record": {
+      "action": "get_record",
+      "map": {
+        "file": "$..file",
+        "url": "$..url",
+        "base64": "$..base64"
+      }
+    },
+
+    "leave_group": {
+      "action": "set_group_leave",
+      "map": {}
+    },
+
+    "set_group_nickname": {
+      "action": "set_group_card",
+      "map": {}
+    },
+
+    "set_group_title": {
+      "action": "set_group_special_title",
+      "map": {}
+    },
+
+    "ban_member": {
+      "action": "set_group_ban",
+      "map": {}
+    },
+
+    "kick_member": {
+      "action": "set_group_kick",
+      "map": {}
+    },
+
+    "friend_add_request": {
+      "action": "set_friend_add_request",
+      "map": {}
+    },
+
+    "group_add_request": {
+      "action": "set_group_add_request",
+      "map": {}
+    }
+  }
+}

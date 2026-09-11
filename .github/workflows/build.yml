@@ -61,18 +61,38 @@ jobs:
       - name: Analyze
         run: flutter analyze || true
 
-      # ---------- 协议自检 ----------
-      # 纯 Dart 自检（TLV / TEA 编解码），不需要 flutter_tester，CI 上稳定可跑
-      - name: Protocol self-test
-        run: dart run tool/selftest.dart
-
-      # 存储层自检：去重、预算淘汰、收藏保护
-      - name: Storage self-test
-        run: dart run tool/storage_selftest.dart
-
-      # 安全防护自检：尝试限制持久化、默认离线、禁止自动重试
-      - name: Safety self-test
-        run: dart run tool/safety_selftest.dart
+      # ---------- 自检 ----------
+      # 全部纯 Dart 自检，逐个跑并汇总：
+      #   qq8_tlv / qq8_sso / qq8_selftest   协议编解码（含 oicq 黄金向量）
+      #   qq8_tran                            传输层（本地 mock TCP 服务器）
+      #   qq8_login / qq8_profile             登录主流程、多版本档案
+      #   onebot / segment / session          日用线
+      #   storage / safety                    存储预算、账号防护
+      #   log                                 日志脱敏与体积闸门
+      #   tea_compat_check / selftest         TEA 编解码、内核基础
+      #
+      # 用通配遍历而不是逐条列举——新增自检不必再改工作流，
+      # 也就不会出现"写了测试但 CI 没跑"的情况。
+      - name: Self-tests
+        run: |
+          set -u
+          fail=0
+          for f in tool/*_selftest.dart tool/tea_compat_check.dart tool/selftest.dart; do
+            [ -f "$f" ] || continue
+            echo "::group::$f"
+            if dart run "$f"; then
+              echo "::endgroup::"
+            else
+              echo "::error file=$f::$f 自检失败"
+              echo "::endgroup::"
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "有自检未通过"
+            exit 1
+          fi
+          echo "全部自检通过"
 
       # 标准单元测试（失败不阻断打包，仅作记录）
       - name: Unit tests
