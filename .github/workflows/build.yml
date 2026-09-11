@@ -67,6 +67,7 @@ jobs:
       #   qq8_tran                            传输层（本地 mock TCP 服务器）
       #   qq8_login / qq8_profile             登录主流程、多版本档案
       #   onebot / segment / session          日用线
+      #   chat_store / session_providers      L3 数据层与接线层（闸门拒绝路径）
       #   storage / safety                    存储预算、账号防护
       #   log                                 日志脱敏与体积闸门
       #   tea_compat_check / selftest         TEA 编解码、内核基础
@@ -145,13 +146,19 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       # ---------- 打包 ----------
-      - name: Build APK (debug)
+      # 只出 arm64-v8a（`--target-platform android-arm64`）。
+      # 默认三个 ABI 全打，产物大 3 倍：debug fat APK 68.8MB，单 ABI 约 23MB。
+      # 多出来的 armeabi-v7a / x86_64 只有老 32 位机和模拟器用得上，
+      # 本项目不发模拟器包，装真机只需要 arm64。
+      - name: Build APK (debug, arm64-v8a)
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode == 'debug' }}
-        run: flutter build apk --debug
+        run: flutter build apk --debug --target-platform android-arm64
 
-      - name: Build APK (release, split per ABI)
+      # release 同样只出 arm64：既然只要一个 ABI，就用不上 --split-per-abi
+      # （那是给多 ABI 拆包用的），单平台直接出一个 app-release.apk。
+      - name: Build APK (release, arm64-v8a)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release' }}
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --target-platform android-arm64
 
       # ---------- 产物上传 ----------
       - name: Upload APK artifacts
