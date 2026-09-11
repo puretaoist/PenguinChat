@@ -66,6 +66,10 @@ app.*.map.json
 *.dex
 !android/gradle/wrapper/gradle-wrapper.jar
 
+# Rust 构建产物（协议内核移植）；但 Cargo.lock 要入库（可复现）
+/rust/target/
+!rust/Cargo.lock
+
 # 调试输出（临时抓的测试日志）
 ui_out.txt
 ui2.txt
