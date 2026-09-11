@@ -242,39 +242,62 @@ provider 的 `ref.onDispose` 里要正确释放，否则热重载会漏连接。
 
 ## 7. 验收标准
 
-**功能上：**
+**工程上（已达成，2026-09-11）：**
+
+1. ✅ `dart analyze lib tool` 干净
+2. ✅ `tool/chat_store_selftest.dart` 通过（102 项），且被 CI 通配收录
+   （CI 用 `tool/*_selftest.dart` 通配，无需改 workflow）
+3. ✅ 全部自测通过：17 个脚本全绿（合计 1003 项，含新增的 102 + 42）
+4. ⏳ 推送后 CI 绿 —— **未推送**：推送会触发 CI 构建，需先确认
+
+**功能上（未做，需真机）：**
+
+本环境跑不了 Flutter（`flutter.bat` 卡在 SDK 引导检查），
+**UI 至今没有真正跑起来看过**，只做到「analyze 干净 + 逻辑层自测通过」。
+以下 7 条一条都没验：
 
 1. 手机上装好 App
 2. 在另一台设备/电脑上跑 NapCat（见 `README.md` 的运行模式章节）
 3. App 里填 `ws://<napcat 地址>:3001` 连上
-4. **能看到真实的好友与群列表**
-5. **能收发真实 QQ 消息**，发出的消息有送达标记
-6. **杀掉 App 重开，会话和消息还在**
+4. 能看到真实的好友与群列表
+5. 能收发真实 QQ 消息，发出的消息有送达标记
+6. 杀掉 App 重开，会话和消息还在
 7. 撤回一条消息，App 里显示"已撤回"而不是消失
 
-**工程上：**
+补充两条本次新增的交互，也一并要验：
 
-1. `dart analyze lib tool` 干净
-2. `tool/chat_store_selftest.dart` 通过，且被 CI 通配收录
-3. 全部自测通过（当前 859 项 + 你新增的）
-4. 推送后 CI 绿
+8. 发一条消息时把 NapCat 停掉 → 气泡显示「发送失败，点此重试」，
+   点它能把消息补发出去（**文本不能丢**）
+9. 连接页填非本机地址 → 不出门就要求环境检测 + 逐条确认；
+   「立即切断」能把模式打回离线
 
 ---
 
-## 8. 建议的开工顺序
+## 8. 建议的开工顺序（实际执行记录）
 
 ```
-1. 先写 tool/chat_store_selftest.dart（测试先行）
-   —— 它保证你设计接口时就在想可测性
-2. 实现 chat_store.dart，让自测通过
-3. 写 session_providers.dart
-4. 写 connect_page.dart（含 SafetyGate 接线）
-5. 改 main.dart（ProviderScope）
-6. 改 home_page.dart（换数据源）
-7. 本地 analyze + 全量自测
-8. 推送到 main，看 CI 出 APK
-9. 真机验证第 7 节的 7 条
+1. ✅ 先写 tool/chat_store_selftest.dart（测试先行，102 项）
+2. ✅ 实现 chat_store.dart（813 行）
+3. ✅ 写 session_providers.dart（用 package:riverpod 而非 flutter_riverpod，
+      理由见该文件头：L3 禁止引入 Flutter）
+4. ✅ 写 connect_page.dart（含 SafetyGate 接线 + 环境检测 + 逐条确认 + 立即切断）
+5. ✅ 改 main.dart（ProviderScope 注入 目录 / 适配表 / 闸门 + 日志落盘）
+6. ✅ 改 home_page.dart（换数据源 + 下拉刷新 / 翻页 / 重试 / 已撤回）
+7. ✅ 本地 analyze + 全量自测（17 个脚本全绿）
+8. ⏳ 推送到 main，看 CI 出 APK（待确认）
+9. ⏳ 真机验证第 7 节的 9 条
+10. ✅ 补 `tool/session_providers_selftest.dart`（42 项）——
+       闸门拒绝路径是本次改动里最要紧的一行，不能只靠人眼
 ```
+
+**顺带修的两个问题（不在原计划里）：**
+
+- `onebot_client.dart` 建连日志把 `?access_token=...` 原样打了出来
+  （`tokenInHeader=false` 时令牌就在 query 里）。已加 `_redacted()`
+  把令牌替换成 `***`，见 `AGENTS.md` §1.5。
+- `session_providers.dart` 引入 `path_provider`：Android 上没有纯 Dart
+  拿应用私有目录的办法（`Directory.systemTemp` 会被系统清理，
+  用户数据丢了就是丢消息）。
 
 ---
 

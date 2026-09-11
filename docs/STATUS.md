@@ -111,9 +111,20 @@
 | 文件 | 行数 | 状态 | 自测 | 验证 |
 |---|---|---|---|---|
 | `client_api/session.dart` | 266 | 完成（契约） | `session_selftest.dart` 部分 | D |
-| `client_api/objects.dart` | 370 | 完成 | 同上 | D |
+| `client_api/objects.dart` | 404 | 完成（含 `MessageSendState`） | 同上 | D |
 | `client_api/segment.dart` | 683 | 完成 | `segment_selftest.dart` 92 项 | A（13 种消息段，CQ 码与数组格式互转） |
-| `client_api/chat_store.dart` | — | **不存在** | — | — |
+| `client_api/chat_store.dart` | 813 | 完成 | `chat_store_selftest.dart` 102 项 | **B**（真实文件系统 + 假 Session 编排全部边界） |
+| `client_api/session_providers.dart` | 452 | 完成 | `session_providers_selftest.dart` 42 项 | D（闸门拒绝路径 + 配置落盘） |
+
+`chat_store.dart` 是 UI 与协议之间的数据层：乐观插入、echo 合并、撤回打补丁
+（不从列表删）、按 id 去重、体积淘汰（只淘汰已送达的，发送中/失败的不淘汰）。
+持久化是「会话索引 JSON + 每会话一个 JSONL」，**媒体字节绝不进消息库**。
+
+`session_providers.dart` 用 `package:riverpod`（纯 Dart）而不是
+`flutter_riverpod`——`AGENTS.md` §1.1 禁止 L3 引入 Flutter，而两者是同一套
+provider 对象，L4 的 `ProviderScope` 直接消费。**连接必须过 `SafetyGate`**
+（`_passGate`）：本机地址判为 loopback 直接放行，非本机地址要求已开启
+真实服务器模式且有当前版本的知情同意。
 
 ---
 
@@ -123,12 +134,18 @@
 |---|---|---|
 | `ui/theme/telegram_theme.dart` | 60 | 完成 |
 | `ui/widgets/telegram_avatar.dart` | 48 | 完成 |
-| `ui/widgets/message_bubble.dart` | 103 | 完成 |
-| `ui/pages/home_page.dart` | 416 | **骨架：吃硬编码假数据** |
-| `main.dart` | 31 | **骨架：无任何接线** |
+| `ui/widgets/message_bubble.dart` | 139 | 完成（含 sending / failed+重试 / 已撤回三态） |
+| `ui/pages/home_page.dart` | 644 | 完成（数据来自 provider，含下拉刷新 / 翻页 / 重试） |
+| `ui/pages/connect_page.dart` | 662 | 完成（地址 + 状态 + 风险确认 + 立即切断） |
+| `main.dart` | 135 | 完成（ProviderScope 注入目录 / 适配表 / 闸门 + 日志落盘） |
 
 `ui/` **没有自测**——它需要 `flutter_tester`，纯 Dart 自测跑不了。
-UI 的正确性靠真机验证。
+本环境的 `flutter.bat` 也会卡在 SDK 引导检查，**UI 至今没有跑起来看过**，
+正确性靠真机验证（清单见 `NEXT-TASK.md` §7）。
+
+`main.dart` 只做三件「必须早于 UI」的事：定位应用私有目录
+（`path_provider`）、把平台能力注入 provider、加载 `assets/backends/*.json`。
+业务一行都不在这里。
 
 ---
 
@@ -164,7 +181,9 @@ UI 的正确性靠真机验证。
 | `qq8_tran_selftest.dart` | 34 | 分帧与传输（真实 socket） |
 | `qq8_login_selftest.dart` | 73 | 登录组包 + 响应解析 |
 | `qq8_profile_selftest.dart` | 90 | 四版本档案差异 |
-| **合计** | **859** | 全量约 27 秒 |
+| `chat_store_selftest.dart` | 102 | 乐观插入 / echo 合并 / 去重 / 撤回 / 淘汰 / 损坏文件 |
+| `session_providers_selftest.dart` | 42 | 地址分类 / 闸门拒绝 / 连接配置落盘 |
+| **合计** | **1003** | 全量约 30 秒 |
 
 另有 `tool/qq8_live_smoke.dart`（真机冒烟，默认 dry-run，不参与
 `*_selftest` 通配，CI 里单独跑一步）。

@@ -81,6 +81,45 @@ log.d('tgtgt ${Redact.fingerprint('tgtgt', b)}'); // 敏感值只输出长度+�
 不做设备指纹伪造、不绕验证码、不伪装官方客户端。理由与替代做法见
 [`SAFETY.md`](SAFETY.md)——**不是道德说教，是这些做法会让账号更快被标记。**
 
+### 1.7 协议代码：先对包，再写码（研究线铁律）
+
+**写任何 QQ 协议代码之前，先在四个包上核对，并与参考实现 oicq 对照。**
+
+四个包（都在 `C:\Users\Administrator\penguis\`）：
+
+| 包 | 版本 |
+|---|---|
+| `QQ-com.tencent.mobileqq-play-8.2.11.apk` | 8.2.11 |
+| `8.9.50.apk` | 8.9.50 |
+| `9.3.60_23e3f34e30110797.apk` | 9.3.60 |
+| `tim_4.1.0.4050.apk` | TIM 4.1.0 |
+
+工具与已解出的产物（见 [`TOOLING.md`](TOOLING.md)）：
+
+| 用途 | 位置 |
+|---|---|
+| jadx / apktool / Ghidra | `~/WorkBuddy/<会话目录>/penguis-analysis/tools/` |
+| apktool 解包结果（dex + 资源） | 同上 `decoded/` |
+| jadx 抽出的 wlogin 类 | 同上 `m2-out/`（`WtloginHelper.java` / `tlv_t.java` / `util.java` …） |
+| TLV 字段总表 | 同上 `api_tlv_fields.csv`（由 `gen_tlv_registry.py` 生成） |
+
+为什么必须先做这一步：
+
+- **字段号和长度会随版本变**。`0x545`（QIMEI）在 8.2.11 是 `MD5(qimei)`（16 字节），
+  8.9.50 起变成原文；`_SSoVer` 从 7 → 19 → 22。写死一个版本的假设，
+  换个版本就是"参数看着都对但登不上"（见 [`docs/PITFALLS.md`](docs/PITFALLS.md) C4）。
+- **oicq 是已知可用的实现**，拿它当对照能区分"我抄错了"和"这版协议就是这样"。
+  黄金向量必须由参考实现的**原始模块**跑出来，不要手抄。
+- **源码里没有出处的常量不许出现**。要么写清"来自哪个包、哪个类、哪一行"，
+  要么就别写。`qq8_profiles.dart` 的头部表格就是标准做法，照着做。
+
+**版本差异一律数据化**（`qq8_profiles.dart`），不要写 `if (版本 == xxx)` 分支。
+
+例外的只有**日用线（OneBot）**：它是公开协议，改动以
+`assets/backends/*.json` 适配表 + `backend_profile_selftest.dart` 为准，
+不需要反编译。**L3/L4（数据层、UI）与协议无关，不受本条约束**——
+但也正因为如此，不要在那里塞任何协议常量。
+
 ---
 
 ## 2. 目录地图
@@ -159,7 +198,7 @@ Get-ChildItem tool -Filter "*_selftest.dart" | ForEach-Object { & $dart run $_.F
 & $dart run tool/selftest.dart
 ```
 
-当前规模：**13 个 `*_selftest.dart` + 2 个独立自检，合计 850+ 项**，全量约 27 秒。
+当前规模：**15 个 `*_selftest.dart` + 2 个独立自检，合计 1003 项**，全量约 30 秒。
 
 ### 3.3 构建
 
@@ -184,42 +223,54 @@ Get-ChildItem tool -Filter "*_selftest.dart" | ForEach-Object { & $dart run $_.F
 | L1 字节读写 / 存储 / 日志 | 自测 | 48 + 51 项 |
 | L2 安全层（闸门 + 限流） | 自测 | 77 项 |
 | L2 OneBot 客户端 + 适配表 + 会话 | 自测（含本地 mock WS 服务器） | 47 + 72 + 93 项 |
-| L3 数据对象 / 消息段 | 自测 | 92 项 |
+| L3 数据对象 / 消息段 / **数据层** | 自测 | 92 + **102 项** |
+| L3 接线层（provider + 闸门拒绝路径） | 自测 | **42 项** |
 | L2 QQ8 协议（TLV/SSO/传输/登录） | **oicq 黄金向量** + 官方反编译对照 + 本地 mock TCP | 275 项 |
 
 QQ8 协议线的验证强度是分级的，**别高估**：
 `TLV / 信封 / TEA / 分帧 / body 头格式` 都有黄金向量或官方代码出处；
 **`响应解析` 只有往返测试**（拿不到真实响应样本），真机联通后才能校准。
 
-### 4.2 骨架，尚未可用
+### 4.2 已接线，但**没有跑起来看过**
 
 | 模块 | 状态 |
 |---|---|
-| `lib/ui/` | 三栏布局能渲染，但**吃的是硬编码假数据** |
-| `lib/main.dart` | 只 `runApp`，**没有任何依赖注入 / 状态管理接线** |
+| `lib/ui/` | 数据已改为 watch provider，但**本环境跑不了 Flutter**（`flutter.bat` 卡在 SDK 引导检查），一次都没渲染过 |
+| `lib/main.dart` | ProviderScope 注入目录 / 适配表 / 闸门 + 日志落盘 |
+| `lib/client_api/chat_store.dart` | 数据层：乐观插入 / echo 合并 / 撤回打补丁 / JSONL 落盘 |
+| `lib/client_api/session_providers.dart` | 连接前必须过 `SafetyGate`（`_passGate`） |
+| `lib/ui/pages/connect_page.dart` | 地址 + 状态 + 环境检测 + 逐条确认 + 立即切断 |
+
+**「analyze 干净 + 逻辑层自测通过」≠「UI 能用」。** 真机验证清单见
+[`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) §7，共 9 条，目前一条都没验。
+
+### 4.3 骨架，尚未完成
+
+| 模块 | 状态 |
+|---|---|
 | `lib/kernel/transport/` `trpc/` `wlogin/` | 早期 MSF 研究骨架，未完成，**暂时别动** |
+| `.github/workflows/build.yml` | **有一个已知矛盾**：`v*` tag 推送走的是 `debug` 分支（条件只判了 `workflow_dispatch`），而 `CI-BUILD.md:73` 写的是 tag 出 release。改之前先读 §3.3 |
 
-### 4.3 明确缺失
+### 4.4 明确缺失
 
-- **UI ↔ Session 之间没有接线**（这是最大的缺口，见 [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md)）
-- **没有 `chat_store`**：会话列表 / 消息持久化数据层不存在
-- **没有连接配置页**：无法在 App 里填 `ws://127.0.0.1:3001`
-- **`flutter_riverpod` 已在 `pubspec.yaml` 里，但整个 `lib/` 里一次都没用**
+- **真机验证**（唯一还差的一步，前面已经没有代码缺口）
+- 连接页没有 QR / 扫码之类，只有手填地址（够用，先不做）
 
 ---
 
 ## 5. 下一步做什么
 
-**当前任务是把 UI 接上协议内核**，详细规格见
-[`docs/NEXT-TASK.md`](docs/NEXT-TASK.md)。摘要：
+**UI 接线已完成（2026-09-11），代码侧没有已知缺口。** 剩下的按优先级：
 
-1. `lib/client_api/chat_store.dart` —— 会话列表 + 消息缓存的持久化数据层
-2. `lib/client_api/session_providers.dart` —— Riverpod provider，把 `Session` 暴露给 UI
-3. 连接配置页 —— 填 WebSocket 地址（默认 `ws://127.0.0.1:3001`）
-4. 改 `home_page.dart` 与 `main.dart` —— 从 `ChatStore` 取数据而非硬编码
+1. **真机验证** —— 唯一还差的一步。装到手机上连本机的 NapCat，
+   逐条走 [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) §7 的 9 条。
+   **在这一步之前，不要说「UI 能用了」**：本环境从没渲染过它。
+2. **构建体积** —— 现在 CI 产物是带 3 个 ABI 的 **debug** fat APK
+   （GitHub 上那个 artifact 是 72MB）。要出能分发的包，需要
+   `release + --split-per-abi`，见 `CI-BUILD.md`。
+3. **修 CI 的 tag 分支** —— 见 §4.3 的已知矛盾。
 
-**验收标准**：装到手机上、连上本机的 NapCat、能收发真实 QQ 消息。
-端到端路子见 `README.md` 的「运行模式与安全约束」。
+之后才轮到 QQ8 研究线（见下）。
 
 ### 5.1 建议的开工顺序
 
@@ -228,8 +279,8 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 1. 本文件（你在读）
 2. [`docs/STATUS.md`](docs/STATUS.md) —— 每个文件的实现程度
 3. [`docs/PITFALLS.md`](docs/PITFALLS.md) —— 踩过的坑，**能省你几小时**
-4. [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) —— 当前任务的完整规格
-5. `lib/client_api/session.dart` —— 内核接缝的契约，写 UI 前必读
+4. [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) —— 刚做完的任务（含 9 条真机验证清单）
+5. `lib/client_api/session.dart` —— 内核接缝的契约，改 UI 前必读
 6. [`STRUCTURE.md`](STRUCTURE.md) —— 分层架构的完整理由
 
 ---
