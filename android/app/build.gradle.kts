@@ -37,11 +37,27 @@ android {
         versionName = flutter.versionName
     }
 
+    // 统一签名（2026-09-11）：debug 与 release 共用同一把钥匙 qqclient.p12，
+    // 保证任何来源（本机 / CI 任意一次构建）的 APK 都能覆盖安装上一版。
+    // 背景：CI 每次跑在新 runner 上，AGP 自动生成的 debug 钥匙每次都不一样，
+    // 不统一就会出现"签名不一致，无法升级安装"。
+    // 注意：这把钥匙与口令是**故意公开**的（课程项目，不做商店分发）；
+    // 真上架前必须换正式签名并改用密钥管理，不得沿用这里的口令。
+    signingConfigs {
+        create("unified") {
+            storeFile = file("qqclient.p12")
+            storePassword = "qqclient123"
+            keyAlias = "qqclient"
+            keyPassword = "qqclient123"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("unified")
+        }
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("unified")
         }
     }
 }
