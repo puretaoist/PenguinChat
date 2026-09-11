@@ -42,6 +42,15 @@
 /// 续期时 `tgtgt = MD5(d2key)`——与 oicq `login-password.js` 的 token
 /// 路径一致（没有密码就没法刷新 cookie，这是官方语义）。
 ///
+/// ## 实验开关（服务端静默丢弃时的排查矩阵）
+///
+/// | 开关 | 效果 |
+/// |---|---|
+/// | `--profile=8.2.11` | 换老档案（ssoVer 7，最接近 oicq 实测能通的形态） |
+/// | `--tlv-set=oicq` | 密码登录改发 oicq 的 24 项清单（去掉 `0x544` 空体） |
+///
+/// 两者默认都不开：默认走官方档案 + 官方清单（37 项超集经 guard 后实发）。
+///
 /// ## 绝不打印凭据
 ///
 /// 口令、`tgtgt`、票据、`d2key`、会话密钥一律不进日志（见 `Redact`）。
@@ -75,6 +84,21 @@ final Logger _log = Log.get('SMOKE');
 /// 真发所需的确认串。
 const String kConfirmToken = 'I_UNDERSTAND_THE_RISK';
 
+/// 参考实现 oicq 的密码登录清单（**24 项**，用于 `--tlv-set=oicq` 实验）。
+///
+/// 出处：oicq `lib/wtlogin/login-password.js` 的 `passwordLogin`，长期实测
+/// 可通。与官方清单的差别正是我们多发的两个降级 TLV：
+/// `0x544`（安全 SDK 空体）与 `0x545`（QIMEI，已按官方 guard 滤掉）——
+/// 即官方清单 37 项里首登实际发出的 26 项中，减去这两个 = 本清单 24 项。
+///
+/// ⚠️ 这是**实验开关**：默认仍走官方清单（`--tlv-set=official`）。
+/// 只在官方清单被服务端静默丢弃、需要排查"是不是这两个 TLV 惹的"时才用。
+const List<int> kOicqPasswordTlvOrder = <int>[
+  0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x108, 0x142,
+  0x144, 0x145, 0x147, 0x154, 0x141, 0x08, 0x511, 0x187,
+  0x188, 0x194, 0x191, 0x202, 0x177, 0x516, 0x521, 0x525,
+];
+
 Future<void> main(List<String> argv) async {
   final args = _parseArgs(argv);
 
@@ -97,6 +121,14 @@ Future<void> main(List<String> argv) async {
   // dry-run 不联网、固定随机源（可复现）；真发走按 uin 派生的设备。
   final deterministic = !args.containsKey('send');
 
+  // 密码登录的 TLV 清单：默认官方（超集 + guard）；`--tlv-set=oicq` 走
+  // 参考实现的 24 项清单（实验开关，见 kOicqPasswordTlvOrder 注释）。
+  final tlvSet = args['tlv-set'] ?? 'official';
+  if (tlvSet != 'official' && tlvSet != 'oicq') {
+    stderr.writeln('✗ --tlv-set 只支持 official / oicq，收到 "$tlvSet"');
+    exit(2);
+  }
+
   if (!args.containsKey('send')) {
     stdout.writeln('模式: **dry-run**（不联网）');
   } else {
@@ -110,8 +142,17 @@ Future<void> main(List<String> argv) async {
   final profileName = args['profile'] ?? 'default';
   final profile = _pickProfile(profileName);
 
+  // 本次实际使用的 TLV 清单：token 路径用 exchange_emp 清单；
+  // 密码路径默认官方超集，`--tlv-set=oicq` 时换成参考实现的 24 项清单。
+  final order = useToken
+      ? qq8ExchangeEmpTlvOrder
+      : (tlvSet == 'oicq' ? kOicqPasswordTlvOrder : profile.apk.loginTlvOrder);
+
   stdout.writeln('--- 客户端档案 ---');
   stdout.writeln('  ${profile.describe()}');
+  stdout.writeln(
+    '  TLV 清单: ${useToken ? "exchange_emp（16 项）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项")}',
+  );
   if (profile.unverified.isNotEmpty) {
     stdout.writeln('  ⚠ 未核实字段: ${profile.unverified.join(', ')}');
   }
@@ -210,11 +251,7 @@ Future<void> main(List<String> argv) async {
 
   final body = useToken
       ? Qq8LoginBody.buildToken(tlvCtx, d2: token!.d2)
-      : Qq8LoginBody.build(
-          tlvCtx,
-          Qq8SubCmd.password,
-          profile.apk.loginTlvOrder,
-        );
+      : Qq8LoginBody.build(tlvCtx, Qq8SubCmd.password, order);
 
   // token 续期的票据要贯穿三层：SSO 信封的 tgt/d2（sig）、body 的 0x143（d2）。
   Qq8SigInfo? tokenSig;
@@ -258,7 +295,7 @@ Future<void> main(List<String> argv) async {
     oicqPacket: oicqPacket,
     loginPacket: loginPacket,
     profile: profile,
-    order: useToken ? qq8ExchangeEmpTlvOrder : profile.apk.loginTlvOrder,
+    order: order,
     shareKey: ecdh.shareKey,
   );
 
