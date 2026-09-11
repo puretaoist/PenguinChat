@@ -2,6 +2,20 @@
 
 软件安全课程作业：**反编译官方 QQ APK → 提取协议与加密机制 → 自研 Android 客户端**（UI 向 Telegram 靠齐）。
 
+> ## 🤖 如果你是接手本项目的 AI agent
+>
+> **先读 [`AGENTS.md`](AGENTS.md)** —— 它包含项目全景、硬性纪律、
+> 当前实现状态、以及**当前任务（UI 接线）**。
+>
+> 配套文档：
+>
+> | 文件 | 用途 |
+> |---|---|
+> | [`AGENTS.md`](AGENTS.md) | **入口**：纪律 / 目录地图 / 状态 / 怎么跑 |
+> | [`docs/STATUS.md`](docs/STATUS.md) | 逐文件实现状态与验证强度分级 |
+> | [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) | 当前任务的完整规格 |
+> | [`docs/PITFALLS.md`](docs/PITFALLS.md) | 已踩过的坑（**能省几小时**） |
+
 > ## ⚠️ 先读这个
 >
 > 本项目会连接**真实腾讯服务器**，这**违反《QQ 用户协议》**，
