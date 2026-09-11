@@ -70,3 +70,14 @@ app.*.map.json
 ui_out.txt
 ui2.txt
 *_out.txt
+
+# 协议分析：反编译与提取产物（可在本地重建，不进库，共约 645MB）
+analysis/_decompiled/
+
+# 真机取证（含账号信息，绝不入库）
+analysis/_device-dump/
+
+# 协议分析：从 APK 抽出的腾讯原生库。
+# 本地留着供查阅，但**不入公共仓库**——它们是腾讯的专有二进制，
+# 提交即构成再分发。需要时按 analysis/README.md 从 APK 重新抽取。
+analysis/lib/

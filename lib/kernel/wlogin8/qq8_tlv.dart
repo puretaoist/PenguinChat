@@ -58,7 +58,7 @@ import 'qq8_device.dart';
 /// * 9.3.60 `...request.l` 在末尾**追加** `0x553`，共 38 项
 ///   （`0x553` 不属于 8.2.11，不必补）。
 ///
-/// 详见 `apk-analysis/QQ-官方三版本登录流程对照.md`。
+/// 详见 `analysis/QQ-官方三版本登录流程对照.md`。
 ///
 /// ## ⚠️ 顺序表 ≠ 实际发送
 ///
@@ -528,7 +528,7 @@ abstract final class Qq8Tlv {
         //
         // 官方三个版本（8.2.11 / 8.9.50 / 9.3.60）的 tlv_t106 逐行对比后
         // **完全一致**（只有 _SSoVer 从 7 → 19 → 22 递增），而 oicq 的公式
-        // 与三者都不符——见 apk-analysis 下三个 jadx 输出目录。
+        // 与三者都不符——见 analysis/ 下的对照文档与反编译产物。
         // 以官方为准。
         final seed = Uint8List(24);
         final guidLen = d.guid.length < 16 ? d.guid.length : 16;
