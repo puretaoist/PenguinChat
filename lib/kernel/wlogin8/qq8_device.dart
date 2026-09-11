@@ -169,6 +169,38 @@ class Qq8Device {
     );
   }
 
+  /// 复制一份设备，只替换 [tgtgt]。
+  ///
+  /// token 续期路径要求 `tgtgt = MD5(d2key)`：没有密码就没法用 t106 派生
+  /// 新的 tgtgt，只能沿用这个约定值（oicq `login-password.js` 的 token 分支
+  /// 同款）。其余字段（imei/guid/mac…）必须保持与上次登录一致，否则
+  /// "同一账号同一设备"的前提就破了。
+  Qq8Device withTgtgt(Uint8List newTgtgt) => Qq8Device(
+        product: product,
+        device: device,
+        board: board,
+        brand: brand,
+        model: model,
+        bootloader: bootloader,
+        fingerprint: fingerprint,
+        bootId: bootId,
+        procVersion: procVersion,
+        baseband: baseband,
+        sim: sim,
+        apn: apn,
+        osType: osType,
+        macAddress: macAddress,
+        ipAddress: ipAddress,
+        wifiBssid: wifiBssid,
+        wifiSsid: wifiSsid,
+        imei: imei,
+        androidId: androidId,
+        version: version,
+        imsi: imsi,
+        tgtgt: newTgtgt,
+        guid: guid,
+      );
+
   /// 诊断用。
   @override
   String toString() =>

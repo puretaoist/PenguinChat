@@ -14,6 +14,7 @@ import 'dart:typed_data';
 
 import 'package:qqclient/kernel/crypto/ecdh.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
 
 // ---------------------------------------------------------------------------
 
@@ -185,6 +186,42 @@ void testEcdhProperties() {
 }
 
 // ---------------------------------------------------------------------------
+// 4. 设备身份（按 uin 派生 / withTgtgt）
+// ---------------------------------------------------------------------------
+
+void testDevice() {
+  section('4. 设备身份');
+
+  final a1 = Qq8Device.generate(10001);
+  final a2 = Qq8Device.generate(10001);
+  final b = Qq8Device.generate(10002);
+
+  // "同一账号同一设备" —— 设备频繁变化本身就是风控信号
+  checkEq('同 uin 两次生成：imei 相同', a1.imei, a2.imei);
+  checkEq('同 uin 两次生成：mac 相同', a1.macAddress, a2.macAddress);
+  checkEq('同 uin 两次生成：guid 相同', toHex(a1.guid), toHex(a2.guid));
+  checkEq('同 uin 两次生成：androidId 相同', a1.androidId, a2.androidId);
+
+  check('不同 uin：imei 不同', a1.imei != b.imei);
+  check('不同 uin：guid 不同', toHex(a1.guid) != toHex(b.guid));
+
+  // 文档里的派生关系：guid = MD5(IMEI + MAC)
+  final expectGuid = md5Bytes(Uint8List.fromList(<int>[
+    ...a1.imei.codeUnits,
+    ...a1.macAddress.codeUnits,
+  ]));
+  checkEq('guid = MD5(IMEI + MAC)', toHex(a1.guid), toHex(expectGuid));
+
+  // withTgtgt：只换 tgtgt，其余身份字段必须原样保留
+  final t2 = Uint8List.fromList(List<int>.filled(16, 0x5a));
+  final c = a1.withTgtgt(t2);
+  checkEq('withTgtgt 后 tgtgt 生效', toHex(c.tgtgt), toHex(t2));
+  checkEq('withTgtgt 不动 guid', toHex(c.guid), toHex(a1.guid));
+  checkEq('withTgtgt 不动 imei', c.imei, a1.imei);
+  checkEq('withTgtgt 不动 mac', c.macAddress, a1.macAddress);
+}
+
+// ---------------------------------------------------------------------------
 
 Future<void> main() async {
   stdout.writeln('QQ 8.2.11 协议内核离线自测');
@@ -193,6 +230,7 @@ Future<void> main() async {
   testConfig();
   testEcdhGolden();
   testEcdhProperties();
+  testDevice();
 
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');

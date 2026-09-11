@@ -94,6 +94,9 @@ Future<void> main(List<String> argv) async {
   // 差别只在"组什么 body / 用哪个命令字 / 响应用什么 key 解"。
   final useToken = args.containsKey('token-login');
 
+  // dry-run 不联网、固定随机源（可复现）；真发走按 uin 派生的设备。
+  final deterministic = !args.containsKey('send');
+
   if (!args.containsKey('send')) {
     stdout.writeln('模式: **dry-run**（不联网）');
   } else {
@@ -161,6 +164,9 @@ Future<void> main(List<String> argv) async {
 
   stdout.writeln('--- 账号 ---');
   stdout.writeln('  uin: $uin');
+  stdout.writeln(
+    '  设备: ${deterministic ? "固定夹具（dry-run 可复现）" : "按 uin 派生（同账号恒定同一套）"}',
+  );
   if (useToken) {
     stdout.writeln('  口令: 不需要（本次是 token 续期）');
   } else {
@@ -174,14 +180,17 @@ Future<void> main(List<String> argv) async {
   stdout.writeln('');
 
   // ---------- 组包 ----------
-  // 固定的随机源，保证 dry-run 可复现；真发时换成随机。
-  final deterministic = !args.containsKey('send');
-  // token 续期时 tgtgt = MD5(d2key) —— oicq `login-password.js` 的 token
-  // 路径同款（没有密码就没法用 t106 派生新的 tgtgt，只能沿用这个约定值）。
-  final device = _buildDevice(
-    deterministic: deterministic,
-    tgtgtOverride: useToken ? md5Bytes(token!.d2key) : null,
-  );
+  // 设备身份：真发用 `Qq8Device.generate(uin)`——同一账号恒定同一套
+  // imei/guid/mac，避免"设备频繁变化"这个风控信号（oicq 用
+  // device-<uin>.json 持久化也是同一个思路）。dry-run 用固定夹具。
+  var device = deterministic
+      ? _buildDevice(deterministic: true)
+      : Qq8Device.generate(uin);
+  // token 续期时 tgtgt = MD5(d2key)：没有密码就没法用 t106 派生新的
+  // tgtgt，只能沿用这个约定值（oicq `login-password.js` 的 token 分支同款）。
+  if (useToken) {
+    device = device.withTgtgt(md5Bytes(token!.d2key));
+  }
   final ecdh = Ecdh.exchange(
     Uint8List.fromList(Qq8Config.serverEcdhPublicKey),
   );
@@ -517,10 +526,7 @@ Qq8ClientProfile _pickProfile(String name) {
   return p;
 }
 
-Qq8Device _buildDevice({
-  required bool deterministic,
-  Uint8List? tgtgtOverride,
-}) {
+Qq8Device _buildDevice({required bool deterministic}) {
   final mac = deterministic ? '00:50:56:C0:00:08' : _randomMac();
   return Qq8Device(
     product: 'piano',
@@ -551,10 +557,9 @@ Qq8Device _buildDevice({
       sdk: 36,
     ),
     imsi: deterministic ? _fill(16, 0x22) : _randomBytes(16),
-    tgtgt: tgtgtOverride ??
-        (deterministic
-            ? _hex('ffeeddccbbaa99887766554433221100')
-            : _randomBytes(16)),
+    tgtgt: deterministic
+        ? _hex('ffeeddccbbaa99887766554433221100')
+        : _randomBytes(16),
     guid: deterministic ? _hex('00112233445566778899aabbccddeeff') : _randomBytes(16),
   );
 }
