@@ -14,7 +14,8 @@
 /// | `appSettingParams` | `AndroidManifest.xml` 的 `AppSetting_params` meta-data |
 /// | `beaconAppKey` | `AndroidManifest.xml` 的 `APPKEY_DENGTA` meta-data |
 /// | `qua` | dex 字符串池 `V1_AND_SQ_*` |
-/// | `sdkVersion` / `buildTime` | `oicq.wlogin_sdk.tools.util` |
+/// | `sdkVersion` / `buildTime` | `oicq.wlogin_sdk.tools.util` 的 `SDK_VERSION` / `BUILD_TIME` 常量 |
+/// | `apkName` | **不在 APK 里**——按 oicq 约定从 `AppSetting` 构建号串推导（见下） |
 /// | `subAppId` | `AppSetting_params` 的 `#` 分隔第 1 段 |
 /// | `miscBitmap` / `mainSigMap` / `subSigMap` | `WtloginHelper` 构造器 |
 /// | `ssoVer` | `tlv_t100._sso_ver` == `tlv_t106._SSoVer` |
@@ -26,8 +27,21 @@
 /// 与 8.2.11 不同** 的结论——**那是错的**。正确解析 AXML 属性结构后确认：
 /// QQ 8.2.11 / 8.9.50 / TIM 4.1.0 的 `APPKEY_DENGTA` **都是 `0S200MNJT807V3GE`**。
 ///
-/// 也就是说 **TIM 的 QIMEI 对 8.2.11 同样有效**，"appkey 对不上" 不构成
-/// 换版本的理由。
+/// 也就是说 **"appkey 对不上" 不构成换版本的理由**（四者本来就相同）。
+///
+/// 但**不能反过来推出"QIMEI 通用"**：`APPKEY_DENGTA` 只属于旧 Beacon，
+/// 8.9.50 起 QIMEI 换新 SDK、appkey 每 app 一套——见 [qq8ProfileQQ8950] 的更正。
+///
+/// ## ⚠️ 第二条更正：`apkName` 怎么取
+///
+/// `apkName` 只出现在 `ksid = "|" + IMEI + "|" + apkName` 里。它**不是 APK 里的
+/// 常量**：对四个 APK 逐 entry 扫描（含 .so）0 命中——官方运行时由服务端在
+/// 登录响应 TLV 0x108 下发、客户端缓存回填。取值按参考实现 oicq 的样本约定
+/// `'A' + <versionName>.<buildNum>`，buildNum 见各版本 `AppSetting` 静态块。
+///
+/// oicq 的 9 个历史样本里 8 个无后缀（`A5.8.9.3460`、`A8.9.35.10440`…）；
+/// 唯一例外 `A8.4.1.2703aac4`（2020 年）来源不可考——早先"修订号末 4 位"
+/// 的推断就是被它误导，现已按多数规则修正。
 ///
 /// 本文件是纯 Dart，不依赖 Flutter。
 library;
@@ -113,7 +127,7 @@ final Qq8ClientProfile qq8ProfileQQ8211 = Qq8ClientProfile(
     id: 'com.tencent.mobileqq',
     ver: '8.2.11',
     sdkver: '6.0.0.2423',
-    name: 'A8.2.11.4530f87a',
+    name: 'A8.2.11.4530', // AppSetting fullVersion 前缀 "8.2.11.4530"
     appid: 16,
     subid: 537064117,
     miscBitmap: 150470524,
@@ -166,9 +180,9 @@ final Qq8ClientProfile qq8ProfileQQ8950 = Qq8ClientProfile(
     id: 'com.tencent.mobileqq',
     ver: '8.9.50',
     sdkver: '6.0.0.2535',
-    // apkName 按 oicq 的 `A<版本>.<构建><修订末4>` 约定推导，
-    // 但 8.9.50 的构建号/修订号未从 APK 中取到（见 unverified）。
-    name: 'A8.9.50.3898',
+    // AppSetting m = "8.9.50.10650"（buildNum；不是 versionCode 3898，
+    // 也不是 QUA 里的 100084）。
+    name: 'A8.9.50.10650',
     appid: 16,
     subid: 537155557,
     miscBitmap: 150470524,
@@ -185,7 +199,6 @@ final Qq8ClientProfile qq8ProfileQQ8950 = Qq8ClientProfile(
     tlv553DegradedBody: null,
     qimeiMode: Qq8QimeiMode.rawSource,
   ),
-  unverified: <String>['apkName'],
 );
 
 /// QQ 9.3.60（应用宝渠道，versionCode 16070）—— 比 8.9.50 多一个 fekit 块。
@@ -205,13 +218,13 @@ final Qq8ClientProfile qq8ProfileQQ9360 = Qq8ClientProfile(
     id: 'com.tencent.mobileqq',
     ver: '9.3.60',
     sdkver: '6.0.0.2591',
-    name: 'A9.3.60.16070',
+    name: 'A9.3.60.41075', // AppSetting n = "9.3.60.41075"
     appid: 16,
     subid: 537389183,
     miscBitmap: 150470524,
     mainSigMap: 16724722,
     subSigMap: 66560,
-    buildtime: 0, // 未取到
+    buildtime: 1784552169, // util.BUILD_TIME（2026-07-20）
     sign: Uint8List.fromList(const <int>[
       0xa6, 0xb7, 0x45, 0xbf, 0x24, 0xa2, 0xc2, 0x77,
       0x52, 0x77, 0x16, 0xf6, 0xf3, 0x6e, 0xb6, 0x8d,
@@ -222,7 +235,6 @@ final Qq8ClientProfile qq8ProfileQQ9360 = Qq8ClientProfile(
     tlv553DegradedBody: const <int>[0],
     qimeiMode: Qq8QimeiMode.rawSource,
   ),
-  unverified: <String>['buildtime', 'apkName'],
 );
 
 /// TIM 4.1.0.4050 —— 与 9.3.60 同构（TLV 表 38 项、`_SSoVer` = 22）。
@@ -241,13 +253,14 @@ final Qq8ClientProfile qq8ProfileTim410 = Qq8ClientProfile(
     id: 'com.tencent.tim',
     ver: '4.1.0',
     sdkver: '6.0.0.2563',
-    name: 'A9.0.95.4050',
+    // AppSetting m = "4.1.0.4050"（versionName 段，不是 QUA 里的 9.0.95）。
+    name: 'A4.1.0.4050',
     appid: 16,
     subid: 537298353,
     miscBitmap: 150470524,
     mainSigMap: 16724722,
     subSigMap: 66560,
-    buildtime: 0, // 未取到
+    buildtime: 1724313621, // util.BUILD_TIME（2024-08-22）
     // ⚠️ TIM **不用** QQ 那张证书：`META-INF/TIM_QQ_C.RSA` 里是 873 字节的
     // 2048-bit 证书，DER MD5 = 775e696d09856872fdd8ab4f3f06b1e0；
     // QQ 三版本则是 599 字节的 1024-bit 证书，MD5 = a6b745bf…
@@ -261,7 +274,6 @@ final Qq8ClientProfile qq8ProfileTim410 = Qq8ClientProfile(
     tlv553DegradedBody: const <int>[0],
     qimeiMode: Qq8QimeiMode.rawSource,
   ),
-  unverified: <String>['buildtime', 'apkName'],
 );
 
 /// 全部档案，按推荐顺序排列。
@@ -279,9 +291,8 @@ final Map<String, Qq8ClientProfile> qq8ClientProfiles =
 ///
 /// 选择理由（见 `QQ-官方三版本登录流程对照.md` 5.8 节）：
 /// 1. 登录 TLV 表与已实现的 8.2.11 **逐项相同** → 组包代码零改动；
-/// 2. 灯塔 appkey 与 TIM 相同 → TIM 的 QIMEI 可直接用；
-/// 3. **不带** 9.3.60/TIM 才有的 `0x553` fekit 门控块；
-/// 4. `0x544` 对它是显式优雅降级（空 body）。
+/// 2. **不带** 9.3.60/TIM 才有的 `0x553` fekit 门控块；
+/// 3. `0x544` 对它是显式优雅降级（空 body）。
 ///
 /// 若服务端以"版本过旧"拒绝，回退到 [qq8ProfileQQ8211] 只需换这一个常量。
 final Qq8ClientProfile qq8DefaultProfile = qq8ProfileQQ8950;

@@ -71,10 +71,12 @@ abstract final class Qq8Config {
 
   /// 客户端标识名，参与 `ksid` 派生（`ksid = "|" + IMEI + "|" + apkName`）。
   ///
-  /// 注意**这个串不是从 APK 里提取的**——dex 中没有 `A8.2.11...` 形式的常量。
-  /// 它沿用参考实现 oicq 的命名约定：`A` + 完整版本号 + 修订号末 4 位
-  /// （oicq 表中 8.4.1 为 `A8.4.1.2703aac4`）。
-  static const String apkName = 'A8.2.11.4530f87a';
+  /// **不从 APK 提取**：全 APK（含 .so）逐 entry 扫描无 `A8.2.11…` 字面量，
+  /// 官方运行时由服务端 TLV 0x108 下发回填。取值按参考实现 oicq 的样本约定
+  /// `'A' + <versionName>.<buildNum>`（`fullVersion` 前缀里的 buildNum 段）。
+  /// oicq 历史样本（`A5.8.9.3460`、`A8.9.35.10440` 等）无后缀；
+  /// 旧注释"修订号末 4 位"仅有一个孤立样本 `A8.4.1.2703aac4` 支持，已纠正。
+  static const String apkName = 'A8.2.11.4530';
 
   /// QUA（QQ User Agent），由 `V1_AND_SQ_<版本>_<versionCode>_<渠道缩写>_D` 构成。
   ///
