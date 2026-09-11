@@ -1,24 +1,172 @@
-This is free and unencumbered software released into the public domain.
+PROPRIETARY LICENSE — ALL RIGHTS RESERVED
+=========================================
 
-Anyone is free to copy, modify, publish, use, compile, sell, or
-distribute this software, either in source code form or as a compiled
-binary, for any purpose, commercial or non-commercial, and by any
-means.
+Copyright (c) 2026 puretaoist. All rights reserved.
 
-In jurisdictions that recognize copyright laws, the author or authors
-of this software dedicate any and all copyright interest in the
-software to the public domain. We make this dedication for the benefit
-of the public at large and to the detriment of our heirs and
-successors. We intend this dedication to be an overt act of
-relinquishment in perpetuity of all present and future rights to this
-software under copyright law.
+NOTICE TO USER
+--------------
+This software and its associated source code, documentation, build
+scripts, protocol notes and all other accompanying materials (together,
+the "Software") are proprietary and confidential.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-OTHER DEALINGS IN THE SOFTWARE.
+No license, right, title or interest in or to the Software, or in any
+intellectual property right therein, is granted to you. All rights are
+expressly reserved by the copyright holder.
 
-For more information, please refer to <https://unlicense.org>
+
+1. NO LICENSE GRANTED
+---------------------
+You MAY NOT, without the prior written permission of the copyright
+holder:
+
+  (a) use, run, execute or operate the Software, in whole or in part,
+      for any purpose, whether commercial or non-commercial;
+
+  (b) copy, reproduce, download, mirror or store the Software;
+
+  (c) modify, adapt, translate, transform or create derivative works
+      based on the Software;
+
+  (d) distribute, publish, transmit, sublicense, rent, lease, lend,
+      sell, resell or otherwise make the Software available to any
+      third party, in source or binary form;
+
+  (e) reverse engineer, decompile, disassemble or otherwise attempt to
+      derive the source code of any component of the Software, except
+      to the extent such restriction is prohibited by applicable law;
+
+  (f) remove, obscure or alter any copyright, attribution or
+      proprietary notice contained in the Software;
+
+  (g) incorporate the Software, in whole or in part, into any other
+      product, service or codebase.
+
+Any act described above that you perform without written permission is
+unauthorized and constitutes an infringement of the copyright holder's
+rights.
+
+
+2. NO IMPLIED LICENSE BY OMISSION OR COURSE OF DEALING
+------------------------------------------------------
+No license is granted by implication, estoppel, waiver, or any course
+of dealing or performance. The failure of the copyright holder to
+enforce any provision of this license shall not be construed as a
+waiver of that provision or of any other provision.
+
+
+3. NO TRADEMARK OR BRANDING RIGHTS
+----------------------------------
+No right is granted to use any name, trade name, trademark, service
+mark or logo of the copyright holder. This license does not grant any
+rights to the names or marks of any third party.
+
+
+4. NO PATENT LICENSE
+--------------------
+No express or implied license or right under any patent, patent
+application or other intellectual property right is granted by this
+license or by the distribution of the Software.
+
+
+5. THIRD-PARTY COMPONENTS
+-------------------------
+The Software builds upon and may reference third-party components,
+including but not limited to the Flutter framework, the Dart SDK and
+the packages listed in `pubspec.yaml`. Such components are governed
+solely by their own licenses, and nothing in this license purports to
+grant, restrict or supersede any rights in respect of them. You are
+responsible for complying with the terms of every third-party license
+applicable to your use of those components.
+
+This project is an independent work. It is not affiliated with,
+endorsed by, sponsored by, or in any way officially connected to
+Tencent Holdings Limited or any of its subsidiaries or affiliates.
+All product names, trademarks and registered trademarks referenced in
+the Software are the property of their respective owners and are used
+for identification purposes only.
+
+
+6. NO WARRANTY
+--------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE AND
+NON-INFRINGEMENT. THE COPYRIGHT HOLDER DOES NOT WARRANT THAT THE
+SOFTWARE WILL MEET YOUR REQUIREMENTS, THAT ITS OPERATION WILL BE
+UNINTERRUPTED OR ERROR-FREE, OR THAT ANY DEFECTS WILL BE CORRECTED.
+
+YOU ASSUME THE ENTIRE RISK ARISING OUT OF ANY USE OF, OR INABILITY TO
+USE, THE SOFTWARE.
+
+
+7. LIMITATION OF LIABILITY
+--------------------------
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+THE USE OR OTHER DEALINGS IN THE SOFTWARE. THIS LIMITATION APPLIES TO
+ANY AND ALL DAMAGES, INCLUDING WITHOUT LIMITATION DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, PUNITIVE AND CONSEQUENTIAL DAMAGES, AND
+DAMAGES FOR LOSS OF DATA, LOSS OF PROFITS, LOSS OF GOODWILL, SERVICE
+INTERRUPTION, COMPUTER FAILURE OR MALFUNCTION, OR ANY OTHER COMMERCIAL
+DAMAGES OR LOSSES, EVEN IF THE COPYRIGHT HOLDER HAS BEEN ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGES.
+
+
+8. NO SUPPORT OR MAINTENANCE OBLIGATION
+---------------------------------------
+The copyright holder has no obligation to provide any support,
+maintenance, updates, upgrades, bug fixes or documentation for the
+Software, and may cease development, modify or withdraw the Software at
+any time without notice.
+
+
+9. TERMINATION
+--------------
+Any permission that may otherwise be implied is automatically and
+immediately terminated upon any breach of the terms of this license.
+Upon termination you must destroy all copies of the Software in your
+possession or control. Sections 3 through 8 and 10 survive termination.
+
+
+10. SEVERABILITY AND INTERPRETATION
+-----------------------------------
+If any provision of this license is held to be invalid or unenforceable
+by a court of competent jurisdiction, that provision shall be enforced
+to the maximum extent permissible, and the remaining provisions shall
+remain in full force and effect.
+
+This license shall be governed by, and construed in accordance with,
+the laws of the copyright holder's place of domicile, without regard to
+its conflict-of-law provisions.
+
+
+11. OBTAINING PERMISSION
+------------------------
+To request any use not permitted by this license, contact the copyright
+holder through the repository at:
+
+    https://github.com/puretaoist/PenguinChat
+
+No permission is granted unless given in a writing signed by the
+copyright holder.
+
+
+---
+非正式中文说明（仅供参考，以英文条款为准）
+------------------------------------------
+
+本软件为专有软件，**保留所有权利**。未经版权持有人事先书面许可，
+任何人不得使用、复制、修改、分发、再许可、出售或以其他方式利用本软件
+的全部或任何部分。
+
+在司法辖区法律允许的范围内，任何上述行为均构成对版权持有人权利的侵犯。
+
+本项目为独立作品，与腾讯控股有限公司及其关联公司**无任何隶属、
+认可、赞助或官方关联关系**。软件中出现的产品名称与商标归各自权利人所有。
+
+本软件依赖的第三方组件（Flutter、Dart SDK 及 `pubspec.yaml` 中列出的
+各包）仍然适用其各自的许可条款，本许可不改变、不限制也不取代这些条款。
+
+本软件按"原样"提供，不附带任何明示或默示的担保；版权持有人不对任何
+损害承担责任。
