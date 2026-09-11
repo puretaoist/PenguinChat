@@ -1,6 +1,11 @@
 /// Telegram 风格组件：消息气泡
 ///
 /// 对方靠左（灰底）、自己靠右（蓝底），圆角 12px，时间戳小字右下。
+///
+/// 三种非正常态也在这里收口，避免调用方各写一套：
+///   - `sending`：时钟图标，表示还没等到服务端回包
+///   - `failed`：红色感叹号 + 「点此重试」入口（文本必须还在，不得静默丢弃）
+///   - `recalled`：显示占位文案而不是把气泡删掉
 library;
 
 import 'package:flutter/material.dart';
@@ -11,10 +16,16 @@ import '../theme/telegram_theme.dart';
 String formatTime(DateTime t) =>
     '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
+/// 失败态用的红色。比主题里任何一个色都更扎眼——它需要被看到。
+const Color _failColor = Color(0xFFE05252);
+
 class MessageBubble extends StatelessWidget {
   final ChatMessage message;
 
-  const MessageBubble({super.key, required this.message});
+  /// 发送失败时的重试入口。为 null 表示不提供重试（例如收到的消息）。
+  final VoidCallback? onRetry;
+
+  const MessageBubble({super.key, required this.message, this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -63,9 +74,14 @@ class MessageBubble extends StatelessWidget {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      message.text,
-                      style: const TextStyle(
-                        color: TelegramColors.textPrimary,
+                      message.displayText,
+                      style: TextStyle(
+                        color: message.isRecalled
+                            ? TelegramColors.textSecondary
+                            : TelegramColors.textPrimary,
+                        fontStyle: message.isRecalled
+                            ? FontStyle.italic
+                            : FontStyle.normal,
                         fontSize: TelegramMetrics.fontBody,
                         height: 1.35,
                       ),
@@ -75,6 +91,18 @@ class MessageBubble extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (message.isFailed && onRetry != null) ...[
+                        GestureDetector(
+                          onTap: onRetry,
+                          child: const Text(
+                            '发送失败，点此重试',
+                            style: TextStyle(
+                                color: _failColor,
+                                fontSize: TelegramMetrics.fontTimestamp),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
                       Text(
                         formatTime(message.time),
                         style: const TextStyle(
@@ -84,10 +112,18 @@ class MessageBubble extends StatelessWidget {
                       ),
                       if (isOut) ...[
                         const SizedBox(width: 4),
-                        const Icon(
-                          Icons.done_all,
+                        Icon(
+                          message.isFailed
+                              ? Icons.error_outline
+                              : message.isSending
+                                  ? Icons.schedule
+                                  : Icons.done_all,
                           size: 14,
-                          color: TelegramColors.accentHover,
+                          color: message.isFailed
+                              ? _failColor
+                              : message.isSending
+                                  ? TelegramColors.textSecondary
+                                  : TelegramColors.accentHover,
                         ),
                       ],
                     ],
