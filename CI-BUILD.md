@@ -64,13 +64,15 @@ git push origin main
 
 ## 三、触发构建
 
-三种触发方式（已在 `.github/workflows/build.yml` 配置）：
+两种触发方式（已在 `.github/workflows/build.yml` 配置）：
 
 | 方式 | 说明 |
 |---|---|
 | **push 到 main/master** | 自动构建 **debug** APK |
 | **手动触发** | Actions 页面 → `build` → `Run workflow`，可选 `debug` / `release` |
-| **打 tag** | ⚠️ 本意是构建 release 并自动创建 Release 附件；**当前实际会构建 debug**（已知矛盾，见 [`AGENTS.md`](AGENTS.md) §4.3） |
+
+> 打 tag **不再**触发构建，也不会发布 GitHub Release（2026-09-11 决定，
+> 产物只走 Actions artifact，见下节）。
 
 ## 四、取回 APK
 
@@ -81,13 +83,20 @@ git push origin main
 3. 页面底部 **Artifacts** 区域下载 `apk-<commit hash>.zip`
 4. 解压得到 `app-debug.apk`，传到手机安装即可
 
-如果用 tag 触发，APK 会直接挂在 **Releases** 页面，下载更方便。
+要体积小的 release 包，用**手动触发选 `release`**（实测 17.8MB；
+debug 是 44.7MB，差距在 debug 引擎 + JIT）。
+
+所有产物由**统一签名**（`android/app/qqclient.p12`，见
+`android/app/build.gradle.kts` 的 `signingConfigs.unified`）——
+debug / release、本机 / CI，任意两次构建都能互相覆盖安装。
+这是刻意的：CI 每次跑在新 runner 上，不统一的话签名每次都不一样，
+手机升级安装会报"签名不一致"。
 
 ---
 
 ## 工作流做了什么
 
-`.github/workflows/build.yml` 的步骤（共 15 步）：
+`.github/workflows/build.yml` 的步骤：
 
 1. `actions/checkout` 拉代码
 2. `actions/setup-java` 装 JDK 17
@@ -95,15 +104,16 @@ git push origin main
 4. `flutter doctor -v` 打印环境
 5. `flutter pub get` 拉 Dart 依赖
 6. `flutter analyze` 静态检查（失败不阻断）
-7. `dart run tool/selftest.dart` **协议自检**（TLV / TEA，19 项）
+7. 全部纯 Dart 自检（`tool/*_selftest.dart` 通配遍历 + `tea_compat_check` / `selftest`）
 8. `flutter test` 标准单测（失败不阻断）
-9. **动态生成 `android/local.properties`** ← 关键，见下
-10. **确保 NDK 存在**（避免构建中途触发下载）
-11. `gradle/actions/setup-gradle` 开启 Gradle 缓存
-12. `flutter build apk --debug --target-platform android-arm64` 打包
-    （**只出 arm64-v8a**，artifact 实测 44.7MB；此前 3-ABI fat 包 68.8MB）
-13. `actions/upload-artifact` 上传产物
-14. `softprops/action-gh-release`（仅打 tag 时附到 Release）
+9. 登录组包 dry-run（`qq8_live_smoke.dart`，不联网）
+10. **动态生成 `android/local.properties`** ← 关键，见下
+11. **确保 NDK 存在**（避免构建中途触发下载）
+12. `gradle/actions/setup-gradle` 开启 Gradle 缓存
+13. `flutter build apk --debug --target-platform android-arm64` 打包
+    （**只出 arm64-v8a**，artifact 实测 44.7MB；此前 3-ABI fat 包 68.8MB。
+    手动触发选 release 时走 `--release`，实测 17.8MB）
+14. `actions/upload-artifact` 上传产物（不发布 Release）
 
 ### 关键工程点：`local.properties`
 

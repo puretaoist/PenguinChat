@@ -205,10 +205,12 @@ Get-ChildItem tool -Filter "*_selftest.dart" | ForEach-Object { & $dart run $_.F
 **不要在本地构建**（本机 JDK / Android SDK / NDK / 代理环境都有坑，
 `CI-BUILD.md` 里有完整踩坑记录）。走 GitHub Actions：
 
-- 推送到 `main` 就自动构建
-- 或在 Actions 页面手动 `Run workflow`，可选 `debug` / `release`
-- 打 `v*` tag 会把 APK 附到 Release
-- 产物在 run 页面的 **Artifacts** 区域（下载需要登录 GitHub）
+- 推送到 `main` 就自动构建 debug
+- 或在 Actions 页面手动 `Run workflow`，选 `debug` / `release`
+- **不发布 GitHub Release**（2026-09-11 决定）：产物只在 **Artifacts**
+  区域（下载需要登录 GitHub）；tag 触发已移除
+- 签名统一在 `android/app/qqclient.p12`：debug / release 同一把钥匙，
+  任意两次构建可互相覆盖安装（口令故意公开，上架前必须换）
 
 仓库：<https://github.com/puretaoist/PenguinChat>
 
@@ -249,7 +251,6 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 | 模块 | 状态 |
 |---|---|
 | `lib/kernel/transport/` `trpc/` `wlogin/` | 早期 MSF 研究骨架，未完成，**暂时别动** |
-| `.github/workflows/build.yml` | **有一个已知矛盾**：`v*` tag 推送走的是 `debug` 分支（条件只判了 `workflow_dispatch`），而 `CI-BUILD.md:73` 写的是 tag 出 release。改之前先读 §3.3 |
 
 ### 4.4 明确缺失
 
@@ -265,12 +266,12 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 1. **真机验证** —— 唯一还差的一步。装到手机上连本机的 NapCat，
    逐条走 [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) §7 的 9 条。
    **在这一步之前，不要说「UI 能用了」**：本环境从没渲染过它。
-2. **构建体积** —— ABI 部分已解决（2026-09-11）：CI 已限定
-   `--target-platform android-arm64`，artifact 68.8MB → 44.7MB（run #5）。
-   debug 仍偏大是 debug 引擎 + JIT 的缘故（不随 ABI 数缩小）。
-   要出能分发的包，用 `workflow_dispatch` + `build_mode=release` 跑一次
-   —— 这条路径还没跑过（release 只有一个 ABI，不需要 `--split-per-abi`）。
-3. **修 CI 的 tag 分支** —— 见 §4.3 的已知矛盾。
+2. **构建体积 / 签名** —— 已解决（2026-09-11）：CI 限定
+   `--target-platform android-arm64`（debug artifact 44.7MB，release
+   实测 17.8MB）；debug/release 统一签名（`android/app/qqclient.p12`），
+   任意两次构建可互相覆盖安装。release 走 `workflow_dispatch` + `build_mode=release`。
+3. ~~修 CI 的 tag 分支~~ —— 已处理（2026-09-11）：不做"tag 出 release"，
+   而是**整体移除** tag 触发与 Release 发布（决定：产物不往 Release 推）。
 
 之后才轮到 QQ8 研究线（见下）。
 
