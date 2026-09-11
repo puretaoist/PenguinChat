@@ -70,7 +70,7 @@ git push origin main
 |---|---|
 | **push 到 main/master** | 自动构建 **debug** APK |
 | **手动触发** | Actions 页面 → `build` → `Run workflow`，可选 `debug` / `release` |
-| **打 tag** | `git tag v0.1.0 && git push origin v0.1.0` → 构建 release 并自动创建 Release 附件 |
+| **打 tag** | ⚠️ 本意是构建 release 并自动创建 Release 附件；**当前实际会构建 debug**（已知矛盾，见 [`AGENTS.md`](AGENTS.md) §4.3） |
 
 ## 四、取回 APK
 
@@ -100,7 +100,8 @@ git push origin main
 9. **动态生成 `android/local.properties`** ← 关键，见下
 10. **确保 NDK 存在**（避免构建中途触发下载）
 11. `gradle/actions/setup-gradle` 开启 Gradle 缓存
-12. `flutter build apk --debug` 打包
+12. `flutter build apk --debug --target-platform android-arm64` 打包
+    （**只出 arm64-v8a**，artifact 实测 44.7MB；此前 3-ABI fat 包 68.8MB）
 13. `actions/upload-artifact` 上传产物
 14. `softprops/action-gh-release`（仅打 tag 时附到 Release）
 

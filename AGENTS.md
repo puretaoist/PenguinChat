@@ -265,9 +265,11 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 1. **真机验证** —— 唯一还差的一步。装到手机上连本机的 NapCat，
    逐条走 [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) §7 的 9 条。
    **在这一步之前，不要说「UI 能用了」**：本环境从没渲染过它。
-2. **构建体积** —— 现在 CI 产物是带 3 个 ABI 的 **debug** fat APK
-   （GitHub 上那个 artifact 是 72MB）。要出能分发的包，需要
-   `release + --split-per-abi`，见 `CI-BUILD.md`。
+2. **构建体积** —— ABI 部分已解决（2026-09-11）：CI 已限定
+   `--target-platform android-arm64`，artifact 68.8MB → 44.7MB（run #5）。
+   debug 仍偏大是 debug 引擎 + JIT 的缘故（不随 ABI 数缩小）。
+   要出能分发的包，用 `workflow_dispatch` + `build_mode=release` 跑一次
+   —— 这条路径还没跑过（release 只有一个 ABI，不需要 `--split-per-abi`）。
 3. **修 CI 的 tag 分支** —— 见 §4.3 的已知矛盾。
 
 之后才轮到 QQ8 研究线（见下）。

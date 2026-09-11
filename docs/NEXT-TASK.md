@@ -248,7 +248,8 @@ provider 的 `ref.onDispose` 里要正确释放，否则热重载会漏连接。
 2. ✅ `tool/chat_store_selftest.dart` 通过（102 项），且被 CI 通配收录
    （CI 用 `tool/*_selftest.dart` 通配，无需改 workflow）
 3. ✅ 全部自测通过：17 个脚本全绿（合计 1003 项，含新增的 102 + 42）
-4. ⏳ 推送后 CI 绿 —— **未推送**：推送会触发 CI 构建，需先确认
+4. ✅ 推送后 CI 绿 —— run #5（`bd6193d`）成功；构建命令已限定
+   `--target-platform android-arm64`，artifact 44.7MB（此前 3-ABI debug 是 68.8MB）
 
 **功能上（未做，需真机）：**
 
@@ -284,7 +285,7 @@ provider 的 `ref.onDispose` 里要正确释放，否则热重载会漏连接。
 5. ✅ 改 main.dart（ProviderScope 注入 目录 / 适配表 / 闸门 + 日志落盘）
 6. ✅ 改 home_page.dart（换数据源 + 下拉刷新 / 翻页 / 重试 / 已撤回）
 7. ✅ 本地 analyze + 全量自测（17 个脚本全绿）
-8. ⏳ 推送到 main，看 CI 出 APK（待确认）
+8. ✅ 推送到 main（6 个提交），CI run #5 绿，artifact 44.7MB（arm64-only）
 9. ⏳ 真机验证第 7 节的 9 条
 10. ✅ 补 `tool/session_providers_selftest.dart`（42 项）——
        闸门拒绝路径是本次改动里最要紧的一行，不能只靠人眼
