@@ -2,8 +2,8 @@ name: build
 
 # 触发条件：
 #  - 手动触发（Actions 页面 Run workflow，可选 build_mode）
-#  - push 到 main / master
-#  - 打 tag（v*）时自动附加到 Release
+#  - push 到 main / master → 构建 debug
+#  - 打 tag（v*）→ 构建 release，并自动附加到 GitHub Release
 on:
   workflow_dispatch:
     inputs:
@@ -150,14 +150,18 @@ jobs:
       # 实测（GitHub artifact 体积）：3-ABI debug 68.8MB → arm64-only 44.7MB。
       # 降幅不到 2/3 是因为 debug 包本身就大（debug 引擎 + JIT，不随 ABI 数缩小）；
       # 被去掉的 armeabi-v7a / x86_64 只有老 32 位机和模拟器用得上，本项目不发。
+      # tag 推送一律走 release（见下），这里先排除 tag，
+      # 否则 v* tag 会同时命中两条构建命令。
       - name: Build APK (debug, arm64-v8a)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode == 'debug' }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.build_mode == 'debug') }}
         run: flutter build apk --debug --target-platform android-arm64
 
       # release 同样只出 arm64：既然只要一个 ABI，就用不上 --split-per-abi
       # （那是给多 ABI 拆包用的），单平台直接出一个 app-release.apk。
+      # 触发场景：手动触发选 release，或推 v* tag —— tag 出来的包会挂到
+      # Release 页面（下载不需要登录），是给真机测试的那一份。
       - name: Build APK (release, arm64-v8a)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release') }}
         run: flutter build apk --release --target-platform android-arm64
 
       # ---------- 产物上传 ----------
