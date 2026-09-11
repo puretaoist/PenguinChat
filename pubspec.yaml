@@ -13,6 +13,12 @@ dependencies:
   # 状态管理：Riverpod（编译期安全，替代 Provider）
   flutter_riverpod: ^2.6.1
 
+  # Riverpod 核心。L3 的接线层（client_api/session_providers.dart）必须保持
+  # 纯 Dart（AGENTS.md §1.1：底层不得 import Flutter），所以那里用 riverpod，
+  # L4 用 flutter_riverpod 的 ProviderScope / ConsumerWidget 消费同一批 provider
+  # ——flutter_riverpod 本就是 riverpod + Flutter 绑定，不是两套状态管理。
+  riverpod: ^2.6.1
+
   # 网络：HTTP 配置拉取（长连接用 dart:io Socket，无需依赖）
   dio: ^5.7.0
 
@@ -22,6 +28,10 @@ dependencies:
 
   # 本地存储：轻量 KV（会话缓存 / 配置）
   shared_preferences: ^2.3.3
+
+  # 平台数据目录：Android 上没有纯 Dart 的办法拿到应用私有目录，
+  # 而 ChatStore 需要一个可持久化的 dataDir（systemTemp 会被系统清理）。
+  path_provider: ^2.1.6
 
   cupertino_icons: ^1.0.8
 
