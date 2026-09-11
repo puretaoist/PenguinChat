@@ -21,6 +21,27 @@
 /// （`sendLogin` / `_decodeLoginResponse` / `readTlv` / `decodeT119`）与
 /// `lib/wtlogin/login-password.js`（各步的子命令与 TLV 清单）。
 ///
+/// ## 响应侧：对着官方 9.3.60 反编译逐行核过（2026-09-11）
+///
+/// 四个包里 9.3.60 的反编译最完整、可 `--show-bad-code` 出全量控制流。
+/// 响应解析的每个关键偏移在下述两个方法里都有一一对应
+/// （`9.3.60_23e3f34e30110797.apk` → `classes5.dex`，jadx 1.5.6；
+/// 类名是混淆过的，**逐版本会变**，这里是 9.3.60 的字母）：
+///
+/// | 本文件的做法 | 官方写法 | 位置 |
+/// |---|---|---|
+/// | 只解 `[16, len-1)`（丢 16 头 + 1 尾） | `this.d = (this.c - 15) - 2;` → `a(this.e, 16, this.d, wVar.m)` | `oicq_request.d()` |
+/// | 首层密钥 = ECDH share key | `this.mG.m = ecdhCrypt.get_g_share_key();` | `WtloginHelper.ShareKeyInit()` |
+/// | 明文至少 5 字节 | `if (i2 < 5) return -1009;` | `oicq_request.c()` 开头 |
+/// | 类型 = **明文第 2 字节** | `iB = b(bArr14, i + 2);`，`b(...) = bArr[i] & 255` | `c()` / `b(byte[],int)` |
+/// | TLV 从明文**偏移 5** 起 | `i19 = i + 5;`，TLV 区 `(this.c - i19) - 1` | `c()` |
+/// | `0x119` 用 tgtgt 再解一层 | `tlv_tVar.get_tlv(bArr14, i19, …, async_contextVarB._tgtgt_key)` | `c()`；`tlv_t.get_tlv(…, key)` |
+/// | `0x119` 内子 TLV 从**偏移 2** 起 | `tlv_t10aVar.get_tlv(bArr15, 2, length)` 等 | `c()` |
+/// | TLV 容器 = 裸 `tag‖len‖body` 序列，**无计数前缀** | `search_tlv` 按 `i = len + 4 + i` 递进 | `tlv_t.search_tlv` |
+///
+/// 这张表把响应侧从"往返测试（C）"抬到"官方反编译对照（A）"。
+/// 仍然只有真机能回答的只剩一件事：**服务端是否接受我们的包**。
+///
 /// ## 子命令取值（官方 `oicq.wlogin_sdk.request.k/u` 的 `this.u`）
 ///
 /// | 子命令 | 含义 | TLV 数（官方） |
@@ -51,15 +72,22 @@ abstract final class Qq8SubCmd {
   static const int device = 20;
 }
 
-/// 登录响应第 3 字节的类型。
+/// 登录响应第 3 字节的类型（官方 `oicq_request.c()` 里的 `iB`，
+/// 即明文偏移 2 的无符号字节）。
 abstract final class Qq8LoginResultType {
-  /// 成功。
+  /// 成功。走 `c()` 的 `iB == 0` 分支解析 `0x119` 票据块。
   static const int success = 0;
 
-  /// 需要滑动验证码（`t[0x192]` 是验证地址）。
+  /// 需要滑动验证码。
+  ///
+  /// `c()` 的 `iB == 2` 分支：先取 `0x104`（新盐），再取 `0x192`
+  /// 并读 `getUrl()` 作为验证地址（另与会取 `0x546`）。
   static const int slider = 2;
 
   /// 设备锁 / 需要二次验证。
+  ///
+  /// `c()` 的 `case 204:` 分支（日志里写作 `type = 0xcc`），
+  /// 取 `0x113`(uin) / `0x104` / `0x402` / `0x403` 进 devlock 流程。
   static const int deviceLock = 204;
 }
 
@@ -219,6 +247,15 @@ abstract final class Qq8LoginBody {
 /// }
 /// ```
 ///
+/// 官方对应 `tlv_t.search_tlv`（逐个 `get_tlv` 的底层扫描）——同样是
+/// **无计数前缀**的裸序列，按 `i = len + 4 + i` 递进：
+/// ```java
+/// while (i < length) {
+///     if (util.buf_to_int16(bArr, i) == i3) return i;
+///     i = util.buf_to_int16(bArr, i + 2) + 2 + (i + 2);
+/// }
+/// ```
+///
 /// [tolerateTruncated] 为真时，尾部不完整的 TLV 被忽略而不是抛错——
 /// 服务端响应里常带一些我们不需要的尾部字段。
 Map<int, Uint8List> qq8ReadTlv(
@@ -298,6 +335,16 @@ class Qq8LoginResponse {
   /// ```
   ///
   /// 开头 16 字节是 OICQ 信封头，末尾 1 字节是 `0x03` 尾——两者都不参与解密。
+  ///
+  /// 官方 9.3.60 `oicq_request.d()` / `c()` 是同一件事：
+  /// ```java
+  /// this.d = (this.c - 15) - 2;              // 密文长 = 总长 - 16 头 - 1 尾
+  /// a(this.e, 16, this.d, wVar.m);           // 密钥 = ECDH share key（w.m）
+  /// // …… c(this.e, 16, this.d) 内：
+  /// if (i2 < 5) return -1009;                // 明文至少 5 字节
+  /// int iB = b(bArr14, i + 2);               // type = 明文[2]（b = & 255）
+  /// int i19 = i + 5;                         // TLV 从明文[5] 起
+  /// ```
   static Qq8LoginResponse parse(Uint8List payload, Uint8List shareKey) {
     if (payload.length < 16 + 1 + 5) {
       throw Qq8LoginException(
@@ -336,6 +383,18 @@ class Qq8LoginResponse {
 /// this.readT106(t[0x106]);   // ← 更新 tgtgt
 /// this.sig = { tgt: t[0x10a], d2: t[0x143], d2key: t[0x305], ... };
 /// ```
+///
+/// 官方 9.3.60 `oicq_request.c()` 的成功分支（`iB == 0`）逐条对应：
+/// ```java
+/// tlv_tVar.get_tlv(bArr14, i19, (this.c - i19) - 1, async_contextVarB._tgtgt_key);
+/// //   ↑ 0x119 的 body 用 tgtgt 密钥 TEA 解密（tlv_t.get_tlv(…, key) → cryptor.decrypt）
+/// byte[] bArr15 = tlv_tVar.get_data();       // 解密后的票据块
+/// tlv_t10aVar.get_tlv(bArr15, 2, length);    // 子 TLV 一律从偏移 2 起搜
+/// tlv_t106Var.get_tlv(bArr5, 2, length);     // t106（新 tgtgt 材料）
+/// tlv_t143Var.get_tlv(bArr5, 2, length);     // d2  = 0x143
+/// tlv_t305Var.get_tlv(bArr5, 2, length);     // d2key = 0x305
+/// ```
+/// 本类的字段名即照此映射（`0x10a` / `0x143` / `0x305` / `0x133` / `0x134` …）。
 class Qq8SigBundle {
   final Uint8List? t106;
   final Uint8List? tgt;

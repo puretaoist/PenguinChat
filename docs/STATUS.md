@@ -71,7 +71,7 @@
 | `wlogin8/qq8_tlv.dart` | 879 | 完成 | `qq8_tlv_selftest.dart` 58 项 | **A** |
 | `wlogin8/qq8_sso.dart` | 277 | 完成 | `qq8_sso_selftest.dart` 20 项 | **A** |
 | `wlogin8/qq8_tran.dart` | 332 | 完成 | `qq8_tran_selftest.dart` 34 项 | **B** |
-| `wlogin8/qq8_login.dart` | 400+ | 完成 | `qq8_login_selftest.dart` 73 项 | **A/C 混合** |
+| `wlogin8/qq8_login.dart` | 400+ | 完成 | `qq8_login_selftest.dart` 73 项 | **A** |
 | `wlogin8/qq8_profiles.dart` | 287 | 完成 | `qq8_profile_selftest.dart` 90 项 | **A** |
 | `wlogin8/qq8_device.dart` | 256 | 完成 | `qq8_selftest.dart` 30 项 | D |
 | `wlogin8/qq8_config.dart` | 165 | 完成 | 同上 | A（参数全部反编译提取） |
@@ -81,9 +81,11 @@
 - `qq8_tlv.dart` / `qq8_sso.dart`：**A**。黄金向量由参考实现 oicq 的
   `lib/wtlogin/tlv.js`、`wt.js` **原始模块**在 Node 里跑出来生成，
   不是手工抄的。
-- `qq8_login.dart`：请求侧是 **A**（body 头格式对着官方
-  `oicq_request.java:362` 核过，TLV guard 逐条对着 `k.java` / `j.java` 核过）；
-  **响应侧只有 C**（往返构造），因为设备流量在 ECC 之下拿不到真实样本。
+- `qq8_login.dart`：**A**。请求侧 + 响应侧都对着官方反编译核过：
+  body 头格式对 `oicq_request.java:362`，TLV guard 逐条对 `k.java` / `j.java`；
+  响应布局逐行对官方 9.3.60 `oicq_request.c()/d()`、`tlv_t.search_tlv`、
+  `WtloginHelper.ShareKeyInit()`（2026-09-11 完成，对照表见该文件头注释）。
+  真机只差最后一项：服务端是否接受我们的组包。
 - `qq8_tran.dart`：**B**，自测起真实的本地 `ServerSocket`。
 
 **这条线的天花板**（真机跑通也不会改变）：三个设备证明块
