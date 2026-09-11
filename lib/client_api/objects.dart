@@ -30,6 +30,25 @@ enum ChatType {
   String get wireName => name;
 }
 
+/// 自己发出的消息的送达状态。
+///
+/// 存在的理由是**乐观插入**：消息发出即渲染，不等服务端回包
+/// （Telegram 的做法）。于是同一条消息在 UI 上会经历三种形态，
+/// 而"发送失败但文本必须保留可重试"这条要求需要一个显式状态位来表达，
+/// 靠"消息在不在列表里"是表达不出来的。
+///
+/// 收到的消息一律是 [sent]。
+enum MessageSendState {
+  /// 已插入本地列表，等待服务端回 message_id。
+  sending,
+
+  /// 服务端已接受。
+  sent,
+
+  /// 发送失败：文本保留，UI 应给出重试入口，**不得静默丢弃**。
+  failed,
+}
+
 /// 一个会话（好友或群）。
 class Chat {
   /// 复合 ID：`group_123456` / `private_10001`。
@@ -207,6 +226,9 @@ class ChatMessage {
   /// 群头衔 / 发送者角色标记。
   final String? senderTitle;
 
+  /// 送达状态，只对自己发出的消息有意义（收到的恒为 [MessageSendState.sent]）。
+  final MessageSendState sendState;
+
   const ChatMessage({
     required this.id,
     this.text = '',
@@ -224,6 +246,7 @@ class ChatMessage {
     this.atMe = false,
     this.system = false,
     this.senderTitle,
+    this.sendState = MessageSendState.sent,
   });
 
   /// 从消息段构造，自动派生 [text] 摘要与 [atMe]。
@@ -243,6 +266,7 @@ class ChatMessage {
     String? senderTitle,
     String? replyToId,
     String? replyPreview,
+    MessageSendState sendState = MessageSendState.sent,
   }) {
     // 回复段既可以放在段数组里，也可以单独传参，这里统一
     var replyId = replyToId;
@@ -273,11 +297,18 @@ class ChatMessage {
       atMe: selfId.isNotEmpty && Segment.mentions(segments, selfId: selfId),
       system: system,
       senderTitle: senderTitle,
+      sendState: sendState,
     );
   }
 
   /// 已撤回且尚未揭示 → UI 应显示"消息已撤回"。
   bool get isRecalled => deleted && !revealed;
+
+  /// 还在等服务端回包。
+  bool get isSending => sendState == MessageSendState.sending;
+
+  /// 发送失败，UI 应给出重试入口。
+  bool get isFailed => sendState == MessageSendState.failed;
 
   /// 气泡里实际该显示的文本。
   String get displayText => isRecalled ? '[消息已撤回]' : text;
@@ -316,6 +347,7 @@ class ChatMessage {
     bool? atMe,
     bool? system,
     String? senderTitle,
+    MessageSendState? sendState,
   }) =>
       ChatMessage(
         id: id ?? this.id,
@@ -334,11 +366,13 @@ class ChatMessage {
         atMe: atMe ?? this.atMe,
         system: system ?? this.system,
         senderTitle: senderTitle ?? this.senderTitle,
+        sendState: sendState ?? this.sendState,
       );
 
   @override
   String toString() =>
-      'ChatMessage($id, ${outgoing ? 'out' : 'in'}, "$displayText"${isRecalled ? ' [recalled]' : ''})';
+      'ChatMessage($id, ${outgoing ? 'out' : 'in'}, "$displayText"'
+      '${isRecalled ? ' [recalled]' : ''}${isFailed ? ' [failed]' : ''})';
 }
 
 /// 好友 / 群成员信息。
