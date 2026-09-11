@@ -94,6 +94,22 @@ jobs:
           fi
           echo "全部自检通过"
 
+      # ---------- 登录组包 dry-run ----------
+      # 不联网、不需要账号。验证三层信封都能组装出来，且首 4 字节声明的
+      # 长度与实体一致（组包长度算错是登录失败最常见的隐蔽原因）。
+      - name: Login dry-run
+        run: |
+          out=$(dart run tool/qq8_live_smoke.dart)
+          echo "$out"
+          if ! echo "$out" | grep -q "✓ 与实体一致"; then
+            echo "::error::登录包长度自洽性检查失败"
+            exit 1
+          fi
+          if echo "$out" | grep -q "✗"; then
+            echo "::error::dry-run 报告里有失败项"
+            exit 1
+          fi
+
       # 标准单元测试（失败不阻断打包，仅作记录）
       - name: Unit tests
         run: flutter test --reporter expanded || true
