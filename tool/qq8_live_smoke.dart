@@ -26,6 +26,22 @@
 /// 用 `LoginAttemptLimiter` 做限流（10 分钟 3 次、连续失败递增冷却、
 /// 5 次后硬锁 24 小时）。**失败就停**——重试本身是风控特征。
 ///
+/// ## 票据续期（token 登录，低风险形态）
+///
+/// 登录成功后可以把票据存下来（`--save-token=<path>`），之后用
+/// `--token-login` 直接续期——**不需要再发密码**（子命令 11 /
+/// `wtlogin.exchange_emp`，清单见 `qq8ExchangeEmpTlvOrder`）。
+///
+/// ```bash
+/// # 1) 密码登录成功后保存票据（文件是明文会话凭据：别进 git、用完即删）
+/// dart run tool/qq8_live_smoke.dart --send --save-token=token.json
+/// # 2) 之后只用票据续期
+/// dart run tool/qq8_live_smoke.dart --send --token-login --token-file=token.json
+/// ```
+///
+/// 续期时 `tgtgt = MD5(d2key)`——与 oicq `login-password.js` 的 token
+/// 路径一致（没有密码就没法刷新 cookie，这是官方语义）。
+///
 /// ## 绝不打印凭据
 ///
 /// 口令、`tgtgt`、票据、`d2key`、会话密钥一律不进日志（见 `Redact`）。
@@ -74,11 +90,16 @@ Future<void> main(List<String> argv) async {
   stdout.writeln('QQ 登录冒烟测试');
   stdout.writeln('=' * 70);
 
+  // token 续期模式（--token-login）与密码登录共用后面的收发流水线，
+  // 差别只在"组什么 body / 用哪个命令字 / 响应用什么 key 解"。
+  final useToken = args.containsKey('token-login');
+
   if (!args.containsKey('send')) {
     stdout.writeln('模式: **dry-run**（不联网）');
   } else {
     stdout.writeln('模式: **真实发送**');
   }
+  stdout.writeln('登录方式: ${useToken ? "token 续期（子命令 11）" : "密码登录（子命令 9）"}');
   stdout.writeln('日志目录: ${logDir.path}');
   stdout.writeln('');
 
@@ -93,6 +114,37 @@ Future<void> main(List<String> argv) async {
   }
   stdout.writeln('');
 
+  // ---------- 票据文件（token 续期用）----------
+  final tokenPath = args['token-file'] ?? args['save-token'];
+  _TokenFile? token;
+  if (useToken || args.containsKey('token-file')) {
+    if (tokenPath == null || tokenPath.isEmpty) {
+      stderr.writeln('✗ --token-login / --token-file 需要给出文件路径'
+          '（--token-file=<path>）');
+      exit(2);
+    }
+    try {
+      token = _TokenFile.load(File(tokenPath));
+    } on Object catch (e) {
+      stderr.writeln('✗ 票据文件读取失败: $e');
+      exit(2);
+    }
+    stdout.writeln('--- 票据 ---');
+    stdout.writeln('  文件: $tokenPath');
+    stdout.writeln('  uin: ${token.uin}（保存于 ${token.savedAt}）');
+    stdout.writeln('  tgt ${token.tgt.length} 字节 / d2 ${token.d2.length} 字节'
+        ' / d2key ${token.d2key.length} 字节');
+    stdout.writeln('');
+  }
+  if (useToken && token == null) {
+    stderr.writeln('✗ --token-login 必须配 --token-file=<path>');
+    exit(2);
+  }
+  if (useToken && token!.d2.isEmpty) {
+    stderr.writeln('✗ 票据文件里没有 d2——token 续期的核心载荷缺失，无法发送');
+    exit(2);
+  }
+
   // ---------- 账号 ----------
   final uinStr = args['uin'] ?? Platform.environment['QQ_LIVE_UIN'];
   Uint8List? passwordMd5;
@@ -105,22 +157,31 @@ Future<void> main(List<String> argv) async {
     }
   }
 
-  final uin = int.tryParse(uinStr ?? '') ?? 10001;
+  final uin = token?.uin ?? int.tryParse(uinStr ?? '') ?? 10001;
 
   stdout.writeln('--- 账号 ---');
   stdout.writeln('  uin: $uin');
-  stdout.writeln(
-    '  口令: ${passwordMd5 == null ? "未提供（用占位值，仅用于组包验证）" : "已提供"}',
-  );
-  if (passwordMd5 != null) {
-    stdout.writeln('    ${Redact.fingerprint("pwd_md5", passwordMd5)}');
+  if (useToken) {
+    stdout.writeln('  口令: 不需要（本次是 token 续期）');
+  } else {
+    stdout.writeln(
+      '  口令: ${passwordMd5 == null ? "未提供（用占位值，仅用于组包验证）" : "已提供"}',
+    );
+    if (passwordMd5 != null) {
+      stdout.writeln('    ${Redact.fingerprint("pwd_md5", passwordMd5)}');
+    }
   }
   stdout.writeln('');
 
   // ---------- 组包 ----------
   // 固定的随机源，保证 dry-run 可复现；真发时换成随机。
   final deterministic = !args.containsKey('send');
-  final device = _buildDevice(deterministic: deterministic);
+  // token 续期时 tgtgt = MD5(d2key) —— oicq `login-password.js` 的 token
+  // 路径同款（没有密码就没法用 t106 派生新的 tgtgt，只能沿用这个约定值）。
+  final device = _buildDevice(
+    deterministic: deterministic,
+    tgtgtOverride: useToken ? md5Bytes(token!.d2key) : null,
+  );
   final ecdh = Ecdh.exchange(
     Uint8List.fromList(Qq8Config.serverEcdhPublicKey),
   );
@@ -134,15 +195,31 @@ Future<void> main(List<String> argv) async {
     ksid: _ksid(device, profile),
     t104: Uint8List(0), // 首登无缓存盐 → 0x104 会被 guard 滤掉
     t174: Uint8List(0),
-    tgt: Uint8List(0),
+    tgt: useToken ? token!.tgt : Uint8List(0),
     srmToken: Uint8List(0),
   );
 
-  final body = Qq8LoginBody.build(
-    tlvCtx,
-    Qq8SubCmd.password,
-    profile.apk.loginTlvOrder,
-  );
+  final body = useToken
+      ? Qq8LoginBody.buildToken(tlvCtx, d2: token!.d2)
+      : Qq8LoginBody.build(
+          tlvCtx,
+          Qq8SubCmd.password,
+          profile.apk.loginTlvOrder,
+        );
+
+  // token 续期的票据要贯穿三层：SSO 信封的 tgt/d2（sig）、body 的 0x143（d2）。
+  Qq8SigInfo? tokenSig;
+  if (useToken) {
+    final t = token!;
+    tokenSig = Qq8SigInfo(
+      tgt: t.tgt,
+      d2: t.d2,
+      d2key: t.d2key,
+      sigKey: t.sigKey,
+      ticketKey: t.ticketKey,
+      srmToken: t.srmToken,
+    );
+  }
 
   final ssoCtx = Qq8SsoContext(
     uin: uin,
@@ -155,12 +232,13 @@ Future<void> main(List<String> argv) async {
     ecdhPublicKey: ecdh.publicKey,
     ecdhShareKey: ecdh.shareKey,
     seqId: tlvCtx.seqId,
+    sig: tokenSig,
   );
 
   final oicqPacket = Qq8Sso.buildOicqPacket(ssoCtx, body);
   final loginPacket = Qq8Sso.buildLoginPacket(
     ssoCtx,
-    qq8LoginCmd,
+    useToken ? qq8ExchangeEmpCmd : qq8LoginCmd,
     oicqPacket,
     Qq8LoginType.login,
   );
@@ -171,6 +249,7 @@ Future<void> main(List<String> argv) async {
     oicqPacket: oicqPacket,
     loginPacket: loginPacket,
     profile: profile,
+    order: useToken ? qq8ExchangeEmpTlvOrder : profile.apk.loginTlvOrder,
     shareKey: ecdh.shareKey,
   );
 
@@ -197,7 +276,7 @@ Future<void> main(List<String> argv) async {
   }
   stdout.writeln('  ✓ 显式确认已给出');
 
-  if (passwordMd5 == null) {
+  if (!useToken && passwordMd5 == null) {
     stdout.writeln('  ✗ 未提供口令，无法真发（设 QQ_LIVE_PWD 或 --pwd-md5）');
     await _finish(logDir, args);
     exitCode = 2;
@@ -295,6 +374,22 @@ Future<void> main(List<String> argv) async {
         stdout.writeln('      sig_key  ${sig.sigKey?.length ?? 0} 字节');
         stdout.writeln('      ticket   ${sig.ticketKey?.length ?? 0} 字节');
         stdout.writeln('      srm      ${sig.srmToken?.length ?? 0} 字节');
+
+        final savePath = args['save-token'];
+        if (savePath != null && savePath.isNotEmpty) {
+          _TokenFile(
+            uin: uin,
+            savedAt: DateTime.now().toIso8601String(),
+            tgt: sig.tgt ?? Uint8List(0),
+            d2: sig.d2 ?? Uint8List(0),
+            d2key: sig.d2key ?? Uint8List(0),
+            sigKey: sig.sigKey ?? Uint8List(0),
+            ticketKey: sig.ticketKey ?? Uint8List(0),
+            srmToken: sig.srmToken ?? Uint8List(0),
+          ).save(File(savePath));
+          stdout.writeln('  票据已保存: $savePath');
+          stdout.writeln('  （明文会话凭据：别进 git，用完即删）');
+        }
       } on Object catch (e) {
         stdout.writeln('    ✗ 0x119 解析失败: $e');
       }
@@ -318,6 +413,7 @@ void _printPacketReport({
   required Uint8List oicqPacket,
   required Uint8List loginPacket,
   required Qq8ClientProfile profile,
+  required List<int> order,
   required Uint8List shareKey,
 }) {
   stdout.writeln('--- 登录 body ---');
@@ -338,8 +434,8 @@ void _printPacketReport({
       '${len.toString().padLeft(5)} 字节$skip',
     );
   }
-  stdout.writeln('  （顺序表 ${profile.apk.loginTlvOrder.length} 项，'
-      '被 guard 滤掉 ${profile.apk.loginTlvOrder.length - count} 项）');
+  stdout.writeln('  （顺序表 ${order.length} 项，'
+      '被 guard 滤掉 ${order.length - count} 项）');
 
   stdout.writeln('');
   stdout.writeln('--- 三层信封尺寸 ---');
@@ -421,7 +517,10 @@ Qq8ClientProfile _pickProfile(String name) {
   return p;
 }
 
-Qq8Device _buildDevice({required bool deterministic}) {
+Qq8Device _buildDevice({
+  required bool deterministic,
+  Uint8List? tgtgtOverride,
+}) {
   final mac = deterministic ? '00:50:56:C0:00:08' : _randomMac();
   return Qq8Device(
     product: 'piano',
@@ -452,7 +551,10 @@ Qq8Device _buildDevice({required bool deterministic}) {
       sdk: 36,
     ),
     imsi: deterministic ? _fill(16, 0x22) : _randomBytes(16),
-    tgtgt: deterministic ? _hex('ffeeddccbbaa99887766554433221100') : _randomBytes(16),
+    tgtgt: tgtgtOverride ??
+        (deterministic
+            ? _hex('ffeeddccbbaa99887766554433221100')
+            : _randomBytes(16)),
     guid: deterministic ? _hex('00112233445566778899aabbccddeeff') : _randomBytes(16),
   );
 }
@@ -503,6 +605,80 @@ String _randomUuid() {
   return '${h.substring(0, 8)}-${h.substring(8, 12)}-'
       '${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
 }
+
+/// 票据文件（明文 JSON、hex 编码）——**只在显式给出路径时读写**。
+///
+/// 里面是会话凭据（tgt / d2 / d2key / …），不是口令；即便如此也别进 git。
+/// 字段名与 [Qq8SigBundle] 对应，`uin` 用于校验是同一个号。
+class _TokenFile {
+  final int uin;
+  final String savedAt;
+  final Uint8List tgt;
+  final Uint8List d2;
+  final Uint8List d2key;
+  final Uint8List sigKey;
+  final Uint8List ticketKey;
+  final Uint8List srmToken;
+
+  const _TokenFile({
+    required this.uin,
+    required this.savedAt,
+    required this.tgt,
+    required this.d2,
+    required this.d2key,
+    required this.sigKey,
+    required this.ticketKey,
+    required this.srmToken,
+  });
+
+  static _TokenFile load(File f) {
+    if (!f.existsSync()) {
+      throw FormatException('文件不存在: ${f.path}');
+    }
+    final Object? raw = jsonDecode(f.readAsStringSync());
+    if (raw is! Map<String, dynamic>) {
+      throw const FormatException('不是 JSON 对象');
+    }
+    final uin = raw['uin'];
+    if (uin is! int) {
+      throw const FormatException('缺少 uin');
+    }
+    Uint8List hexField(String key) {
+      final v = raw[key];
+      if (v is! String || v.isEmpty) return Uint8List(0);
+      return _hex(v);
+    }
+
+    return _TokenFile(
+      uin: uin,
+      savedAt: '${raw['saved_at'] ?? '?'}',
+      tgt: hexField('tgt'),
+      d2: hexField('d2'),
+      d2key: hexField('d2key'),
+      sigKey: hexField('sig_key'),
+      ticketKey: hexField('ticket_key'),
+      srmToken: hexField('srm_token'),
+    );
+  }
+
+  void save(File f) {
+    const encoder = JsonEncoder.withIndent('  ');
+    f.writeAsStringSync(encoder.convert(<String, Object?>{
+      'uin': uin,
+      'saved_at': savedAt,
+      'tgt': _plainHex(tgt),
+      'd2': _plainHex(d2),
+      'd2key': _plainHex(d2key),
+      'sig_key': _plainHex(sigKey),
+      'ticket_key': _plainHex(ticketKey),
+      'srm_token': _plainHex(srmToken),
+    }));
+  }
+}
+
+/// 无分隔符的小写 hex（票据文件用）。
+String _plainHex(List<int> b) =>
+    b.map((v) => (v & 0xff).toRadixString(16).padLeft(2, '0')).join();
 
 Future<void> _finish(Directory logDir, Map<String, String> args) async {
   await Log.flush();
