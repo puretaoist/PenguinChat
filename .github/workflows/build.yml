@@ -1,12 +1,13 @@
 name: build
 
 # 触发条件：
-#  - 手动触发（Actions 页面 Run workflow，可选 build_mode）
-#  - push 到 main / master → 构建 debug
+#  - push 到 main / master → 构建 **release**（安装体积小，适合装机使用）
+#  - 手动触发（Actions 页面 Run workflow，可选 build_mode）→ debug / release
 #
-# 说明（2026-09-11 决定）：**不自动发布 GitHub Release**，产物只走 Actions
-# artifact（tag 触发与 Release 附件步骤均已移除）。需要分发的 release APK
-# 用手动触发选 release 构建后自行取用。
+# 说明（2026-09-11 决定）：**不发布 GitHub Release** —— 产物只走 Actions
+# artifact 下载（本文件没有任何 release 步骤，`permissions` 也只给只读）。
+# 装机请下载 release 产物：debug 包安装后约 145MB（debug 引擎 + JIT 内核），
+# release 包约 17.8MB（见下方打包步骤的实测注释）。
 on:
   workflow_dispatch:
     inputs:
@@ -148,22 +149,24 @@ jobs:
       # ---------- 打包 ----------
       # 只出 arm64-v8a（`--target-platform android-arm64`）。
       # 实测（GitHub artifact 体积）：3-ABI debug 68.8MB → arm64-only 44.7MB。
-      # 降幅不到 2/3 是因为 debug 包本身就大（debug 引擎 + JIT，不随 ABI 数缩小）；
-      # 被去掉的 armeabi-v7a / x86_64 只有老 32 位机和模拟器用得上，本项目不发。
+      # 降幅不到 2/3 是因为 debug 包本身就大（debug 引擎 + JIT 内核，
+      # 实测包内展开 127.7MB、装机 ~145MB）；被去掉的 armeabi-v7a / x86_64
+      # 只有老 32 位机和模拟器用得上，本项目不发。
+      # debug 仅手动触发时可选（排查用），push 默认出 release。
       - name: Build APK (debug, arm64-v8a)
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode == 'debug' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'debug' }}
         run: flutter build apk --debug --target-platform android-arm64
 
       # release 同样只出 arm64：既然只要一个 ABI，就用不上 --split-per-abi
       # （那是给多 ABI 拆包用的），单平台直接出一个 app-release.apk。
-      # 触发场景：仅手动触发选 release（实测 17.8MB；签名与 debug 包统一，
-      # 见 android/app/build.gradle.kts 的 signingConfigs.unified）。
+      # 实测 17.8MB；签名与 debug 统一（android/app/build.gradle.kts 的
+      # signingConfigs.unified），可覆盖安装。
       - name: Build APK (release, arm64-v8a)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'release' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode == 'release' }}
         run: flutter build apk --release --target-platform android-arm64
 
       # ---------- 产物上传 ----------
-      # 只传 artifact，不发布 Release —— 见文件头"说明"。
+      # 只传 artifact，不发布 GitHub Release（本轮起 push 默认即 release 包）。
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
