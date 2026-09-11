@@ -160,7 +160,7 @@ Future<void> main(List<String> argv) async {
   final oicqPacket = Qq8Sso.buildOicqPacket(ssoCtx, body);
   final loginPacket = Qq8Sso.buildLoginPacket(
     ssoCtx,
-    'wtlogin.login',
+    qq8LoginCmd,
     oicqPacket,
     Qq8LoginType.login,
   );

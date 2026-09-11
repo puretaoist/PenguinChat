@@ -46,11 +46,11 @@
 ///
 /// | 子命令 | 含义 | TLV 数（官方） |
 /// |---|---|---|
-/// | 9 | 密码登录 | 24 |
+/// | 9 | 密码登录（`wtlogin.login`） | 24 |
 /// | 2 | 滑动验证码 | 4 |
 /// | 7 | 提交短信验证码 | 7 |
 /// | 8 | 请求下发短信 | 6 |
-/// | 11 | token 登录 | 16 |
+/// | 11 | token 登录 / 票据续期（`wtlogin.exchange_emp`） | 16（清单 [qq8ExchangeEmpTlvOrder]） |
 /// | 20 | 设备锁 | 4 |
 ///
 /// 本文件是纯 Dart。
@@ -147,6 +147,13 @@ class Qq8LoginConditions {
   /// （那是与官方不一致的偏差，2026-09-11 修正）。
   final String? qimei;
 
+  /// d2 票据（登录成功时 0x119 块里的 `0x143`）。
+  ///
+  /// 只有 token 登录（子命令 11）会用它：`0x143` 的 body 就是 d2 本体。
+  /// 没有 d2 时发这条请求没有意义，故 guard 用"有没有 d2"
+  /// （清单见 [qq8ExchangeEmpTlvOrder]）。
+  final Uint8List? d2;
+
   const Qq8LoginConditions({
     this.accountIsUin = true,
     this.flags = 0,
@@ -159,6 +166,7 @@ class Qq8LoginConditions {
     this.t16a,
     this.hasSig = false,
     this.qimei,
+    this.d2,
   });
 
   /// 密码首登的默认条件：一律取"取不到"的分支，等价于官方首次登录的情形。
@@ -206,6 +214,8 @@ class Qq8LoginConditions {
         return _nonEmptyStr(qimei); // 取不到 QIMEI → 官方整条不发（j.java case 1349）
       case 0x548:
         return _nonEmpty(an);
+      case 0x143:
+        return _nonEmpty(d2); // token 登录专有：没有 d2 发出去只会被拒
       default:
         return true;
     }
@@ -248,6 +258,22 @@ abstract final class Qq8LoginBody {
     Qq8LoginConditions cond = Qq8LoginConditions.firstPasswordLogin,
   }) =>
       tags.where(cond.applies).toList();
+
+  /// token 登录（子命令 11，命令字 `wtlogin.exchange_emp`）的便捷入口。
+  ///
+  /// [d2] 来自上次登录成功时响应 `0x119` 票据块里的 `0x143`（见
+  /// [Qq8SigBundle.d2]）；tgt 由 `ctx.tgt` 提供。这条路径**不需要密码**，
+  /// 是"票据续期"的低风险登录形态。
+  static Uint8List buildToken(Qq8TlvContext ctx, {required Uint8List d2}) =>
+      build(
+        ctx,
+        Qq8SubCmd.token,
+        qq8ExchangeEmpTlvOrder,
+        cond: Qq8LoginConditions(d2: d2),
+        args: <int, List<Object?>>{
+          0x143: <Object?>[d2],
+        },
+      );
 }
 
 /// 读一段 TLV 序列，返回 `tag → body`。

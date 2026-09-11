@@ -54,6 +54,19 @@ const int qq8CmdWtLogin = 0x810;
 /// SSO 包头里的协议版本。
 const int qq8ProtocolVersion = 8001;
 
+/// 登录层信封的命令字（[Qq8Sso.buildLoginPacket] 的 `cmd` 参数）。
+///
+/// 出处（8.9.50 反编译）：密码登录 `request/j.java:14`、
+/// 票据续期/设备锁 `request/l.java:9`、扫码取票 `request/d0.java:12`。
+/// 三个字符串都在 `oicq_request` 子类的 `f154l` 字段里，与类一一对应。
+const String qq8LoginCmd = 'wtlogin.login';
+
+/// 票据续期（token 登录，子命令 11）的命令字。
+const String qq8ExchangeEmpCmd = 'wtlogin.exchange_emp';
+
+/// 扫码取票的命令字（尚未实现对应流程）。
+const String qq8TransEmpCmd = 'wtlogin.trans_emp';
+
 /// 登录信封的传输类型。
 abstract final class Qq8LoginType {
   /// 心跳。

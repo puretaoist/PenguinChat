@@ -352,6 +352,50 @@ Future<void> main() async {
     );
   }
 
+  // -- 2c. token 登录（子命令 11，wtlogin.exchange_emp）-------------------
+  stdout.writeln('\n【2c】token 登录（票据续期）body');
+  {
+    final d2 = _hex('d2d2d2d2');
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final body = Qq8LoginBody.buildToken(ctx, d2: d2);
+    final tlvs = qq8ReadTlv(body, offset: 4);
+
+    check(
+      'token：前 2 字节是子命令 11',
+      (body[0] << 8 | body[1]) == Qq8SubCmd.token,
+      '${(body[0] << 8 | body[1])}',
+    );
+    check(
+      'token：共 16 项、顺序与清单一致（官方记载同为 16）',
+      tlvs.length == 16 &&
+          tlvs.keys.join(',') == qq8ExchangeEmpTlvOrder.join(','),
+      '${tlvs.length} 项',
+    );
+    check(
+      'token：0x143 = d2 本体',
+      tlvs[0x143] != null && tlvs[0x143]!.join(',') == d2.join(','),
+      'len=${tlvs[0x143]?.length}',
+    );
+    check(
+      'token：0x10a = tgt（来自 ctx.tgt）',
+      tlvs[0x10A] != null && tlvs[0x10A]!.join(',') == ctx.tgt.join(','),
+      'len=${tlvs[0x10A]?.length}',
+    );
+    check(
+      'token：没有 d2 时 0x143 被 guard 滤掉（整条不发）',
+      !Qq8LoginConditions.firstPasswordLogin.applies(0x143),
+    );
+    check(
+      'token：有 d2 时才发',
+      Qq8LoginConditions(d2: d2).applies(0x143),
+    );
+    check(
+      'token：命令字常量与官方一致',
+      qq8ExchangeEmpCmd == 'wtlogin.exchange_emp',
+      qq8ExchangeEmpCmd,
+    );
+  }
+
   // -- 3. 响应解析（往返） ------------------------------------------------
   stdout.writeln('\n【3】响应解析（往返构造）');
   {
