@@ -170,14 +170,10 @@ qqclient/
 │       └── widgets/                    头像 / 消息气泡
 │
 ├── assets/backends/         后端适配表（napcat / lagrange / llonebot）
-├── analysis/                ★ 协议分析产物：参数出处 / 对照结论 / 可重跑脚本
-│   ├── README.md                索引 + 如何重建反编译产物 + 已确认的坑
-│   ├── QQ-8.2.11-参数提取报告.md
-│   ├── QQ-官方三版本登录流程对照.md
-│   ├── scripts/                 全部提取与核对脚本
-│   ├── lib/                     ⛔ 腾讯原生库：本地留存，不入公共仓库
-│   ├── _decompiled/             ⛔ 反编译产物（645MB，可按 README 重建）
-│   └── _device-dump/            ⛔ 真机取证（**含账号信息，绝不入库**）
+│
+│   （协议分析产物在**同级目录** `../analysis/`，不在本仓库里——它是
+│    研究素材，和 APK、参考实现放在一起。协议代码里引用的"某文件某行"
+│    都在那边。入口见 ../analysis/README.md）
 ├── tool/                    全部离线自检（纯 Dart）
 ├── test/                    flutter test（含 UI widget 测试）
 ├── android/                 Android 工程
@@ -317,7 +313,7 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 | [`docs/STATUS.md`](docs/STATUS.md) | 逐模块实现状态与测试规模 |
 | [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) | 当前任务（UI 接线）的完整规格 |
 | [`docs/PITFALLS.md`](docs/PITFALLS.md) | 已踩过的坑与规避方式 |
-| [`analysis/README.md`](analysis/README.md) | **协议参数的出处**：反编译对照、提取脚本、如何重建产物 |
+| [`../analysis/README.md`](../analysis/README.md) | **协议参数的出处**：反编译对照、提取脚本、如何重建产物（在仓库外，同级目录） |
 | [`STRUCTURE.md`](STRUCTURE.md) | 分层架构与依赖规则 |
 | [`README.md`](README.md) | 项目总览、快速开始、运行模式 |
 | [`SAFETY.md`](SAFETY.md) | 账号风险分析、三层防护设计 |
