@@ -439,12 +439,24 @@ class OneBotClient {
       _setState(OneBotState.connected);
       // 建连成功先起一个保守的看门狗，收到 heartbeat 后用真实 interval 重设。
       _armHeartbeat(config.heartbeatTimeout);
-      _log('info', '已连接 $uri');
+      _log('info', '已连接 ${_redacted(uri)}');
     } on Object catch (e, st) {
       _emit(OneBotTransportError(e, st));
-      _log('error', '建连失败 $uri', e);
+      _log('error', '建连失败 ${_redacted(uri)}', e);
       _scheduleRetry(reason: 'connect-failed');
     }
+  }
+
+  /// 供日志使用的脱敏 URI。
+  ///
+  /// `resolveUri` 会把 access_token 拼进查询串，直接插值等于把凭据写进日志
+  /// （AGENTS.md §1.5）。令牌只以查询参数的形态出现，替换其值即可。
+  static String _redacted(Uri uri) {
+    final params = uri.queryParameters;
+    if (!params.containsKey('access_token')) return '$uri';
+    return '${uri.replace(
+      queryParameters: {...params, 'access_token': '***'},
+    )}';
   }
 
   /// 主动关闭。之后不再自动重连。
