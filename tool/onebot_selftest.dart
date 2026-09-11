@@ -67,6 +67,31 @@ Future<T?> waitFor<T extends OneBotEvent>(
 
 Future<void> sleep(int ms) => Future<void>.delayed(Duration(milliseconds: ms));
 
+/// 轮询等待某个条件成立。
+///
+/// ## 为什么必须用它，不能连用两次 `waitFor`
+///
+/// [waitFor] 的实现是 `stream.where(...).first`——**先订阅、再等下一个匹配事件**。
+/// 如果两条事件在两次订阅之间都到达了，第二条就被永久漏掉。
+///
+/// 这类竞态在本机大概率不复现，在 CI 上却是必然的 flake：
+/// 本地实测 15 次挂 1 次，而 CI 上第一次就撞上了。
+///
+/// 正确做法是**先订阅收集，再等条件**——条件是对已收到的集合求值，
+/// 与到达时机无关。
+Future<bool> waitUntil(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 2),
+  int stepMs = 5,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    if (condition()) return true;
+    await sleep(stepMs);
+  }
+  return condition();
+}
+
 // ---------------------------------------------------------------------------
 // mock OneBot 服务
 // ---------------------------------------------------------------------------
@@ -359,21 +384,25 @@ Future<void> testPendingRejectedOnDisconnect() async {
     server.onRequest = (ws, req) => false; // 永不回包，制造挂起
 
     final pending = client.call('never');
+    // ⚠️ 必须在挂起之后**立刻**挂上错误监听。
+    // 如果它先以错误完成而我们还没 await，Dart 会把「未处理的异步错误」
+    // 抛到根 zone，直接把进程打挂（表现为自带测莫名退出）。
+    final guarded =
+        pending.then<Object?>((v) => v).catchError((Object e) => e);
+
     final req = await server.waitForRequest(1);
     check('请求已挂起', req != null && client.pendingCalls == 1);
 
-    Object? caught;
-    try {
-      await pending;
-    } on OneBotApiException catch (e) {
-      caught = e;
-    }
-    // 主动断开连接，挂起请求应被拒绝而不是永久挂起
+    // 主动断开连接，挂起请求应被**立刻**拒绝，而不是等 10 秒超时
+    final sw = Stopwatch()..start();
     await server.dropAll();
-    await sleep(200);
-    check('挂起请求被拒绝（未永久挂起）',
-        caught is OneBotApiException || client.pendingCalls == 0,
-        'pending=${client.pendingCalls} caught=$caught');
+    final caught = await guarded;
+    sw.stop();
+
+    check('挂起请求被拒绝（未永久挂起）', caught is OneBotApiException,
+        'caught=$caught pending=${client.pendingCalls}');
+    check('拒绝是断线触发的，没有干等超时', sw.elapsedMilliseconds < 3000,
+        '${sw.elapsedMilliseconds}ms');
   }, configOf: (a) => OneBotConfig(
         address: a,
         callTimeout: const Duration(seconds: 10),
@@ -442,46 +471,62 @@ Future<void> testEventDispatch() async {
 Future<void> testMessageEventParsing() async {
   section('13-14. 消息事件字段解析');
   await withClient((server, client) async {
-    server.push({
-      'post_type': 'message',
-      'message_type': 'group',
-      'group_id': 555,
-      'user_id': 666,
-      'message_id': 777,
-      'time': 1700000000,
-      'raw_message': '[CQ:image,file=a.jpg]',
-      'sender': {'nickname': '小红'},
-      'message': [
-        {'type': 'text', 'data': {'text': 'hi'}},
-        {'type': 'image', 'data': {'file': 'a.jpg'}},
-      ],
-    });
-    server.push({
-      'post_type': 'message_sent',
-      'message_type': 'private',
-      'user_id': 888,
-      'message_id': 999,
-      'time': 1700000001,
-      'message': [
-        {'type': 'text', 'data': {'text': '我发的'}},
-      ],
-    });
+    // 先订阅收集，再推事件。**不能**用两次 waitFor：
+    // 两条事件背靠背到达时，第二次订阅会错过已经过去的那个。
+    final got = <OneBotMessageEvent>[];
+    final sub = client.events
+        .where((e) => e is OneBotMessageEvent)
+        .cast<OneBotMessageEvent>()
+        .listen(got.add);
+    try {
+      server.push({
+        'post_type': 'message',
+        'message_type': 'group',
+        'group_id': 555,
+        'user_id': 666,
+        'message_id': 777,
+        'time': 1700000000,
+        'raw_message': '[CQ:image,file=a.jpg]',
+        'sender': {'nickname': '小红'},
+        'message': [
+          {'type': 'text', 'data': {'text': 'hi'}},
+          {'type': 'image', 'data': {'file': 'a.jpg'}},
+        ],
+      });
+      server.push({
+        'post_type': 'message_sent',
+        'message_type': 'private',
+        'user_id': 888,
+        'message_id': 999,
+        'time': 1700000001,
+        'message': [
+          {'type': 'text', 'data': {'text': '我发的'}},
+        ],
+      });
 
-    final group = await waitFor<OneBotMessageEvent>(
-        client.events.where((e) => e is OneBotMessageEvent && !e.isSelfSent),
-        const Duration(seconds: 2));
-    final self = await waitFor<OneBotMessageEvent>(
-        client.events.where((e) => e is OneBotMessageEvent && e.isSelfSent),
-        const Duration(seconds: 2));
+      await waitUntil(
+        () =>
+            got.any((e) => !e.isSelfSent) && got.any((e) => e.isSelfSent),
+        timeout: const Duration(seconds: 3),
+      );
 
-    check('群消息 groupId 正确', group?.groupId == 555);
-    check('群消息 userId 正确', group?.userId == 666);
-    check('群消息段数组长度正确', group?.segments.length == 2);
-    check('段类型解析正确', group?.segments[1]['type'] == 'image');
-    check('raw_message 可用作搜索摘要', group?.rawMessage.contains('a.jpg') == true);
-    check('sender 可提取昵称', group?.sender['nickname'] == '小红');
-    check('message_sent 被标记为自己发的', self?.isSelfSent == true);
-    check('message_sent 的 messageType 正确', self?.messageType == 'private');
+      final group = got.where((e) => !e.isSelfSent).firstOrNull;
+      final self = got.where((e) => e.isSelfSent).firstOrNull;
+
+      check('两类事件都收到', group != null && self != null,
+          '收到 ${got.length} 条');
+      check('群消息 groupId 正确', group?.groupId == 555);
+      check('群消息 userId 正确', group?.userId == 666);
+      check('群消息段数组长度正确', group?.segments.length == 2);
+      check('段类型解析正确', group?.segments[1]['type'] == 'image');
+      check('raw_message 可用作搜索摘要',
+          group?.rawMessage.contains('a.jpg') == true);
+      check('sender 可提取昵称', group?.sender['nickname'] == '小红');
+      check('message_sent 被标记为自己发的', self?.isSelfSent == true);
+      check('message_sent 的 messageType 正确', self?.messageType == 'private');
+    } finally {
+      await sub.cancel();
+    }
   });
 }
 
@@ -546,9 +591,13 @@ Future<void> testCloseCodePolicy() async {
   await withClient((server, client) async {
     final before = server.connectCount;
     client.forceReconnect('测试异常断线');
-    await sleep(600);
-    check('异常断线后自动重连', server.connectCount > before,
-        'connectCount=$before→${server.connectCount}');
+    // 等条件而不是等固定时长：CI 机器比本机慢，600ms 里重连未必来得及完成，
+    // 固定 sleep 会变成只在 CI 上挂的 flake。
+    final ok = await waitUntil(
+      () => server.connectCount > before,
+      timeout: const Duration(seconds: 5),
+    );
+    check('异常断线后自动重连', ok, 'connectCount=$before→${server.connectCount}');
   }, configOf: (a) => OneBotConfig(
         address: a,
         maxRetries: 3,
