@@ -233,6 +233,24 @@ const List<int> qq8ExchangeEmpTlvOrder = <int>[
   0x141, 0x08, 0x147, 0x177, 0x187, 0x188, 0x202, 0x511,
 ];
 
+/// `wtlogin.login` 子命令 2（滑动验证码提交）的 TLV 顺序表。
+///
+/// 官方记载该子命令发 **4 项**，与下表数目一致。取值与顺序出自参考实现
+/// oicq 的 `lib/wtlogin/login-password.js`（`sliderLogin`）：
+///
+/// ```js
+/// const body = new Writer().writeU16(2).writeU16(4)
+///     .writeBytes(t(0x193, ticket))   // ← 人工解出的票据
+///     .writeBytes(t(0x8))
+///     .writeBytes(t(0x104))           // ← 上一条响应里下发的新盐
+///     .writeBytes(t(0x116))
+///     .read();
+/// ```
+///
+/// ⚠️ `0x104`（盐）是**必需**的：没有它整条请求没有意义（oicq 在
+/// `!this.t104` 时直接拒绝发送）。[Qq8LoginBody.buildSlider] 会显式校验。
+const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
+
 /// TLV `0x545`（QIMEI）的取值方式。
 ///
 /// **这是 8.2.11 → 8.9.50 之间一个真实的协议可见变化**，不是实现细节：

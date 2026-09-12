@@ -485,12 +485,101 @@ class _Reader {
   int _p = 0;
   _Reader(this._b);
 
+  int get pos => _p;
+
   int u8() => _b[_p++];
   int u16() {
     final v = (_b[_p] << 8) | _b[_p + 1];
     _p += 2;
     return v;
   }
+
+  int u32() {
+    final v = (_b[_p] << 24) | (_b[_p + 1] << 16) | (_b[_p + 2] << 8) | _b[_p + 3];
+    _p += 4;
+    return v;
+  }
+
+  void skip(int n) => _p += n;
+}
+
+/// 相等断言（沿用 ok/bad 的计数口径）。
+void checkEq(String name, Object? actual, Object? expected) {
+  final okv = '$actual' == '$expected';
+  if (okv) {
+    ok(name);
+  } else {
+    bad(name, '期望 $expected，实际 $actual');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. UNI 包（业务包）——黄金向量来自 oicq `buildUniPkt`
+// ---------------------------------------------------------------------------
+
+/// 由 `../analysis/scripts/gen_uni_vector.cjs` 生成（可重跑）。
+///
+/// 固定输入：uin=10001、cmd=`StatSvc.register`、seq=2、session=`01020304`、
+/// d2key=`00112233445566778899aabbccddeeff`、body=`deadbeef`。
+const String _uniGoldenHex =
+    '0000004f0000000b0100000002000000000931303030314ce56dbc9860ec2ee82a493d'
+    'fae5c5713dd2916b5256c0d3dd926530dbdbb621e52124d4b9652482566e46d746ab'
+    '59224ba7f27112591bce';
+
+void testUniPacket() {
+  section('5. UNI 包（业务包，黄金向量来自 oicq buildUniPkt）');
+
+  final d2key = hex('00112233445566778899aabbccddeeff');
+  final pkt = Qq8Uni.build(
+    uin: 10001,
+    cmd: 'StatSvc.register',
+    body: hex('deadbeef'),
+    seq: 2,
+    session: hex('01020304'),
+    d2key: d2key,
+  );
+  final theirs = hex(_uniGoldenHex);
+
+  // 明文头（前 23 字节 = 18 头 + uin 5 字节）逐字节一致；
+  // TEA 区含任意填充，按本文件既有的口径比较**解密后的明文**。
+  checkEq('长度一致', pkt.length, theirs.length);
+  checkEq('明文头逐字节一致（前 23 字节）',
+      toHex(pkt.sublist(0, 23)), toHex(theirs.sublist(0, 23)));
+  checkEq(
+      'TEA 区解密后一致',
+      toHex(qqTeaDecrypt(pkt.sublist(23), d2key)),
+      toHex(qqTeaDecrypt(theirs.sublist(23), d2key)));
+
+  // ---- 结构自洽（不依赖黄金向量）----
+  final r = _Reader(pkt);
+  checkEq('首 4 字节声明总长 = 实体', r.u32(), pkt.length);
+  checkEq('服务类型标记 0x0B', r.u32(), 0x0B);
+  checkEq('常量 1', r.u8(), 1);
+  checkEq('seq', r.u32(), 2);
+  checkEq('常量 0', r.u8(), 0);
+  checkEq('uin 长度前缀 = 4 + 5', r.u32(), 9);
+  checkEq('uin ASCII', String.fromCharCodes(pkt.sublist(18, 23)), '10001');
+
+  // 内层 SSO 块：用 d2key 解密后逐字段核对（与收包侧 parseSSO 对偶）
+  final inner = qqTeaDecrypt(pkt.sublist(23), d2key);
+  final ir = _Reader(inner);
+  checkEq('SSO headlen = cmdLen + 20', ir.u32(), 36);
+  final cmdLen = ir.u32();
+  checkEq('cmd 长度前缀 = 4 + 16', cmdLen, 20);
+  final cmd = String.fromCharCodes(inner.sublist(8, 8 + cmdLen - 4));
+  checkEq('cmd 回读一致', cmd, 'StatSvc.register');
+  ir.skip(cmdLen - 4);
+  checkEq('session 长度前缀 = 8', ir.u32(), 8);
+  checkEq('session 内容', toHex(inner.sublist(ir.pos, ir.pos + 4)), '01020304');
+  ir.skip(4);
+  checkEq('固定字段 = 4', toHex(inner.sublist(ir.pos, ir.pos + 4)), '00000004');
+  ir.skip(4);
+  checkEq('body 长度前缀 = 4 + 4', ir.u32(), 8);
+  checkEq('body 回读', toHex(inner.sublist(ir.pos, ir.pos + 4)), 'deadbeef');
+
+  // 序号推进
+  checkEq('nextSeq(1) = 2', Qq8Uni.nextSeq(1), 2);
+  checkEq('nextSeq(0x7FFF) 回绕到 1', Qq8Uni.nextSeq(0x7FFF), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +594,7 @@ void main() {
   testOicqPacket();
   testLoginPacket();
   testStructure();
+  testUniPacket();
 
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');

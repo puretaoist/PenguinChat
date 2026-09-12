@@ -172,6 +172,19 @@ abstract class Qq8Transport {
   /// 等一个完整的响应 payload（帧头已在接收侧剥掉）。
   Future<Uint8List> send(Uint8List payload, {Duration? timeout});
 
+  /// 只发不等：响应统一从 [onFrame] 回调走。
+  ///
+  /// 会话层（`qq8_session.dart`）用这对 API——比 [send] 的一问一答多两种
+  /// 情况：**推送**（没有对应请求的帧）与**并发**（多个请求同时在等）。
+  /// 单发工具仍用 [send]。
+  Future<void> write(Uint8List packet);
+
+  /// 每个解出的帧回调一次（帧 = 去掉 4 字节分帧头后的 payload）。
+  ///
+  /// 设置后 [send] 的配对逻辑不再生效（两种消费方式互斥，避免同一个帧
+  /// 被投递两次）。
+  set onFrame(void Function(Uint8List frame)? cb);
+
   /// 关闭连接。
   Future<void> close();
 
@@ -195,6 +208,9 @@ class Qq8TcpTransport implements Qq8Transport {
 
   /// 待响应的 Completer（串行，最多一个）。
   Completer<Uint8List>? _pending;
+
+  /// 流式消费回调（设置后 [send] 的配对逻辑不再生效）。
+  void Function(Uint8List frame)? _onFrame;
 
   Qq8TcpTransport({
     this.host = qq8DefaultHost,
@@ -227,6 +243,11 @@ class Qq8TcpTransport implements Qq8Transport {
           return;
         }
         for (final f in frames) {
+          final cb = _onFrame;
+          if (cb != null) {
+            cb(f); // 流式消费：由上层按 seq 配对 / 走推送
+            continue;
+          }
           final p = _pending;
           if (p == null || p.isCompleted) {
             // 没有人在等响应。丢弃而不是报错 —— 服务端偶发推送属正常。
@@ -249,6 +270,21 @@ class Qq8TcpTransport implements Qq8Transport {
     final p = _pending;
     _pending = null;
     if (p != null && !p.isCompleted) p.completeError(error);
+  }
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
+
+  @override
+  Future<void> write(Uint8List packet) async {
+    if (_socket == null) await connect();
+    try {
+      // 与 send 同一约定：包自带 u32 长度头，原样写出。
+      _socket!.add(packet);
+      await _socket!.flush();
+    } on Object catch (e) {
+      throw Qq8TransportException('发送失败', e);
+    }
   }
 
   @override
@@ -314,6 +350,7 @@ class Qq8ScriptedTransport implements Qq8Transport {
 
   bool _connected = false;
   int _cursor = 0;
+  void Function(Uint8List frame)? _onFrame;
 
   Qq8ScriptedTransport(
     this.scriptedResponses, {
@@ -325,6 +362,25 @@ class Qq8ScriptedTransport implements Qq8Transport {
 
   @override
   Future<void> connect() async => _connected = true;
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
+
+  /// 手动投递一个帧（模拟服务端主动推送；测试用）。
+  void emit(Uint8List frame) => _onFrame?.call(frame);
+
+  @override
+  Future<void> write(Uint8List packet) async {
+    if (!_connected) await connect();
+    sent.add(packet);
+    final cb = _onFrame;
+    if (cb == null) return; // 无监听者：留在 sent 里由测试断言
+    if (_cursor >= scriptedResponses.length) {
+      throw Qq8TransportException('脚本已用尽（第 ${_cursor + 1} 个请求无响应）');
+    }
+    // 与真实传输一致：回调收到的是"去掉分帧头后的 payload"。
+    cb(scriptedResponses[_cursor++]);
+  }
 
   @override
   Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async {

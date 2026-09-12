@@ -264,6 +264,89 @@ abstract final class Qq8Sso {
   }
 }
 
+/// 业务包（UNI 包）——**登录成功之后所有请求的载体**。
+///
+/// 逐行移植自参考实现 oicq `lib/core/base-client.ts` 的 `buildUniPkt`；
+/// 黄金向量由 `../analysis/scripts/gen_uni_vector.cjs` 生成（同一份参考
+/// 源码转写 + js 时代 tea），见 `tool/qq8_sso_selftest.dart` 第 5 节。
+///
+/// ## 证据等级（为什么不是"官方反编译逐行对照"）
+///
+/// 官方客户端的包编码**不在 Java 层**：`com.tencent.qphone.base.util.CodecWarpper`
+/// 的 `encodeRequest(...)` 等方法全是 `native` 声明，实现落在
+/// `libcodecwrapperV2.so`（8.9.50：218KB，`.text` 118KB，导出 22 个 JNI 函数
+/// 含 `encodeRequest`——体检脚本 `../analysis/scripts/inspect_codecwrapper.py`）。
+/// 且官方在该端口上走的是 MSF 形态（native 编码），与 raw-TCP 的这层报文
+/// 不直接对应——所以**没有可逐行对照的官方 Java 实现**。
+/// 本层结构以 oicq 参考实现为准，最终裁判是**服务端实测**：
+/// 登录信封/三层响应已被真机 dump 逐字段确认；UNI 包的确认点是"注册"请求。
+///
+/// ```text
+/// [u32 total（含自身）]
+/// [u32 0x0B]                 ← 服务类型标记
+/// [u8  1]
+/// [i32 seq]                  ← 1..0x7FFF 循环，见 [Qq8Uni.nextSeq]
+/// [u8  0]
+/// [u32 uinLen（含自身 4 字节）]
+/// [uin ASCII]
+/// [TEA(sso, d2key)]          ← 内层 SSO 块
+/// ```
+///
+/// 内层 SSO 块（TEA 解密后；布局与收包侧的 `parseSSO` 对偶）：
+/// ```text
+/// [u32 头长-4][u32 cmdLen+4][cmd][u32 8][session(4)][u32 4][u32 bodyLen+4][body]
+/// ```
+///
+/// 返回的字节自带长度头，可直接交给传输层 `send`（原样写出）。
+abstract final class Qq8Uni {
+  /// 组装一个 UNI 包。
+  static Uint8List build({
+    required int uin,
+    required String cmd,
+    required Uint8List body,
+    required int seq,
+    required Uint8List session,
+    required Uint8List d2key,
+  }) {
+    if (session.length != 4) {
+      throw ArgumentError.value(session.length, 'session', 'UNI 包的 session 必须是 4 字节');
+    }
+    final cmdBytes = utf8.encode(cmd);
+    // 头部（第一个 u32 之后的部分）：cmdLen + 20 —— 与收包侧 parseSSO 的
+    // `headlen`（= 头总长 - 4）同义。
+    final headLen = cmdBytes.length + 20;
+    final inner = (ByteWriter()
+          ..u32(headLen)
+          ..u32(cmdBytes.length + 4)
+          ..raw(cmdBytes)
+          ..u32(8) // session 字段长度（含自身 4 字节）
+          ..raw(session)
+          ..u32(4) // 固定值
+          ..u32(body.length + 4)
+          ..raw(body))
+        .build();
+    final encrypted = qqTeaEncrypt(inner, d2key);
+    final uinBytes = utf8.encode('$uin');
+    return (ByteWriter()
+          ..u32(encrypted.length + uinBytes.length + 18)
+          ..u32(0x0B)
+          ..u8(1)
+          ..u32(seq)
+          ..u8(0)
+          ..u32(uinBytes.length + 4)
+          ..raw(Uint8List.fromList(uinBytes))
+          ..raw(encrypted))
+        .build();
+  }
+
+  /// 请求序号推进：`1..0x7FFF` 循环（对应 oicq 的 `FN_NEXT_SEQ`：
+  /// `if (++seq >= 0x8000) seq = 1`）。
+  static int nextSeq(int current) {
+    final next = current + 1;
+    return next >= 0x8000 ? 1 : next;
+  }
+}
+
 /// 长度前缀字节串，其中**长度字段包含它自己那 4 字节**。
 ///
 /// 对应参考实现的 `Writer.writeWithLength`：

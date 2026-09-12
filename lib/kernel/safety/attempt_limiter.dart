@@ -122,6 +122,13 @@ class LoginAttemptLimiter {
   int _consecutiveFailures = 0;
   DateTime? _hardLockUntil;
 
+  /// 最后一次失败的时刻——冷却的计时基准。
+  ///
+  /// 单独存一份而不是从 [_records] 反推：`beginAttempt` 记的占位记录
+  /// （成功前也是 `success: false`）会把"最后一条记录"顶到当下，
+  /// 拿它计时就会把尝试自己挡在冷却里。
+  DateTime? _lastFailureAt;
+
   LoginAttemptLimiter({
     this.window = const Duration(minutes: 10),
     this.maxInWindow = 3,
@@ -147,10 +154,19 @@ class LoginAttemptLimiter {
       _consecutiveFailures = raw['fails'] as int? ?? 0;
       final lock = raw['lockUntil'] as String?;
       _hardLockUntil = lock == null ? null : DateTime.tryParse(lock);
+      final lastFail = raw['lastFailureAt'] as String?;
+      _lastFailureAt = lastFail == null ? null : DateTime.tryParse(lastFail);
+      // 老格式没有 lastFailureAt：从记录里回推最后一条失败的尝试
+      // （占位记录与失败记录在旧格式里不可区分，取最后一条即可——
+      //  旧格式下它要么是失败、要么是刚记下的那次，误差只在几十秒内）。
+      if (_lastFailureAt == null && _consecutiveFailures > 0 && _records.isNotEmpty) {
+        _lastFailureAt = _records.last.at;
+      }
     } on FormatException {
       // 记录损坏就当没有，不阻塞启动
       _records = [];
       _consecutiveFailures = 0;
+      _lastFailureAt = null;
     }
   }
 
@@ -163,6 +179,7 @@ class LoginAttemptLimiter {
         'records': _records.map((e) => e.toJson()).toList(),
         'fails': _consecutiveFailures,
         'lockUntil': _hardLockUntil?.toIso8601String(),
+        'lastFailureAt': _lastFailureAt?.toIso8601String(),
       }),
       flush: true,
     );
@@ -197,11 +214,15 @@ class LoginAttemptLimiter {
       );
     }
 
-    // 3. 递增冷却
+    // 3. 递增冷却——**从最后一次失败起算**。
+    //
+    // ⚠️ 不能拿"最后一条记录"当基准：beginAttempt 会先记一条占位记录，
+    // 拿它当基准会把这次尝试自己挡在冷却里（2026-09-11 踩过：失败 79 分钟
+    // 后的重试仍被要求"再等 29 秒"）。
     final cd = currentCooldown;
-    if (cd > Duration.zero && _records.isNotEmpty) {
-      final last = _records.last.at;
-      final until = last.add(cd);
+    final base = _lastFailureAt;
+    if (cd > Duration.zero && base != null) {
+      final until = base.add(cd);
       if (t.isBefore(until)) {
         return AttemptStatus(
           allowed: false,
@@ -242,18 +263,22 @@ class LoginAttemptLimiter {
   ///
   /// ⚠️ 必须先调用此方法再发请求。若先发请求再记录，用户在冷却期
   /// 内的点击会漏记，限制就失效了。
+  ///
+  /// 返回的是**预检结果**：记录了这条占位记录之后才放行，所以不能拿
+  /// 记录后的状态再判一次（那会把这次尝试自己挡下来）。
   Future<AttemptStatus> beginAttempt({DateTime? now}) async {
     final st = status(now);
     if (!st.allowed) return st;
     _records.add(AttemptRecord(at: now ?? DateTime.now(), success: false));
     await _save();
-    return status(now);
+    return st;
   }
 
   /// 记录失败（带服务端返回码，便于事后分析）。
   Future<void> recordFailure({String? reasonCode, DateTime? now}) async {
     _consecutiveFailures++;
     final t = now ?? DateTime.now();
+    _lastFailureAt = t;
     if (_records.isEmpty) {
       _records.add(AttemptRecord(at: t, success: false, reasonCode: reasonCode));
     } else {
@@ -272,11 +297,19 @@ class LoginAttemptLimiter {
   }
 
   /// 记录成功（清零连续失败计数）。
+  ///
+  /// 与 [recordFailure] 对称：**改标记而不是再记一条**，否则一次尝试会在
+  /// 窗口里占两条（成功那次腾出的一条名额被凭空吃掉）。
   Future<void> recordSuccess({DateTime? now}) async {
     _consecutiveFailures = 0;
     _hardLockUntil = null;
-    _records.add(
-        AttemptRecord(at: now ?? DateTime.now(), success: true));
+    _lastFailureAt = null;
+    if (_records.isEmpty) {
+      _records.add(AttemptRecord(at: now ?? DateTime.now(), success: true));
+    } else {
+      final last = _records.removeLast();
+      _records.add(AttemptRecord(at: last.at, success: true));
+    }
     await _save();
   }
 
@@ -287,6 +320,7 @@ class LoginAttemptLimiter {
     _records = [];
     _consecutiveFailures = 0;
     _hardLockUntil = null;
+    _lastFailureAt = null;
     await _save();
   }
 

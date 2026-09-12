@@ -208,6 +208,44 @@ Future<void> main() async {
     }
 
     // ---------------------------------------------------------------
+    print('\n[限制器] 冷却从"失败时刻"起算（不拿占位记录当基准）');
+    {
+      final t0 = DateTime(2026, 1, 1, 12, 0, 0);
+      final limiter = LoginAttemptLimiter(
+        window: const Duration(minutes: 10),
+        maxInWindow: 3,
+        baseCooldown: const Duration(seconds: 30),
+      );
+      await limiter.beginAttempt(now: t0);
+      await limiter.recordFailure(now: t0);
+
+      // 冷却期内：预检就该拒绝，且不该留下新记录
+      final during = await limiter.beginAttempt(
+          now: t0.add(const Duration(seconds: 10)));
+      check('冷却期内 beginAttempt 拒绝', !during.allowed, during.describe());
+
+      // 冷却过去之后必须放行 —— 这里曾被"刚记下的占位记录"挡了 29 秒
+      final after = await limiter.beginAttempt(
+          now: t0.add(const Duration(seconds: 31)));
+      check('冷却过后放行（不被自己的占位记录挡住）', after.allowed,
+          after.describe());
+    }
+
+    // ---------------------------------------------------------------
+    print('\n[限制器] 一次尝试只占一条记录（成功不再追加）');
+    {
+      final limiter = LoginAttemptLimiter(
+        window: const Duration(minutes: 10),
+        maxInWindow: 2,
+        baseCooldown: Duration.zero,
+      );
+      await limiter.beginAttempt();
+      await limiter.recordSuccess();
+      check('成功后窗口内仍只有 1 条', limiter.status().usedInWindow == 1,
+          '${limiter.status().usedInWindow}');
+    }
+
+    // ---------------------------------------------------------------
     print('\n[闸门] 默认离线');
     {
       final gate = SafetyGate(persistFile: File('${tmp.path}/gate.json'));

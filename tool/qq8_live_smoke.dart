@@ -42,6 +42,18 @@
 /// 续期时 `tgtgt = MD5(d2key)`——与 oicq `login-password.js` 的 token
 /// 路径一致（没有密码就没法刷新 cookie，这是官方语义）。
 ///
+/// ## 被要求人机验证时（滑动验证码）
+///
+/// 密码登录若被要求验证（响应 `type=2`，`0x192` 是验证地址），工具会把
+/// 响应下发的**盐（0x104）**存进 `qq8-slider-state.json` 并打印验证地址。
+/// **由人**把滑块解掉（解自己账号的验证属正常流程；这里不做任何自动化或
+/// 绕过），拿到 ticket 后提交继续（子命令 2，清单 `qq8SliderTlvOrder`）：
+///
+/// ```bash
+/// dart run tool/qq8_live_smoke.dart --send --slider-ticket=<ticket>
+/// # 盐默认读 qq8-slider-state.json；也可 --slider-salt=<hex> 显式给
+/// ```
+///
 /// ## 实验开关（服务端静默丢弃时的排查矩阵）
 ///
 /// | 开关 | 效果 |
@@ -70,11 +82,13 @@ import 'dart:typed_data';
 import 'package:qqclient/infra/log/log_file.dart';
 import 'package:qqclient/infra/log/logger.dart';
 import 'package:qqclient/kernel/crypto/ecdh.dart';
+import 'package:qqclient/kernel/crypto/tea.dart';
 import 'package:qqclient/kernel/safety/attempt_limiter.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_recv.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_tlv.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
@@ -118,6 +132,11 @@ Future<void> main(List<String> argv) async {
   // 差别只在"组什么 body / 用哪个命令字 / 响应用什么 key 解"。
   final useToken = args.containsKey('token-login');
 
+  // 滑动验证提交模式（--slider-ticket）：密码登录被要求验证（type=2）后，
+  // **人工**解出 ticket，用响应里下发的盐（0x104）提交、继续登录。
+  final sliderTicket = args['slider-ticket'];
+  final useSlider = sliderTicket != null;
+
   // dry-run 不联网、固定随机源（可复现）；真发走按 uin 派生的设备。
   final deterministic = !args.containsKey('send');
 
@@ -134,9 +153,31 @@ Future<void> main(List<String> argv) async {
   } else {
     stdout.writeln('模式: **真实发送**');
   }
-  stdout.writeln('登录方式: ${useToken ? "token 续期（子命令 11）" : "密码登录（子命令 9）"}');
+  stdout.writeln(
+    '登录方式: ${useSlider ? "滑动验证提交（子命令 2）" : (useToken ? "token 续期（子命令 11）" : "密码登录（子命令 9）")}',
+  );
   stdout.writeln('日志目录: ${logDir.path}');
   stdout.writeln('');
+
+  // ---------- 离线回放：用 dump 出来的响应验证拆壳（不联网）----------
+  if (args.containsKey('unwrap-file')) {
+    final path = args['unwrap-file']!;
+    final lines = File(path).readAsLinesSync();
+    final hex = lines.skip(lines.first.trim().startsWith('total=') ? 1 : 0)
+        .join()
+        .replaceAll(' ', '')
+        .replaceAll(RegExp(r'[^0-9a-fA-F]'), '');
+    final frame = _hex(hex);
+    stdout.writeln('--- 离线回放拆壳: $path（${frame.length} 字节）---');
+    final sso = qq8UnwrapRecv(frame);
+    stdout.writeln('  外壳flag=${sso.flag} seq=${sso.seq} cmd=${sso.cmd}');
+    stdout.writeln('  负载 ${sso.payload.length} 字节；'
+        '负载[0..16)=${_hexOf(sso.payload.take(16).toList())}');
+    stdout.writeln('  负载-17 = ${sso.payload.length - 17}'
+        '${(sso.payload.length - 17) % 8 == 0 ? '（8 对齐 ✓，可交给内层 ECDH 解密）' : '（✗ 不对齐）'}');
+    await _finish(logDir, args);
+    return;
+  }
 
   // ---------- 档案 ----------
   final profileName = args['profile'] ?? 'default';
@@ -144,14 +185,18 @@ Future<void> main(List<String> argv) async {
 
   // 本次实际使用的 TLV 清单：token 路径用 exchange_emp 清单；
   // 密码路径默认官方超集，`--tlv-set=oicq` 时换成参考实现的 24 项清单。
-  final order = useToken
-      ? qq8ExchangeEmpTlvOrder
-      : (tlvSet == 'oicq' ? kOicqPasswordTlvOrder : profile.apk.loginTlvOrder);
+  final order = useSlider
+      ? qq8SliderTlvOrder
+      : (useToken
+          ? qq8ExchangeEmpTlvOrder
+          : (tlvSet == 'oicq'
+              ? kOicqPasswordTlvOrder
+              : profile.apk.loginTlvOrder));
 
   stdout.writeln('--- 客户端档案 ---');
   stdout.writeln('  ${profile.describe()}');
   stdout.writeln(
-    '  TLV 清单: ${useToken ? "exchange_emp（16 项）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项")}',
+    '  TLV 清单: ${useSlider ? "滑验证提交（4 项）" : (useToken ? "exchange_emp（16 项）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项"))}',
   );
   if (profile.unverified.isNotEmpty) {
     stdout.writeln('  ⚠ 未核实字段: ${profile.unverified.join(', ')}');
@@ -189,6 +234,31 @@ Future<void> main(List<String> argv) async {
     exit(2);
   }
 
+  // ---------- 滑动验证的盐 ----------
+  // 盐来自上一条 type=2 响应下发的 0x104（会自动存进 qq8-slider-state.json）。
+  Uint8List sliderSalt = Uint8List(0);
+  if (useSlider) {
+    final saltHex = args['slider-salt'] ??
+        _sliderSaltFromState(
+          File('${logDir.path}${Platform.pathSeparator}qq8-slider-state.json'),
+        );
+    if (saltHex == null || saltHex.isEmpty) {
+      stderr.writeln('✗ --slider-ticket 需要盐：用 --slider-salt=<hex>，'
+          '或先跑一次密码登录（拿到 type=2 时自动写入 qq8-slider-state.json）');
+      exit(2);
+    }
+    try {
+      sliderSalt = _hex(saltHex);
+    } on Object catch (e) {
+      stderr.writeln('✗ 盐不是合法 hex: $e');
+      exit(2);
+    }
+    stdout.writeln('--- 滑动验证 ---');
+    stdout.writeln('  盐: ${sliderSalt.length} 字节（响应 0x104）');
+    stdout.writeln('  ticket: ${sliderTicket.length} 字符');
+    stdout.writeln('');
+  }
+
   // ---------- 账号 ----------
   final uinStr = args['uin'] ?? Platform.environment['QQ_LIVE_UIN'];
   Uint8List? passwordMd5;
@@ -210,6 +280,8 @@ Future<void> main(List<String> argv) async {
   );
   if (useToken) {
     stdout.writeln('  口令: 不需要（本次是 token 续期）');
+  } else if (useSlider) {
+    stdout.writeln('  口令: 不需要（本次提交人工解出的滑验证 ticket）');
   } else {
     stdout.writeln(
       '  口令: ${passwordMd5 == null ? "未提供（用占位值，仅用于组包验证）" : "已提供"}',
@@ -243,15 +315,17 @@ Future<void> main(List<String> argv) async {
     passwordMd5: passwordMd5 ?? Uint8List(16),
     seqId: deterministic ? 100 : DateTime.now().millisecondsSinceEpoch & 0x7FFF,
     ksid: _ksid(device, profile),
-    t104: Uint8List(0), // 首登无缓存盐 → 0x104 会被 guard 滤掉
+    t104: sliderSalt, // 滑验证提交要带上一条响应下发的盐；其余场景为空
     t174: Uint8List(0),
     tgt: useToken ? token!.tgt : Uint8List(0),
     srmToken: Uint8List(0),
   );
 
-  final body = useToken
-      ? Qq8LoginBody.buildToken(tlvCtx, d2: token!.d2)
-      : Qq8LoginBody.build(tlvCtx, Qq8SubCmd.password, order);
+  final body = useSlider
+      ? Qq8LoginBody.buildSlider(tlvCtx, ticket: sliderTicket)
+      : (useToken
+          ? Qq8LoginBody.buildToken(tlvCtx, d2: token!.d2)
+          : Qq8LoginBody.build(tlvCtx, Qq8SubCmd.password, order));
 
   // token 续期的票据要贯穿三层：SSO 信封的 tgt/d2（sig）、body 的 0x143（d2）。
   Qq8SigInfo? tokenSig;
@@ -322,7 +396,7 @@ Future<void> main(List<String> argv) async {
   }
   stdout.writeln('  ✓ 显式确认已给出');
 
-  if (!useToken && passwordMd5 == null) {
+  if (!useToken && !useSlider && passwordMd5 == null) {
     stdout.writeln('  ✗ 未提供口令，无法真发（设 QQ_LIVE_PWD 或 --pwd-md5）');
     await _finish(logDir, args);
     exitCode = 2;
@@ -360,21 +434,30 @@ Future<void> main(List<String> argv) async {
 
   Qq8LoginResponse? resp;
   Object? failure;
+  Uint8List? rawResponse;
   try {
     await tran.connect();
     stdout.writeln('  已连接');
     _log.i('已连接');
 
     stdout.writeln('--- 发送登录请求（${loginPacket.length} 字节）---');
-    final payload = await tran.send(loginPacket);
-    stdout.writeln('  收到响应 ${payload.length} 字节');
-    _log.i('收到响应 ${payload.length} 字节');
+    final frame = await tran.send(loginPacket);
+    rawResponse = frame;
+    stdout.writeln('  收到响应 ${frame.length} 字节');
+    _log.i('收到响应 ${frame.length} 字节');
 
-    resp = Qq8LoginResponse.parse(payload, ecdh.shareKey);
+    // 拆两层壳（外壳 + SSO 头）后再交给内层解析——实现与出处见
+    // `lib/kernel/wlogin8/qq8_recv.dart` 头部。
+    final sso = qq8UnwrapRecv(frame, d2key: useToken ? token?.d2key : null);
+    stdout.writeln('  SSO: seq=${sso.seq} cmd=${sso.cmd} '
+        '外壳flag=${sso.flag} 负载=${sso.payload.length} 字节');
+    resp = Qq8LoginResponse.parse(sso.payload, ecdh.shareKey);
   } on Object catch (e, st) {
     failure = e;
     _log.e('登录失败', error: e, stack: st);
     stdout.writeln('  ✗ 失败: $e');
+    // 解析失败时把响应结构摊开——下一次尝试就能靠数据定位，不靠猜。
+    if (rawResponse != null) _diagnoseResponse(rawResponse, ecdh.shareKey, logDir);
   } finally {
     await tran.close();
   }
@@ -395,6 +478,22 @@ Future<void> main(List<String> argv) async {
   stdout.writeln('  type = ${r.type}  (${_typeMeaning(r.type)})');
   if (r.needsSlider) {
     stdout.writeln('  滑动验证地址: ${r.sliderUrl}');
+    final salt = r.tlvs[0x104];
+    if (salt != null && salt.isNotEmpty) {
+      final stateFile = File(
+          '${logDir.path}${Platform.pathSeparator}qq8-slider-state.json');
+      stateFile.writeAsStringSync(jsonEncode(<String, Object?>{
+        't104': _plainHex(salt),
+        'url': r.sliderUrl,
+        'at': DateTime.now().toIso8601String(),
+      }));
+      stdout.writeln('  盐（0x104，${salt.length} 字节）已存: ${stateFile.path}');
+      stdout.writeln('  **人工**解完滑块后（解自己账号的验证，不做任何自动化）：');
+      stdout.writeln('    dart run tool/qq8_live_smoke.dart --send '
+          '--slider-ticket=<ticket>');
+    } else {
+      stdout.writeln('  ⚠ 响应里没有 0x104（盐），无法构造后续的提交请求');
+    }
   }
   stdout.writeln('  TLV 列表（只列编号与长度，不打印内容）:');
   final tags = r.tlvs.keys.toList()..sort();
@@ -721,6 +820,75 @@ class _TokenFile {
 /// 无分隔符的小写 hex（票据文件用）。
 String _plainHex(List<int> b) =>
     b.map((v) => (v & 0xff).toRadixString(16).padLeft(2, '0')).join();
+
+/// 解析失败时的结构诊断：**不猜结构，只穷举 + 用 TEA 完整性校验当裁判**。
+///
+/// 参考模型（oicq js/ts 的 `packetListener` + `parseSSO` + `decodeLoginResponse`，
+/// 以及官方 8.9.50 `oicq_request.d()`）都假定响应是
+/// `[16 字节头][密文][1 字节尾]`、密文长度 8 对齐、密钥按头部某标志选。
+/// 一旦实际长度对不上，就把这段字节摊开：先看长度与首字节，再穷举"头/尾"
+/// 偏移逐个尝试解密（TEA 的填充校验能让错误的组合直接抛错），并把原始
+/// 字节落到日志目录，供离线复核。
+void _diagnoseResponse(Uint8List p, Uint8List shareKey, Directory logDir) {
+  stdout.writeln('--- 响应结构诊断（离线）---');
+  final n17 = p.length - 17;
+  stdout.writeln('  长度 ${p.length}；len-17 = $n17'
+      '${n17 % 8 == 0 ? '（8 对齐 ✓）' : '（不是 8 的倍数 → 16 头/1 尾 模型不符）'}');
+  stdout.writeln('  前 32 字节: ${_hexOf(p.take(32).toList())}');
+  if (p.isNotEmpty && p[0] == 0x02) {
+    stdout.writeln('  首字节 0x02 —— 疑似 OICQ 信封形'
+        '（u16@1 = ${(p[1] << 8) | p[2]}）');
+  }
+
+  final hits = <String>[];
+  for (final header in <int>[0, 4, 8, 12, 16, 20]) {
+    for (final tail in <int>[0, 1, 4]) {
+      final n = p.length - header - tail;
+      if (n < 16 || n % 8 != 0) continue;
+      final ct = Uint8List.sublistView(p, header, p.length - tail);
+      for (final e in <String, Uint8List>{
+        'share_key': shareKey,
+        'BUF16': Uint8List(16),
+      }.entries) {
+        try {
+          final pt = qqTeaDecrypt(ct, e.value);
+          final head = _hexOf(pt.take(8).toList());
+          hits.add('头 $header / 尾 $tail / ${e.key} → 明文 ${pt.length} 字节，'
+              '开头 $head');
+        } on Object {
+          // 密钥不对或本就不是密文：换下一组
+        }
+      }
+    }
+  }
+  if (hits.isEmpty) {
+    stdout.writeln('  没有"头/尾偏移 + share_key/BUF16"能通过 TEA 校验的组合');
+  } else {
+    for (final h in hits) {
+      stdout.writeln('  ✓ $h');
+    }
+  }
+
+  final f = File('${logDir.path}${Platform.pathSeparator}'
+      'qq8-response-${DateTime.now().millisecondsSinceEpoch}.hex');
+  f.writeAsStringSync('total=${p.length}\n${_plainHex(p)}\n');
+  stdout.writeln('  原始响应已落盘: ${f.path}');
+}
+
+/// 从滑动验证状态文件里读盐（hex）；文件不存在或没有盐时返回 null。
+String? _sliderSaltFromState(File f) {
+  if (!f.existsSync()) return null;
+  try {
+    final raw = jsonDecode(f.readAsStringSync());
+    if (raw is Map<String, dynamic>) {
+      final v = raw['t104'];
+      if (v is String && v.isNotEmpty) return v;
+    }
+  } on Object {
+    // 文件损坏当作没有：--slider-salt 仍是显式入口
+  }
+  return null;
+}
 
 Future<void> _finish(Directory logDir, Map<String, String> args) async {
   await Log.flush();

@@ -97,14 +97,14 @@ Qq8Device _device() => Qq8Device(
       guid: _hex('00112233445566778899aabbccddeeff'),
     );
 
-Qq8TlvContext _tlvCtx(Qq8ClientProfile p) => Qq8TlvContext(
+Qq8TlvContext _tlvCtx(Qq8ClientProfile p, {Uint8List? t104}) => Qq8TlvContext(
       uin: 10001,
       apk: p.apk,
       device: _device(),
       passwordMd5: _fill(16, 0x11),
       seqId: 100,
       ksid: _fill(16, 0x33),
-      t104: _hex('0102030405060708'),
+      t104: t104 ?? _hex('0102030405060708'),
       t174: _hex('aabbccdd'),
       tgt: _hex('1122334455667788'),
       srmToken: _hex('99aabbcc'),
@@ -394,6 +394,56 @@ Future<void> main() async {
       qq8ExchangeEmpCmd == 'wtlogin.exchange_emp',
       qq8ExchangeEmpCmd,
     );
+  }
+
+  // -- 2d. 滑动验证码提交（子命令 2）------------------------------------
+  stdout.writeln('\n【2d】滑动验证码提交 body');
+  {
+    const ticket = 't0305ABCDEF0123456789';
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final body = Qq8LoginBody.buildSlider(ctx, ticket: ticket);
+    final tlvs = qq8ReadTlv(body, offset: 4);
+
+    check(
+      'slider：前 2 字节是子命令 2',
+      (body[0] << 8 | body[1]) == Qq8SubCmd.slider,
+      '${(body[0] << 8 | body[1])}',
+    );
+    check(
+      'slider：共 4 项、顺序与清单一致（官方记载同为 4）',
+      tlvs.length == 4 && tlvs.keys.join(',') == qq8SliderTlvOrder.join(','),
+      '${tlvs.length} 项',
+    );
+    check(
+      'slider：0x193 = ticket 原文（trim 后）',
+      tlvs[0x193] != null && String.fromCharCodes(tlvs[0x193]!) == ticket,
+      'len=${tlvs[0x193]?.length}',
+    );
+    check(
+      'slider：0x104 = 响应下发的盐',
+      tlvs[0x104] != null && tlvs[0x104]!.join(',') == ctx.t104.join(','),
+      'len=${tlvs[0x104]?.length}',
+    );
+
+    // 没有盐时必须显式拒绝（官方参考在 !t104 时直接不发）
+    var noSaltRejected = false;
+    try {
+      Qq8LoginBody.buildSlider(
+        _tlvCtx(qq8ProfileQQ8950, t104: Uint8List(0)),
+        ticket: ticket,
+      );
+    } on Qq8LoginException {
+      noSaltRejected = true;
+    }
+    check('slider：盐缺失（type=2 响应里没 0x104）时显式拒绝', noSaltRejected);
+
+    var emptyTicketRejected = false;
+    try {
+      Qq8LoginBody.buildSlider(ctx, ticket: '  ');
+    } on Qq8LoginException {
+      emptyTicketRejected = true;
+    }
+    check('slider：ticket 为空时显式拒绝', emptyTicketRejected);
   }
 
   // -- 3. 响应解析（往返） ------------------------------------------------

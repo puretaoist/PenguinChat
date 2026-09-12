@@ -47,7 +47,7 @@
 /// | 子命令 | 含义 | TLV 数（官方） |
 /// |---|---|---|
 /// | 9 | 密码登录（`wtlogin.login`） | 24 |
-/// | 2 | 滑动验证码 | 4 |
+/// | 2 | 滑动验证码提交（人工解出 ticket 后，`wtlogin.login`） | 4（清单 [qq8SliderTlvOrder]） |
 /// | 7 | 提交短信验证码 | 7 |
 /// | 8 | 请求下发短信 | 6 |
 /// | 11 | token 登录 / 票据续期（`wtlogin.exchange_emp`） | 16（清单 [qq8ExchangeEmpTlvOrder]） |
@@ -274,6 +274,36 @@ abstract final class Qq8LoginBody {
           0x143: <Object?>[d2],
         },
       );
+
+  /// 滑动验证码提交（子命令 2，命令字 `wtlogin.login`）的便捷入口。
+  ///
+  /// 流程：密码登录被要求验证（响应 `type == 2` + TLV `0x192` 是验证地址）
+  /// → **人来把滑块解掉**（这是正常流程，不做任何自动化）→ 用拿到的
+  /// [ticket] 发这条请求继续登录。
+  ///
+  /// [ctx] 里的 `t104` 必须是**上一条响应下发的盐**（`0x104`）：没有它
+  /// 这条请求无意义，官方参考实现也直接拒绝发送——所以这里显式校验。
+  static Uint8List buildSlider(Qq8TlvContext ctx, {required String ticket}) {
+    if (ctx.t104.isEmpty) {
+      throw Qq8LoginException(
+        '滑动验证提交缺少盐（ctx.t104 为空）：盐来自上一条响应（type=2）的 0x104',
+      );
+    }
+    if (ticket.trim().isEmpty) {
+      throw Qq8LoginException('滑动验证提交的 ticket 为空');
+    }
+    return build(
+      ctx,
+      Qq8SubCmd.slider,
+      qq8SliderTlvOrder,
+      // 盐要同时在 guard（条件对象）与 body（ctx.t104）两侧可见：
+      // guard 决定 0x104 是否进包，body 决定它的内容。
+      cond: Qq8LoginConditions(t104: ctx.t104),
+      args: <int, List<Object?>>{
+        0x193: <Object?>[ticket.trim()],
+      },
+    );
+  }
 }
 
 /// 读一段 TLV 序列，返回 `tag → body`。
