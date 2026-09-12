@@ -184,9 +184,11 @@ Future<void> main(List<String> argv) async {
   final profile = _pickProfile(profileName);
 
   // 本次实际使用的 TLV 清单：token 路径用 exchange_emp 清单；
-  // 密码路径默认官方超集，`--tlv-set=oicq` 时换成参考实现的 24 项清单。
+  // 密码路径默认官方超集，`--tlv-set=oicq` 时换成参考实现的 24 项清单；
+  // 滑验证提交按版本条件追加（ssoVer>12 带 0x544；有 PoW 应答再带 0x547）。
+  final sliderOrder = qq8SliderTlvOrderFor(profile.apk, hasT547: false);
   final order = useSlider
-      ? qq8SliderTlvOrder
+      ? sliderOrder
       : (useToken
           ? qq8ExchangeEmpTlvOrder
           : (tlvSet == 'oicq'
@@ -196,7 +198,7 @@ Future<void> main(List<String> argv) async {
   stdout.writeln('--- 客户端档案 ---');
   stdout.writeln('  ${profile.describe()}');
   stdout.writeln(
-    '  TLV 清单: ${useSlider ? "滑验证提交（4 项）" : (useToken ? "exchange_emp（16 项）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项"))}',
+    '  TLV 清单: ${useSlider ? "滑验证提交（${sliderOrder.length} 项：${sliderOrder.map((t) => '0x${t.toRadixString(16)}').join(' ')}）" : (useToken ? "exchange_emp（16 项）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项"))}',
   );
   if (profile.unverified.isNotEmpty) {
     stdout.writeln('  ⚠ 未核实字段: ${profile.unverified.join(', ')}');
@@ -478,6 +480,12 @@ Future<void> main(List<String> argv) async {
   stdout.writeln('  type = ${r.type}  (${_typeMeaning(r.type)})');
   if (r.needsSlider) {
     stdout.writeln('  滑动验证地址: ${r.sliderUrl}');
+    final pow = r.tlvs[0x546];
+    if (pow != null && pow.isNotEmpty) {
+      stdout.writeln('  ⚠ 响应带 0x546（防刷计算题，${pow.length} 字节）：'
+          '参考实现要先算出 0x547 再提交。我们暂无样本、未实现该算法，'
+          '请把这段的编号+长度记下来。');
+    }
     final salt = r.tlvs[0x104];
     if (salt != null && salt.isNotEmpty) {
       final stateFile = File(
@@ -540,9 +548,19 @@ Future<void> main(List<String> argv) async {
       }
     }
   } else {
-    await limiter.recordFailure(reasonCode: 'type=${r.type}');
-    stdout.writeln('');
-    stdout.writeln('  ⚠ 非成功码。已记录失败。');
+    // 「要求验证」是流程中间态（接着要提交 ticket 或走设备锁流程），
+    // 不计入连败；其余非成功码才算失败。
+    final rc = 'type=${r.type}';
+    if (LoginAttemptLimiter.isProgressCode(rc)) {
+      await limiter.recordProgress(reasonCode: rc);
+      stdout.writeln('');
+      stdout.writeln('  ↻ 要求验证（$rc）：按提示人工完成验证后，'
+          '用 --slider-ticket 继续；这一步**不计入失败次数**。');
+    } else {
+      await limiter.recordFailure(reasonCode: rc);
+      stdout.writeln('');
+      stdout.writeln('  ⚠ 非成功码。已记录失败。');
+    }
   }
 
   await _finish(logDir, args);

@@ -10,6 +10,7 @@
 // ignore_for_file: avoid_print, avoid_relative_lib_imports
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import '../lib/kernel/safety/attempt_limiter.dart';
@@ -243,6 +244,75 @@ Future<void> main() async {
       await limiter.recordSuccess();
       check('成功后窗口内仍只有 1 条', limiter.status().usedInWindow == 1,
           '${limiter.status().usedInWindow}');
+    }
+
+    // ---------------------------------------------------------------
+    print('\n[限制器] 「要求验证」不算失败（type=2 / type=204）');
+    {
+      final limiter = LoginAttemptLimiter(maxInWindow: 8, hardLockAfter: 5);
+      for (var i = 0; i < 4; i++) {
+        await limiter.beginAttempt();
+        await limiter.recordProgress(reasonCode: 'type=2');
+      }
+      check('四轮"要求验证"不累计连败', limiter.consecutiveFailures == 0,
+          '实际 ${limiter.consecutiveFailures}');
+      check('但照样占窗口名额', limiter.status().usedInWindow == 4,
+          '${limiter.status().usedInWindow}');
+
+      await limiter.beginAttempt();
+      await limiter.recordFailure(reasonCode: 'type=1');
+      check('真失败仍然计数', limiter.consecutiveFailures == 1,
+          '实际 ${limiter.consecutiveFailures}');
+
+      final tight = LoginAttemptLimiter(maxInWindow: 2, hardLockAfter: 5);
+      await tight.beginAttempt();
+      await tight.recordProgress(reasonCode: 'type=204');
+      await tight.beginAttempt();
+      await tight.recordProgress(reasonCode: 'type=204');
+      final third = await tight.beginAttempt();
+      check('设备锁也不计失败，但窗口用满后仍然拒绝', !third.allowed,
+          third.describe());
+    }
+
+    // ---------------------------------------------------------------
+    print('\n[限制器] 老数据里被误记为失败的"要求验证"，加载时重算');
+    {
+      final f = File('${tmp.path}/attempts-legacy.json');
+      final t0 = DateTime(2026, 9, 12, 8, 0, 0);
+      await f.writeAsString(jsonEncode(<String, Object?>{
+        'records': <Object?>[
+          <String, Object?>{
+            'at': t0.toIso8601String(),
+            'ok': false,
+            'rc': 'Qq8LoginException',
+          },
+          <String, Object?>{
+            'at': t0.add(const Duration(seconds: 10)).toIso8601String(),
+            'ok': false,
+            'rc': 'type=2',
+          },
+          <String, Object?>{
+            'at': t0.add(const Duration(seconds: 20)).toIso8601String(),
+            'ok': false,
+            'rc': 'type=2',
+          },
+        ],
+        'fails': 3,
+        'lockUntil': null,
+        'lastFailureAt': t0.add(const Duration(seconds: 20)).toIso8601String(),
+      }));
+      // maxInWindow 放宽，确保这里测的是"冷却"而不是"窗口"
+      final l =
+          LoginAttemptLimiter(persistFile: f, maxInWindow: 9, hardLockAfter: 5);
+      await l.load();
+      check('连败重算为 1（两条 type=2 不算）', l.consecutiveFailures == 1,
+          '实际 ${l.consecutiveFailures}');
+      check('冷却基准挪到最后一次真失败（25s 时仍在 30s 冷却内）',
+          !l.status(t0.add(const Duration(seconds: 25))).allowed,
+          l.status(t0.add(const Duration(seconds: 25))).describe());
+      check('真失败的冷却过后放行（31s）',
+          l.status(t0.add(const Duration(seconds: 31))).allowed,
+          l.status(t0.add(const Duration(seconds: 31))).describe());
     }
 
     // ---------------------------------------------------------------

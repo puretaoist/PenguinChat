@@ -295,7 +295,7 @@ abstract final class Qq8LoginBody {
     return build(
       ctx,
       Qq8SubCmd.slider,
-      qq8SliderTlvOrder,
+      qq8SliderTlvOrderFor(ctx.apk, hasT547: (ctx.t547?.isNotEmpty) ?? false),
       // 盐要同时在 guard（条件对象）与 body（ctx.t104）两侧可见：
       // guard 决定 0x104 是否进包，body 决定它的内容。
       cond: Qq8LoginConditions(t104: ctx.t104),

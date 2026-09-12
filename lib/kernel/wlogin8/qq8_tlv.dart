@@ -251,6 +251,28 @@ const List<int> qq8ExchangeEmpTlvOrder = <int>[
 /// `!this.t104` 时直接拒绝发送）。[Qq8LoginBody.buildSlider] 会显式校验。
 const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 
+/// 滑验证提交的**实际清单**：基础 4 项，按版本与是否有 PoW 应答追加。
+///
+/// 两个参考实现分属不同世代，规则合起来是这样：
+///
+/// | 参考 | 写法 |
+/// |---|---|
+/// | js 时代 `login-password.js`（8.2.11 同代） | 恒定 4 项：`0x193 0x08 0x104 0x116` |
+/// | 新版 `base-client.ts` | `0x193 0x08 0x104 0x116 [0x547] 0x544`，且 `ssover<=12` 时少一项 |
+///
+/// 两者对 `_sso_ver <= 12`（8.2.11 = 7）的结论一致：**就是 4 项、不发 0x544**。
+/// 而 8.9.50（19）/ 9.3.60（22）按新版要带 `0x544`（走降级空 body，与 8.9.50
+/// 登录清单里 `0x544` 本身就是空体一致）。
+///
+/// ⚠️ `0x547` 需要 `0x546` 的本地应答（PoW），我们暂无样本，故只在
+/// [Qq8TlvContext.t547] 非空时才追加。
+List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {required bool hasT547}) {
+  final order = <int>[0x193, 0x08, 0x104, 0x116];
+  if (hasT547) order.add(0x547);
+  if (apk.ssoVer > 12) order.add(0x544);
+  return order;
+}
+
 /// TLV `0x545`（QIMEI）的取值方式。
 ///
 /// **这是 8.2.11 → 8.9.50 之间一个真实的协议可见变化**，不是实现细节：
@@ -380,6 +402,14 @@ class Qq8TlvContext {
   final Uint8List tgt;
   final Uint8List srmToken;
 
+  /// 防刷计算题（TLV `0x546`）的应答，供滑验证提交里的 `0x547` 使用。
+  ///
+  /// 参考实现：响应里若带 `0x546`，本地算出 `t547` 后随子命令 2 一起提交
+  /// （`base-client.ts` 的 `calcPoW`）。**我们目前没有可核对的 `0x546` 样本**，
+  /// 所以这里只做承载位、不猜算法：拿到真样本前 `t547` 为空 ⇒ 清单里没有
+  /// `0x547`（见 [qq8SliderTlvOrderFor]）。
+  final Uint8List? t547;
+
   /// 随机源（用于 TLV 内的随机字段，如 0x01 的 4 字节、0x400 的 16 字节）。
   final Uint8List Function(int n) randomBytes;
 
@@ -416,6 +446,7 @@ class Qq8TlvContext {
     required this.t174,
     required this.tgt,
     required this.srmToken,
+    this.t547,
     this.msalt = 0,
     this.seqId = 0,
     this.randomBytes = _secureRandomImpl,
@@ -688,6 +719,16 @@ abstract final class Qq8Tlv {
             },
           );
         }
+
+      case 0x547:
+        // 防刷计算题（0x546）的应答。仅在算得出时才进清单（见 Qq8TlvContext.t547）；
+        // 空 body 没有意义，所以这里显式抛错，避免发出一个空壳。
+        final t547 = ctx.t547;
+        if (t547 == null || t547.isEmpty) {
+          throw ArgumentError(
+              'TLV 0x547 需要 ctx.t547（0x546 的应答），当前为空——不该把它进清单');
+        }
+        w.raw(t547);
 
       case 0x553:
         // 仅 9.3.60 / TIM 的顺序表里有。官方 =

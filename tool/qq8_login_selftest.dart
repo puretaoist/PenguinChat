@@ -409,11 +409,52 @@ Future<void> main() async {
       (body[0] << 8 | body[1]) == Qq8SubCmd.slider,
       '${(body[0] << 8 | body[1])}',
     );
+    final sliderOrder = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk, hasT547: false);
     check(
-      'slider：共 4 项、顺序与清单一致（官方记载同为 4）',
-      tlvs.length == 4 && tlvs.keys.join(',') == qq8SliderTlvOrder.join(','),
-      '${tlvs.length} 项',
+      'slider（8.9.50，ssoVer=19）：5 项 = 基础 4 项 + 0x544',
+      tlvs.length == 5 && tlvs.keys.join(',') == sliderOrder.join(',') &&
+          sliderOrder.last == 0x544,
+      '${tlvs.length} 项: ${tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
     );
+    check(
+      'slider（8.9.50）：0x544 是合法空体（不能因空被滤掉）',
+      tlvs.containsKey(0x544) && tlvs[0x544]!.isEmpty,
+      'len=${tlvs[0x544]?.length}',
+    );
+
+    // 8.2.11（ssoVer=7 ≤ 12）按两个参考的一致结论：只有基础 4 项、不发 0x544
+    {
+      final ctx7 = _tlvCtx(qq8ProfileQQ8211);
+      final b7 = Qq8LoginBody.buildSlider(ctx7, ticket: ticket);
+      final t7 = qq8ReadTlv(b7, offset: 4);
+      final o7 = qq8SliderTlvOrderFor(qq8ProfileQQ8211.apk, hasT547: false);
+      check(
+        'slider（8.2.11，ssoVer=7）：4 项、不含 0x544（与 js 时代参考一致）',
+        t7.length == 4 && o7.join(',') == qq8SliderTlvOrder.join(',') &&
+            t7.keys.join(',') == o7.join(',') && !t7.containsKey(0x544),
+        '${t7.length} 项',
+      );
+    }
+
+    // 有 PoW 应答时追加 0x547，且排在 0x544 之前（参考实现写法）
+    {
+      final with547 = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk, hasT547: true);
+      check(
+        'slider 清单：hasT547 → 0x547 在 0x544 之前',
+        with547.length == 6 &&
+            with547[4] == 0x547 && with547[5] == 0x544,
+        with547.map((t) => '0x${t.toRadixString(16)}').join(' '),
+      );
+      // 空 t547 时显式报错，不发空壳
+      var threw = false;
+      try {
+        Qq8Tlv.body(_tlvCtx(qq8ProfileQQ8950), 0x547);
+      } on ArgumentError {
+        threw = true;
+      }
+      check('TLV 0x547 在无应答时抛错而不是发空体', threw);
+    }
+
     check(
       'slider：0x193 = ticket 原文（trim 后）',
       tlvs[0x193] != null && String.fromCharCodes(tlvs[0x193]!) == ticket,

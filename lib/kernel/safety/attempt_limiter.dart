@@ -36,18 +36,31 @@ class AttemptRecord {
   final bool success;
   final String? reasonCode;
 
-  const AttemptRecord({required this.at, required this.success, this.reasonCode});
+  /// 发起时写的占位记录：请求已发出、结果未知。
+  ///
+  /// 窗口限速要算它（确实打了一次服务器），但**连败计数不能算**——
+  /// 中途崩溃/退出留下的悬空占位不是"这次尝试失败了"。
+  final bool pending;
+
+  const AttemptRecord({
+    required this.at,
+    required this.success,
+    this.reasonCode,
+    this.pending = false,
+  });
 
   Map<String, dynamic> toJson() => {
         'at': at.toIso8601String(),
         'ok': success,
         if (reasonCode != null) 'rc': reasonCode,
+        if (pending) 'pending': true,
       };
 
   static AttemptRecord fromJson(Map<String, dynamic> j) => AttemptRecord(
         at: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
         success: j['ok'] as bool? ?? false,
         reasonCode: j['rc'] as String?,
+        pending: j['pending'] as bool? ?? false,
       );
 }
 
@@ -162,6 +175,21 @@ class LoginAttemptLimiter {
       if (_lastFailureAt == null && _consecutiveFailures > 0 && _records.isNotEmpty) {
         _lastFailureAt = _records.last.at;
       }
+      // 「要求验证」不是失败：老数据里被按失败累计的那些（type=2 / type=204）
+      // 在这里一次性重算掉。不这么做的话，正常走一次验证就被记一次失败，
+      // 解两轮滑块就会被自己的保护逻辑锁 24 小时。
+      if (_records.isNotEmpty) {
+        final recomputed = _recomputeConsecutive();
+        if (recomputed != _consecutiveFailures) {
+          _consecutiveFailures = recomputed;
+          if (_consecutiveFailures == 0) {
+            _lastFailureAt = null;
+            _hardLockUntil = null;
+          } else {
+            _lastFailureAt = _lastRealFailureAt() ?? _lastFailureAt;
+          }
+        }
+      }
     } on FormatException {
       // 记录损坏就当没有，不阻塞启动
       _records = [];
@@ -252,6 +280,53 @@ class LoginAttemptLimiter {
         : Duration(milliseconds: ms);
   }
 
+  /// 「要求验证」的响应码：`type=2`（滑块/短信验证）、`type=204`（设备锁）。
+  ///
+  /// 这两类是**流程往前走了一步**，靠后续请求继续，不是"这次尝试废了"。
+  /// 若按失败累计，解一次验证就记一次，五轮下来把自己锁 24 小时。
+  static bool isProgressCode(String? rc) => rc == 'type=2' || rc == 'type=204';
+
+  /// 从记录尾部重算连败次数：跳过"要求验证"与未定结果的占位记录，遇到成功即止。
+  int _recomputeConsecutive() {
+    var n = 0;
+    for (final r in _records.reversed) {
+      if (r.success) break;
+      if (r.pending || isProgressCode(r.reasonCode)) continue;
+      n++;
+    }
+    return n;
+  }
+
+  /// 最后一次"真失败"的时刻（冷却的计时基准）。
+  DateTime? _lastRealFailureAt() {
+    for (final r in _records.reversed) {
+      if (r.success) break;
+      if (r.pending || isProgressCode(r.reasonCode)) continue;
+      return r.at;
+    }
+    return null;
+  }
+
+  /// 记录「服务端要求验证」：给占位记录补上返回码，但**不加连败、不延长冷却**
+  /// （窗口限速仍然生效——一次验证往返照样占一个名额）。
+  Future<void> recordProgress({String? reasonCode, DateTime? now}) async {
+    if (_records.isEmpty) {
+      _records.add(AttemptRecord(
+        at: now ?? DateTime.now(),
+        success: false,
+        reasonCode: reasonCode,
+      ));
+    } else {
+      final last = _records.removeLast();
+      _records.add(AttemptRecord(
+        at: last.at,
+        success: last.success,
+        reasonCode: reasonCode ?? last.reasonCode,
+      ));
+    }
+    await _save();
+  }
+
   List<AttemptRecord> _windowRecords(DateTime now) => _records
       .where((r) => now.difference(r.at) < window)
       .toList()
@@ -269,7 +344,8 @@ class LoginAttemptLimiter {
   Future<AttemptStatus> beginAttempt({DateTime? now}) async {
     final st = status(now);
     if (!st.allowed) return st;
-    _records.add(AttemptRecord(at: now ?? DateTime.now(), success: false));
+    _records.add(
+        AttemptRecord(at: now ?? DateTime.now(), success: false, pending: true));
     await _save();
     return st;
   }
