@@ -62,7 +62,14 @@ class Qq8ClientProfile {
   final int versionCode;
 
   /// `AndroidManifest` 的 `AppSetting_params` 原串（`#` 分隔）。
-  final String appSettingParams;
+  ///
+  /// 可空：参数若不是来自本地 APK（如 [qq8ProfileQQ8950Yyb] 取自维护版
+  /// oicq 档案），没有原串就不许编造——此时 subid 以 [Qq8ApkInfo.subid]
+  /// 为准、渠道见 [channelOverride]。
+  final String? appSettingParams;
+
+  /// 渠道名覆盖项；[appSettingParams] 为空时使用。
+  final String? channelOverride;
 
   /// 灯塔 appkey（`AndroidManifest` 的 `APPKEY_DENGTA`）。
   ///
@@ -84,21 +91,30 @@ class Qq8ClientProfile {
     required this.label,
     required this.versionName,
     required this.versionCode,
-    required this.appSettingParams,
+    this.appSettingParams,
+    this.channelOverride,
     required this.beaconAppKey,
     required this.qua,
     required this.apk,
     this.unverified = const <String>[],
   });
 
-  /// 从 [appSettingParams]（`subAppId#f1#f2#渠道#hex…`）取子应用 ID。
-  int get subAppId =>
-      int.parse(appSettingParams.split('#').first);
+  /// 子应用 ID：优先取 `AppSetting_params` 首段；没有原串时以
+  /// [Qq8ApkInfo.subid] 为准（两者在有原串的档案里本就一致）。
+  int get subAppId {
+    final p = appSettingParams;
+    if (p != null && p.isNotEmpty) return int.parse(p.split('#').first);
+    return apk.subid;
+  }
 
-  /// 从 [appSettingParams] 取渠道名。
+  /// 渠道名：`AppSetting_params` 第 4 段；无原串时用 [channelOverride]。
   String get channel {
-    final p = appSettingParams.split('#');
-    return p.length > 3 ? p[3] : '';
+    final p = appSettingParams;
+    if (p != null && p.isNotEmpty) {
+      final parts = p.split('#');
+      if (parts.length > 3) return parts[3];
+    }
+    return channelOverride ?? '';
   }
 
   String describe() =>
@@ -201,6 +217,65 @@ final Qq8ClientProfile qq8ProfileQQ8950 = Qq8ClientProfile(
   ),
 );
 
+/// QQ 8.9.50 **应用宝（YYB）渠道** —— 2026-09 真机对齐用档案。
+///
+/// ## 为什么在 ALYY 档案之外再加一份
+///
+/// 上方 [qq8ProfileQQ8950] 的参数全部反编译自本机的 ALYY 渠道包
+/// （subid=537155557），但 `qua` 沿用了 oicq 历史样本的 YYB 串——
+/// **subid 与 qua 渠道不一致**。真机结果：密码登录能拿到 type=2，
+/// 滑块提交却回 type=45「下载最新版 QQ」（客户端身份/版本门）。
+///
+/// 对照 **2026-09-04 仍在发布** 的维护版 oicq（`oicq-icalingua-plus-plus`
+/// v1.26.25，Icalingua++ 的实际内核）`lib/device.js` 的默认 Android 档案，
+/// 它是一整套**自洽的 YYB 身份**，8.9.50/ssover=19 与本档案同代：
+///
+/// | 字段 | ALYY 包反编译 | YYB（本档案，维护版默认值） |
+/// |---|---|---|
+/// | subid | 537155557 | **537155551** |
+/// | qua | `…_3898_YYB_D`（串渠道） | `…_3898_YYB_D`（一致） |
+/// | sigmap（TLV 0x100） | 16724722 | **34869472** |
+/// | sdkver / buildtime / code / sign | 6.0.0.2535 / 1676531414 / 3898 / a6b7…（全部相同） |
+///
+/// 维护版默认 `0x544` 同样发**空 body**（`force_algo_T544` 关闭），
+/// 证明 type=45 的差异不在签名，而在身份与登录清单（另补 `0x542` /
+/// `0x548`，见 `qq8PasswordTlvOrderFor` / `qq8SliderTlvOrderFor`）。
+///
+/// `appSettingParams` 留空：本机没有 YYB 渠道 APK，hash 段不许编造；
+/// 该串在组包中只消费 subid（已显式给出）与渠道（[channelOverride]）。
+final Qq8ClientProfile qq8ProfileQQ8950Yyb = Qq8ClientProfile(
+  label: 'QQ 8.9.50 (YYB)',
+  versionName: '8.9.50',
+  versionCode: 3898,
+  channelOverride: 'YYB',
+  beaconAppKey: '0S200MNJT807V3GE',
+  qua: 'V1_AND_SQ_8.9.50_3898_YYB_D',
+  apk: Qq8ApkInfo(
+    id: 'com.tencent.mobileqq',
+    ver: '8.9.50',
+    sdkver: '6.0.0.2535',
+    name: 'A8.9.50.10650',
+    appid: 16,
+    // 出处：维护版 oicq v1.26.25 lib/device.js `DEFAULT_ANDROID_APK_INFO.subid`。
+    subid: 537155551,
+    miscBitmap: 150470524,
+    // 出处同上 `sigmap`；写入 TLV 0x100（ALYY 档案的 16724722 来自
+    // WtloginHelper 构造器，两个值对应不同渠道构建）。
+    mainSigMap: 34869472,
+    subSigMap: 66560,
+    buildtime: 1676531414,
+    sign: Uint8List.fromList(const <int>[
+      0xa6, 0xb7, 0x45, 0xbf, 0x24, 0xa2, 0xc2, 0x77,
+      0x52, 0x77, 0x16, 0xf6, 0xf3, 0x6e, 0xb6, 0x8d,
+    ]),
+    ssoVer: 19,
+    loginTlvOrder: qq8OfficialLoginTlvOrder,
+    tlv544DegradedBody: const <int>[],
+    tlv553DegradedBody: null,
+    qimeiMode: Qq8QimeiMode.rawSource,
+  ),
+);
+
 /// QQ 9.3.60（应用宝渠道，versionCode 16070）—— 比 8.9.50 多一个 fekit 块。
 ///
 /// * `_SSoVer` = **22**
@@ -276,6 +351,34 @@ final Qq8ClientProfile qq8ProfileTim410 = Qq8ClientProfile(
   ),
 );
 
+/// 手表平台档案（`com.tencent.qqlite` 2.0.8）——**只服务二维码登录**。
+///
+/// 出处：参考实现 `analysis/_ref/oicq-src/lib/core/device.ts` 的 `watch`。
+/// 二维码取码（`wtlogin.trans_emp` / code2d）在信封层与 0x16 里都用它：
+/// * SSO 头 subid = 537065138（不是 QQ 手 Q 的 537155557）；
+/// * 取码请求里 `0x16` 的 body 用它的 appid/subid/版本/sign。
+///
+/// ⚠️ 与手 Q 档案的 `0x16`（js 时代那套固定值 `16/537067759/4.0.2`，
+/// 见 `qq8_tlv.dart` 的 case 0x16 与本工程 48 条黄金向量）**不同**；
+/// 这里按新版参考实现的手表取值，只在二维码流程里用。
+final Qq8ApkInfo qq8ApkWatch = Qq8ApkInfo(
+  id: 'com.tencent.qqlite',
+  ver: '2.0.8',
+  sdkver: '6.0.0.2365',
+  name: 'A2.0.8',
+  appid: 16,
+  subid: 537065138,
+  miscBitmap: 16252796,
+  mainSigMap: 16724722,
+  subSigMap: 66560,
+  buildtime: 1559564731,
+  sign: Uint8List.fromList(const <int>[
+    0xa6, 0xb7, 0x45, 0xbf, 0x24, 0xa2, 0xc2, 0x77,
+    0x52, 0x77, 0x16, 0xf6, 0xf3, 0x6e, 0xb6, 0x8d,
+  ]),
+  ssoVer: 5,
+);
+
 /// 全部档案，按推荐顺序排列。
 ///
 /// 不是 `const` —— [Qq8ApkInfo.sign] 是 `Uint8List`，构造需要运行期转换。
@@ -283,6 +386,7 @@ final Map<String, Qq8ClientProfile> qq8ClientProfiles =
     <String, Qq8ClientProfile>{
   '8.2.11': qq8ProfileQQ8211,
   '8.9.50': qq8ProfileQQ8950,
+  '8.9.50-yyb': qq8ProfileQQ8950Yyb,
   '9.3.60': qq8ProfileQQ9360,
   'tim4.1.0': qq8ProfileTim410,
 };

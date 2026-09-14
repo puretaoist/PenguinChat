@@ -85,6 +85,82 @@ abstract final class Qq8Pb {
   static void _key(BytesBuilder b, int tag, int wireType) =>
       _varint(b, (tag << 3) | wireType);
 
+  // -------------------------------------------------------------------------
+  // 解码（读服务端响应要用；只覆盖 wiretype 0/2）
+  // -------------------------------------------------------------------------
+
+  /// 解码为 `tag → 值列表`（同一 tag 重复 = repeated 字段）。
+  ///
+  /// 返回值里：wiretype 0 → `int`；wiretype 2 → `Uint8List`（是文本还是嵌套
+  /// 消息由调用方按业务判断，本函数不猜）。wiretype 1/5 显式抛错（无样本）。
+  static Map<int, List<Object>> decode(Uint8List data) {
+    final out = <int, List<Object>>{};
+    var i = 0;
+    while (i < data.length) {
+      final k = _readVarint(data, i);
+      i = k.$2;
+      final tag = k.$1 >> 3;
+      final wire = k.$1 & 7;
+      if (tag == 0) throw Qq8PbException('tag=0 非法（偏移 $i）');
+      switch (wire) {
+        case 0:
+          final v = _readVarint(data, i);
+          i = v.$2;
+          out.putIfAbsent(tag, () => <Object>[]).add(v.$1);
+        case 2:
+          final l = _readVarint(data, i);
+          i = l.$2;
+          final end = i + l.$1;
+          if (end > data.length) {
+            throw Qq8PbException(
+                '长度越界：tag=$tag 声明 ${l.$1} 字节，剩余 ${data.length - i}');
+          }
+          out.putIfAbsent(tag, () => <Object>[]).add(data.sublist(i, end));
+          i = end;
+        default:
+          throw Qq8PbException('未支持的 wiretype $wire（tag=$tag）');
+      }
+    }
+    return out;
+  }
+
+  /// 取某个 tag 的第一个整数（没有则 null）。
+  static int? intAt(Map<int, List<Object>> m, int tag) {
+    final v = m[tag];
+    if (v == null || v.isEmpty) return null;
+    final first = v.first;
+    return first is int ? first : null;
+  }
+
+  /// 取某个 tag 的第一个字节串（没有或类型不符则 null）。
+  static Uint8List? bytesAt(Map<int, List<Object>> m, int tag) {
+    final v = m[tag];
+    if (v == null || v.isEmpty) return null;
+    final first = v.first;
+    return first is Uint8List ? first : null;
+  }
+
+  /// 取某个 tag 的第一个字符串（按 UTF-8 解，畸形字节按替换字符处理）。
+  static String? textAt(Map<int, List<Object>> m, int tag) {
+    final b = bytesAt(m, tag);
+    return b == null ? null : utf8.decode(b, allowMalformed: true);
+  }
+
+  /// 读一个 varint，返回 (值, 新偏移)。
+  static (int, int) _readVarint(Uint8List data, int offset) {
+    var v = 0;
+    var shift = 0;
+    var i = offset;
+    while (true) {
+      if (i >= data.length) throw Qq8PbException('varint 被截断（偏移 $offset）');
+      final b = data[i++];
+      v |= (b & 0x7f) << shift;
+      if ((b & 0x80) == 0) return (v, i);
+      shift += 7;
+      if (shift > 63) throw Qq8PbException('varint 超长（偏移 $offset）');
+    }
+  }
+
   /// varint：负数按 64 位补码（`>>>` 逻辑右移，最多 10 字节）。
   static void _varint(BytesBuilder b, int v) {
     var x = v;

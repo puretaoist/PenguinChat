@@ -12,7 +12,6 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qqclient/infra/coder.dart';
 import 'package:qqclient/kernel/crypto/tea.dart';
-import 'package:qqclient/kernel/wlogin/tlv.dart';
 
 void main() {
   group('L1 字节读写器', () {
@@ -33,38 +32,6 @@ void main() {
     test('越界读取抛出异常', () {
       final r = ByteReader([1, 2, 3]);
       expect(() => r.read(5), throwsFormatException);
-    });
-  });
-
-  group('L2 TLV 编解码', () {
-    test('编码后字节布局符合大端约定，且能解码还原', () {
-      final pkt = TlvPacket()
-        ..add(0x104, [0x01, 0x02, 0x03, 0x04])
-        ..add(0x106, List.filled(16, 0xAA))
-        ..add(0x116, 'device-id-test'.codeUnits);
-
-      final data = pkt.encode();
-      // 首字段：cmd=0x0104 -> 01 04，len=4 -> 00 04
-      expect(data.sublist(0, 4), [0x01, 0x04, 0x00, 0x04]);
-
-      final back = TlvPacket.decode(data);
-      expect(back.length, 3);
-      expect(back.get(0x104)!.value, [0x01, 0x02, 0x03, 0x04]);
-      expect(back.get(0x106)!.value.length, 16);
-      expect(back.get(0x116)!.value,
-          'device-id-test'.codeUnits);
-      expect(back.get(0x104)!.name, 'tlv_t104');
-    });
-
-    test('已知 TLV 常量表完整', () {
-      expect(tlvKnownTypes.containsKey(0x104), true);
-      expect(tlvKnownTypes.containsKey(0x106), true);
-      expect(tlvKnownTypes.length >= 20, true);
-    });
-
-    test('容错模式遇到截断数据停止而不抛异常', () {
-      final pkt = TlvPacket.decode([0x04, 0x01, 0xFF, 0xFF, 0x01]);
-      expect(pkt.length, 0);
     });
   });
 

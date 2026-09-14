@@ -35,6 +35,12 @@ param(
     # 人工解完滑块拿到的 ticket（形如 t03...）；给了它就走子命令 2、不再问口令
     [string] $SliderTicket,
 
+    # 账号 uin；不给就交互提问（非交互运行时必须给）
+    [string] $Uin,
+
+    # 跳过"输入 yes 确认"这一步（供受控的非交互调用；交互使用时别加）
+    [switch] $Yes,
+
     # -Stage session 结束时发 logout 注册（正常下线）
     [switch] $Logout
 )
@@ -92,7 +98,7 @@ if ($Stage -eq 'pack') {
 
 # ---------- login：真发登录 ----------
 if ($Stage -eq 'login') {
-    $uin = Read-Host '测试号 uin（不要用主号）'
+    $uin = if ($Uin) { $Uin } else { Read-Host '测试号 uin（不要用主号）' }
     if (-not $uin) { throw 'uin 不能为空' }
 
     # 滑验证续传（子命令 2）不需要口令：盐来自上一条响应，body 里没有 0x106。
@@ -109,7 +115,8 @@ if ($Stage -eq 'login') {
         Write-Host "滑验证提交模式（子命令 2）：不需要口令，盐自动读上一条响应的 0x104"
     }
 
-    if ((Read-Host "确认真实发送到生产服务器？输入 yes 继续") -ne 'yes') {
+    if (-not $Yes -and
+        (Read-Host "确认真实发送到生产服务器？输入 yes 继续") -ne 'yes') {
         Write-Host '已取消。' -ForegroundColor Yellow
         return
     }
@@ -149,7 +156,8 @@ if ($Stage -eq 'login') {
 
 # ---------- session：真发注册 + 心跳 ----------
 if (-not (Test-Path $TokenFile)) { throw "票据文件不存在：$TokenFile（先跑 -Stage login）" }
-if ((Read-Host '确认真实发送（注册 + 心跳）？输入 yes 继续') -ne 'yes') {
+if (-not $Yes -and
+    (Read-Host '确认真实发送（注册 + 心跳）？输入 yes 继续') -ne 'yes') {
     Write-Host '已取消。' -ForegroundColor Yellow
     return
 }

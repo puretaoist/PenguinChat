@@ -64,7 +64,7 @@ const String qq8LoginCmd = 'wtlogin.login';
 /// 票据续期（token 登录，子命令 11）的命令字。
 const String qq8ExchangeEmpCmd = 'wtlogin.exchange_emp';
 
-/// 扫码取票的命令字（尚未实现对应流程）。
+/// 扫码取票的命令字（code2d 取码/轮询走它，见 `qq8_qrcode.dart`）。
 const String qq8TransEmpCmd = 'wtlogin.trans_emp';
 
 /// 登录信封的传输类型。
@@ -169,6 +169,12 @@ abstract final class Qq8Sso {
     Qq8SsoContext ctx,
     Uint8List body, {
     bool emp = false,
+
+    /// uin 覆写：二维码取码（`wtlogin.trans_emp`）要求 uin = **0**。
+    int? uinOverride,
+
+    /// 命令字覆写：二维码取码用 **0x812**（手 Q 登录是 0x810）。
+    int? cmdIdOverride,
   }) {
     final wrapped = emp ? _wrapEmp(ctx, body) : _wrapEcdh(ctx, body);
 
@@ -177,9 +183,9 @@ abstract final class Qq8Sso {
           // 长度 = 1(本字节) + 27(固定字段) + body + 1(尾部 0x03)
           ..u16(29 + wrapped.length)
           ..u16(qq8ProtocolVersion)
-          ..u16(qq8CmdWtLogin)
+          ..u16(cmdIdOverride ?? qq8CmdWtLogin)
           ..u16(1) // 常量
-          ..u32(ctx.uin)
+          ..u32(uinOverride ?? ctx.uin)
           ..u8(3) // 常量
           ..u8(emp ? 69 : 0x87) // 加密类型：0x87=4，69=设备锁
           ..u8(0) // 常量
@@ -219,15 +225,23 @@ abstract final class Qq8Sso {
     Qq8SsoContext ctx,
     String cmd,
     Uint8List body,
-    int type,
-  ) {
+    int type, {
+
+    /// uin 覆写：二维码取码（`wtlogin.trans_emp`）信封里 uin 写 **0**。
+    int? uinOverride,
+
+    /// SSO 头 subid 覆写：二维码取码用手表档案（537065138）。
+    int? subIdOverride,
+  }) {
     final ksid = ctx.ksid;
+    final subId = subIdOverride ?? ctx.apk.subid;
+    final uin = uinOverride ?? ctx.uin;
 
     // 内层：SSO 信封
     var sso = (ByteWriter()
           ..u32(ctx.seqId)
-          ..u32(ctx.apk.subid)
-          ..u32(ctx.apk.subid)
+          ..u32(subId)
+          ..u32(subId)
           ..raw(qq8BufUnknown)
           ..let((w) => _withLength(w, ctx.sig.tgt))
           ..let((w) => _withLength(w, utf8.encode(cmd)))
@@ -256,7 +270,7 @@ abstract final class Qq8Sso {
           ..u8(type)
           ..let((w) => _withLength(w, ctx.sig.d2))
           ..u8(0)
-          ..let((w) => _withLength(w, utf8.encode('${ctx.uin}')))
+          ..let((w) => _withLength(w, utf8.encode('$uin')))
           ..raw(sso))
         .build();
 

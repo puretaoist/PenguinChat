@@ -193,22 +193,30 @@ class Qq8Session {
   }
 
   /// UNI 包请求（业务命令字）。响应按 SSO 头里的 seq 配对。
+  ///
+  /// [seq] 指定包序号（不给就自动分配）——业务包里带"消息 seq"的场合
+  /// （如 `MessageSvc.PbSendMsg` 的 tag4）要求**包序号 == 消息序号**
+  /// （参考实现同款），调用方先 [nextSeq] 取号、再组装 body、再带上它发送。
   Future<Qq8SsoResponse> sendUni(
     String cmd,
     Uint8List body, {
     Duration timeout = const Duration(seconds: 10),
+    int? seq,
   }) {
-    final seq = _nextSeq();
+    final s = seq ?? _nextSeq();
     final pkt = Qq8Uni.build(
       uin: uin,
       cmd: cmd,
       body: body,
-      seq: seq,
+      seq: s,
       session: sessionId,
       d2key: sig.d2key,
     );
-    return _send(seq, pkt, timeout);
+    return _send(s, pkt, timeout);
   }
+
+  /// 预取一个包序号（配合 [sendUni] 的 `seq` 参数）。
+  int nextSeq() => _nextSeq();
 
   // ------------------------------------------------------------------
   // 注册与心跳

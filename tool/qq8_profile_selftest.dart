@@ -379,7 +379,47 @@ void main() {
     identical(qq8DefaultProfile, qq8ProfileQQ8950),
     qq8DefaultProfile.label,
   );
-  check('档案表有 4 项', qq8ClientProfiles.length == 4);
+  check('档案表有 5 项（含 8.9.50-yyb）', qq8ClientProfiles.length == 5,
+      '${qq8ClientProfiles.length}');
+  check(
+    "档案表注册 '8.9.50-yyb'",
+    identical(qq8ClientProfiles['8.9.50-yyb'], qq8ProfileQQ8950Yyb),
+  );
+
+  // -- 6b. 8.9.50 YYB 档案（维护版 oicq v1.26.25 真机对齐）-----------------
+  stdout.writeln('\n【6b】8.9.50 YYB 档案（维护版 oicq 默认身份）');
+  {
+    final yyb = qq8ProfileQQ8950Yyb;
+    final alyy = qq8ProfileQQ8950;
+    check('YYB subid = 537155551（维护版 DEFAULT_ANDROID_APK_INFO）',
+        yyb.apk.subid == 537155551 && yyb.subAppId == 537155551);
+    check('YYB sigmap（0x100）= 34869472，区别于 ALYY 的 16724722',
+        yyb.apk.mainSigMap == 34869472 && alyy.apk.mainSigMap == 16724722,
+        'yyb=${yyb.apk.mainSigMap} alyy=${alyy.apk.mainSigMap}');
+    check('YYB ssoVer=19 / sdkver=6.0.0.2535 / buildtime=1676531414（与 ALYY 相同）',
+        yyb.apk.ssoVer == 19 &&
+            yyb.apk.sdkver == '6.0.0.2535' &&
+            yyb.apk.buildtime == 1676531414);
+    check('YYB qua 自洽为 YYB 渠道串',
+        yyb.qua == 'V1_AND_SQ_8.9.50_3898_YYB_D' && yyb.channel == 'YYB',
+        '${yyb.qua} / ${yyb.channel}');
+    check('YYB 无 AppSetting 原串（不编造），渠道走 channelOverride',
+        yyb.appSettingParams == null && yyb.channelOverride == 'YYB');
+    check('ALYY 档案保持反编译原值（subid=537155557 / channel=ALYY）',
+        alyy.apk.subid == 537155557 && alyy.channel == 'ALYY',
+        '${alyy.apk.subid} / ${alyy.channel}');
+    check('YYB 0x544 同样走空 body（维护版默认 force_algo_T544 关闭）',
+        yyb.apk.tlv544DegradedBody.isEmpty);
+    // sigmap 差异要真的落到 0x100 字节上。
+    final b100yyb = Qq8Tlv.body(_context(yyb), 0x100);
+    final b100alyy = Qq8Tlv.body(_context(alyy), 0x100);
+    // 0x100 布局：u16 ver ‖ u32 ssover ‖ u32 appid ‖ u32 subid ‖ u32 0 ‖ u32 sigmap
+    // ⇒ sigmap 在偏移 18。
+    check('0x100 字节体现 sigmap 差异（34869472 vs 16724722）',
+        _u32be(b100yyb, 18) == 34869472 && _u32be(b100alyy, 18) == 16724722,
+        'yyb=0x${_u32be(b100yyb, 18).toRadixString(16)} '
+            'alyy=0x${_u32be(b100alyy, 18).toRadixString(16)}');
+  }
 
   // -- 7. sign（TLV 0x142）跨版本 -----------------------------------------
   stdout.writeln('\n【7】sign（TLV 0x142）跨版本');

@@ -253,24 +253,42 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 
 /// 滑验证提交的**实际清单**：基础 4 项，按版本与是否有 PoW 应答追加。
 ///
-/// 两个参考实现分属不同世代，规则合起来是这样：
+/// 三个参考实现分属不同世代，规则合起来是这样：
 ///
 /// | 参考 | 写法 |
 /// |---|---|
 /// | js 时代 `login-password.js`（8.2.11 同代） | 恒定 4 项：`0x193 0x08 0x104 0x116` |
 /// | 新版 `base-client.ts` | `0x193 0x08 0x104 0x116 [0x547] 0x544`，且 `ssover<=12` 时少一项 |
+/// | 维护版 v1.26.25（2026-09 仍在用） | 在新版基础上**包尾再追加 `0x542`** |
 ///
-/// 两者对 `_sso_ver <= 12`（8.2.11 = 7）的结论一致：**就是 4 项、不发 0x544**。
+/// 三者对 `_sso_ver <= 12`（8.2.11 = 7）的结论一致：**就是 4 项、不发 0x544**。
 /// 而 8.9.50（19）/ 9.3.60（22）按新版要带 `0x544`（走降级空 body，与 8.9.50
-/// 登录清单里 `0x544` 本身就是空体一致）。
+/// 登录清单里 `0x544` 本身就是空体一致）与 `0x542`。
 ///
-/// ⚠️ `0x547` 需要 `0x546` 的本地应答（PoW），我们暂无样本，故只在
-/// [Qq8TlvContext.t547] 非空时才追加。
+/// ⚠️ `0x547` 需要 `0x546` 的本地应答（PoW）——真机样本已拿到且能解
+/// （`qq8_pow.dart`，typ=2 在第 9046 次迭代撞上），但仍**只在
+/// [Qq8TlvContext.t547] 非空时追加**：解不出时宁可不发，也不编造答案。
 List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {required bool hasT547}) {
   final order = <int>[0x193, 0x08, 0x104, 0x116];
   if (hasT547) order.add(0x547);
-  if (apk.ssoVer > 12) order.add(0x544);
+  if (apk.ssoVer > 12) {
+    order.add(0x544);
+    // 维护版 oicq v1.26.25 的 sliderLogin：544 之后（553 无票据时不发）收尾 542。
+    order.add(0x542);
+  }
   return order;
+}
+
+/// 密码登录（子命令 9）的**实际清单**：档案的官方顺序表 + 维护版追加的 `0x542`。
+///
+/// `0x548` 已在官方 37/38 项顺序表内（位于尾部），由
+/// [Qq8LoginConditions] + [Qq8TlvContext.t548] 决定是否真正产出；
+/// `0x542` 不在官方反编译顺序表里，只在这里按版本追加（ssoVer > 12）。
+List<int> qq8PasswordTlvOrderFor(Qq8ApkInfo apk) {
+  return <int>[
+    ...apk.loginTlvOrder,
+    if (apk.ssoVer > 12) 0x542,
+  ];
 }
 
 /// TLV `0x545`（QIMEI）的取值方式。
@@ -410,6 +428,13 @@ class Qq8TlvContext {
   /// `0x547`（见 [qq8SliderTlvOrderFor]）。
   final Uint8List? t547;
 
+  /// 客户端自构造防刷块（TLV `0x548`）的应答 body。
+  ///
+  /// 与服务端下发的 [t547] 不同：`0x548` 是客户端自造挑战、自解的 PoW
+  /// （构造见 `qq8_pow.dart` 的 `qq8BuildClientPow548`，出处为 2026-09 仍在
+  /// 维护的 oicq 分支 `lib/wtlogin/tlv.js` 的 `0x548`）。密码登录包携带。
+  final Uint8List? t548;
+
   /// 随机源（用于 TLV 内的随机字段，如 0x01 的 4 字节、0x400 的 16 字节）。
   final Uint8List Function(int n) randomBytes;
 
@@ -433,6 +458,27 @@ class Qq8TlvContext {
   /// 的后 8 字节。oicq 的 0x106 里没有这个概念，是官方较新的做法。
   final int msalt;
 
+  /// 0x106 里的登录类型：`1` = 口令登录，`3` = **短信验证登录后的那次登录**
+  /// （官方 `WtloginHelper.java:2310`：`int i4 = _isSmslogin ? 3 : 1;`，同处
+  /// `:1439` 设 `_isSmslogin`，`:1489` 把口令换成 `_mpasswd`）。
+  final int loginType;
+
+  /// 账号串（官方 `t.g`）。写进 0x106 尾部的长度前缀字段——uin 登录时就是
+  /// uin 的十进制串，手机号登录时是手机号；为空则退回 `'$uin'`。
+  final String? account;
+
+  /// TLV `0x544` 的形态开关（**实验字段**，null = 官方降级路径）。
+  ///
+  /// * `null`：发官方的"安全 SDK 不可用"降级 body（`apk.tlv544DegradedBody`）。
+  /// * 非 null：发**参考实现 oicq 的 v==2 结构**，值就是当前的子命令号：
+  ///   `u32(0) ‖ tlv(guid) ‖ tlv(sdkver) ‖ u32(子命令) ‖ u32(0)`
+  ///   （oicq `lib/core/tlv.ts` 的 `0x544` 打包函数，密码登录传 `(2, 9)`）。
+  ///
+  /// 为什么要有它：官方那份是真签名（来自安全 SDK），我们发不出来；oicq 用
+  /// 结构占位在实测里能过。两种形态哪个被服务端接受，只有真机能回答——
+  /// 默认仍是官方降级（不改变既有行为），实验时显式打开。
+  final int? t544SubCmd;
+
   /// 当前时间（毫秒）。
   final int Function() nowMillis;
 
@@ -447,7 +493,11 @@ class Qq8TlvContext {
     required this.tgt,
     required this.srmToken,
     this.t547,
+    this.t548,
     this.msalt = 0,
+    this.loginType = 1,
+    this.account,
+    this.t544SubCmd,
     this.seqId = 0,
     this.randomBytes = _secureRandomImpl,
     this.teaPadding = _secureRandomImpl,
@@ -574,6 +624,13 @@ abstract final class Qq8Tlv {
         w.raw(ctx.t104);
 
       case 0x106:
+        // 二维码扫码登录时，服务端把扫到的 t106 **整块**给客户端，登录包要原样回带
+        // （参考实现 `writeU16(0x106) + writeTlv(t106)`）⇒ 有注入就直接用，不重新生成。
+        final injected106 = args.isNotEmpty ? args[0] : null;
+        if (injected106 is List<int> && injected106.isNotEmpty) {
+          w.raw(injected106);
+          break;
+        }
         final inner = ByteWriter()
           ..u16(4) // tgtgt ver
           ..raw(rnd(4))
@@ -590,8 +647,10 @@ abstract final class Qq8Tlv {
           ..u8(1) // guid available
           ..raw(d.guid)
           ..u32(ctx.apk.subid)
-          ..u32(1) // login type: password
-          ..raw((ByteWriter()..bytes16(utf8.encode('${ctx.uin}'))).build())
+          ..u32(ctx.loginType) // 1 = 口令登录 / 3 = 短信验证登录后的那次
+          ..raw((ByteWriter()
+                  ..bytes16(utf8.encode(ctx.account ?? '${ctx.uin}')))
+              .build())
           ..u16(0);
         // TEA 密钥种子 = guid(16) ‖ u64(msalt 非 0 时用 msalt，否则用 uin)(8)
         //
@@ -680,8 +739,33 @@ abstract final class Qq8Tlv {
           }
         }
 
+      case 0x542:
+        // 活跃能力位 TLV（维护版 oicq v1.26.25 `lib/wtlogin/tlv.js` 的 0x542）。
+        //
+        // 该分支在密码 / 滑块提交 / 扫码登录的包尾**无条件**追加，内容按 ssoVer
+        // 分两档（同文件）：ssoVer ≥ 20 发 6 字节 `4A 04 60 01 78 01`，
+        // 其余发 4 字节 `4A 02 60 01`。
+        //
+        // 8.2.11 的官方顺序表里没有这个 TLV，因此它只出现在
+        // [qq8PasswordTlvOrderFor] / [qq8SliderTlvOrderFor] 对 ssoVer>12 的
+        // 追加段里，不进官方反编译顺序表。
+        if (ctx.apk.ssoVer >= 20) {
+          w.raw(const <int>[0x4A, 0x04, 0x60, 0x01, 0x78, 0x01]);
+        } else {
+          w.raw(const <int>[0x4A, 0x02, 0x60, 0x01]);
+        }
+
       case 0x548:
-        // 官方 8.2.11 `k.java:394`：仅当 `t.an` 非空，默认空 → 不发。
+        // 两条来源：
+        // * 官方 8.2.11 `k.java:394`：仅当服务端下发的 `t.an` 非空才发，
+        //   首登为空 → 不发（由 args/an 路径保留）；
+        // * 维护版 oicq v1.26.25：密码登录无条件发客户端自构造 PoW 应答，
+        //   body 在 [Qq8TlvContext.t548]（见 `qq8BuildClientPow548`）。
+        final t548 = ctx.t548;
+        if (t548 != null && t548.isNotEmpty) {
+          w.raw(t548);
+          break;
+        }
         final an = args.isNotEmpty ? args[0] : null;
         if (an is List<int> && an.isNotEmpty) w.raw(an);
 
@@ -693,11 +777,22 @@ abstract final class Qq8Tlv {
         w.u32(1600000226); // app id list[0]
 
       case 0x544:
-        // 安全 SDK 不可用时的降级 body。官方出处：
-        //   8.2.11  ByteData.getCode() → status = {0,0,0,0}
-        //   8.9.50  tlv_t544.get_tlv_544 → liteSign = new byte[0]
-        // 这是官方自己的代码路径，不是伪造。
-        w.raw(Uint8List.fromList(ctx.apk.tlv544DegradedBody));
+        // 安全 SDK 不可用时官方的降级 body（默认路径，出处见上方文档）。
+        //
+        // 实验开关：`ctx.t544SubCmd` 非空时改发参考实现 oicq 的 v==2 结构
+        //   u32(0) ‖ tlv(guid) ‖ tlv(sdkver) ‖ u32(子命令) ‖ u32(0)
+        // （oicq `tlv.ts` 的 `0x544`；它没有真正的签名，只是把格式填满。
+        //   哪个形态服务端认，只有真机能回答——见 ctx 字段的注释。）
+        final t544Sub = ctx.t544SubCmd;
+        if (t544Sub == null) {
+          w.raw(Uint8List.fromList(ctx.apk.tlv544DegradedBody));
+        } else {
+          w.u32(0);
+          _tlv(w, ctx.device.guid);
+          _tlv(w, utf8.encode(ctx.apk.sdkver));
+          w.u32(t544Sub);
+          w.u32(0);
+        }
 
       case 0x545:
         // QIMEI。取值方式随版本变（见 Qq8QimeiMode）：
@@ -794,11 +889,78 @@ abstract final class Qq8Tlv {
         _tlv(w, _cut(ctx.apk.ver, 5));
         _tlv(w, ctx.apk.sign);
 
+      case 0x127:
+        // 短信验证码（官方 `tlv_t127.get_tlv_127(code, random)`）：
+        //   u16 version(该字段默认 0) ‖ u16 len(code) ‖ code
+        //   ‖ u16 len(random) ‖ random
+        // `random` 来自**检查手机号那一步回包里 0x126 的 get_random()**。
+        final code127 = args.isNotEmpty ? args[0] : null;
+        final rand127 = args.length > 1 ? args[1] : null;
+        w.u16(0);
+        w.u16(code127 is List<int> ? code127.length : 0);
+        if (code127 is List<int>) w.raw(code127);
+        w.u16(rand127 is List<int> ? rand127.length : 0);
+        if (rand127 is List<int>) w.raw(rand127);
+
+      case 0x184:
+        // 短信验证登录第二步的"口令校验块"（官方 `tlv_t184.get_tlv_184(msalt, mpasswd)`）：
+        //   body = MD5( MD5(mpasswd 的字节) ‖ u64(msalt) )
+        // —— 官方代码里 fill_body 前又做了一次 MD5（tlv_t184.java:27-36），所以最终
+        // 就是 16 字节；`mpasswd` 是**本地每次现生成的 16 位随机字母串**
+        // （tools/util.java:200-212），不用跟服务端要。
+        final mpasswd184 = args.isNotEmpty && args[0] is String ? args[0] as String : '';
+        final msalt184 = args.length > 1 && args[1] is int ? args[1] as int : 0;
+        final inner = <int>[
+          ...md5Bytes(utf8.encode(mpasswd184)),
+          for (var i = 7; i >= 0; i--) (msalt184 >> (8 * i)) & 0xFF,
+        ];
+        w.raw(md5Bytes(inner));
+
+      case 0x148:
+        // 设备信息 + 三个时间戳（官方 `tlv_t148.get_tlv_148(guid, t1, t2, t3, a, b)`）：
+        //   u16 len(≤32) ‖ guid ‖ u32(t1) ‖ u32(t2) ‖ u32(t3) ‖ u16 len ‖ a ‖ u16 len ‖ b
+        // 官方用 `int64_to_buf32`（**只写低 4 字节**），所以三个时间戳是 u32。
+        // ⚠️ 各参数的具体语义（哪三个时间、a/b 是什么）要看**子命令 13 的调用处**
+        // —— 目前只有 13（短信验证登录）会用到它，接入那条流程时再定值，
+        // 这里先把结构做对，不要凭猜填。
+        final a148 = args.isNotEmpty ? args[0] : null;
+        final b148 = args.length > 1 ? args[1] : null;
+        final c148 = args.length > 2 ? args[2] : null;
+        w.u16(a148 is List<int> ? (a148.length > 32 ? 32 : a148.length) : 0);
+        if (a148 is List<int>) w.raw(a148.sublist(0, a148.length > 32 ? 32 : a148.length));
+        w.u32(args.length > 3 && args[3] is int ? args[3] as int : 0);
+        w.u32(args.length > 4 && args[4] is int ? args[4] as int : 0);
+        w.u32(args.length > 5 && args[5] is int ? args[5] as int : 0);
+        w.u16(b148 is List<int> ? b148.length : 0);
+        if (b148 is List<int>) w.raw(b148);
+        w.u16(c148 is List<int> ? c148.length : 0);
+        if (c148 is List<int>) w.raw(c148);
+
+      case 0x153:
+        // root 标记（官方 `tlv_t153.get_tlv_153(i)` = 一个 u16）。
+        w.u16(args.isNotEmpty && args[0] is int ? args[0] as int : 0);
+
       case 0x154:
         w.u32(ctx.seqId + 1);
 
       case 0x16A:
-        w.raw(ctx.srmToken);
+        // 与 0x106 同理：二维码登录要回带扫码拿到的 t16a；平时用 ctx 里的票据。
+        final injected16A = args.isNotEmpty ? args[0] : null;
+        if (injected16A is List<int> && injected16A.isNotEmpty) {
+          w.raw(injected16A);
+        } else {
+          w.raw(ctx.srmToken);
+        }
+
+      case 0x318:
+        // `tgtQR`：二维码登录专用。官方没有专用类，是用泛型 `tlv_t(792)` 直接包
+        // 服务端返回的那块字节（`writeU16(0x318) + writeTlv(tgtQR)`）。
+        // 密码登录下 `applies(0x318)` 恒为假，永远不会走到这里。
+        final tgtQr = args.isNotEmpty ? args[0] : null;
+        if (tgtQr is! List<int> || tgtQr.isEmpty) {
+          throw ArgumentError('TLV 0x318 需要 tgtQR 字节（来自扫码结果），当前为空');
+        }
+        w.raw(tgtQr);
 
       case 0x16E:
         w.raw(utf8.encode(d.model));
@@ -877,6 +1039,20 @@ abstract final class Qq8Tlv {
         w.u16(1); // tlv 计数
         w.u16(0x536);
         _tlv(w, Uint8List.fromList(const [0x01, 0x00]));
+
+      case 0x52C:
+        // 短信验证登录的"额外验证标志 + 额外 uin"（官方 `tlv_t52c.get_tlv_52c(i, j)` =
+        // u8(i) ‖ u64(j)）。官方便捷重载 `CheckSMSVerifyLoginAccount(appid, subappid,
+        // account, sigInfo)` 传的就是 `extraFlag=1, extraUin=-1`（WtloginHelper.java:2674），
+        // 所以手机号登录这条默认 (1, 0xFFFF...FFFF)。
+        final flag52c = args.isNotEmpty && args[0] is int ? args[0] as int : 1;
+        final uin52c = args.length > 1 && args[1] is int
+            ? args[1] as int
+            : -1; // = 0xFFFFFFFFFFFFFFFF
+        w.u8(flag52c & 0xFF);
+        for (var i = 7; i >= 0; i--) {
+          w.u8((uin52c >> (8 * i)) & 0xFF);
+        }
 
       case 0x52D:
         w.raw(protoEncode(<int, Object?>{

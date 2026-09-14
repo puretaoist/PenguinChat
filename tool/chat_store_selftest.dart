@@ -183,8 +183,14 @@ class FakeSession implements Session {
     return replyId?.call(attempt) ?? '${90000 + attempt}';
   }
 
+  /// `recall` 调用次数（断言"确实走到了会话层"）。
+  int recallCalls = 0;
+
   @override
-  Future<void> recall(String chatId, String messageId) async => _requireReady();
+  Future<void> recall(String chatId, String messageId) async {
+    _requireReady();
+    recallCalls++;
+  }
 
   @override
   Future<void> markRead(String chatId, String messageId) async {
@@ -409,12 +415,44 @@ Future<void> testEventMerge() async {
       store.messagesOf('group_12345').firstWhere((m) => m.id == '200').displayText,
       '[消息已撤回]');
 
+  // 反撤回（Nagram/NekoX 系的招牌功能）：原文一直留着，点"查看"才显示
+  final recalledMsg =
+      store.messagesOf('group_12345').firstWhere((m) => m.id == '200');
+  check('撤回但未揭示：原文没被丢掉', recalledMsg.text.isNotEmpty, recalledMsg.text);
+  await store.revealMessage('group_12345', '200');
+  final revealedMsg =
+      store.messagesOf('group_12345').firstWhere((m) => m.id == '200');
+  check('revealMessage 后：revealed=true 且文本就是原文',
+      revealedMsg.revealed && revealedMsg.text == recalledMsg.text,
+      'revealed=${revealedMsg.revealed} text=${revealedMsg.text}');
+  check('揭示后 UI 不再显示占位', revealedMsg.displayText == recalledMsg.text);
+  await store.revealMessage('group_12345', '200');
+  check('重复揭示是空操作（不抛异常）', true);
+
   // openChat 清零未读
   await store.openChat('private_20002');
   checkEq('openChat 清零未读',
       store.chats.firstWhere((c) => c.id == 'private_20002').unreadCount, 0);
   checkEq('活跃会话已切换', store.activeChatId, 'private_20002');
   check('已读上报被调用（supports 为 true）', session.markReadCalls > 0);
+  // 清未读的同时要把"读到哪儿"记下来（未读分隔线靠它定位）
+  final readChat = store.chats.firstWhere((c) => c.id == 'private_20002');
+  check('openChat 记下 lastReadId = 最后一条',
+      readChat.lastReadId != null &&
+          readChat.lastReadId == store.messagesOf('private_20002').last.id,
+      '${readChat.lastReadId}');
+  // 再来一条 → 锚点不动（分隔线要停在"上次读到的地方"）
+  session.emit(SessionMessage(
+      msg('202', '又一条', time: at(12), chatId: 'private_20002', senderId: '20002')));
+  check('新消息到达后锚点没被顺势推走',
+      await waitUntil(() =>
+          store.chats.firstWhere((c) => c.id == 'private_20002').lastReadId ==
+          readChat.lastReadId));
+  await store.markChatRead('private_20002');
+  check('重新标记已读后锚点跟到最后一条',
+      store.chats.firstWhere((c) => c.id == 'private_20002').lastReadId ==
+          store.messagesOf('private_20002').last.id,
+      '${store.chats.firstWhere((c) => c.id == 'private_20002').lastReadId}');
 
   // 状态事件透传
   changes.clear();
@@ -716,6 +754,109 @@ Future<void> testCorruptFiles() async {
   await store.dispose();
 }
 
+/// 存储策略（TG 式：消息库不自动删；媒体缓存按保留期 + 上限清）。
+Future<void> _storageTests() async {
+  section('11. 存储策略：用量统计 / 媒体缓存清理 / 清聊天记录');
+
+  final dir = newTempDir('storage');
+  final session = FakeSession();
+  await session.connect();
+  final store = ChatStore(
+    session: session,
+    dataDir: dir,
+    keepMediaFor: const Duration(days: 7),
+    maxCacheBytes: 300,
+  );
+  await store.bootstrap();
+  await store.refreshChats();
+  await store.openChat('group_12345');
+  session.emit(SessionMessage(
+      msg('900', '存一条消息', time: DateTime(2026, 9, 12, 12))));
+  await waitUntil(() => store.messagesOf('group_12345').isNotEmpty);
+
+  final stats0 = await store.storageStats();
+  check('统计：消息库有字节、媒体缓存为 0（还没媒体）',
+      stats0.dbBytes > 0 && stats0.cacheBytes == 0,
+      'db=${stats0.dbBytes} cache=${stats0.cacheBytes}');
+  check('统计：会话数与消息数报得出来',
+      stats0.chatCount > 0 && stats0.messageCount > 0,
+      'chats=${stats0.chatCount} msgs=${stats0.messageCount}');
+  checkEq('体积格式化', StorageStats.formatBytes(1536), '1.5 KB');
+
+  // 造媒体缓存：一个新文件 + 一个"过期"文件（改 mtime 到 30 天前）
+  final mediaDir = Directory('${dir.path}${Platform.pathSeparator}media'
+      '${Platform.pathSeparator}photos');
+  mediaDir.createSync(recursive: true);
+  final fresh = File('${mediaDir.path}${Platform.pathSeparator}new.jpg')
+    ..writeAsBytesSync(List<int>.filled(100, 1));
+  final old = File('${mediaDir.path}${Platform.pathSeparator}old.jpg')
+    ..writeAsBytesSync(List<int>.filled(100, 2));
+  old.setLastModifiedSync(DateTime.now().subtract(const Duration(days: 30)));
+
+  final stats1 = await store.storageStats();
+  check('媒体缓存被归类统计（photos）',
+      stats1.cacheBytes == 200 && stats1.cacheByCategory['photos'] == 200,
+      'cache=${stats1.cacheBytes} byCat=${stats1.cacheByCategory}');
+
+  final freed = await store.pruneMediaCache();
+  check('保留期清理：过期文件被删、新文件留着',
+      freed == 100 && !old.existsSync() && fresh.existsSync(),
+      'freed=$freed old=${old.existsSync()} new=${fresh.existsSync()}');
+
+  // 上限清理：换一个「上限 50 字节」的实例指向同一目录 → 剩下的 100 字节应当被删
+  final tight = ChatStore(session: session, dataDir: dir, maxCacheBytes: 50);
+  final freed2 = await tight.pruneMediaCache();
+  check('上限清理：超预算时删到预算内',
+      freed2 == 100 && !fresh.existsSync(),
+      'freed=$freed2 exists=${fresh.existsSync()}');
+  await tight.dispose();
+  check('未 bootstrap 的实例 dispose 后索引仍在（不会空手覆盖）',
+      store.chats.isNotEmpty, 'chats=${store.chats.length}');
+
+  // 主动撤回：走 session.recall，成功后本地立刻标记为已撤回（原文仍在）
+  session.emit(SessionMessage(
+      msg('910', '我发的', time: DateTime(2026, 9, 12, 14), outgoing: true)));
+  await waitUntil(() => store.messagesOf('group_12345').any((m) => m.id == '910'));
+  await store.recallMessage('group_12345', '910');
+  final recalledOut =
+      store.messagesOf('group_12345').firstWhere((m) => m.id == '910');
+  check('recallMessage：调了 session.recall 且本地标记为已撤回',
+      session.recallCalls == 1 && recalledOut.isRecalled,
+      'calls=${session.recallCalls} recalled=${recalledOut.isRecalled}');
+  check('撤回后原文仍留着（反撤回闭环）', recalledOut.text == '我发的',
+      recalledOut.text);
+
+  // 一键清空媒体缓存（TG 的 Clear cache）
+  File('${mediaDir.path}${Platform.pathSeparator}x.jpg')
+      .writeAsBytesSync(List<int>.filled(10, 3));
+  final freed3 = await store.clearMediaCache();
+  check('清空媒体缓存', freed3 == 10, 'freed=$freed3');
+
+  // 清聊天记录：消息库清空但会话列表保留
+  final beforeClear = store.chats.length;
+  await store.clearAllHistory();
+  final stats2 = await store.storageStats();
+  check('清空聊天记录后：消息没了、会话列表还在',
+      store.messagesOf('group_12345').isEmpty &&
+          store.chats.length == beforeClear &&
+          stats2.dbBytes < stats0.dbBytes,
+      'db=${stats2.dbBytes} chats=${store.chats.length}');
+  check('清空后会话可重新拉取（historyFetched 复位）',
+      store.hasMore('group_12345') == false);
+
+  // 单会话清理
+  session.emit(SessionMessage(
+      msg('901', '再来一条', time: DateTime(2026, 9, 12, 13))));
+  await waitUntil(() => store.messagesOf('group_12345').isNotEmpty);
+  await store.clearChatHistory('group_12345');
+  check('单会话清理：该会话空了、会话本身还在',
+      store.messagesOf('group_12345').isEmpty &&
+          store.chatOf('group_12345') != null);
+
+  await store.dispose();
+  await session.dispose();
+}
+
 /// 构造一行与 ChatStore 落盘格式一致的消息记录（仅测试损坏容错用）。
 Map<String, dynamic> _persistedMessage(String id, String text) => {
       'id': id,
@@ -767,10 +908,17 @@ Future<void> testRetention() async {
       ['602', '603', '604']);
 
   // 落盘后重建，磁盘上也应是同样结果
+  final anchorBefore =
+      store.chats.firstWhere((c) => c.id == 'group_12345').lastReadId;
+  check('重载前记下了未读锚点', anchorBefore != null, '$anchorBefore');
   await store.dispose();
   final session2 = FakeSession();
   final store2 = ChatStore(session: session2, dataDir: dir, maxMessagesPerChat: 3);
   await store2.bootstrap();
+  check('磁盘上的未读锚点还在（重启后分隔线位置不丢）',
+      store2.chats.firstWhere((c) => c.id == 'group_12345').lastReadId ==
+          anchorBefore,
+      '${store2.chats.firstWhere((c) => c.id == 'group_12345').lastReadId}');
   await store2.openChat('group_12345');
   checkEq('磁盘上也是 4 条', store2.messagesOf('group_12345').length, 4);
   check('磁盘上失败消息仍在',
@@ -829,6 +977,122 @@ Future<void> testSorting() async {
 // 10. 生命周期
 // ---------------------------------------------------------------------------
 
+Future<void> testForward() async {
+  section('12. 转发：只重发内容，发不了的整批不发');
+
+  final f = await readyStore('forward', chats: [
+    fakeGroup(),
+    fakeFriend('private_20002', '小明'),
+  ]);
+  final store = f.store;
+  final session = f.session;
+
+  // 群里来三条：纯文本、带引用的文本、图片
+  session.emit(SessionMessage(msg('700', '第一条', time: at(1))));
+  session.emit(SessionMessage(msg('701', '引用别人的', time: at(2))));
+  session.emit(SessionMessage(msg('702', '看图', time: at(3))));
+  await sleep(60);
+  // 给 701 手动塞个引用段、给 702 塞个图片段（模拟协议线解出来的样子）
+  store.replaceSegmentsForTest('group_12345', '701', <Segment>[
+    const ReplySegment('', text: '被引用的原话'),
+    const TextSegment('引用别人的'),
+  ]);
+  store.replaceSegmentsForTest('group_12345', '702', <Segment>[
+    const TextSegment('看图'),
+    const ImageSegment('abc.jpg'),
+  ]);
+
+  // 1) 纯文本转发
+  final sentBefore = session.sent.length;
+  final n1 = await store.forwardMessages(
+    fromChatId: 'group_12345',
+    messageIds: <String>['700'],
+    toChatId: 'private_20002',
+  );
+  check('转发成功返回条数', n1 == 1, '$n1');
+  check('真的发到了目标会话', session.sent.length == sentBefore + 1,
+      '${session.sent.length}');
+  check('发的是内容本身（文本段）',
+      session.sent.last.chatId == 'private_20002' &&
+          session.sent.last.segments.length == 1 &&
+          (session.sent.last.segments.first as TextSegment).text == '第一条',
+      '${session.sent.last.segments}');
+  check('目标会话本地也插了一条（乐观插入）',
+      store.messagesOf('private_20002').any((m) => m.text == '第一条'));
+
+  // 2) 带引用的：引用要丢掉（src_msg 指的是原会话里的消息，带过去是错的）
+  final n2 = await store.forwardMessages(
+    fromChatId: 'group_12345',
+    messageIds: <String>['701'],
+    toChatId: 'private_20002',
+  );
+  check('带引用的消息也能转发', n2 == 1, '$n2');
+  check('转发出去时引用段被剔除',
+      session.sent.last.segments.length == 1 &&
+          session.sent.last.segments.first is TextSegment,
+      '${session.sent.last.segments}');
+
+  // 3) 图片：按原样重发做不到（要上传），必须整批不发并说明原因
+  final beforeImg = session.sent.length;
+  var threw = '';
+  try {
+    await store.forwardMessages(
+      fromChatId: 'group_12345',
+      messageIds: <String>['700', '702'],
+      toChatId: 'private_20002',
+    );
+  } on SessionException catch (e) {
+    threw = e.message;
+  }
+  check('带图片的一批 → 抛异常并说清是哪种内容',
+      threw.contains('图片'), threw.isEmpty ? '(没抛)' : threw);
+  check('整批都不发（不做半截转发）', session.sent.length == beforeImg,
+      '多发了 ${session.sent.length - beforeImg}');
+
+  await store.dispose();
+  await session.dispose();
+}
+
+Future<void> testSearch() async {
+  section('13. 本地搜索：只搜已加载的消息，按时间倒序');
+
+  final f = await readyStore('search', chats: [
+    fakeGroup(),
+    fakeFriend('private_20002', '小明'),
+  ]);
+  final store = f.store;
+  final session = f.session;
+
+  session.emit(SessionMessage(msg('900', '今天的会议改到三点', time: at(10))));
+  session.emit(SessionMessage(msg('901', '另外一份材料我发你了',
+      time: at(20), chatId: 'private_20002', senderId: '20002')));
+  session.emit(SessionMessage(msg('902', '会议纪要记得写',
+      time: at(30), chatId: 'private_20002', senderId: '20002')));
+  check('三条消息都已合并',
+      await waitUntil(() => store.messagesOf('private_20002').length == 2));
+
+  final hits = store.searchMessages('会议');
+  check('两条命中"会议"（跨会话）', hits.length == 2, '${hits.length}');
+  check('按时间倒序（新的在前）',
+      hits.length == 2 && hits.first.message.id == '902',
+      hits.map((h) => h.message.id).join(','));
+  check('结果带上会话 id（UI 要拿它跳会话）',
+      hits.every((h) => h.chatId == 'private_20002' || h.chatId == 'group_12345'),
+      hits.map((h) => h.chatId).join(','));
+  check('搜不到就是空（不是抛异常）', store.searchMessages('不存在的词').isEmpty);
+  check('空查询直接返回空', store.searchMessages('   ').isEmpty);
+  check('大小写不敏感（ASCII）',
+      store.searchMessages('ABC').isEmpty &&
+          store.searchMessages('abc').isEmpty,
+      '用例里没有英文消息，这里只确认不炸');
+
+  final limited = store.searchMessages('会', limit: 1);
+  check('limit 生效', limited.length == 1, '${limited.length}');
+
+  await store.dispose();
+  await session.dispose();
+}
+
 Future<void> testLifecycle() async {
   section('10. 生命周期：dispose 后不再处理事件');
 
@@ -868,6 +1132,8 @@ Future<void> main() async {
     await testCorruptFiles();
     await testRetention();
     await testSorting();
+    await testForward();
+    await testSearch();
     await testLifecycle();
   } finally {
     for (final d in _tempDirs) {
@@ -878,6 +1144,8 @@ Future<void> main() async {
       }
     }
   }
+
+  await _storageTests();
 
   stdout.writeln('\n${'=' * 64}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');

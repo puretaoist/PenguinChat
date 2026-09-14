@@ -122,6 +122,26 @@ void testRoundTrip() {
   check('往返 image url 一致', (back[3] as ImageSegment).url == 'http://x/a.jpg');
   check('往返 reply 一致', (back[4] as ReplySegment).messageId == '42');
   check('往返 file 一致', (back[5] as FileSegment).fileId == 'fid1');
+
+  // 图片的宽高：协议线收到的是原始尺寸，UI 拿它算占位框比例，
+  // 落盘再读回不能丢（丢了就只能退回方形占位）
+  final withSize = ImageSegment('b.jpg',
+      url: 'https://gchat.qpic.cn/x',
+      summary: '[动画表情]',
+      width: 320,
+      height: 240);
+  final sizeBack =
+      Segment.parseList(Segment.toArrayData(<Segment>[withSize])).first
+          as ImageSegment;
+  check(
+      '往返图片宽高与摘要一致',
+      sizeBack.width == 320 &&
+          sizeBack.height == 240 &&
+          sizeBack.summary == '[动画表情]' &&
+          sizeBack.aspectRatio == 320 / 240,
+      '${sizeBack.width}x${sizeBack.height} ${sizeBack.summary}');
+  check('没有宽高时比例返回 null（不瞎猜成 1）',
+      const ImageSegment('c.jpg').aspectRatio == null);
 }
 
 void testCqCode() {

@@ -106,6 +106,7 @@ abstract final class Qq8Jce {
     required String service,
     required String method,
     required Map<String, Uint8List> attributes,
+    int requestId = 0,
   }) {
     final payload =
         encode(<int, Object?>{0: Map<Object?, Object?>.of(attributes)});
@@ -113,7 +114,10 @@ abstract final class Qq8Jce {
       1: 3, // iVersion（参考实现默认 3）
       2: 0, // cPacketType
       3: 0, // iMessageType
-      4: 0, // iRequestId
+      // iRequestId：推送回执（OnlinePush.RespPush）要放推送的 seq，
+      // 其余请求是 0——参考实现 `jce.encodeWrapper(..., seq)` 的第 4 个参数
+      // 就是它。
+      4: requestId,
       5: service, // sServantName
       6: method, // sFuncName
       7: payload, // sBuffer

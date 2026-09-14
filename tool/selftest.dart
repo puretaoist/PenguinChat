@@ -10,10 +10,6 @@ import 'dart:typed_data';
 
 import '../lib/infra/coder.dart';
 import '../lib/kernel/crypto/tea.dart';
-import '../lib/kernel/transport/transport.dart';
-import '../lib/kernel/wlogin/login_commands.dart';
-import '../lib/kernel/wlogin/tlv.dart';
-import '../lib/kernel/wlogin/tlv_types.dart';
 
 int _passed = 0;
 int _failed = 0;
@@ -62,31 +58,6 @@ Future<void> main() async {
     check('越界读取抛出异常', threw);
   }
 
-  print('\n[L2] TLV 编解码');
-  {
-    final pkt = TlvPacket()
-      ..add(0x104, [0x01, 0x02, 0x03, 0x04])
-      ..add(0x106, List.filled(16, 0xAA))
-      ..add(0x116, 'device-id-test'.codeUnits);
-    final data = pkt.encode();
-    // 大端：[cmd 0x0104 -> 01 04][len 4 -> 00 04]
-    check('TLV 头大端布局 = 01 04 00 04',
-        data.sublist(0, 4).join(',') == '1,4,0,4',
-        data.sublist(0, 4).join(','));
-
-    final back = TlvPacket.decode(data);
-    check('解码后字段数一致', back.length == 3);
-    check('tlv_t104 值还原', back.get(0x104)!.value.join(',') == '1,2,3,4');
-    check('tlv_t106 长度 16', back.get(0x106)!.value.length == 16);
-    check('tlv_t116 字符串还原',
-        String.fromCharCodes(back.get(0x116)!.value) == 'device-id-test');
-    check('TLV 命名规则 tlv_t104', back.get(0x104)!.name == 'tlv_t104');
-    check('已知常量表 >= 20 项', tlvKnownTypes.length >= 20);
-    check('容错模式不抛异常', TlvPacket.decode([0x04, 0x01, 0xFF, 0xFF, 0x01]).length == 0);
-    check('长度只计 body 不含头',
-        back.get(0x104)!.encode().length == 4 + 4);
-  }
-
   print('\n[L2] TEA 加密');
   {
     final key = '0123456789abcdef'.codeUnits;
@@ -116,72 +87,6 @@ Future<void> main() async {
     final out = hexdump(Uint8List.fromList([0x48, 0x65, 0x6C, 0x6C, 0x6F]));
     check('十六进制部分正确', out.contains('48 65 6c 6c 6f'));
     check('ASCII 部分正确', out.contains('|Hello|'));
-  }
-
-  print('\n[M2] TLV 编号注册表');
-  {
-    check('注册表项数 == 113', tlvRegistry.length == 113, '${tlvRegistry.length}');
-    // 派生校验：类名后缀的十六进制值必须等于 map 的 key
-    var mismatch = <String>[];
-    tlvRegistry.forEach((type, cls) {
-      final suffix = cls.replaceFirst('tlv_t', '');
-      final expected = int.parse(suffix, radix: 16);
-      if (expected != type) mismatch.add('$cls -> 0x${type.toRadixString(16)}');
-    });
-    check('全部 113 项「类名后缀 == 编号」自洽', mismatch.isEmpty,
-        mismatch.take(3).join('; '));
-    // 反编译已证实的锚点：tlv_t104 的 CMD_104 常量 == 260 == 0x0104
-    check('锚点 tlv_t104 存在且编号 0x0104', tlvRegistry[0x104] == 'tlv_t104');
-    check('锚点 tlv_t106 存在且编号 0x0106', tlvRegistry[0x106] == 'tlv_t106');
-    check('语义表条目均属注册表',
-        tlvSemantics.keys.every(tlvRegistry.containsKey));
-    check('语义表条目数合理（>25）', tlvSemantics.length > 25,
-        '${tlvSemantics.length}');
-  }
-
-  print('\n[M2] 登录命令字');
-  {
-    check('命令字总数 == 14', LoginSsoCommand.all.length == 14,
-        '${LoginSsoCommand.all.length}');
-    check('无重复命令字',
-        LoginSsoCommand.all.toSet().length == LoginSsoCommand.all.length);
-    check('全部以 EcdhService.SsoNTLogin 或 Sso 开头',
-        LoginSsoCommand.all.every((c) => c.startsWith('EcdhService.')));
-    check('登录入口 4 种',
-        LoginSsoCommand.entryPoints.length == 4);
-    check('返回码描述可用',
-        LoginResultCode.describe(LoginResultCode.success) == '成功' &&
-            LoginResultCode.describe(0x99).contains('未知'));
-    check('登录阶段枚举完整（10 态）', LoginStage.values.length == 10,
-        '${LoginStage.values.length}');
-  }
-
-  print('\n[M2] 传输层（回环实现）');
-  {
-    final t = LoopbackTransport();
-    check('初始为未连接', t.state == TransportState.disconnected);
-
-    var threw = false;
-    try {
-      await t.send(0x825, Uint8List(0));
-    } catch (_) {
-      threw = true;
-    }
-    check('未连接时 send 抛异常', threw);
-
-    await t.connect();
-    check('连接后状态正确', t.state == TransportState.connected);
-
-    t.on(0x825, (body) => Uint8List.fromList([0xAA, 0xBB]));
-    final rsp = await t.send(0x825, Uint8List.fromList([1, 2, 3]));
-    check('响应按命令字回填', rsp.join(',') == '170,187', rsp.join(','));
-    check('请求已记录', t.sent.length == 1 && t.sent.first.command == 0x825);
-
-    final empty = await t.send(0x999, Uint8List(0));
-    check('未注册命令返回空响应', empty.isEmpty);
-
-    await t.close();
-    check('关闭后状态为 closed', t.state == TransportState.closed);
   }
 
   print('\n[M2] QQ TEA（填充 + CBC，反编译证实）');

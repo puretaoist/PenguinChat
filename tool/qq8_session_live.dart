@@ -25,7 +25,23 @@
 ///
 /// # 结束时正常下线（发 logout 注册）
 /// dart run tool/qq8_session_live.dart --send --token-file=token.json --logout
+///
+/// # 上线后发一条消息（文本）
+/// dart run tool/qq8_session_live.dart --send --token-file=token.json \
+///     --to-uin=22222 --text="你好"
+///
+/// # 上线后发一张本地图片（**图片上传链路的真机入口**：四步全走）
+/// dart run tool/qq8_session_live.dart --send --token-file=token.json \
+///     --to-uin=22222 --image=C:\图片\cat.png
+/// # 干跑也能先验"探图 + 组申请包"（不发）：去掉 --send 即可
 /// ```
+///
+/// 发图的四步（输出里每步都有编号，卡在哪一步一眼能看到）：
+/// ① 探图（md5/宽高/类型）→ ② `OffPicUp`/`GroupPicUp` 申请（拿 fid/ticket/
+/// 图床地址）→ ③ highway `PicUp.DataUp` 传数据（服务端已有同 md5 的图会跳过）
+/// → ④ fid 回填元素后 `PbSendMsg`。字段号出处与证据等级见
+/// `lib/kernel/wlogin8/qq8_image.dart` 头注。
+///
 ///
 /// ## 判读口径
 ///
@@ -52,12 +68,17 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:qqclient/infra/coder.dart';
 import 'package:qqclient/infra/log/log_file.dart';
 import 'package:qqclient/infra/log/logger.dart';
 import 'package:qqclient/kernel/crypto/ecdh.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_elem.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_image.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_push.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
@@ -144,6 +165,38 @@ Future<void> main(List<String> argv) async {
 
   if (!live) {
     stdout.writeln('干跑结束：以上就是一次会话要用的全部材料。');
+    // 要发图时**本地能先验的部分**在这里验掉（探图 + 组申请包 + 印字段），
+    // 免得真机跑完注册/心跳才发现图路径写错或格式不支持。
+    final dryImage = args['image'];
+    final dryTo = int.tryParse(args['to-uin'] ?? '') ??
+        int.tryParse(args['to-group'] ?? '');
+    if (dryImage != null && dryImage.isNotEmpty && dryTo != null) {
+      stdout.writeln('');
+      stdout.writeln('--- 干跑：图片那一步（只探图 + 组包，不发）---');
+      try {
+        final info = await Qq8ImageProbe.probeFile(dryImage);
+        stdout.writeln('  ① 探图: $info');
+        final dm = args['to-uin'] != null;
+        final body = dm
+            ? Qq8ImageUp.buildOffPicUpBody(
+                uin: uin,
+                uid: dryTo,
+                images: <Qq8ImageInfo>[info],
+                apkVersion: profile.versionCode,
+              )
+            : Qq8ImageUp.buildGroupPicUpBody(
+                gid: dryTo,
+                uin: uin,
+                images: <Qq8ImageInfo>[info],
+                apkVersion: profile.versionCode,
+              );
+        stdout.writeln('  ② ${dm ? 'OffPicUp' : 'GroupPicUp'} 申请包: '
+            '${body.length} 字节（真发时连图床要等回执才知道 ip/port/ticket）');
+      } on Object catch (e) {
+        stdout.writeln('  ✗ 探图/组包失败: $e');
+        exitCode = 2;
+      }
+    }
     stdout.writeln('真发前需要：');
     stdout.writeln('  1) 加 --send');
     stdout.writeln('  2) 设环境变量 QQ_LIVE_CONFIRM="$kConfirmToken"');
@@ -198,6 +251,7 @@ Future<void> main(List<String> argv) async {
     stdout.writeln('  ← 推送: cmd=${r.cmd} seq=${r.seq} '
         'payload=${r.payload.length} 字节');
     _log.i('推送 cmd=${r.cmd} seq=${r.seq} len=${r.payload.length}');
+    _dumpPush(r.cmd, r.payload);
   });
 
   var failed = false;
@@ -254,6 +308,46 @@ Future<void> main(List<String> argv) async {
       if (i < rounds) await Future<void>.delayed(const Duration(seconds: 3));
     }
 
+    // 3.5) 可选：发一条消息（文本 / 图片）。给 `--to-uin` 或 `--to-group` 才做。
+    //
+    // 这是**图片上传链路的真机入口**：探图 → PicUp 申请（拿 fid/ticket/图床）
+    // → highway 传数据 → 元素回填 → PbSendMsg。每一步的数字都打出来，
+    // 失败时能直接看出卡在哪一步（而不是"发了没反应"）。
+    final toUin = int.tryParse(args['to-uin'] ?? '');
+    final toGroup = int.tryParse(args['to-group'] ?? '');
+    final imagePath = args['image'];
+    final textArg = args['text'];
+    if (toUin != null || toGroup != null) {
+      stdout.writeln('');
+      stdout.writeln('--- 3.5 发消息（${toUin != null ? '私聊 $toUin' : '群 $toGroup'}）---');
+      try {
+        if (imagePath != null && imagePath.isNotEmpty) {
+          await _sendImage(
+            session: session,
+            profile: profile,
+            imagePath: imagePath,
+            uid: toUin,
+            gid: toGroup,
+          );
+        } else {
+          await _sendText(
+            session: session,
+            text: textArg ?? '你好',
+            uid: toUin,
+            gid: toGroup,
+          );
+        }
+      } on Object catch (e, st) {
+        failed = true;
+        stdout.writeln('  ✗ 发送失败: $e');
+        _log.e('发送失败', error: e, stack: st);
+      }
+    } else if (imagePath != null || textArg != null) {
+      stdout.writeln('');
+      stdout.writeln('  ⚠ 给了 --image/--text 但没给 --to-uin / --to-group，'
+          '不知道发给谁，跳过');
+    }
+
     // 4) 可选下线
     if (logout) {
       stdout.writeln('');
@@ -284,6 +378,166 @@ Future<void> main(List<String> argv) async {
 
   await _finish(logDir, args);
   exitCode = failed ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// 发消息（文本 / 图片）
+// ---------------------------------------------------------------------------
+
+int _randomU32() {
+  final r = Random.secure();
+  return ((r.nextInt(1 << 16) << 16) | r.nextInt(1 << 16)) & 0xFFFFFFFF;
+}
+
+/// 发一条纯文本（私聊/群）。走的是与 App 同一条 [Qq8Msg] 组包 + `PbSendMsg`。
+Future<void> _sendText({
+  required Qq8Session session,
+  required String text,
+  int? uid,
+  int? gid,
+}) async {
+  final elems = <Uint8List>[Qq8Msg.textElem(text)];
+  if (uid != null) {
+    final seq = session.nextSeq();
+    final rand = _randomU32();
+    final body = Qq8Msg.buildC2cTextBody(
+      uid: uid,
+      elems: elems,
+      seq: seq,
+      rand: rand,
+      syncCookieSeed: _randomU32(),
+      nowSeconds:
+          DateTime.now().millisecondsSinceEpoch ~/ 1000 + session.timeDiffSeconds,
+      syncR5: _randomU32(),
+      syncR9: _randomU32(),
+      syncR11: _randomU32(),
+    );
+    final rsp = await session.sendUni(Qq8Msg.sendCmd, body, seq: seq);
+    final r = Qq8Msg.parseSendResponse(rsp.payload, seq: seq, rand: rand);
+    stdout.writeln('  私聊文本 → code=${r.code} seq=${r.seq} '
+        'time=${r.time} ${r.ok ? '✓ 已发送' : '✗ ${r.message}'}');
+    _log.i('私聊发送 uid=$uid code=${r.code}');
+    return;
+  }
+  final rand16 = _randomU32() & 0xFFFF;
+  final rand32 = _randomU32();
+  final body = Qq8Msg.buildGroupTextBody(
+    gid: gid!,
+    elems: elems,
+    rand16: rand16,
+    rand32: rand32,
+  );
+  final rsp = await session.sendUni(Qq8Msg.sendCmd, body);
+  final r = Qq8Msg.parseSendResponse(rsp.payload, seq: 0, rand: rand32);
+  stdout.writeln('  群文本 → code=${r.code} ${r.ok ? '✓ 已发送' : '✗ ${r.message}'}');
+  _log.i('群发送 gid=$gid code=${r.code}');
+}
+
+/// 发一张本地图片：**四步链路**，每步的数字都打出来（卡在哪一步一眼能看到）。
+Future<void> _sendImage({
+  required Qq8Session session,
+  required Qq8ClientProfile profile,
+  required String imagePath,
+  int? uid,
+  int? gid,
+}) async {
+  final dm = uid != null;
+  final info = await Qq8ImageProbe.probeFile(imagePath);
+  stdout.writeln('  ① 探图: $info');
+  stdout.writeln('     fileParam = ${info.fileParam}');
+
+  final body = dm
+      ? Qq8ImageUp.buildOffPicUpBody(
+          uin: session.uin,
+          uid: uid,
+          images: <Qq8ImageInfo>[info],
+          apkVersion: profile.versionCode,
+        )
+      : Qq8ImageUp.buildGroupPicUpBody(
+          gid: gid!,
+          uin: session.uin,
+          images: <Qq8ImageInfo>[info],
+          apkVersion: profile.versionCode,
+        );
+  final rsp = await session.sendUni(
+    dm ? Qq8ImageUp.cmdOffPicUp : Qq8ImageUp.cmdGroupPicUp,
+    body,
+  );
+  stdout.writeln('  ② ${dm ? 'OffPicUp' : 'GroupPicUp'} 申请: '
+      '响应 ${rsp.payload.length} 字节');
+  final replies = dm
+      ? Qq8ImageUp.parseOffPicUpResponse(rsp.payload)
+      : Qq8ImageUp.parseGroupPicUpResponse(rsp.payload);
+  if (replies.isEmpty) {
+    stdout.writeln('     ✗ 没有回执——字段号可能对不上（见 qq8_image.dart 头注）');
+    return;
+  }
+  final reply = replies.first;
+  stdout.writeln('     回执: $reply');
+  if (!reply.ok) {
+    stdout.writeln('     ✗ 被拒：code=${reply.code} ${reply.message}');
+    return;
+  }
+
+  if (reply.alreadyExists) {
+    stdout.writeln('  ③ 服务端已有这张图（md5 命中）→ 跳过 highway 上传');
+  } else {
+    stdout.writeln('  ③ highway 上传 → ${reply.host}:${reply.port} '
+        '（ticket ${reply.ticket.length} 字节，${info.size} 字节数据）');
+    await Qq8Highway.upload(
+      host: reply.host!,
+      port: reply.port!,
+      uin: '${session.uin}',
+      appid: profile.apk.subid,
+      buCmdId: dm ? Qq8Highway.cmdIdDmImage : Qq8Highway.cmdIdGroupImage,
+      ticket: reply.ticket,
+      fileMd5: info.md5,
+      data: await File(imagePath).readAsBytes(),
+      timeout: const Duration(seconds: 120),
+      onProgress: (p) {
+        if (p >= 1.0) stdout.writeln('     上传完成 100%');
+      },
+    );
+  }
+
+  final elem = dm
+      ? Qq8ImageElems.dm(info: info, fid: reply.fid)
+      : Qq8ImageElems.group(info: info, fid: reply.fid);
+  if (dm) {
+    final seq = session.nextSeq();
+    final rand = _randomU32();
+    final msgBody = Qq8Msg.buildC2cTextBody(
+      uid: uid,
+      elems: <Uint8List>[elem],
+      seq: seq,
+      rand: rand,
+      syncCookieSeed: _randomU32(),
+      nowSeconds:
+          DateTime.now().millisecondsSinceEpoch ~/ 1000 + session.timeDiffSeconds,
+      syncR5: _randomU32(),
+      syncR9: _randomU32(),
+      syncR11: _randomU32(),
+    );
+    final sent = await session.sendUni(Qq8Msg.sendCmd, msgBody, seq: seq);
+    final r = Qq8Msg.parseSendResponse(sent.payload, seq: seq, rand: rand);
+    stdout.writeln('  ④ 图片消息（fid=${reply.fid}）→ code=${r.code} '
+        '${r.ok ? '✓ 已发送' : '✗ ${r.message}'}');
+    _log.i('私聊图片 uid=$uid fid=${reply.fid} code=${r.code}');
+    return;
+  }
+  final rand16 = _randomU32() & 0xFFFF;
+  final rand32 = _randomU32();
+  final msgBody = Qq8Msg.buildGroupTextBody(
+    gid: gid!,
+    elems: <Uint8List>[elem],
+    rand16: rand16,
+    rand32: rand32,
+  );
+  final sent = await session.sendUni(Qq8Msg.sendCmd, msgBody);
+  final r = Qq8Msg.parseSendResponse(sent.payload, seq: 0, rand: rand32);
+  stdout.writeln('  ④ 群图片消息（fid=${reply.fid}）→ code=${r.code} '
+      '${r.ok ? '✓ 已发送' : '✗ ${r.message}'}');
+  _log.i('群图片 gid=$gid fid=${reply.fid} code=${r.code}');
 }
 
 // ---------------------------------------------------------------------------
@@ -390,5 +644,81 @@ Future<void> _finish(Directory logDir, Map<String, String> args) async {
   } else {
     stdout.writeln('');
     stdout.writeln('（日志: ${logDir.path}；加 --export-log 可导出日志报告）');
+  }
+}
+
+/// 把推送解析成人能看的几行——**真机验证就靠这段输出**：
+/// 收到语音/视频/图片时，字段号对不对、直链长什么样，这里全能看出来。
+///
+/// 认不出的元素会把原始 payload 的前 64 字节按十六进制打出来（带偏移），
+/// 方便贴回来对照字段号。
+void _dumpPush(String cmd, Uint8List payload) {
+  Qq8PushEvent ev;
+  try {
+    ev = qq8ParsePush(cmd, payload);
+  } on Object catch (e) {
+    stdout.writeln('    （解析失败：$e）');
+    return;
+  }
+
+  switch (ev) {
+    case Qq8MessagePush(:final message, :final needsAck):
+      stdout.writeln('    → 收到消息 kind=${message.kind.name} '
+          'from=${message.fromUin}'
+          '${message.groupCode == null ? '' : ' gid=${message.groupCode}'} '
+          'seq=${message.seq} rand=${message.rand} t=${message.time}'
+          '${needsAck ? ' needsAck' : ''}');
+      stdout.writeln('      文本: ${message.text}');
+      stdout.writeln('      元素: ${message.elemKinds.join('/')}');
+      for (final e in message.elems) {
+        final line = switch (e) {
+          Qq8TextElem(:final text) => '文本(${text.length} 字)',
+          Qq8AtElem(:final target, :final name) =>
+            '@$target${name == null ? '' : '($name)'}',
+          Qq8FaceElem(:final id, :final isBig) =>
+            '表情 id=$id${isBig ? ' 大' : ''}',
+          Qq8ImageElem(
+            :final file,
+            :final url,
+            :final width,
+            :final height,
+            :final flash
+          ) =>
+            '图片 ${width}x$height${flash ? ' 闪照' : ''} file=$file url=${url ?? '(无)'}',
+          Qq8VoiceElem(:final seconds, :final size, :final url, :final md5) =>
+            '语音 ${seconds}s ${size}B md5=${md5 ?? '(无)'} url=${url ?? '(无)'}',
+          Qq8VideoElem(
+            :final name,
+            :final seconds,
+            :final size,
+            :final fileId
+          ) =>
+            '视频 ${name ?? ''} ${seconds}s ${size}B fid=${fileId ?? '(无)'}',
+          Qq8FileElem(:final name, :final size, :final fileId) =>
+            '文件 ${name ?? ''} ${size}B fid=${fileId ?? '(无)'}',
+          Qq8CardElem(:final kind, :final raw, :final summary) =>
+            '卡片 $kind 摘要=$summary 原文=${raw.length} 字符',
+          Qq8ReplyElem(:final seq, :final preview) => '引用 seq=$seq 「$preview」',
+          Qq8PokeElem(:final id) => '戳一戳 id=${id ?? '(无)'}',
+          Qq8UnsupportedElem(:final name, :final field) =>
+            '**认不出** name=$name field=$field',
+        };
+        stdout.writeln('      - $line');
+      }
+      // 有认不出的元素时，把原始 payload 头部打出来（贴回来就能对照字段号）
+      if (message.elems.any((e) => e is Qq8UnsupportedElem)) {
+        final head = payload.length <= 64 ? payload : payload.sublist(0, 64);
+        stdout.writeln('      payload 前 ${head.length} 字节：');
+        stdout.writeln(hexdump(head, prefix: '        '));
+      }
+    case Qq8KickPush(:final hint):
+      stdout.writeln('    → 被踢下线：$hint');
+    case Qq8NotifyPush(:final notifyType):
+      stdout.writeln('    → 有新消息通知 type=$notifyType'
+          '（33/38/85/141/166/167/208/529 会触发一次 PbGetMsg 拉取）');
+    case Qq8UnknownPush(:final note, :final payloadLength):
+      stdout.writeln('    → 未处理的推送（$payloadLength 字节）${note ?? ''}');
+      final head = payload.length <= 64 ? payload : payload.sublist(0, 64);
+      stdout.writeln(hexdump(head, prefix: '        '));
   }
 }

@@ -22,12 +22,14 @@
 /// ```
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:qqclient/infra/coder.dart';
 import 'package:qqclient/kernel/crypto/tea.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/crypto/digest.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
@@ -56,6 +58,8 @@ Uint8List _hex(String s) {
   }
   return out;
 }
+
+String _hexCompact(List<int> b) => _hexOf(b).replaceAll(' ', '');
 
 String _hexOf(List<int> b) =>
     b.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' ');
@@ -97,7 +101,9 @@ Qq8Device _device() => Qq8Device(
       guid: _hex('00112233445566778899aabbccddeeff'),
     );
 
-Qq8TlvContext _tlvCtx(Qq8ClientProfile p, {Uint8List? t104}) => Qq8TlvContext(
+Qq8TlvContext _tlvCtx(Qq8ClientProfile p,
+        {Uint8List? t104, Uint8List? t174, Uint8List? t548}) =>
+    Qq8TlvContext(
       uin: 10001,
       apk: p.apk,
       device: _device(),
@@ -105,9 +111,10 @@ Qq8TlvContext _tlvCtx(Qq8ClientProfile p, {Uint8List? t104}) => Qq8TlvContext(
       seqId: 100,
       ksid: _fill(16, 0x33),
       t104: t104 ?? _hex('0102030405060708'),
-      t174: _hex('aabbccdd'),
+      t174: t174 ?? _hex('aabbccdd'),
       tgt: _hex('1122334455667788'),
       srmToken: _hex('99aabbcc'),
+      t548: t548,
       randomBytes: (n) => _fill(n, 0xab),
       teaPadding: (n) => _fill(n, 0),
       nowMillis: () => _fixedNow,
@@ -147,6 +154,35 @@ Uint8List _buildResponse(int type, Map<int, List<int>> tlvs) {
     ..u8(0x03); // 末尾 1 字节
   return out.build();
 }
+
+int _subOf(Uint8List body) => (body[0] << 8) | body[1];
+
+List<int> _tagsOf(Uint8List body) {
+  final n = (body[2] << 8) | body[3];
+  final tags = <int>[];
+  var i = 4;
+  for (var k = 0; k < n && i + 4 <= body.length; k++) {
+    final tag = (body[i] << 8) | body[i + 1];
+    final len = (body[i + 2] << 8) | body[i + 3];
+    tags.add(tag);
+    i += 4 + len;
+  }
+  return tags;
+}
+
+Uint8List? _tlvBody(Uint8List body, int want) {
+  final n = (body[2] << 8) | body[3];
+  var i = 4;
+  for (var k = 0; k < n && i + 4 <= body.length; k++) {
+    final tag = (body[i] << 8) | body[i + 1];
+    final len = (body[i + 2] << 8) | body[i + 3];
+    if (tag == want) return body.sublist(i + 4, i + 4 + len);
+    i += 4 + len;
+  }
+  return null;
+}
+
+String _hx(int v) => '0x${v.toRadixString(16)}';
 
 Future<void> main() async {
   stdout.writeln('=' * 66);
@@ -411,15 +447,21 @@ Future<void> main() async {
     );
     final sliderOrder = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk, hasT547: false);
     check(
-      'slider（8.9.50，ssoVer=19）：5 项 = 基础 4 项 + 0x544',
-      tlvs.length == 5 && tlvs.keys.join(',') == sliderOrder.join(',') &&
-          sliderOrder.last == 0x544,
+      'slider（8.9.50，ssoVer=19）：6 项 = 基础 4 项 + 0x544 + 0x542（维护版追加）',
+      tlvs.length == 6 && tlvs.keys.join(',') == sliderOrder.join(',') &&
+          sliderOrder[sliderOrder.length - 2] == 0x544 &&
+          sliderOrder.last == 0x542,
       '${tlvs.length} 项: ${tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
     );
     check(
       'slider（8.9.50）：0x544 是合法空体（不能因空被滤掉）',
       tlvs.containsKey(0x544) && tlvs[0x544]!.isEmpty,
       'len=${tlvs[0x544]?.length}',
+    );
+    check(
+      'slider（8.9.50）：收尾 0x542 body = 4A 02 60 01（ssoVer<20 四字节）',
+      tlvs[0x542]?.join(',') == [0x4A, 0x02, 0x60, 0x01].join(','),
+      tlvs[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
     );
 
     // 8.2.11（ssoVer=7 ≤ 12）按两个参考的一致结论：只有基础 4 项、不发 0x544
@@ -440,9 +482,9 @@ Future<void> main() async {
     {
       final with547 = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk, hasT547: true);
       check(
-        'slider 清单：hasT547 → 0x547 在 0x544 之前',
-        with547.length == 6 &&
-            with547[4] == 0x547 && with547[5] == 0x544,
+        'slider 清单：hasT547 → 0x547 在 0x544 之前、0x542 收尾',
+        with547.length == 7 &&
+            with547[4] == 0x547 && with547[5] == 0x544 && with547[6] == 0x542,
         with547.map((t) => '0x${t.toRadixString(16)}').join(' '),
       );
       // 空 t547 时显式报错，不发空壳
@@ -485,6 +527,64 @@ Future<void> main() async {
       emptyTicketRejected = true;
     }
     check('slider：ticket 为空时显式拒绝', emptyTicketRejected);
+
+    // ssoVer ≥ 20（9.3.60）：0x542 升为六字节 4A 04 60 01 78 01
+    {
+      final ctx22 = _tlvCtx(qq8ProfileQQ9360);
+      final b22 = Qq8LoginBody.buildSlider(ctx22, ticket: ticket);
+      final t22 = qq8ReadTlv(b22, offset: 4);
+      check(
+        'slider（9.3.60，ssoVer=22）：0x542 body = 4A 04 60 01 78 01（六字节）',
+        t22[0x542]?.join(',') ==
+            [0x4A, 0x04, 0x60, 0x01, 0x78, 0x01].join(','),
+        t22[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
+      );
+    }
+  }
+
+  // -- 2e. 密码登录清单的维护版对齐（0x548 自构造 PoW + 0x542）-------------
+  stdout.writeln('\n【2e】密码登录清单（维护版 oicq v1.26.25 对齐）');
+  {
+    final order8950 = qq8PasswordTlvOrderFor(qq8ProfileQQ8950.apk);
+    check('8.9.50 密码清单 = 官方 37 项 + 末尾 0x542（38 项）',
+        order8950.length == 38 && order8950.last == 0x542,
+        '${order8950.length} 项，尾=0x${order8950.last.toRadixString(16)}');
+    final order8211 = qq8PasswordTlvOrderFor(qq8ProfileQQ8211.apk);
+    check('8.2.11（ssoVer=7）密码清单不加 0x542（官方表无此项）',
+        order8211.length == 37 && !order8211.contains(0x542),
+        '${order8211.length} 项');
+
+    // 组包：带自构造 0x548 时它出现在 0x545 之后、0x542 之前（官方表位次）。
+    final fakeT548 = Uint8List(484)..fillRange(0, 484, 0xCD);
+    final ctx = _tlvCtx(qq8ProfileQQ8950, t548: fakeT548);
+    final body = Qq8LoginBody.build(
+      ctx,
+      Qq8SubCmd.password,
+      qq8PasswordTlvOrderFor(qq8ProfileQQ8950.apk),
+      cond: Qq8LoginConditions(t548: ctx.t548),
+    );
+    final tlvs = qq8ReadTlv(body, offset: 4);
+    final keys = tlvs.keys.toList();
+    check('密码包带 0x548（body 透传自 ctx.t548）',
+        tlvs[0x548]?.length == 484 && tlvs[0x548]![0] == 0xCD);
+    check('密码包以 0x542 收尾（四字节档）',
+        keys.last == 0x542 &&
+            tlvs[0x542]?.join(',') == [0x4A, 0x02, 0x60, 0x01].join(','),
+        keys.map((t) => '0x${t.toRadixString(16)}').join(' '));
+    check('0x548 的位次在 0x544 之后、0x542 之前（无 QIMEI 时 0x545 被 guard 滤掉）',
+        keys.indexOf(0x548) > keys.indexOf(0x544) &&
+            keys.indexOf(0x548) < keys.indexOf(0x542));
+
+    // 无 t548（旧行为）：guard 滤掉 0x548，但 0x542 仍在。
+    final bodyNoPow = Qq8LoginBody.build(
+      _tlvCtx(qq8ProfileQQ8950),
+      Qq8SubCmd.password,
+      qq8PasswordTlvOrderFor(qq8ProfileQQ8950.apk),
+      cond: Qq8LoginConditions.firstPasswordLogin,
+    );
+    final tNoPow = qq8ReadTlv(bodyNoPow, offset: 4);
+    check('未提供自构造 PoW：0x548 被 guard 滤掉（首登官方语义不变）',
+        !tNoPow.containsKey(0x548) && tNoPow.containsKey(0x542));
   }
 
   // -- 3. 响应解析（往返） ------------------------------------------------
@@ -629,6 +729,333 @@ Future<void> main() async {
 
     final sig = Qq8SigBundle.parse(parsed.t119!, _tgtgtKey);
     check('票据 tgt 解出', sig.tgt?.length == 56, '${sig.tgt?.length}');
+  }
+
+  // -- 2e. 验证分支：设备锁（20）/ 请求下发短信（8）/ 提交短信码（7）--------
+  stdout.writeln('\n【2e】验证分支：设备锁 / 短信码');
+  {
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    const saltHex = '0102030405060708';
+
+    // 设备锁：204 之后自动发的那条，体 = 0x08/0x104/0x116/0x401
+    {
+      final d = Qq8LoginBody.buildDeviceUnlock(ctx);
+      final tlvs = qq8ReadTlv(d, offset: 4);
+      check(
+        '设备锁：子命令 20、4 项、顺序 0x08 0x104 0x116 0x401',
+        (d[0] << 8 | d[1]) == Qq8SubCmd.device &&
+            tlvs.length == 4 &&
+            tlvs.keys.join(',') == '8,260,278,1025',
+        'sub=${d[0] << 8 | d[1]} keys=${tlvs.keys.join(',')}',
+      );
+      check('设备锁：0x104 = 盐', _hexCompact(tlvs[0x104]!) == saltHex,
+          _hexCompact(tlvs[0x104]!));
+      check('设备锁：0x401 是 16 字节随机', tlvs[0x401]?.length == 16,
+          '${tlvs[0x401]?.length}');
+      var threw = false;
+      try {
+        Qq8LoginBody.buildDeviceUnlock(_tlvCtx(qq8ProfileQQ8950, t104: Uint8List(0)));
+      } on Qq8LoginException {
+        threw = true;
+      }
+      check('设备锁：没有盐时显式拒绝', threw);
+    }
+
+    // 请求下发短信：子命令 8，体 = 0x08/0x104/0x116/0x174/0x17a/0x197
+    {
+      final d = Qq8LoginBody.buildSendSms(ctx);
+      final tlvs = qq8ReadTlv(d, offset: 4);
+      check(
+        '下发短信：子命令 8、6 项、顺序含 0x174 与 0x197',
+        (d[0] << 8 | d[1]) == Qq8SubCmd.sendSms &&
+            tlvs.length == 6 &&
+            tlvs.keys.join(',') == '8,260,278,372,378,407',
+        'sub=${d[0] << 8 | d[1]} keys=${tlvs.keys.join(',')}',
+      );
+      check('下发短信：0x174 = 令牌', _hexCompact(tlvs[0x174]!) == 'aabbccdd',
+          _hexCompact(tlvs[0x174]!));
+      check('下发短信：0x17a = 9', _hexCompact(tlvs[0x17A]!) == '00000009',
+          _hexCompact(tlvs[0x17A]!));
+      check('下发短信：0x197 = tlv(1 字节 00)',
+          _hexCompact(tlvs[0x197]!) == '000100', _hexCompact(tlvs[0x197]!));
+    }
+
+    // 提交短信码：子命令 7，体 = 0x08/0x104/0x116/0x174/0x17c/0x401/0x198/0x544
+    {
+      final d = Qq8LoginBody.buildSubmitSms(ctx, code: '654321');
+      final tlvs = qq8ReadTlv(d, offset: 4);
+      check(
+        '提交短信码：子命令 7、8 项、顺序与参考一致',
+        (d[0] << 8 | d[1]) == Qq8SubCmd.submitSms &&
+            tlvs.length == 8 &&
+            tlvs.keys.join(',') == '8,260,278,372,380,1025,408,1348',
+        'sub=${d[0] << 8 | d[1]} keys=${tlvs.keys.join(',')}',
+      );
+      check('提交短信码：0x17c = tlv(码的字节)',
+          tlvs[0x17C]!.length == 8 &&
+              String.fromCharCodes(tlvs[0x17C]!.sublist(2)) == '654321',
+          _hexCompact(tlvs[0x17C]!));
+      check('提交短信码：0x198 = tlv(1 字节 00)',
+          _hexCompact(tlvs[0x198]!) == '000100', _hexCompact(tlvs[0x198]!));
+      check('提交短信码：带 0x544（8.9.50 空体）',
+          tlvs.containsKey(0x544) && tlvs[0x544]!.isEmpty);
+
+      var badCode = false;
+      try {
+        Qq8LoginBody.buildSubmitSms(ctx, code: '12345');
+      } on Qq8LoginException {
+        badCode = true;
+      }
+      check('提交短信码：5 位码被拒（不学参考实现的静默替换）', badCode);
+
+      var nonNumeric = false;
+      try {
+        Qq8LoginBody.buildSubmitSms(ctx, code: 'abcdef');
+      } on Qq8LoginException {
+        nonNumeric = true;
+      }
+      check('提交短信码：非数字码被拒', nonNumeric);
+
+      var noToken = false;
+      try {
+        Qq8LoginBody.buildSubmitSms(
+          _tlvCtx(qq8ProfileQQ8950, t174: Uint8List(0)),
+          code: '654321',
+        );
+      } on Qq8LoginException {
+        noToken = true;
+      }
+      check('提交短信码：没有 0x174 令牌时显式拒绝', noToken);
+    }
+
+    // 响应侧：160/162/239 判定 + 0x178 手机号解析 + 0x204 提示
+    {
+      final phone = <int>[0x31, 0x0b, ...'13800000000'.codeUnits];
+      final payload = _buildResponse(Qq8LoginResultType.smsVerify1, <int, List<int>>{
+        0x104: <int>[9, 9],
+        0x174: <int>[0xaa, 0xbb],
+        0x178: phone,
+      });
+      final r = Qq8LoginResponse.parse(payload, _shareKey);
+      check('短信响应：needsSmsVerify 为真', r.needsSmsVerify, 'type=${r.type}');
+      check('短信响应：手机号 = 13800000000', r.verifyPhone == '13800000000',
+          '${r.verifyPhone}');
+      check('短信响应：0x174 令牌解出 2 字节', r.verifyToken?.length == 2);
+      check('短信响应：162/239 同样判定为短信验证',
+          _buildResponse(Qq8LoginResultType.smsVerify2, <int, List<int>>{0x104: <int>[1]})
+                  .isNotEmpty &&
+              Qq8LoginResponse.parse(
+                _buildResponse(Qq8LoginResultType.smsVerify3, <int, List<int>>{
+                  0x104: <int>[1],
+                }),
+                _shareKey,
+              ).needsSmsVerify);
+
+      final lockPayload =
+          _buildResponse(Qq8LoginResultType.deviceLock, <int, List<int>>{
+        0x104: <int>[1, 2],
+        0x204: utf8.encode('设备锁提示'),
+      });
+      final lock = Qq8LoginResponse.parse(lockPayload, _shareKey);
+      check('设备锁响应：needsDeviceLock 为真', lock.needsDeviceLock);
+      check('设备锁响应：0x204 提示语解出', lock.deviceLockHint == '设备锁提示',
+          '${lock.deviceLockHint}');
+    }
+  }
+
+  // ----------------------------------------------------------------
+  stdout.writeln('');
+  stdout.writeln('--- 17. 手机号短信验证登录：三条子命令的组包（字段照官方 w/x/y.java）---');
+  {
+    // 17 检查手机号：子命令 17 + 官方"带账号串"那套数组（无 0x104 / 0x52C）
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final checkBody =
+        Qq8LoginBody.buildSmsLoginCheck(ctx, phone: '13800138000');
+    final checkTags = _tagsOf(checkBody);
+    stdout.writeln('    17 检查：sub=${_subOf(checkBody)} '
+        'tags=${checkTags.map(_hx).join(',')}');
+    check('子命令 = 17', _subOf(checkBody) == 17, '${_subOf(checkBody)}');
+    check('带账号串 0x112', checkTags.contains(0x112));
+    check('11 项且顺序 = 官方第三套（0x100…0x154,0x112,0x116,0x521）',
+        checkTags.join(',') ==
+            <int>[
+              0x100, 0x108, 0x109, 0x52D, 0x8, 0x142, 0x145, 0x154, 0x112, 0x116,
+              0x521,
+            ].join(','),
+        checkTags.map(_hx).join(','));
+    check('不含 0x104 / 0x52C（官方带账号串那套就没有）',
+        !checkTags.contains(0x104) && !checkTags.contains(0x52C));
+    check('没有 0x127/0x184（那是提交那一步的）',
+        !checkTags.contains(0x127) && !checkTags.contains(0x184));
+    final acc = _tlvBody(checkBody, 0x112);
+    check('0x112 里就是手机号原文',
+        acc != null && String.fromCharCodes(acc) == '13800138000',
+        acc == null ? '(缺)' : String.fromCharCodes(acc));
+
+    // 19 下发验证码：只要 4 项
+    final refresh = Qq8LoginBody.buildSmsLoginRefresh(ctx);
+    final refreshTags = _tagsOf(refresh);
+    stdout.writeln('    19 下发：sub=${_subOf(refresh)} tags=${refreshTags.map(_hx).join(',')}');
+    check('子命令 = 19', _subOf(refresh) == 19, '${_subOf(refresh)}');
+    check('TLV 恰好 4 项且顺序 = 0x104,0x8,0x116,0x521',
+        refreshTags.length == 4 &&
+            refreshTags[0] == 0x104 &&
+            refreshTags[1] == 0x8 &&
+            refreshTags[2] == 0x116 &&
+            refreshTags[3] == 0x521,
+        refreshTags.map(_hx).join(','));
+
+    // 18 提交验证码：0x127（验证码 + random）与 0x184（双 MD5）
+    final random = _hex('00112233445566778899aabbccddeeff');
+    final verify = Qq8LoginBody.buildSmsLoginVerify(
+      ctx,
+      code: '123456',
+      random: random,
+      mpasswd: 'AbCdEfGhIjKlMnOp',
+      msalt: 0x1122334455667788,
+    );
+    final verifyTags = _tagsOf(verify);
+    stdout.writeln('    18 提交：sub=${_subOf(verify)} tags=${verifyTags.map(_hx).join(',')}');
+    check('子命令 = 18', _subOf(verify) == 18, '${_subOf(verify)}');
+    check('6 项且顺序 = 0x104,0x8,0x127,0x184,0x116,0x521',
+        verifyTags.join(',') ==
+            <int>[0x104, 0x8, 0x127, 0x184, 0x116, 0x521].join(','),
+        verifyTags.map(_hx).join(','));
+    final t127 = _tlvBody(verify, 0x127);
+    check('0x127 = u16(0) ‖ u16(6) ‖ "123456" ‖ u16(16) ‖ random',
+        t127 != null &&
+            t127.length == 2 + 2 + 6 + 2 + 16 &&
+            t127[0] == 0 &&
+            t127[1] == 0 &&
+            ((t127[2] << 8) | t127[3]) == 6 &&
+            String.fromCharCodes(t127.sublist(4, 10)) == '123456' &&
+            ((t127[10] << 8) | t127[11]) == 16,
+        t127 == null ? '(缺)' : '${t127.length} 字节');
+    final t184 = _tlvBody(verify, 0x184);
+    check('0x184 = 16 字节（双 MD5 之后就是摘要长度）',
+        t184 != null && t184.length == 16, t184 == null ? '(缺)' : '${t184.length}');
+    check('0x184 与"本地算出来的"一致（可独立复算）',
+        t184 != null &&
+            _hexOf(md5Bytes(<int>[
+              ...md5Bytes(utf8.encode('AbCdEfGhIjKlMnOp')),
+              for (var i = 7; i >= 0; i--) (0x1122334455667788 >> (8 * i)) & 0xFF,
+            ])) ==
+                _hexOf(t184),
+        '');
+
+    // 验证码通过之后那次登录（官方 GetStViaSMSVerifyLogin → 子命令 9）：
+    // 账号串 = 手机号（0x112）、0x185 出现（cond.loginType == 3）、
+    // 0x106 的登录类型 = 3，且 TEA 密钥种子用 msalt（不是 uin）。
+    {
+      const msalt = 0x1122334455667788;
+      const mpasswd = 'AbCdEfGhIjKlMnOp';
+      const plainPwd = '13800138000';
+      final base = _tlvCtx(qq8ProfileQQ8950);
+      final smsCtx = Qq8TlvContext(
+        uin: 0, // 手机号登录：18 号回包之前 uin 还是 0
+        apk: base.apk,
+        device: base.device,
+        passwordMd5: md5Bytes(utf8.encode(mpasswd)),
+        seqId: base.seqId,
+        ksid: base.ksid,
+        t104: base.t104,
+        t174: Uint8List(0),
+        tgt: Uint8List(0),
+        srmToken: Uint8List(0),
+        msalt: msalt,
+        loginType: 3,
+        account: plainPwd,
+        randomBytes: (n) => _fill(n, 0xab),
+        teaPadding: (n) => _fill(n, 0),
+        nowMillis: () => _fixedNow,
+      );
+      final smsBody = Qq8LoginBody.build(
+        smsCtx,
+        Qq8SubCmd.password,
+        qq8ProfileQQ8950.apk.loginTlvOrder,
+        cond: Qq8LoginConditions(accountIsUin: false, loginType: 3, t104: smsCtx.t104),
+        args: <int, List<Object?>>{
+          0x112: <Object?>[plainPwd],
+        },
+      );
+      final smsTags = _tagsOf(smsBody);
+      stdout.writeln('    短信后的登录：sub=${_subOf(smsBody)} '
+          'tags=${smsTags.map(_hx).join(',')}');
+      check('子命令 = 9（就是普通口令登录）', _subOf(smsBody) == 9);
+      check('带账号串 0x112 = 手机号',
+          String.fromCharCodes(_tlvBody(smsBody, 0x112) ?? <int>[]) == plainPwd);
+      check('带 0x185（cond.loginType == 3 才发）', smsTags.contains(0x185));
+      final b106 = _tlvBody(smsBody, 0x106);
+      final seed = Uint8List(24)
+        ..setRange(0, 16, base.device.guid)
+        ..setRange(16, 24, <int>[
+          for (var i = 7; i >= 0; i--) (msalt >> (8 * i)) & 0xFF,
+        ]);
+      final plain106 = qqTeaDecrypt(b106!, md5Bytes(seed));
+      check('0x106 用 msalt 当种子能解开（不是 uin）', plain106.length > 90,
+          'len=${plain106.length}');
+      check('0x106 里的登录类型 = 3（偏移 92 的 u32）',
+          ((plain106[92] << 24) |
+                  (plain106[93] << 16) |
+                  (plain106[94] << 8) |
+                  plain106[95]) ==
+              3,
+          '${plain106[92]},${plain106[93]},${plain106[94]},${plain106[95]}');
+      check('0x106 里的账号串 = 手机号',
+          String.fromCharCodes(plain106.sublist(98, 98 + plainPwd.length)) ==
+              plainPwd,
+          'len=${((plain106[96] << 8) | plain106[97])}');
+    }
+
+    // 响应侧：208（检查）带盐 + random + 计数/时限 + msalt；232（刷新）带盐 + 手机号提示
+    {
+      final payload208 =
+          _buildResponse(Qq8LoginResultType.smsLoginCheck, <int, List<int>>{
+        0x104: <int>[0x01, 0x02],
+        0x126: <int>[0, 0, 0, 16, ...List<int>.generate(16, (i) => i)],
+        0x182: <int>[0, 0x00, 0x05, 0x00, 0x3c],
+        0x183: <int>[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+      });
+      final r208 = Qq8LoginResponse.parse(payload208, _shareKey);
+      stdout.writeln('    208 解出：type=${r208.type} '
+          'random=${r208.smsLoginRandom?.length}B '
+          'cnt=${r208.smsLoginLimits?.msgCnt} '
+          'limit=${r208.smsLoginLimits?.timeLimit}s '
+          'msalt=0x${r208.smsLoginMsalt?.toRadixString(16)}');
+      check('208：isSmsLoginStep 为真', r208.isSmsLoginStep, 'type=${r208.type}');
+      check('208：盐 0x104 = 0102',
+          r208.smsLoginSalt != null && _hexCompact(r208.smsLoginSalt!) == '0102',
+          '${r208.smsLoginSalt}');
+      check('208：0x126 random 取 16 字节（长度在 body+2）',
+          r208.smsLoginRandom?.length == 16 &&
+              r208.smsLoginRandom!.last == 15,
+          '${r208.smsLoginRandom?.length}');
+      check('208：0x182 msgCnt=5 / timeLimit=60（偏移 +1 起）',
+          r208.smsLoginLimits?.msgCnt == 5 &&
+              r208.smsLoginLimits?.timeLimit == 60,
+          '${r208.smsLoginLimits}');
+      check('208：0x183 msalt = 0x1122334455667788（u64 大端）',
+          r208.smsLoginMsalt == 0x1122334455667788,
+          '0x${r208.smsLoginMsalt?.toRadixString(16)}');
+
+      final payload232 =
+          _buildResponse(Qq8LoginResultType.smsLoginRefresh, <int, List<int>>{
+        0x104: <int>[0x03, 0x04],
+        0x52B: <int>[
+          0, 0, 0, 0, 0x00, 0x56, 0x00, 0x00,
+          ...utf8.encode('13800000000'),
+        ],
+      });
+      final r232 = Qq8LoginResponse.parse(payload232, _shareKey);
+      stdout.writeln('    232 解出：type=${r232.type} zone=${r232.smsLoginZone} '
+          'hint=${r232.smsLoginPhoneHint}');
+      check('232：isSmsLoginStep 为真', r232.isSmsLoginStep, 'type=${r232.type}');
+      check('232：zone=86 / 号码 = 13800000000（号码取 body+8 到末尾）',
+          r232.smsLoginZone == 86 && r232.smsLoginPhoneHint == '13800000000',
+          'zone=${r232.smsLoginZone} phone=${r232.smsLoginPhoneHint}');
+      check('232：needsSmsVerify 为假（208/232 不是旧路那三个码）',
+          !r232.needsSmsVerify && !r208.needsSmsVerify);
+    }
   }
 
   // -- 汇总 --------------------------------------------------------------
