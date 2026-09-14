@@ -26,6 +26,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'client_api/qq8_providers.dart';
+import 'client_api/qq8_token_store.dart';
 import 'client_api/session_providers.dart';
 import 'infra/log/log_file.dart';
 import 'infra/log/logger.dart';
@@ -64,6 +66,10 @@ Future<void> main() async {
         dataDirProvider.overrideWithValue(dataDir),
         backendRegistryProvider.overrideWithValue(registry),
         safetyGateProvider.overrideWithValue(gate),
+        // 协议线的票据存储：需要可写目录（不注入会在首次 watch 时抛错 → 白屏）
+        qq8TokenStoreProvider.overrideWithValue(
+          FileQq8TokenStore(Directory('${dataDir.path}${Platform.pathSeparator}qq8')),
+        ),
       ],
       child: const QQClientApp(),
     ),
