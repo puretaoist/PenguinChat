@@ -7,8 +7,13 @@ description = "QQ 协议内核（Rust 移植）：JCE / protobuf / 响应拆壳 
 
 [dependencies]
 penguin-crypto = { path = "../penguin-crypto" }
+# TLV 0x01/0x400/0x401 的随机字段与 TEA 填充（生产路径）
+getrandom = "0.2"
+# 传输层与会话层（TCP + 异步任务）
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "net", "io-util", "macros"] }
 
 [dev-dependencies]
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

@@ -15,7 +15,7 @@
 
 use penguin_crypto::tea::qq_tea_decrypt;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RecvError {
     TooShort(usize),
     BadMagic(u32),

@@ -28,6 +28,11 @@ pub const BUF_UNKNOWN: [u8; 12] = [
 pub const CMD_WT_LOGIN: u16 = 0x810;
 pub const PROTOCOL_VERSION: u16 = 8001;
 
+/// 登录层信封的命令字（[`build_login_packet`] 的 `cmd` 参数）。
+pub const LOGIN_CMD: &str = "wtlogin.login";
+pub const EXCHANGE_EMP_CMD: &str = "wtlogin.exchange_emp";
+pub const TRANS_EMP_CMD: &str = "wtlogin.trans_emp";
+
 /// 登录信封的传输类型。
 pub mod login_type {
     pub const HEARTBEAT: u8 = 0;
