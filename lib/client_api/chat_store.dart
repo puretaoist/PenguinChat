@@ -36,6 +36,24 @@
 ///   字节归 `infra/storage/` 的内容寻址存储管。见 `STORAGE-DESIGN.md`。
 /// - **用户输入绝不静默丢弃**：发送失败的消息保留原文并标记
 ///   [MessageSendState.failed]，体积淘汰也不会碰它。
+///
+/// ## 存储策略（按 Telegram 分两类，不是"一刀切缓存"）
+///
+/// TG 的做法是**分成两类**：聊天记录是数据库（不自动删），媒体才进缓存
+/// （有保留期 + 上限 + 一键清空）。这里照抄这个结构：
+///
+/// | 类别 | 位置 | 自动清理 | 手动清理 |
+/// |---|---|---|---|
+/// | 消息库 | `<dataDir>/chats.json` + `chats/*.jsonl` | **不删**（只有条数上限） | [clearChatHistory] / [clearAllHistory]（TG 的 Clear history） |
+/// | 媒体缓存 | `<dataDir>/media/<分类>/…` | [pruneMediaCache]：保留期 [keepMediaFor] + 上限 [maxCacheBytes] | [clearMediaCache]（TG 的 Clear cache） |
+///
+/// 与 TG 的差别要说明白：TG 聊天记录能无限保留是因为它有**云端无限历史**；
+/// QQ 的漫游有限（私聊按天、群按 seq 区间），所以这里给消息加了一个
+/// **条数上限** [maxMessagesPerChat]（默认 500/会话）兜底——它只在单会话超过
+/// 500 条时裁掉最旧的那些，且置顶会话豁免、`sending`/`failed`（用户没送出去
+/// 的内容）永不裁。真要看更早的，靠 [Session.fetchHistory] 翻页再拉。
+///
+/// 媒体字节**永不进消息库**（见下条约束），所以清媒体缓存不会影响历史。
 library;
 
 import 'dart:async';
@@ -79,6 +97,8 @@ class ChatStore {
     Logger? logger,
     this.maxMessagesPerChat = 500,
     this.pageSize = 20,
+    this.maxCacheBytes = 512 * 1024 * 1024,
+    this.keepMediaFor = const Duration(days: 30),
   }) : _log = logger ?? Log.get('ChatStore');
 
   /// 数据来源。ChatStore **不拥有**它的生命周期——不负责 connect / dispose，
@@ -100,6 +120,25 @@ class ChatStore {
   /// 单次拉历史的条数。
   final int pageSize;
 
+  /// **媒体缓存**上限（TG 的 "Maximum cache size"）。
+  ///
+  /// 只约束 `media/`（图片/视频/文件/语音），**不约束聊天记录**——
+  /// 记录是数据库不是缓存，见文件头"存储策略"。
+  final int maxCacheBytes;
+
+  /// 媒体保留期（TG 的 "Keep media"：3 天 / 1 周 / 1 月 / 永久）。
+  /// null = 永久保留（只受 [maxCacheBytes] 约束）。
+  final Duration? keepMediaFor;
+
+  /// 媒体缓存的分类子目录（对齐 TG "存储用量"页的分类）。
+  static const List<String> mediaCategories = <String>[
+    'photos',
+    'videos',
+    'files',
+    'voices',
+    'other',
+  ];
+
   /// 索引落盘防抖：会话摘要每来一条消息就会变，逐条写盘不划算。
   static const Duration _indexDebounce = Duration(milliseconds: 200);
 
@@ -120,6 +159,7 @@ class ChatStore {
   int _localSeq = 0;
   String? _activeChatId;
   bool _disposed = false;
+  bool _bootstrapped = false;
 
   // ---------------------------------------------------------------------------
   // 读接口
@@ -162,6 +202,10 @@ class ChatStore {
 
   Chat? chatOf(String chatId) => _chats[chatId];
 
+  /// 归档会话（TG/Nagram 的 Archived chats：列表里收起来，入口在列表顶部）。
+  List<Chat> get archivedChats =>
+      List<Chat>.unmodifiable(chats.where((c) => c.archived));
+
   // ---------------------------------------------------------------------------
   // 生命周期
   // ---------------------------------------------------------------------------
@@ -174,6 +218,10 @@ class ChatStore {
     await dataDir.create(recursive: true);
     await _chatsDir.create(recursive: true);
     _loadIndex();
+    _bootstrapped = true;
+
+    // TG 的做法：启动时顺手清一次媒体缓存（保留期 + 上限），不阻塞启动
+    unawaited(pruneMediaCache());
 
     _sub = session.events.listen(
       _onEvent,
@@ -299,10 +347,24 @@ class ChatStore {
   }
 
   /// 清零未读；若后端支持则顺带上报已读。
+  ///
+  /// 同时把 [Chat.lastReadId] 推到当前最后一条——"未读消息"分隔线就是靠它定位
+  /// （见 `message_list_builder.dart`）。清未读与记位置必须一起做，否则会出现
+  /// "计数器是 0、分隔线还停在三条之前"的错位。
   Future<void> markChatRead(String chatId) async {
     final chat = _chats[chatId];
-    if (chat != null && chat.unreadCount > 0) {
-      _chats[chatId] = chat.copyWith(unreadCount: 0);
+    final list = _messages[chatId];
+    final lastId = (list != null && list.isNotEmpty) ? list.last.id : null;
+    if (chat != null &&
+        (chat.unreadCount > 0 ||
+            chat.manualUnread ||
+            (lastId != null && lastId != chat.lastReadId))) {
+      _chats[chatId] = chat.copyWith(
+        unreadCount: 0,
+        lastReadId: lastId ?? chat.lastReadId,
+        // 打开会话（或主动标已读）时，手动的"标为未读"就该结束
+        manualUnread: false,
+      );
       _scheduleIndexPersist();
       _emit(ChatStoreChangeKind.chats);
     }
@@ -310,7 +372,6 @@ class ChatStore {
     if (session.state != SessionState.ready) return;
     // 各后端能力不同（实测只有 NapCat 有 mark_*_msg_as_read），先问再做
     if (!session.supports('set_message_read')) return;
-    final list = _messages[chatId];
     if (list == null || list.isEmpty) return;
     final last = list.last;
     if (last.outgoing || last.id.startsWith('local:')) return;
@@ -403,6 +464,404 @@ class ChatStore {
         _messages[event.chatId]![idx].recalled(recallInfo: info);
     _rewriteMessages(event.chatId);
     _emit(ChatStoreChangeKind.messages, event.chatId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 存储：用量统计 / 清理（按 TG 的做法，见文件头"存储策略"）
+  // ---------------------------------------------------------------------------
+
+  /// 本地占用统计：**消息库**（不自动清理）与**媒体缓存**（可清）分开报。
+  Future<StorageStats> storageStats() async {
+    final dbByChat = <String, int>{};
+    var dbBytes = 0;
+    if (_chatsDir.existsSync()) {
+      for (final f in _chatsDir.listSync()) {
+        if (f is! File) continue;
+        dbBytes += f.lengthSync();
+      }
+      for (final id in _chats.keys) {
+        final f = _messageFile(id);
+        if (f.existsSync()) dbByChat[id] = f.lengthSync();
+      }
+    }
+    if (_indexFile.existsSync()) dbBytes += _indexFile.lengthSync();
+
+    final cacheByCategory = <String, int>{};
+    var cacheBytes = 0;
+    final media = _mediaDir;
+    if (media.existsSync()) {
+      for (final f in media.listSync(recursive: true)) {
+        if (f is! File) continue;
+        final size = f.lengthSync();
+        cacheBytes += size;
+        final rel = f.path.substring(media.path.length + 1).split(RegExp(r'[\\/]'));
+        final category = rel.length > 1 ? rel.first : 'other';
+        cacheByCategory[category] = (cacheByCategory[category] ?? 0) + size;
+      }
+    }
+
+    return StorageStats(
+      dbBytes: dbBytes,
+      cacheBytes: cacheBytes,
+      cacheByCategory: cacheByCategory,
+      dbByChat: dbByChat,
+      messageCount:
+          _messages.values.fold<int>(0, (sum, list) => sum + list.length),
+      chatCount: _chats.length,
+    );
+  }
+
+  /// 清媒体缓存：先按保留期删过期文件，再按上限从最旧的删到预算内。
+  ///
+  /// 返回释放的字节数。对应 TG 的"自动清理缓存"（保留期 + 上限两档）。
+  Future<int> pruneMediaCache() async {
+    if (_disposed) return 0;
+    final media = _mediaDir;
+    if (!media.existsSync()) return 0;
+
+    final files = <File>[
+      for (final f in media.listSync(recursive: true))
+        if (f is File) f,
+    ];
+    var freed = 0;
+    final now = DateTime.now();
+
+    final keep = keepMediaFor;
+    if (keep != null) {
+      for (final f in files.toList()) {
+        if (now.difference(f.lastModifiedSync()) > keep) {
+          freed += _deleteQuietly(f);
+          files.remove(f);
+        }
+      }
+    }
+
+    var total = files.fold<int>(0, (sum, f) => sum + f.lengthSync());
+    if (total > maxCacheBytes) {
+      files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+      for (final f in files) {
+        if (total <= maxCacheBytes) break;
+        final size = f.lengthSync();
+        if (_deleteQuietly(f) > 0) {
+          total -= size;
+          freed += size;
+        }
+      }
+    }
+    if (freed > 0) {
+      _log.i('媒体缓存清理：释放 $freed 字节'
+          '（上限 $maxCacheBytes，保留期 ${keepMediaFor ?? '永久'}）');
+    }
+    return freed;
+  }
+
+  /// 清空整个媒体缓存（TG 的 Clear cache 按钮）。返回释放的字节数。
+  Future<int> clearMediaCache() async {
+    final media = _mediaDir;
+    if (!media.existsSync()) return 0;
+    var freed = 0;
+    for (final f in media.listSync(recursive: true)) {
+      if (f is File) freed += _deleteQuietly(f);
+    }
+    _log.i('已清空媒体缓存（释放 $freed 字节）');
+    return freed;
+  }
+
+  /// 清空某个会话的历史（TG 的 Clear history，单会话版）。
+  ///
+  /// 会话本身、未读数与摘要保留；清掉后下次打开会重新拉（[_historyFetched] 复位）。
+  Future<void> clearChatHistory(String chatId) async {
+    final f = _messageFile(chatId);
+    try {
+      if (f.existsSync()) f.deleteSync();
+    } catch (e) {
+      _log.w('删除消息文件失败 $chatId', error: e);
+    }
+    _messages[chatId] = <ChatMessage>[];
+    _resetHistoryState(chatId);
+    _emit(ChatStoreChangeKind.messages, chatId);
+    _log.i('已清空会话历史 $chatId');
+  }
+
+  /// 清空**全部**聊天记录（TG 的 Clear history，全局版；会话列表保留）。
+  Future<void> clearAllHistory() async {
+    var removed = 0;
+    if (_chatsDir.existsSync()) {
+      for (final f in _chatsDir.listSync()) {
+        if (f is! File) continue;
+        try {
+          f.deleteSync();
+          removed++;
+        } catch (e) {
+          _log.w('删除消息文件失败 ${f.path}', error: e);
+        }
+      }
+    }
+    for (final id in _messages.keys.toList()) {
+      _messages[id] = <ChatMessage>[];
+      _resetHistoryState(id);
+    }
+    _emit(ChatStoreChangeKind.messages);
+    _log.i('已清空本地聊天记录（$removed 个文件）');
+  }
+
+  void _resetHistoryState(String chatId) {
+    _cursors[chatId] = null;
+    _hasMore[chatId] = false;
+    _historyFetched[chatId] = false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 会话级操作（置顶 / 免打扰 / 归档 / 标为未读 / 删除会话）
+  //
+  // 全都是**本地状态**：官方这几项在服务端也有一份，但那需要额外的 oidb 命令，
+  // 我们还没核实过字段（见 AGENTS 的"语义二义只构建不自动发"）。先本地生效，
+  // 协议同步留到做那一步时再加——所以这些开关在换设备后不会跟着走。
+  // ---------------------------------------------------------------------------
+
+  /// 置顶 / 取消置顶。
+  Future<void> setChatPinned(String chatId, bool pinned) =>
+      _patchChat(chatId, (c) => c.copyWith(pinned: pinned));
+
+  /// 消息免打扰。
+  Future<void> setChatMuted(String chatId, bool muted) =>
+      _patchChat(chatId, (c) => c.copyWith(muted: muted));
+
+  /// 归档 / 取消归档（列表里收进"已归档"入口）。
+  Future<void> setChatArchived(String chatId, bool archived) =>
+      _patchChat(chatId, (c) => c.copyWith(archived: archived));
+
+  /// 草稿：随打随存（UI 侧做防抖），换会话/重启都还在。
+  Future<void> setDraft(String chatId, String draft) => _patchChat(
+        chatId,
+        (c) => c.copyWith(draft: draft.isEmpty ? '' : draft),
+      );
+
+  /// 标为未读：把"已读位置"往回退一条，让未读分隔线落在最后一条之前。
+  ///
+  /// 退到哪儿：列表里倒数第二条之后（= 最后一条算未读）。只有一条消息时
+  /// 锚点清空（整段都算未读）。没有消息可标就只是把计数设为 1。
+  Future<void> markChatUnread(String chatId) {
+    final list = _messages[chatId] ?? const <ChatMessage>[];
+    final anchor = list.length >= 2 ? list[list.length - 2].id : null;
+    return _patchChat(
+      chatId,
+      (c) => c.copyWith(
+        unreadCount: 1,
+        lastReadId: anchor,
+        manualUnread: true,
+      ),
+    );
+  }
+
+  /// 删除会话：本地记录清空 + 从列表移除（官方叫"删除聊天"，不影响对方）。
+  ///
+  /// 和 [clearChatHistory] 的区别：那个留下会话壳子（还能收到新消息），
+  /// 这个把壳子也去掉；下次服务端再推消息会重新建条目（[_touchChat] 有兜底）。
+  Future<void> deleteChat(String chatId) async {
+    final f = _messageFile(chatId);
+    try {
+      if (f.existsSync()) f.deleteSync();
+    } catch (e) {
+      _log.w('删除消息文件失败 $chatId', error: e);
+    }
+    _messages.remove(chatId);
+    _resetHistoryState(chatId);
+    _chats.remove(chatId);
+    if (_activeChatId == chatId) _activeChatId = null;
+    _scheduleIndexPersist();
+    _emit(ChatStoreChangeKind.messages, chatId);
+    _emit(ChatStoreChangeKind.chats);
+    _log.i('已删除会话 $chatId（仅本地）');
+  }
+
+  /// 删掉**一条**消息（仅本地，TG 的 "Delete for me"）。
+  ///
+  /// 对面不会知道（要让双方都看不到得走撤回，见 [recallMessage]）。
+  /// 删的是最后一条时，顺手把会话摘要换成新的最后一条，否则列表上会留着
+  /// 一条点不进去的预览。
+  Future<void> deleteMessage(String chatId, String messageId) async {
+    final list = _messages[chatId];
+    if (list == null) return;
+    final idx = _indexOf(chatId, messageId);
+    if (idx < 0) return;
+    list.removeAt(idx);
+    _rewriteMessages(chatId);
+    final chat = _chats[chatId];
+    if (chat != null && chat.lastTime != null) {
+      // 删的可能是最后一条（摘要要跟着换），也可能是唯一一条（摘要要清空）
+      _chats[chatId] = list.isEmpty
+          ? chat.clearedPreview()
+          : chat.copyWith(
+              lastMessage: list.last.displayText,
+              lastTime: list.last.time,
+            );
+      _scheduleIndexPersist();
+    }
+    _emit(ChatStoreChangeKind.messages, chatId);
+    _emit(ChatStoreChangeKind.chats);
+    _log.d('已删除本地消息 $chatId/$messageId');
+  }
+
+  /// 在**已加载**的消息里搜文本（本地搜索，不打服务端）。
+  ///
+  /// 说明与边界：
+  /// * 只搜内存/本地文件里已经有的消息——我们还没做服务端的全文检索
+  ///   （官方是云端搜索，需要另一套协议），所以"搜不到"可能只是"这条还没拉下来"；
+  /// * 大小写不敏感只对 ASCII 有意义；中文是子串匹配；
+  /// * 结果按时间倒序（新的在前），最多 [limit] 条。
+  List<({String chatId, ChatMessage message})> searchMessages(
+    String query, {
+    int limit = 50,
+  }) {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    final needle = q.toLowerCase();
+    final hits = <({String chatId, ChatMessage message})>[];
+    for (final entry in _messages.entries) {
+      for (final m in entry.value) {
+        if (m.text.toLowerCase().contains(needle)) {
+          hits.add((chatId: entry.key, message: m));
+        }
+      }
+    }
+    hits.sort((a, b) => b.message.time.compareTo(a.message.time));
+    return hits.length <= limit ? hits : hits.sublist(0, limit);
+  }
+
+  /// **仅测试用**：替换某条消息的 segments（自测里造富内容用，UI 不走这条路）。
+  void replaceSegmentsForTest(
+    String chatId,
+    String messageId,
+    List<Segment> segments,
+  ) {
+    final idx = _indexOf(chatId, messageId);
+    if (idx < 0) return;
+    final list = _messages[chatId]!;
+    final m = list[idx];
+    list[idx] = ChatMessage(
+      id: m.id,
+      text: m.text,
+      segments: segments,
+      time: m.time,
+      outgoing: m.outgoing,
+      senderId: m.senderId,
+      senderName: m.senderName,
+      chatId: m.chatId,
+      replyToId: m.replyToId,
+      replyPreview: m.replyPreview,
+      deleted: m.deleted,
+      recallInfo: m.recallInfo,
+      revealed: m.revealed,
+      atMe: m.atMe,
+      system: m.system,
+      senderTitle: m.senderTitle,
+      sendState: m.sendState,
+    );
+    _emit(ChatStoreChangeKind.messages, chatId);
+  }
+
+  /// 把若干条消息**转发**到另一个会话。
+  ///
+  /// 语义：转发就是"把内容重发一遍"（官方经典线没有转发头，我们也不编）。
+  /// 因此：
+  /// * 引用关系**不带过去**——`src_msg` 指的是原会话里的某条消息，带过去就是错的；
+  /// * 图片/语音/视频/文件/卡片**发不了**：它们要靠原来的 fid/md5 或上传后的新 fid
+  ///   才能重发，我们还没做上传（见 `qq8_session_adapter.dart` 的说明）。
+  ///   这种消息**一条都不发**并抛 [SessionException]——半截转发比失败更难查。
+  ///
+  /// 返回转发成功的条数。
+  Future<int> forwardMessages({
+    required String fromChatId,
+    required List<String> messageIds,
+    required String toChatId,
+  }) async {
+    final all = _messages[fromChatId] ?? const <ChatMessage>[];
+    final picked = <ChatMessage>[
+      for (final id in messageIds)
+        for (final m in all)
+          if (m.id == id) m,
+    ];
+    if (picked.isEmpty) return 0;
+
+    for (final m in picked) {
+      for (final seg in m.segments) {
+        if (seg is TextSegment || seg is FaceSegment || seg is ReplySegment) {
+          continue;
+        }
+        throw SessionException(
+          '这条消息里有「${seg.preview}」，转发还没做（要先做文件上传/下载）',
+        );
+      }
+    }
+
+    var sent = 0;
+    for (final m in picked) {
+      final segments = <Segment>[
+        for (final seg in m.segments)
+          if (seg is! ReplySegment) seg,
+      ];
+      if (segments.isEmpty) continue;
+      await send(toChatId, segments);
+      sent++;
+    }
+    _log.i('转发 $sent 条：$fromChatId → $toChatId');
+    return sent;
+  }
+
+  /// 改一个会话的本地字段并落盘、广播（上面几个开关的公共实现）。
+  Future<void> _patchChat(String chatId, Chat Function(Chat) patch) async {
+    final chat = _chats[chatId];
+    if (chat == null) return;
+    _chats[chatId] = patch(chat);
+    _scheduleIndexPersist();
+    _emit(ChatStoreChangeKind.chats);
+  }
+
+  /// 删文件并返回释放的字节数（失败只记日志，不抛）。
+  int _deleteQuietly(File f) {
+    try {
+      final size = f.existsSync() ? f.lengthSync() : 0;
+      if (f.existsSync()) f.deleteSync();
+      return size;
+    } catch (e) {
+      _log.w('删除缓存文件失败 ${f.path}', error: e);
+      return 0;
+    }
+  }
+
+  /// 撤回自己发的一条消息（成功后本地立刻标记为已撤回）。
+  ///
+  /// 失败（超时时限、不是自己的消息、后端不支持…）会把 [SessionException]
+  /// 原样抛给调用方——UI 该把服务端文案显示出来，**不要静默吞掉**。
+  Future<void> recallMessage(String chatId, String messageId) async {
+    if (session.state != SessionState.ready) {
+      throw const SessionException('还没连上后端，不能撤回');
+    }
+    await session.recall(chatId, messageId);
+    _ensureDiskLoaded(chatId);
+    final idx = _indexOf(chatId, messageId);
+    if (idx < 0) return;
+    _messages[chatId]![idx] = _messages[chatId]![idx].recalled();
+    _rewriteMessages(chatId);
+    _emit(ChatStoreChangeKind.messages, chatId);
+    _log.i('已撤回消息 $chatId/$messageId');
+  }
+
+  /// 揭示一条已撤回消息的原文（反撤回：撤回只打标记，内容一直留着）。
+  ///
+  /// 与 [ChatMessage.reveal] 对应；没撤回或已揭示的消息调用是空操作。
+  /// 落盘走整文件重写（低频操作）。
+  Future<void> revealMessage(String chatId, String messageId) async {
+    _ensureDiskLoaded(chatId);
+    final idx = _indexOf(chatId, messageId);
+    if (idx < 0) return;
+    final m = _messages[chatId]![idx];
+    if (!m.deleted || m.revealed) return;
+    _messages[chatId]![idx] = m.reveal();
+    _rewriteMessages(chatId);
+    _emit(ChatStoreChangeKind.messages, chatId);
+    _log.i('已揭示撤回消息 $chatId/$messageId');
   }
 
   /// 找一条能与 echo 配对的本地乐观消息：同会话、同文本、还是 `local:` ID、
@@ -546,6 +1005,10 @@ class ChatStore {
     }
     if (bumpUnread && !message.outgoing) {
       chat = chat.copyWith(unreadCount: chat.unreadCount + 1);
+    } else if (!message.outgoing) {
+      // 活跃会话：用户人就在这个会话里，未读不涨，但"读到哪儿"要跟着走——
+      // 否则下次打开会看到一条假的未读分隔线（那几条其实已经看过了）。
+      chat = chat.copyWith(lastReadId: message.id);
     }
     _chats[chatId] = chat;
     _scheduleIndexPersist();
@@ -554,7 +1017,8 @@ class ChatStore {
   /// 合并远端会话与本地状态。
   ///
   /// 归属划分：标题/类型/成员数/在线状态以**服务端为准**（会改名、会退群）；
-  /// 置顶/免打扰/优先级/未读以**本地为准**（服务端不知道这些）；
+  /// 置顶/免打扰/优先级/未读**与已读位置**以**本地为准**（服务端不告诉我们这些，
+  /// 已读位置丢了就等于"未读分隔线凭空跳到末尾"）；
   /// 摘要与时间取**更新的那个**（刚发出去的消息服务端列表里可能还没有）。
   Chat _mergeChat(Chat? local, Chat remote) {
     if (local == null) return remote;
@@ -565,6 +1029,11 @@ class ChatStore {
       muted: local.muted,
       priority: local.priority,
       unreadCount: local.unreadCount,
+      lastReadId: local.lastReadId,
+      // 归档与草稿同样是本地状态，服务端那份列表里没有——不带上就会被合并冲掉
+      archived: local.archived,
+      draft: local.draft,
+      manualUnread: local.manualUnread,
       lastMessage: keepLocalPreview ? local.lastMessage : remote.lastMessage,
       lastTime: keepLocalPreview ? local.lastTime : remote.lastTime,
     );
@@ -596,6 +1065,9 @@ class ChatStore {
   // ---------------------------------------------------------------------------
 
   Directory get _chatsDir => Directory('${dataDir.path}${Platform.pathSeparator}chats');
+
+  /// 媒体缓存目录：`<dataDir>/media/<分类>/…`（分类见 [mediaCategories]）。
+  Directory get _mediaDir => Directory('${dataDir.path}${Platform.pathSeparator}media');
 
   File get _indexFile => File('${dataDir.path}${Platform.pathSeparator}chats.json');
 
@@ -680,6 +1152,8 @@ class ChatStore {
   void _persistIndex() {
     _indexTimer?.cancel();
     _indexTimer = null;
+    // 没 bootstrap 过就没读过索引：此时写下去等于把别人的会话列表清空
+    if (!_bootstrapped) return;
     try {
       _indexFile.writeAsStringSync(
         jsonEncode(_chats.values.map(_chatToJson).toList()),
@@ -782,12 +1256,17 @@ class ChatStore {
         'type': c.type.wireName,
         if (c.rawId != null) 'rawId': c.rawId,
         if (c.memberCount != 0) 'memberCount': c.memberCount,
+        if (c.ownerUin != 0) 'ownerUin': c.ownerUin,
         if (c.pinned) 'pinned': true,
         if (c.muted) 'muted': true,
         if (c.priority != 3) 'priority': c.priority,
         'lastMessage': c.lastMessage,
         if (c.lastTime != null) 'lastTime': c.lastTime!.millisecondsSinceEpoch,
         if (c.unreadCount != 0) 'unread': c.unreadCount,
+        if (c.lastReadId != null) 'lastRead': c.lastReadId,
+        if (c.archived) 'archived': true,
+        if (c.draft.isNotEmpty) 'draft': c.draft,
+        if (c.manualUnread) 'manualUnread': true,
         if (c.online) 'online': true,
       };
 
@@ -801,13 +1280,65 @@ class ChatStore {
       type: ChatType.parse(j['type'] as String?),
       rawId: j['rawId'] as int?,
       memberCount: (j['memberCount'] as int?) ?? 0,
+      ownerUin: (j['ownerUin'] as int?) ?? 0,
       pinned: j['pinned'] == true,
       muted: j['muted'] == true,
       priority: (j['priority'] as int?) ?? 3,
       lastMessage: (j['lastMessage'] as String?) ?? '',
       lastTime: lastTime is int ? DateTime.fromMillisecondsSinceEpoch(lastTime) : null,
       unreadCount: (j['unread'] as int?) ?? 0,
+      lastReadId: j['lastRead'] as String?,
+      archived: j['archived'] == true,
+      draft: (j['draft'] as String?) ?? '',
+      manualUnread: j['manualUnread'] == true,
       online: j['online'] == true,
     );
   }
+}
+
+/// 本地占用统计（UI 的"存储与缓存"页用它显示）。
+///
+/// 刻意把**消息库**与**媒体缓存**分开报：前者不该被当成缓存清掉，
+/// 用户看到"聊天记录 3MB / 媒体缓存 800MB"才知道清哪个有用。
+class StorageStats {
+  /// 消息库（`chats.json` + `chats/*.jsonl`）。
+  final int dbBytes;
+
+  /// 媒体缓存（`media/` 下的全部文件）。
+  final int cacheBytes;
+
+  /// 按分类拆开的媒体占用（键见 [ChatStore.mediaCategories]，未来才可能有内容）。
+  final Map<String, int> cacheByCategory;
+
+  /// 按会话拆开的消息库占用（chatId → 字节）。
+  final Map<String, int> dbByChat;
+
+  /// 内存里当前持有的消息条数（不是磁盘上的全量）。
+  final int messageCount;
+  final int chatCount;
+
+  const StorageStats({
+    required this.dbBytes,
+    required this.cacheBytes,
+    this.cacheByCategory = const <String, int>{},
+    this.dbByChat = const <String, int>{},
+    this.messageCount = 0,
+    this.chatCount = 0,
+  });
+
+  int get totalBytes => dbBytes + cacheBytes;
+
+  /// 给人看的体积（B / KB / MB / GB）。
+  static String formatBytes(int n) {
+    if (n < 1024) return '$n B';
+    if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)} KB';
+    if (n < 1024 * 1024 * 1024) {
+      return '${(n / 1024 / 1024).toStringAsFixed(1)} MB';
+    }
+    return '${(n / 1024 / 1024 / 1024).toStringAsFixed(2)} GB';
+  }
+
+  @override
+  String toString() => 'StorageStats(db=${formatBytes(dbBytes)}, '
+      'cache=${formatBytes(cacheBytes)}, chats=$chatCount, msgs=$messageCount)';
 }

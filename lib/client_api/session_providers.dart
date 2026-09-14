@@ -405,16 +405,30 @@ final connectionControllerProvider =
 // UI 消费的数据
 // ---------------------------------------------------------------------------
 
+/// 协议线（QQ）后端上线后**回填**的会话 + 数据层。
+///
+/// 为什么用"回填"而不是直接 watch 协议线的控制器：watch 会**构造**它，而构造
+/// 协议线控制器要求 `qq8TokenStoreProvider` 已被 override——那样 OneBot 那条线的
+/// DI 测试（以及任何不跑协议线的场景）都会连带受影响。这里只放一个默认 null
+/// 的状态口：协议线上线时由 `Qq8ConnectController` 填、断开时清空。
+final activeQq8BackendProvider =
+    StateProvider<({Session session, ChatStore store})?>((ref) => null);
+
 /// 当前会话实例；连接成功后才非 null。
+///
+/// **两条后端取并集**：OneBot（[ConnectionController]）与协议线
+/// （回填到 [activeQq8BackendProvider]）谁接上了就用谁——UI 只认这一个口。
 final sessionProvider = Provider<Session?>((ref) {
   ref.watch(connectionControllerProvider); // 状态变化时重新求值
-  return ref.read(connectionControllerProvider.notifier).session;
+  return ref.read(connectionControllerProvider.notifier).session ??
+      ref.watch(activeQq8BackendProvider)?.session;
 });
 
 /// 数据层实例；连接成功后才非 null。
 final chatStoreProvider = Provider<ChatStore?>((ref) {
   ref.watch(connectionControllerProvider);
-  return ref.read(connectionControllerProvider.notifier).store;
+  return ref.read(connectionControllerProvider.notifier).store ??
+      ref.watch(activeQq8BackendProvider)?.store;
 });
 
 /// 当前账号信息。

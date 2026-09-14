@@ -81,11 +81,32 @@ class Chat {
   /// 群成员数（私聊为 0）。
   final int memberCount;
 
+  /// 群主 uin（私聊为 0；成员列表里判"群主"要用它比）。
+  final int ownerUin;
+
   /// 置顶。
   final bool pinned;
 
   /// 免打扰。
   final bool muted;
+
+  /// 归档（TG/Nagram 的 Archived chats）：列表里收起来，入口在列表顶部。
+  final bool archived;
+
+  /// 草稿：没发出去的输入框内容（换会话/重启都还在）。
+  final String draft;
+
+  /// 手动"标为未读"（TG 的 Mark as unread）。
+  ///
+  /// 为什么需要单独一个标志：会话正开着且列表停在底部时，"在底部 = 已读"的
+  /// 自动逻辑会把刚标上的未读立刻清掉。这个标志让标记**撑到下次打开会话**为止。
+  final bool manualUnread;
+
+  /// 最后一条**已读**消息的 ID（TG 的 `read_inbox_max_id` 在我们这里的等价物）。
+  ///
+  /// 只用来画"未读消息"分隔线：列表里这条消息之后的都算新的。为 null 表示
+  /// 还没读过（或历史数据没有这个字段）——那就**不画**分隔线，别瞎猜位置。
+  final String? lastReadId;
 
   /// 优先级，1（最高）~ 5（最低）。
   ///
@@ -103,8 +124,13 @@ class Chat {
     this.type = ChatType.private,
     this.rawId,
     this.memberCount = 0,
+    this.ownerUin = 0,
     this.pinned = false,
     this.muted = false,
+    this.archived = false,
+    this.draft = '',
+    this.manualUnread = false,
+    this.lastReadId,
     this.priority = 3,
   });
 
@@ -142,6 +168,10 @@ class Chat {
     int? memberCount,
     bool? pinned,
     bool? muted,
+    bool? archived,
+    String? draft,
+    bool? manualUnread,
+    String? lastReadId,
     int? priority,
   }) =>
       Chat(
@@ -156,7 +186,33 @@ class Chat {
         memberCount: memberCount ?? this.memberCount,
         pinned: pinned ?? this.pinned,
         muted: muted ?? this.muted,
+        archived: archived ?? this.archived,
+        draft: draft ?? this.draft,
+        manualUnread: manualUnread ?? this.manualUnread,
+        lastReadId: lastReadId ?? this.lastReadId,
         priority: priority ?? this.priority,
+      );
+
+  /// 清掉列表摘要（消息被删光时用）。
+  ///
+  /// 单独一个方法而不是 `copyWith(lastTime: null)`：`copyWith` 的 `??` 语义
+  /// 没法把字段置回 null，这里显式重建一次，字段一个不漏。
+  Chat clearedPreview() => Chat(
+        id: id,
+        title: title,
+        type: type,
+        rawId: rawId,
+        memberCount: memberCount,
+        ownerUin: ownerUin,
+        pinned: pinned,
+        muted: muted,
+        archived: archived,
+        draft: draft,
+        manualUnread: manualUnread,
+        lastReadId: lastReadId,
+        priority: priority,
+        unreadCount: unreadCount,
+        online: online,
       );
 
   @override

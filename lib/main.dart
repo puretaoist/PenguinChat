@@ -33,6 +33,7 @@ import 'kernel/onebot/backend_profile.dart';
 import 'kernel/safety/safety_gate.dart';
 import 'ui/pages/home_page.dart';
 import 'ui/theme/telegram_theme.dart';
+import 'ui/theme/theme_mode.dart';
 
 /// 后端适配表 asset 清单。
 ///
@@ -122,15 +123,19 @@ Future<BackendProfileRegistry> _loadBackendRegistry() async {
   }
 }
 
-class QQClientApp extends StatelessWidget {
+class QQClientApp extends ConsumerWidget {
   const QQClientApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 调色板是全局单例：根组件每次 build 先把"当前生效的那套"设好，
+    // 之后这一帧里所有 `TelegramColors.xxx` 读到的就是它。
+    // 其它页面自己也调了一次（applyThemePalette），避免谁先重建谁读到旧值。
+    final dark = applyThemePalette(ref);
     return MaterialApp(
       title: 'QQ Client',
       debugShowCheckedModeBanner: false,
-      theme: buildTelegramTheme(),
+      theme: buildTelegramTheme(dark: dark),
       // 直接进主界面：未连接时主界面自己会引导去连接页，
       // 不让用户每开一次应用都先看一遍连接设置。
       home: const HomePage(),

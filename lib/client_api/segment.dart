@@ -232,6 +232,9 @@ class AtSegment extends Segment {
 /// 图片。
 class ImageSegment extends Segment {
   /// 文件名或 URL 或 base64:// 前缀。
+  ///
+  /// 协议线收到的是 QQ 的图片文件名（`{md5}{大小}-{宽}-{高}.{扩展名}`）；
+  /// OneBot 后端给的是路径或 base64。
   final String file;
 
   /// 后端给的直链（接收侧才有）。
@@ -243,17 +246,41 @@ class ImageSegment extends Segment {
   /// 闪照。
   final bool flash;
 
-  const ImageSegment(this.file, {this.url, this.summary, this.flash = false});
+  /// 原始宽高（像素）。协议线会给（QQ 图片元素里有），OneBot 后端多半没有——
+  /// UI 拿它算占位框的宽高比，拿不到就退回方形占位。
+  final int? width;
+  final int? height;
+
+  const ImageSegment(
+    this.file, {
+    this.url,
+    this.summary,
+    this.flash = false,
+    this.width,
+    this.height,
+  });
 
   factory ImageSegment.fromData(Map<String, dynamic> data) => ImageSegment(
         (data['file'] as String?) ?? '',
         url: data['url'] as String?,
         summary: data['summary'] as String?,
         flash: data['type'] == 'flash',
+        width: _intOf(data['width']),
+        height: _intOf(data['height']),
       );
+
+  static int? _intOf(Object? v) =>
+      v is int ? v : (v == null ? null : int.tryParse('$v'));
 
   /// 传输层优先用直链，没有则回落到 file（可能是本地路径或 base64）。
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
+
+  /// 宽高比（宽/高）。拿不到宽高返回 null。
+  double? get aspectRatio {
+    final w = width, h = height;
+    if (w == null || h == null || w <= 0 || h <= 0) return null;
+    return w / h;
+  }
 
   @override
   String get type => 'image';
@@ -262,6 +289,9 @@ class ImageSegment extends Segment {
   Map<String, dynamic> toData() => {
         'file': file,
         if (url != null) 'url': url,
+        if (summary != null) 'summary': summary,
+        if (width != null) 'width': width,
+        if (height != null) 'height': height,
         if (flash) 'type': 'flash',
       };
 
@@ -284,13 +314,26 @@ class RecordSegment extends Segment {
   /// 变声。
   final bool magic;
 
-  const RecordSegment(this.file, {this.url, this.text, this.magic = false});
+  /// 时长（秒）与体积（字节）。协议线会给（QQ 的语音元素里有），OneBot 多半没有。
+  final int? seconds;
+  final int? size;
+
+  const RecordSegment(
+    this.file, {
+    this.url,
+    this.text,
+    this.magic = false,
+    this.seconds,
+    this.size,
+  });
 
   factory RecordSegment.fromData(Map<String, dynamic> data) => RecordSegment(
         (data['file'] as String?) ?? '',
         url: data['url'] as String?,
         text: data['text'] as String?,
         magic: data['magic'] == true || data['magic'] == 1,
+        seconds: _asInt(data['seconds'] ?? data['duration']),
+        size: _asInt(data['size']),
       );
 
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
@@ -302,6 +345,8 @@ class RecordSegment extends Segment {
   Map<String, dynamic> toData() => {
         'file': file,
         if (url != null) 'url': url,
+        if (seconds != null) 'seconds': seconds,
+        if (size != null) 'size': size,
         if (magic) 'magic': '1',
       };
 
@@ -320,11 +365,19 @@ class VideoSegment extends Segment {
   final String file;
   final String? url;
 
-  const VideoSegment(this.file, {this.url});
+  /// 文件名、时长（秒）、体积（字节）——协议线会给，OneBot 多半没有。
+  final String? name;
+  final int? seconds;
+  final int? size;
+
+  const VideoSegment(this.file, {this.url, this.name, this.seconds, this.size});
 
   factory VideoSegment.fromData(Map<String, dynamic> data) => VideoSegment(
         (data['file'] as String?) ?? '',
         url: data['url'] as String?,
+        name: data['name'] as String?,
+        seconds: _asInt(data['seconds'] ?? data['duration']),
+        size: _asInt(data['size']),
       );
 
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
@@ -333,7 +386,13 @@ class VideoSegment extends Segment {
   String get type => 'video';
 
   @override
-  Map<String, dynamic> toData() => {'file': file, if (url != null) 'url': url};
+  Map<String, dynamic> toData() => {
+        'file': file,
+        if (url != null) 'url': url,
+        if (name != null) 'name': name,
+        if (seconds != null) 'seconds': seconds,
+        if (size != null) 'size': size,
+      };
 
   @override
   String get preview => '[视频]';
@@ -481,19 +540,28 @@ class ForwardNode {
 /// JSON 卡片消息（小程序、分享等）。
 class JsonSegment extends Segment {
   final String data;
-  const JsonSegment(this.data);
 
-  factory JsonSegment.fromData(Map<String, dynamic> d) =>
-      JsonSegment((d['data'] as String?) ?? '');
+  /// 从卡片里抠出来的一句摘要（协议线给的；抠不到为空）。
+  final String summary;
+
+  const JsonSegment(this.data, {this.summary = ''});
+
+  factory JsonSegment.fromData(Map<String, dynamic> d) => JsonSegment(
+        (d['data'] as String?) ?? '',
+        summary: (d['summary'] as String?) ?? '',
+      );
 
   @override
   String get type => 'json';
 
   @override
-  Map<String, dynamic> toData() => {'data': data};
+  Map<String, dynamic> toData() => {
+        'data': data,
+        if (summary.isNotEmpty) 'summary': summary,
+      };
 
   @override
-  String get preview => '[卡片消息]';
+  String get preview => summary.isNotEmpty ? '[轻应用] $summary' : '[轻应用消息]';
 
   @override
   String toString() => 'JsonSegment(${data.length} chars)';
@@ -502,19 +570,28 @@ class JsonSegment extends Segment {
 /// XML 消息（富媒体卡片、文件分享等）。
 class XmlSegment extends Segment {
   final String data;
-  const XmlSegment(this.data);
 
-  factory XmlSegment.fromData(Map<String, dynamic> d) =>
-      XmlSegment((d['data'] as String?) ?? '');
+  /// 从卡片里抠出来的一句摘要（协议线给的；抠不到为空）。
+  final String summary;
+
+  const XmlSegment(this.data, {this.summary = ''});
+
+  factory XmlSegment.fromData(Map<String, dynamic> d) => XmlSegment(
+        (d['data'] as String?) ?? '',
+        summary: (d['summary'] as String?) ?? '',
+      );
 
   @override
   String get type => 'xml';
 
   @override
-  Map<String, dynamic> toData() => {'data': data};
+  Map<String, dynamic> toData() => {
+        'data': data,
+        if (summary.isNotEmpty) 'summary': summary,
+      };
 
   @override
-  String get preview => '[富媒体消息]';
+  String get preview => summary.isNotEmpty ? '[卡片] $summary' : '[卡片消息]';
 
   @override
   String toString() => 'XmlSegment(${data.length} chars)';
