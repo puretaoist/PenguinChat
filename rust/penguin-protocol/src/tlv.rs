@@ -625,9 +625,12 @@ pub fn body(ctx: &TlvContext, tag: u16, args: &[TlvArg]) -> Result<Vec<u8>, TlvE
         }
 
         0x147 => {
+            // 官方 tlv_t147.get_tlv_147(appid, apkVersion, pkgSig)：两段 limit_len(..., 32)。
+            // 曾照抄 oicq 的 ver.slice(0, 5)——oicq 自身 ver 是 5 字符恒不生效，
+            // 我们的 "8.2.11"/"8.9.50"/"9.3.60" 是 6 字符会少一字节（2026-09-15 修正）。
             u32b(&mut w, ctx.apk.appid);
-            tlv_str(&mut w, &cut(ctx.apk.ver, 5));
-            tlv(&mut w, &ctx.apk.sign);
+            tlv_str(&mut w, &cut(ctx.apk.ver, 32));
+            tlv(&mut w, &cut_bytes(&ctx.apk.sign, 32));
         }
 
         0x154 => {

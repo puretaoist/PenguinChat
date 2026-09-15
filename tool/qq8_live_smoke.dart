@@ -468,8 +468,9 @@ Future<void> main(List<String> argv) async {
   final sliderStateFile =
       File('${logDir.path}${Platform.pathSeparator}qq8-slider-state.json');
   final sliderPowHex = useSlider ? _sliderT547FromState(sliderStateFile) : null;
-  final sliderOrder =
-      qq8SliderTlvOrderFor(profile.apk, hasT547: sliderPowHex != null);
+  // 官方三版本对照(2026-09-15):滑块提交 547 恒在(空 body 或应答)、
+  // 8.9.50+ 带 544、无 542——见 qq8SliderTlvOrderFor。
+  final sliderOrder = qq8SliderTlvOrderFor(profile.apk);
   // oicq 实验集是旧参考的 24 项（无 548）；ssoVer>12 时按维护版补 0x548/0x542。
   List<int> oicqPasswordOrder() => tlvSet == 'oicq' && profile.apk.ssoVer > 12
       ? <int>[...kOicqPasswordTlvOrder, 0x548, 0x542]

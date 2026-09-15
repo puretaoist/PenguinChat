@@ -424,7 +424,9 @@ abstract final class Qq8LoginBody {
     return build(
       ctx,
       Qq8SubCmd.slider,
-      qq8SliderTlvOrderFor(ctx.apk, hasT547: (ctx.t547?.isNotEmpty) ?? false),
+      // 官方三版本对照（2026-09-15）：193/8/104/116/547 恒在（547 空时发空
+      // body），8.9.50+ 加 544（空 body），无 542——见 qq8SliderTlvOrderFor。
+      qq8SliderTlvOrderFor(ctx.apk),
       // 盐要同时在 guard（条件对象）与 body（ctx.t104）两侧可见：
       // guard 决定 0x104 是否进包，body 决定它的内容。
       cond: Qq8LoginConditions(t104: ctx.t104),

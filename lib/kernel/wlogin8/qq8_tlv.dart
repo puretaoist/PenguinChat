@@ -251,34 +251,38 @@ const List<int> qq8ExchangeEmpTlvOrder = <int>[
 /// `!this.t104` 时直接拒绝发送）。[Qq8LoginBody.buildSlider] 会显式校验。
 const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 
-/// 滑验证提交的**实际清单**：基础 4 项，按版本与是否有 PoW 应答追加。
+/// 滑验证提交的**实际清单**——**以官方三版本反编译为准**(2026-09-15 深挖)。
 ///
-/// 三个参考实现分属不同世代，规则合起来是这样：
+/// 官方构建点（逐行核对）：
 ///
-/// | 参考 | 写法 |
-/// |---|---|
-/// | js 时代 `login-password.js`（8.2.11 同代） | 恒定 4 项：`0x193 0x08 0x104 0x116` |
-/// | 新版 `base-client.ts` | `0x193 0x08 0x104 0x116 [0x547] 0x544`，且 `ssover<=12` 时少一项 |
-/// | 维护版 v1.26.25（2026-09 仍在用） | `0x542` **无条件**收尾（`t(0x542)` 在 ssover 分支外） |
+/// | 版本 | 构建器 | 官方 TLV 序（数组组装序） |
+/// |---|---|---|
+/// | 8.2.11 | `request/n.java`（jadx-main） | `0x193/0x2 → 0x8 → 0x104 → 0x116 → 0x547`（**5 项**） |
+/// | 8.9.50 | `WtloginHelper.java:938-990`（jadx8950） | 同上 + `0x544`（**6 项**） |
+/// | 9.3.60 | `WtloginHelper.java:9396-9445`（m2-out） | 再 + `0x553(fekit,"0x810","0x2")`（**7 项**） |
 ///
-/// 后两者对 `_sso_ver <= 12`（8.2.11 = 7）的结论一致：**不发 0x544**。
-/// 而 8.9.50（19）/ 9.3.60（22）按新版要带 `0x544`（走降级空 body，与 8.9.50
-/// 登录清单里 `0x544` 本身就是空体一致）。
+/// 关键官方语义（全部逐行核对）：
 ///
-/// ⚠️ 2026-09-15 更正：早先只在 `ssoVer > 12` 时追加 `0x542`——**看漏了维护版
-/// 的 `t(0x542)` 在 if 块外面**。真机后果：8.2.11 的滑块提交一直缺这个 4 字节
-/// 能力位，提交回 type=1「账号或密码错误」（密码包能到 type=2，说明不是密码
-/// 问题；两次会话复用实验一次 237 一次 1，包缺项是唯一恒定差异）。
-///
-/// ⚠️ `0x547` 需要 `0x546` 的本地应答（PoW）——真机样本已拿到且能解
-/// （`qq8_pow.dart`，typ=2 在第 9046 次迭代撞上），但仍**只在
-/// [Qq8TlvContext.t547] 非空时追加**：解不出时宁可不发，也不编造答案。
-List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {required bool hasT547}) {
-  final order = <int>[0x193, 0x08, 0x104, 0x116];
-  if (hasT547) order.add(0x547);
+/// * **`0x547` 恒在**：`tlv_t547.get_tlv_547(null)` 产出**空 body 的 4 字节
+///   TLV**，照发不误。有应答（响应 `0x546` → 同步 `pow.b.b()` 解出 → `t.am`
+///   缓存）就发应答；没应答发空 body——不是"没有就不发"。
+/// * **`0x193` vs `0x2` 由开关决定**：`n.K`（8.9.50 `n.v`）= true 走
+///   `CheckWebsigAndGetSt`（Web/滑块 ticket → 0x193）；false 走
+///   `CheckPictureAndGetSt`（传统图片验证码 → 0x2(sig,code)）。我们走滑块。
+/// * **`0x544`**：8.9.50 起恒带（`get_tlv_544(uin,"810_2",subcmd)`，
+///   安全 SDK 不可用 → 空 body）；8.2.11 的流程里没有它。
+/// * **`0x553`**：9.3.60 特有，`getFeKitAttach(...,"0x810","0x2")`——注意
+///   第二参数是**子命令 2**，不是密码登录的 "0x9"。
+/// * **没有 `0x542`！** 8.9.50 的 `get_tlv_542` 只出现在**子命令 8**
+///   （请求下发短信，带 174/17a 令牌）的流程里（`WtloginHelper:8501`）。
+///   维护版 oicq 把它错位带进了滑块提交——我们此前跟随它发了 542，
+///   真机对应 type=1（2026-09-15 官方对照后修正）。
+List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk) {
+  final order = <int>[0x193, 0x08, 0x104, 0x116, 0x547];
   if (apk.ssoVer > 12) order.add(0x544);
-  // 维护版 oicq v1.26.25 的 sliderLogin：0x542 无条件收尾（553 无票据不发）。
-  order.add(0x542);
+  // 9.3.60 / TIM：官方滑块提交还带 0x553 —— getFeKitAttach(...,"0x810","0x2")
+  // （第二个参数是**子命令 2**）。按档案字段判断：8.2.11/8.9.50 = null 不发。
+  if (apk.tlv553DegradedBody != null) order.add(0x553);
   return order;
 }
 
@@ -287,6 +291,13 @@ List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {required bool hasT547}) {
 /// `0x548` 已在官方 37/38 项顺序表内（位于尾部），由
 /// [Qq8LoginConditions] + [Qq8TlvContext.t548] 决定是否真正产出；
 /// `0x542` 不在官方反编译顺序表里，只在这里按版本追加（ssoVer > 12）。
+///
+/// 第二轮深逆（2026-09-15，`analysis/QQ-官方三版本登录流程对照.md` §8.3）确认
+/// 三条铁证：8.2.11 无 `tlv_t542` 类；8.9.50 `j.java` 37 项 switch 无 1346 case；
+/// 官方只在子命令 7/8（短信）与业务层注入（subcmd 23/25 的
+/// `extraLoginTLVMap`）构建 0x542。因此这里的 542 是**业务层注入仿真**
+/// （官方 `extraLoginTLVMap` 通道，`j.java:95-100` 会并入 TLV 计数），
+/// 不是 wlogin_sdk 行为。
 ///
 /// ⚠️ 已知与维护版的差异（**刻意保留**）：维护版 `passwordLogin` 的
 /// `0x548 / 0x545 / 0x542` 对 8.2.11 也是无条件发的，而这里 ssoVer=7 时不追加
@@ -434,8 +445,8 @@ class Qq8TlvContext {
   ///
   /// 参考实现：响应里若带 `0x546`，本地算出 `t547` 后随子命令 2 一起提交
   /// （`base-client.ts` 的 `calcPoW`）。**我们目前没有可核对的 `0x546` 样本**，
-  /// 所以这里只做承载位、不猜算法：拿到真样本前 `t547` 为空 ⇒ 清单里没有
-  /// `0x547`（见 [qq8SliderTlvOrderFor]）。
+  /// 所以这里只做承载位、不猜算法：`t547` 为空时 `0x547` 以**空 body** 照发
+  /// （官方 `get_tlv_547(null)` 恒在语义，见 [qq8SliderTlvOrderFor]）。
   final Uint8List? t547;
 
   /// 客户端自构造防刷块（TLV `0x548`）的应答 body。
@@ -752,13 +763,14 @@ abstract final class Qq8Tlv {
       case 0x542:
         // 活跃能力位 TLV（维护版 oicq v1.26.25 `lib/wtlogin/tlv.js` 的 0x542）。
         //
-        // 该分支在密码 / 滑块提交 / 扫码登录的包尾**无条件**追加，内容按 ssoVer
-        // 分两档（同文件）：ssoVer ≥ 20 发 6 字节 `4A 04 60 01 78 01`，
+        // 内容按 ssoVer 分两档（同文件）：ssoVer ≥ 20 发 6 字节 `4A 04 60 01 78 01`，
         // 其余发 4 字节 `4A 02 60 01`。
         //
-        // 8.2.11 的官方顺序表里没有这个 TLV，因此它只出现在
-        // [qq8PasswordTlvOrderFor] / [qq8SliderTlvOrderFor] 对 ssoVer>12 的
-        // 追加段里，不进官方反编译顺序表。
+        // 只在**密码路径**追加（[qq8PasswordTlvOrderFor] 对 ssoVer>12）：官方
+        // 三版本的**滑块提交都不带 0x542**——8.9.50 的 `get_tlv_542` 只出现在
+        // 子命令 8（下发短信）流程（`WtloginHelper:8501`），此前跟随维护版把它
+        // 带进滑块提交，真机对应 type=1（2026-09-15 官方对照后修正）。
+        // 8.2.11 的官方顺序表里也没有它，因此它不进官方反编译顺序表。
         if (ctx.apk.ssoVer >= 20) {
           w.raw(const <int>[0x4A, 0x04, 0x60, 0x01, 0x78, 0x01]);
         } else {
@@ -826,14 +838,22 @@ abstract final class Qq8Tlv {
         }
 
       case 0x547:
-        // 防刷计算题（0x546）的应答。仅在算得出时才进清单（见 Qq8TlvContext.t547）；
-        // 空 body 没有意义，所以这里显式抛错，避免发出一个空壳。
+        // 防刷计算题（0x546）的应答——**官方语义是"恒在"**（2026-09-15 官方对照
+        // 修正，构建点见 [qq8SliderTlvOrderFor] 的表格）：
+        //
+        // ```java
+        // // 8.2.11 tlv_t547.java —— get_tlv_547(null) 照样产出 TLV：
+        // byte[] bArr2 = new byte[bArr.length];   // 空 → 空 body
+        // fill_head(this._cmd); fill_body(bArr2, length); set_length();
+        // ```
+        //
+        // 即：有应答（响应 0x546 → pow.b.b 同步解 → t.am/u.k0 缓存）发应答；
+        // 没应答发**空 body 的 4 字节 TLV**（u16 0x547 + u16 0），照发不误。
+        // 早先"空就抛错不发"是跟随 oicq 的 `if (sig.t547.length)` 推断——官方不是。
         final t547 = ctx.t547;
-        if (t547 == null || t547.isEmpty) {
-          throw ArgumentError(
-              'TLV 0x547 需要 ctx.t547（0x546 的应答），当前为空——不该把它进清单');
+        if (t547 != null && t547.isNotEmpty) {
+          w.raw(t547);
         }
-        w.raw(t547);
 
       case 0x553:
         // 仅 9.3.60 / TIM 的顺序表里有。官方 =
@@ -895,9 +915,21 @@ abstract final class Qq8Tlv {
         w.raw(d.guid);
 
       case 0x147:
+        // 官方 `tlv_t147.get_tlv_147(long appid, byte[] apkVersion, byte[] pkgSig)`
+        // （8.2.11 `tlv_type/tlv_t147.java:10-32`）：
+        //   u32(appid) ‖ u16len ‖ apkVersion ‖ u16len ‖ pkgSig，**两段都 limit_len(..., 32)**。
+        //
+        // ⚠️ 修正记录（2026-09-15 第二轮深逆）：此处曾照抄 oicq 的 `ver.slice(0, 5)`。
+        // oicq 自己的 `apk.ver` 是 5 字符（"8.4.1"）⇒ slice 恒不生效；而我们的档案
+        // 是 "8.2.11"/"8.9.50"/"9.3.60"（均 6 字符）⇒ 会真的截成 "8.2.1"，
+        // 与官方报文（整串 versionName，上限 32）差一个字节。
+        // 第一参语义也已核实是 **appid**：官方调用链 GetStWithPasswd(account, appid,
+        // mainSigMap, subDstAppid, …) → `k.a(appid, subDstAppid, uin, …)`
+        // → `get_tlv_147(appid, t.G=APK versionName, t.H=pkgSig)`
+        // （`request/WtloginHelper.java:1536` → `request/k.java:166`；t.G 见 `request/t.java:315`）。
         w.u32(ctx.apk.appid);
-        _tlv(w, _cut(ctx.apk.ver, 5));
-        _tlv(w, ctx.apk.sign);
+        _tlv(w, _cut(ctx.apk.ver, 32));
+        _tlv(w, _cutBytes(ctx.apk.sign, 32));
 
       case 0x127:
         // 短信验证码（官方 `tlv_t127.get_tlv_127(code, random)`）：

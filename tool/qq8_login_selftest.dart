@@ -102,7 +102,7 @@ Qq8Device _device() => Qq8Device(
     );
 
 Qq8TlvContext _tlvCtx(Qq8ClientProfile p,
-        {Uint8List? t104, Uint8List? t174, Uint8List? t548}) =>
+        {Uint8List? t104, Uint8List? t174, Uint8List? t547, Uint8List? t548}) =>
     Qq8TlvContext(
       uin: 10001,
       apk: p.apk,
@@ -114,6 +114,7 @@ Qq8TlvContext _tlvCtx(Qq8ClientProfile p,
       t174: t174 ?? _hex('aabbccdd'),
       tgt: _hex('1122334455667788'),
       srmToken: _hex('99aabbcc'),
+      t547: t547,
       t548: t548,
       randomBytes: (n) => _fill(n, 0xab),
       teaPadding: (n) => _fill(n, 0),
@@ -445,13 +446,17 @@ Future<void> main() async {
       (body[0] << 8 | body[1]) == Qq8SubCmd.slider,
       '${(body[0] << 8 | body[1])}',
     );
-    final sliderOrder = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk, hasT547: false);
+    final sliderOrder = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk);
     check(
-      'slider（8.9.50，ssoVer=19）：6 项 = 基础 4 项 + 0x544 + 0x542（维护版追加）',
+      'slider（8.9.50，ssoVer=19）：6 项 = 193/8/104/116/547/544（官方 Helper:938）',
       tlvs.length == 6 && tlvs.keys.join(',') == sliderOrder.join(',') &&
-          sliderOrder[sliderOrder.length - 2] == 0x544 &&
-          sliderOrder.last == 0x542,
+          sliderOrder[4] == 0x547 && sliderOrder[5] == 0x544,
       '${tlvs.length} 项: ${tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
+    );
+    check(
+      'slider（8.9.50）：0x547 无应答时为空 body（官方恒在语义）',
+      tlvs.containsKey(0x547) && tlvs[0x547]!.isEmpty,
+      'len=${tlvs[0x547]?.length}',
     );
     check(
       'slider（8.9.50）：0x544 是合法空体（不能因空被滤掉）',
@@ -459,52 +464,52 @@ Future<void> main() async {
       'len=${tlvs[0x544]?.length}',
     );
     check(
-      'slider（8.9.50）：收尾 0x542 body = 4A 02 60 01（ssoVer<20 四字节）',
-      tlvs[0x542]?.join(',') == [0x4A, 0x02, 0x60, 0x01].join(','),
-      tlvs[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
+      'slider（8.9.50）：收尾 0x544，**没有 0x542**（官方滑块提交无此项）',
+      sliderOrder.last == 0x544 && !sliderOrder.contains(0x542),
+      sliderOrder.map((t) => '0x${t.toRadixString(16)}').join(' '),
     );
 
-    // 8.2.11（ssoVer=7 ≤ 12）：不发 0x544，但 0x542 无条件收尾（维护版规则）。
-    // 2026-09-15 更正：早先以为 8.2.11 只有 4 项——看漏了维护版 t(0x542) 在
-    // ssover 分支外。真机 type=1 与此吻合（缺能力位）。
+    // 8.2.11（ssoVer=7）：官方 n.java = 193/8/104/116/547（空 body），无 544/542
     {
       final ctx7 = _tlvCtx(qq8ProfileQQ8211);
       final b7 = Qq8LoginBody.buildSlider(ctx7, ticket: ticket);
       final t7 = qq8ReadTlv(b7, offset: 4);
-      final o7 = qq8SliderTlvOrderFor(qq8ProfileQQ8211.apk, hasT547: false);
+      final o7 = qq8SliderTlvOrderFor(qq8ProfileQQ8211.apk);
       check(
-        'slider（8.2.11，ssoVer=7）：5 项 = 基础 4 项 + 0x542，不含 0x544',
+        'slider（8.2.11，ssoVer=7）：5 项 = 193/8/104/116/547(空)，无 544/542',
         t7.length == 5 &&
-            o7.join(',') == <int>[...qq8SliderTlvOrder, 0x542].join(',') &&
+            o7.join(',') == <int>[...qq8SliderTlvOrder, 0x547].join(',') &&
             t7.keys.join(',') == o7.join(',') &&
             !t7.containsKey(0x544) &&
-            t7.containsKey(0x542),
+            !t7.containsKey(0x542) &&
+            t7[0x547]!.isEmpty,
         '${t7.length} 项: ${t7.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
-      );
-      check(
-        'slider（8.2.11）：0x542 body = 4A 02 60 01（ssoVer<20 四字节档）',
-        t7[0x542]?.join(',') == [0x4A, 0x02, 0x60, 0x01].join(','),
-        t7[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
       );
     }
 
-    // 有 PoW 应答时追加 0x547，且排在 0x544 之前（参考实现写法）
+    // 有 PoW 应答时 0x547 带应答本体（官方 t.am 缓存语义）
     {
-      final with547 = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk, hasT547: true);
+      final ctx547 = _tlvCtx(qq8ProfileQQ8950, t547: Uint8List.fromList(
+          <int>[1, 2, 3, 4]));
+      final b547 = Qq8LoginBody.buildSlider(ctx547, ticket: ticket);
+      final t547 = qq8ReadTlv(b547, offset: 4);
       check(
-        'slider 清单：hasT547 → 0x547 在 0x544 之前、0x542 收尾',
-        with547.length == 7 &&
-            with547[4] == 0x547 && with547[5] == 0x544 && with547[6] == 0x542,
-        with547.map((t) => '0x${t.toRadixString(16)}').join(' '),
+        'slider：0x547 有应答时发应答本体（官方 t.am 缓存）',
+        t547[0x547]?.join(',') == '1,2,3,4',
+        t547[0x547]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
       );
-      // 空 t547 时显式报错，不发空壳
-      var threw = false;
-      try {
-        Qq8Tlv.body(_tlvCtx(qq8ProfileQQ8950), 0x547);
-      } on ArgumentError {
-        threw = true;
-      }
-      check('TLV 0x547 在无应答时抛错而不是发空体', threw);
+    }
+
+    // 0x547 的顺序位：官方在 0x544 之前（Helper:978-980 的 arraycopy 序）
+    {
+      final order = qq8SliderTlvOrderFor(qq8ProfileQQ8950.apk);
+      check(
+        'slider 清单：0x547 在 0x544 之前（官方 arraycopy 序），无 0x542',
+        order.length == 6 &&
+            order[4] == 0x547 && order[5] == 0x544 &&
+            !order.contains(0x542),
+        order.map((t) => '0x${t.toRadixString(16)}').join(' '),
+      );
     }
 
     check(
@@ -538,16 +543,22 @@ Future<void> main() async {
     }
     check('slider：ticket 为空时显式拒绝', emptyTicketRejected);
 
-    // ssoVer ≥ 20（9.3.60）：0x542 升为六字节 4A 04 60 01 78 01
+    // ssoVer=22（9.3.60）：官方滑块提交 = 193/8/104/116/547/544/553，**无 0x542**
+    // （官方三版本对照：0x542 只在子命令 8 下发短信流程里出现）。六字节
+    // 0x542 只属于密码路径（ssoVer ≥ 20 档），见 2e 段末。
     {
       final ctx22 = _tlvCtx(qq8ProfileQQ9360);
       final b22 = Qq8LoginBody.buildSlider(ctx22, ticket: ticket);
       final t22 = qq8ReadTlv(b22, offset: 4);
+      final o22 = qq8SliderTlvOrderFor(qq8ProfileQQ9360.apk);
       check(
-        'slider（9.3.60，ssoVer=22）：0x542 body = 4A 04 60 01 78 01（六字节）',
-        t22[0x542]?.join(',') ==
-            [0x4A, 0x04, 0x60, 0x01, 0x78, 0x01].join(','),
-        t22[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
+        'slider（9.3.60，ssoVer=22）：7 项 = 193/8/104/116/547/544/553，无 0x542',
+        t22.length == 7 &&
+            t22.keys.join(',') == o22.join(',') &&
+            o22.last == 0x553 &&
+            !t22.containsKey(0x542) &&
+            t22[0x553]?.join(',') == '0',
+        '${t22.length} 项: ${t22.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
       );
     }
   }
@@ -595,6 +606,19 @@ Future<void> main() async {
     final tNoPow = qq8ReadTlv(bodyNoPow, offset: 4);
     check('未提供自构造 PoW：0x548 被 guard 滤掉（首登官方语义不变）',
         !tNoPow.containsKey(0x548) && tNoPow.containsKey(0x542));
+
+    // 六字节档（ssoVer ≥ 20）只出现在密码路径：9.3.60 密码包 0x542 = 4A 04 60 01 78 01。
+    final body9360 = Qq8LoginBody.build(
+      _tlvCtx(qq8ProfileQQ9360),
+      Qq8SubCmd.password,
+      qq8PasswordTlvOrderFor(qq8ProfileQQ9360.apk),
+      cond: Qq8LoginConditions.firstPasswordLogin,
+    );
+    final t9360 = qq8ReadTlv(body9360, offset: 4);
+    check('密码包（9.3.60，ssoVer=22）：0x542 = 4A 04 60 01 78 01（六字节档）',
+        t9360[0x542]?.join(',') ==
+            [0x4A, 0x04, 0x60, 0x01, 0x78, 0x01].join(','),
+        t9360[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '));
   }
 
   // -- 3. 响应解析（往返） ------------------------------------------------

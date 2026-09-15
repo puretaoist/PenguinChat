@@ -204,9 +204,14 @@ const _vectors = <({int tag, List<Object?> args, String hex})>[
   ),
   (tag: 0x145, args: [], hex: '0145001000112233445566778899aabbccddeeff'),
   (
+    // ⚠️ 48 条里唯一**有意偏离 oicq** 的向量（生成端 `gen_tlv_vectors.cjs`
+    // 的 OFFICIAL_OVERRIDES）：oicq 第二段是 `ver.slice(0, 5)`，它自己的
+    // ver 恰是 5 字符（"8.4.1"）故 slice 恒不生效；官方 `tlv_t147.java:17-18`
+    // 是 `limit_len(..., 32)` 发整串 versionName ⇒ "8.2.11" 6 字节。
+    // 我们的档案都是 6 字符，照抄 slice(0,5) 会真的少一字节。
     tag: 0x147,
     args: [],
-    hex: '0147001d000000100005382e322e310010a6b745bf24a2c277527716f6f36eb6'
+    hex: '0147001e000000100006382e322e31310010a6b745bf24a2c277527716f6f36eb6'
         '8d'
   ),
   (tag: 0x154, args: [], hex: '0154000400000065'),
