@@ -40,6 +40,7 @@ import '../widgets/message_list_builder.dart';
 import '../widgets/storage_dialog.dart';
 import '../widgets/telegram_avatar.dart';
 import 'connect_page.dart';
+import 'qq8_connect_page.dart';
 import 'search_page.dart';
 
 class HomePage extends ConsumerStatefulWidget {
@@ -375,6 +376,12 @@ class _HomePageState extends ConsumerState<HomePage> {
         .push(MaterialPageRoute<void>(builder: (_) => const ConnectPage()));
   }
 
+  /// 协议线（QQ 自实现协议）登录直达入口。
+  void _openQq8Login() {
+    Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const Qq8ConnectPage()));
+  }
+
   // ---------------------------------------------------------------
   //  构建
   // ---------------------------------------------------------------
@@ -645,6 +652,16 @@ class _HomePageState extends ConsumerState<HomePage> {
                   child: Text(
                     '去连接设置',
                     style: TextStyle(color: TelegramColors.accent),
+                  ),
+                ),
+                // 协议线（自实现 QQ 协议）的主入口：与 OneBot 线并存，一条直达。
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: _openQq8Login,
+                  icon: const Icon(Icons.key, size: 16),
+                  label: const Text('QQ 账号登录（自实现协议）'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: TelegramColors.accent,
                   ),
                 ),
               ],

@@ -33,6 +33,9 @@ dependencies:
   # 而 ChatStore 需要一个可持久化的 dataDir（systemTemp 会被系统清理）。
   path_provider: ^2.1.6
 
+  # 打开系统浏览器（滑块验证 / 二维码溢出时用；QQ8 登录页）
+  url_launcher: ^6.3.0
+
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
