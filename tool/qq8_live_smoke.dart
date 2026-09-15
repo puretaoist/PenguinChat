@@ -966,6 +966,14 @@ Future<void> main(List<String> argv) async {
         'at': DateTime.now().toIso8601String(),
       };
       if (t547Hex != null) state['t547'] = t547Hex;
+      // ⚠️ 响应没带 0x546（或解不出）→ **显式清掉**状态里可能残留的旧 t547。
+      // 它属于上一次（可能是别的档案/别的会话）的挑战；patch 合并模式下不清
+      // 就会一直残留，提交时带上一个"与会话不绑定"的应答，服务端必拒——
+      // 2026-09-15 发现 8.2.11 的提交一直带着 09-13 8.9.50 会话解出的 547。
+      // 维护版 oicq 此时 sig.t547 为空、根本不发这项（`if (this.sig.t547.length)`）。
+      else {
+        state['t547'] = '';
+      }
       _saveSliderState(
         stateFile,
         state.map((k, v) => MapEntry(k, '$v')),
@@ -1823,9 +1831,18 @@ Map<String, String> _readSliderState(File f) {
 }
 
 /// 合并写入验证状态文件（保留已有键，只更新给定键）。
+///
+/// 值为**空串**的键表示显式删除——脏残留比缺键更危险（2026-09-15：
+/// 上一次会话解出的 t547 残留后被随包回带，服务端按不绑定拒绝）。
 void _saveSliderState(File f, Map<String, String> patch) {
   final cur = _readSliderState(f);
-  cur.addAll(patch);
+  for (final e in patch.entries) {
+    if (e.value.isEmpty) {
+      cur.remove(e.key);
+    } else {
+      cur[e.key] = e.value;
+    }
+  }
   f.writeAsStringSync(jsonEncode(cur));
 }
 
