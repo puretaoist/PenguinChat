@@ -464,17 +464,27 @@ Future<void> main() async {
       tlvs[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
     );
 
-    // 8.2.11（ssoVer=7 ≤ 12）按两个参考的一致结论：只有基础 4 项、不发 0x544
+    // 8.2.11（ssoVer=7 ≤ 12）：不发 0x544，但 0x542 无条件收尾（维护版规则）。
+    // 2026-09-15 更正：早先以为 8.2.11 只有 4 项——看漏了维护版 t(0x542) 在
+    // ssover 分支外。真机 type=1 与此吻合（缺能力位）。
     {
       final ctx7 = _tlvCtx(qq8ProfileQQ8211);
       final b7 = Qq8LoginBody.buildSlider(ctx7, ticket: ticket);
       final t7 = qq8ReadTlv(b7, offset: 4);
       final o7 = qq8SliderTlvOrderFor(qq8ProfileQQ8211.apk, hasT547: false);
       check(
-        'slider（8.2.11，ssoVer=7）：4 项、不含 0x544（与 js 时代参考一致）',
-        t7.length == 4 && o7.join(',') == qq8SliderTlvOrder.join(',') &&
-            t7.keys.join(',') == o7.join(',') && !t7.containsKey(0x544),
-        '${t7.length} 项',
+        'slider（8.2.11，ssoVer=7）：5 项 = 基础 4 项 + 0x542，不含 0x544',
+        t7.length == 5 &&
+            o7.join(',') == <int>[...qq8SliderTlvOrder, 0x542].join(',') &&
+            t7.keys.join(',') == o7.join(',') &&
+            !t7.containsKey(0x544) &&
+            t7.containsKey(0x542),
+        '${t7.length} 项: ${t7.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
+      );
+      check(
+        'slider（8.2.11）：0x542 body = 4A 02 60 01（ssoVer<20 四字节档）',
+        t7[0x542]?.join(',') == [0x4A, 0x02, 0x60, 0x01].join(','),
+        t7[0x542]?.map((v) => v.toRadixString(16).padLeft(2, '0')).join(' '),
       );
     }
 

@@ -259,11 +259,16 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 /// |---|---|
 /// | js 时代 `login-password.js`（8.2.11 同代） | 恒定 4 项：`0x193 0x08 0x104 0x116` |
 /// | 新版 `base-client.ts` | `0x193 0x08 0x104 0x116 [0x547] 0x544`，且 `ssover<=12` 时少一项 |
-/// | 维护版 v1.26.25（2026-09 仍在用） | 在新版基础上**包尾再追加 `0x542`** |
+/// | 维护版 v1.26.25（2026-09 仍在用） | `0x542` **无条件**收尾（`t(0x542)` 在 ssover 分支外） |
 ///
-/// 三者对 `_sso_ver <= 12`（8.2.11 = 7）的结论一致：**就是 4 项、不发 0x544**。
+/// 后两者对 `_sso_ver <= 12`（8.2.11 = 7）的结论一致：**不发 0x544**。
 /// 而 8.9.50（19）/ 9.3.60（22）按新版要带 `0x544`（走降级空 body，与 8.9.50
-/// 登录清单里 `0x544` 本身就是空体一致）与 `0x542`。
+/// 登录清单里 `0x544` 本身就是空体一致）。
+///
+/// ⚠️ 2026-09-15 更正：早先只在 `ssoVer > 12` 时追加 `0x542`——**看漏了维护版
+/// 的 `t(0x542)` 在 if 块外面**。真机后果：8.2.11 的滑块提交一直缺这个 4 字节
+/// 能力位，提交回 type=1「账号或密码错误」（密码包能到 type=2，说明不是密码
+/// 问题；两次会话复用实验一次 237 一次 1，包缺项是唯一恒定差异）。
 ///
 /// ⚠️ `0x547` 需要 `0x546` 的本地应答（PoW）——真机样本已拿到且能解
 /// （`qq8_pow.dart`，typ=2 在第 9046 次迭代撞上），但仍**只在
@@ -271,11 +276,9 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {required bool hasT547}) {
   final order = <int>[0x193, 0x08, 0x104, 0x116];
   if (hasT547) order.add(0x547);
-  if (apk.ssoVer > 12) {
-    order.add(0x544);
-    // 维护版 oicq v1.26.25 的 sliderLogin：544 之后（553 无票据时不发）收尾 542。
-    order.add(0x542);
-  }
+  if (apk.ssoVer > 12) order.add(0x544);
+  // 维护版 oicq v1.26.25 的 sliderLogin：0x542 无条件收尾（553 无票据不发）。
+  order.add(0x542);
   return order;
 }
 
@@ -284,6 +287,13 @@ List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {required bool hasT547}) {
 /// `0x548` 已在官方 37/38 项顺序表内（位于尾部），由
 /// [Qq8LoginConditions] + [Qq8TlvContext.t548] 决定是否真正产出；
 /// `0x542` 不在官方反编译顺序表里，只在这里按版本追加（ssoVer > 12）。
+///
+/// ⚠️ 已知与维护版的差异（**刻意保留**）：维护版 `passwordLogin` 的
+/// `0x548 / 0x545 / 0x542` 对 8.2.11 也是无条件发的，而这里 ssoVer=7 时不追加
+/// 0x542、0x548 由官方 guard（t.an / 自构造 PoW）控制。密码包已实测稳定到
+/// type=2（服务端放行到验证环节），说明 8.2.11 密码包缺 542 **不被拒**——
+/// 滑块提交那次 type=1 才是它的报文（2026-09-15 改 `qq8SliderTlvOrderFor`）。
+/// 若日后 8.2.11 密码包也被拒，第一个要试的就是把 0x542 无条件加进来。
 List<int> qq8PasswordTlvOrderFor(Qq8ApkInfo apk) {
   return <int>[
     ...apk.loginTlvOrder,
