@@ -36,6 +36,9 @@ dependencies:
   # 打开系统浏览器（滑块验证 / 二维码溢出时用；QQ8 登录页）
   url_launcher: ^6.3.0
 
+  # 分享日志/文件到系统分享面板（登录页"导出日志"用）
+  share_plus: ^10.0.0
+
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

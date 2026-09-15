@@ -27,12 +27,17 @@
 /// 本文件是 Flutter 层（L4）。
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
+import '../../client_api/session_providers.dart' show dataDirProvider;
+import '../../infra/log/log_file.dart';
 import 'home_page.dart';
 
 /// 协议线登录页（把 [Qq8ConnectView] 接到 provider 上）。
@@ -43,6 +48,10 @@ class Qq8ConnectPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final status = ref.watch(qq8ConnectControllerProvider);
     final c = ref.read(qq8ConnectControllerProvider.notifier);
+    // 日志目录：应用私有目录下。main.dart 注入的 dataDir 即 "…/logs" 的父目录。
+    final dataDir = ref.read(dataDirProvider);
+    final logDir = Directory(
+        '${dataDir.path}${Platform.pathSeparator}logs');
     return Scaffold(
       appBar: AppBar(title: const Text('QQ 账号登录')),
       body: Qq8ConnectView(
@@ -61,6 +70,24 @@ class Qq8ConnectPage extends ConsumerWidget {
         onPollQrcode: c.pollQrcode,
         onOpenBrowser: (url) => launchUrl(Uri.parse(url),
             mode: LaunchMode.externalApplication),
+        // 导出日志：生成报告 → 写临时文件 → 系统分享面板。
+        onExportLog: () async {
+          final report = LogExporter.buildReport(
+            logDirectory: logDir,
+            metadata: <String, Object?>{
+              'app': 'PenguinChat QQ 客户端',
+              'time': DateTime.now().toIso8601String(),
+            },
+          );
+          final tmp =
+              '${Directory.systemTemp.path}${Platform.pathSeparator}'
+              '${LogExporter.fileNameFor(DateTime.now())}';
+          File(tmp).writeAsStringSync(report);
+          await Share.shareXFiles(
+            <XFile>[XFile(tmp, mimeType: 'text/plain')],
+            subject: 'QQ 客户端日志',
+          );
+        },
         onEnterApp: () => Navigator.of(context).pushReplacement(
           MaterialPageRoute<void>(builder: (_) => const HomePage()),
         ),
@@ -90,6 +117,7 @@ class Qq8ConnectView extends StatefulWidget {
     this.onPollQrcode,
     this.onOpenBrowser,
     this.onEnterApp,
+    this.onExportLog,
   });
 
   final Qq8ConnectStatus status;
@@ -109,6 +137,9 @@ class Qq8ConnectView extends StatefulWidget {
   final void Function(String url)? onOpenBrowser;
 
   final VoidCallback? onEnterApp;
+
+  /// 导出日志（生成报告 → 系统分享面板）。
+  final VoidCallback? onExportLog;
 
   @override
   State<Qq8ConnectView> createState() => _Qq8ConnectViewState();
@@ -199,6 +230,21 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         const SizedBox(height: 12),
         // 状态行 / 错误（放在最下方，不打扰输入）
         _statusCard(context, s),
+        const SizedBox(height: 8),
+        // 日志导出（弱入口，排障用；也方便把日志发出来给人看）
+        if (widget.onExportLog != null)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const ValueKey('qq8-export-log'),
+              onPressed: widget.onExportLog,
+              icon: const Icon(Icons.ios_share, size: 16),
+              label: const Text('导出日志'),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ),
       ],
     );
   }

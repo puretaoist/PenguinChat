@@ -285,6 +285,17 @@ void main() {
           find.byKey(const ValueKey('qq8-login-password')));
       expect(btn.onPressed, isNull);
     });
+
+    testWidgets('导出日志按钮存在且触发回调', (tester) async {
+      var exported = 0;
+      await tester.pumpWidget(_wrapView(Qq8ConnectView(
+        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+        onExportLog: () => exported++,
+      )));
+      await tester.tap(find.byKey(const ValueKey('qq8-export-log')));
+      await tester.pump();
+      expect(exported, 1);
+    });
   });
 
   group('Qq8ConnectPage：provider 接线', () {
