@@ -38,6 +38,7 @@ import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
 import '../../client_api/session_providers.dart' show dataDirProvider;
 import '../../infra/log/log_file.dart';
+import '../widgets/real_server_panel.dart';
 import 'home_page.dart';
 
 /// 协议线登录页（把 [Qq8ConnectView] 接到 provider 上）。
@@ -57,6 +58,10 @@ class Qq8ConnectPage extends ConsumerWidget {
       body: Qq8ConnectView(
         key: const ValueKey('qq8-connect-view'),
         status: status,
+        // 风险确认入口：没开真实服务器模式时登录必被拦，用户必须在**本页**
+        // 就能开（旧版提示"去风险确认里开"却没有入口，真机上卡死）。
+        // 默认折叠成一行提示，点击展开检测 + 逐条确认，不撑满首屏。
+        header: const RealServerPanel(),
         onPasswordLogin: c.loginWithPassword,
         onTokenLogin: c.loginWithToken,
         onPhoneLogin: c.loginWithPhone,
@@ -104,6 +109,7 @@ class Qq8ConnectView extends StatefulWidget {
   const Qq8ConnectView({
     super.key,
     required this.status,
+    this.header,
     this.onPasswordLogin,
     this.onTokenLogin,
     this.onPhoneLogin,
@@ -121,6 +127,11 @@ class Qq8ConnectView extends StatefulWidget {
   });
 
   final Qq8ConnectStatus status;
+
+  /// 表单上方的附加区块（如 [RealServerPanel] 风险确认）。
+  /// 哑视图不关心它是什么，只负责摆在顶部——测试可传 null。
+  final Widget? header;
+
   final void Function(int uin, String password)? onPasswordLogin;
   final void Function(int uin)? onTokenLogin;
   final void Function(String phone)? onPhoneLogin;
@@ -207,6 +218,11 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
+        // 附加区块（风险确认等）——排在最前，因为它是登录的前置条件
+        if (widget.header != null) ...<Widget>[
+          widget.header!,
+          const SizedBox(height: 16),
+        ],
         // 顶部方式切换
         SegmentedButton<_LoginMode>(
           segments: const <ButtonSegment<_LoginMode>>[

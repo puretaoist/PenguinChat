@@ -21,6 +21,7 @@ import 'package:qqclient/client_api/session_providers.dart';
 import 'package:qqclient/kernel/onebot/backend_profile.dart';
 import 'package:qqclient/kernel/safety/safety_gate.dart';
 import 'package:qqclient/ui/pages/qq8_connect_page.dart';
+import 'package:qqclient/ui/widgets/real_server_panel.dart';
 
 Widget _wrapView(Qq8ConnectView view) =>
     MaterialApp(home: Scaffold(body: view));
@@ -308,6 +309,65 @@ void main() {
       expect(find.text('QQ 账号登录'), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-uin')), findsOneWidget);
       expect(find.text('未连接'), findsOneWidget);
+      // 风险确认入口必须在本页可见（旧版只在 OneBot 页有，真机上无处可开）
+      expect(find.byKey(const ValueKey('real-server-banner')), findsOneWidget);
+    });
+  });
+
+  group('RealServerPanel：风险确认入口', () {
+    Widget wrapPanel(Widget panel) => MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: panel,
+            ),
+          ),
+        );
+
+    Future<void> pumpPanel(WidgetTester tester) async {
+      await tester.pumpWidget(ProviderScope(
+        overrides: _overrides(),
+        child: wrapPanel(const RealServerPanel()),
+      ));
+      await tester.pump();
+    }
+
+    testWidgets('未开启：单行横幅；点击展开出现检测 / 逐条确认 / 开启', (tester) async {
+      await pumpPanel(tester);
+      expect(find.byKey(const ValueKey('real-server-banner')), findsOneWidget);
+      expect(find.byKey(const ValueKey('real-server-probe')), findsNothing,
+          reason: '折叠态不该显示完整流程');
+
+      await tester.tap(find.byKey(const ValueKey('real-server-banner')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('real-server-probe')), findsOneWidget);
+      expect(find.text('开启真实服务器模式'), findsOneWidget);
+      // 未勾选任何项 → 开启按钮必须是禁用的
+      final btn = tester.widget<FilledButton>(
+          find.byKey(const ValueKey('real-server-enable')));
+      expect(btn.onPressed, isNull);
+    });
+
+    testWidgets('全部勾选后才可点开启；未做环境检测时显示闸门拒绝原文', (tester) async {
+      await pumpPanel(tester);
+      await tester.tap(find.byKey(const ValueKey('real-server-banner')));
+      await tester.pumpAndSettle();
+
+      for (var i = 0; i < kRiskPoints.length; i++) {
+        final f = find.byKey(ValueKey('real-server-ack-$i'));
+        await tester.ensureVisible(f);
+        await tester.tap(f);
+        await tester.pump();
+      }
+      final btnFinder = find.byKey(const ValueKey('real-server-enable'));
+      await tester.ensureVisible(btnFinder);
+      final btn = tester.widget<FilledButton>(btnFinder);
+      expect(btn.onPressed, isNotNull, reason: '全勾选后应可点');
+
+      await tester.tap(btnFinder);
+      await tester.pumpAndSettle();
+      // environment: null → 闸门第一道关拒绝（不联网，纯本地判定）
+      expect(find.textContaining('必须先完成环境检测'), findsOneWidget);
     });
   });
 }

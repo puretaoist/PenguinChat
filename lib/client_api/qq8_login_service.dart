@@ -282,8 +282,8 @@ class Qq8LoginService {
     final g = gate;
     if (g == null) return null;
     if (!g.isRealServer) {
-      return '要连接真实 QQ 服务器，需要先在「风险确认」里开启真实服务器模式：'
-          '先做环境检测，再逐条确认风险点。';
+      return '要连接真实 QQ 服务器，需要先开启「真实服务器模式」：'
+          '在页面上方的提示里做环境检测，并逐条确认风险点。';
     }
     if (!g.hasValidConsent) {
       return '知情同意已失效（声明已更新到 $kConsentVersion），需要重新逐条确认。';
