@@ -654,6 +654,38 @@ Future<void> main() async {
     check('type 解出为 204（设备锁）', r.needsDeviceLock, '${r.type}');
   }
   {
+    // 0x508 进阶提示块：官方 tlv_t508.verify 布局 = flag(1B) ‖ timeout(i32)
+    // ‖ u16len ‖ userBuf。flag=1 → doFetch=true。
+    final payload = _buildResponse(1, <int, List<int>>{
+      0x508: <int>[1, 0, 0, 3, 0xE8, 0, 4, 0xDE, 0xAD, 0xBE, 0xEF],
+    });
+    final r = Qq8LoginResponse.parse(payload, _shareKey);
+    final n = r.t508Notice;
+    check('0x508 解包：doFetch=true / timeout=1000 / userBuf 4 字节',
+        n != null &&
+            n.doFetch &&
+            n.timeoutMs == 1000 &&
+            n.userBuf.join(',') == '222,173,190,239',
+        n == null
+            ? '<null>'
+            : 'doFetch=${n.doFetch} timeout=${n.timeoutMs} '
+                'userBuf=${n.userBuf.map((v) => v.toRadixString(16).padLeft(2, '0')).join()}');
+
+    // flag=0 → doFetch=false；超时 0 官方兜 1000 由服务层/换文案层处理，此处只透传。
+    final payload0 = _buildResponse(1, <int, List<int>>{
+      0x508: <int>[0, 0, 0, 0, 0, 0, 1, 0xAB],
+    });
+    final n0 = Qq8LoginResponse.parse(payload0, _shareKey).t508Notice;
+    check('0x508 flag=0 → doFetch=false', n0 != null && !n0.doFetch);
+
+    // 畸形：userBuf 长度越界 → null（不静默截断）
+    final payloadBad = _buildResponse(1, <int, List<int>>{
+      0x508: <int>[1, 0, 0, 0, 0, 0, 64, 0x00],
+    });
+    final nBad = Qq8LoginResponse.parse(payloadBad, _shareKey).t508Notice;
+    check('0x508 长度越界 → null', nBad == null);
+  }
+  {
     var threw = false;
     try {
       Qq8LoginResponse.parse(_fill(10, 0), _shareKey);

@@ -796,6 +796,29 @@ class Qq8LoginResponse {
     return (title, text(p, contentLen));
   }
 
+  /// 服务端"进阶语法提示"块（TLV `0x508`，tag 1288）的解包结果；没有就是 null。
+  ///
+  /// 官方 `tlv_t508.verify()` 的 body 布局（8.9.50 `tlv_t508.java:20-28`）：
+  /// `u8 flag ‖ i32 timeout ‖ u16 len ‖ len 字节 userBuf`。`flag=1` 时官方会用
+  /// `userBuf` 再 POST 到 `ts{7,8,9}.qq.com:8080/msg`（`request/g.java:136-207`）
+  /// 换人类可读文案——`userBuf` 本身是加密的 notice 查询载荷，不是明文内部码。
+  Qq8T508Notice? get t508Notice {
+    final b = tlvs[0x508];
+    if (b == null || b.length < 7) return null;
+    final flag = b[0];
+    var p = 1;
+    final timeout = (b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3];
+    p += 4;
+    final len = (b[p] << 8) | b[p + 1];
+    p += 2;
+    if (p + len > b.length) return null;
+    return Qq8T508Notice(
+      doFetch: flag == 1,
+      timeoutMs: timeout,
+      userBuf: Uint8List.fromList(b.sublist(p, p + len)),
+    );
+  }
+
   /// 解析响应。
   ///
   /// 步骤完全照搬 oicq `_decodeLoginResponse`：
@@ -912,4 +935,28 @@ class Qq8SigBundle {
       t512: tlvs[0x512],
     );
   }
+}
+
+/// 服务端"进阶语法提示"（TLV `0x508`）的承载。
+///
+/// 官方 8.9.50 `tlv_t508` 只做「拆包」不做「解释」：`verify()` 读出
+/// `flag / timeout / userBuf` 三个字段，`userBuf` 是**加密的** notice 查询载荷，
+/// 需要 `request/g.b()` 再走一次 `POST ts{7,8,9}.qq.com:8080/msg`（RSA 解外层、
+/// MD5 校验、ECDH share key 解内层）才变成明文错误文案。本类只承载拆包结果，
+/// 换文案那条链路未实现（纯诊断增强，不改登录成败，见 [Qq8LoginResponse.t508Notice]）。
+class Qq8T508Notice {
+  /// 官方是否据此发起 HTTP 换文案（body 首字节 == 1）。
+  final bool doFetch;
+
+  /// HTTP 换文案的超时（毫秒；0 时官方按 1000 兜底）。
+  final int timeoutMs;
+
+  /// 加密的 notice 查询载荷（原样回传 `ts*.qq.com/msg` 才能解出文案）。
+  final Uint8List userBuf;
+
+  const Qq8T508Notice({
+    required this.doFetch,
+    required this.timeoutMs,
+    required this.userBuf,
+  });
 }

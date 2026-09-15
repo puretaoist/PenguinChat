@@ -1603,6 +1603,15 @@ class Qq8LoginService {
 
     // 其它：能读到服务端文案就显示文案，否则显示返回码
     final msg = r.serverMessage;
+    // 服务端进阶提示块（0x508）——诊断关键：真机被拒时确认服务端究竟回了什么。
+    // userBuf 是加密的 notice 载荷，需再走 ts{7,8,9}.qq.com:8080/msg 才变明文；
+    // 这里先打原始 hex，供离线比对官方 g.b() 的换文案链路是否值得补。
+    final notice = r.t508Notice;
+    if (notice != null) {
+      _log.i('0x508 进阶提示: doFetch=${notice.doFetch} '
+          'timeout=${notice.timeoutMs}ms userBuf[${notice.userBuf.length}]='
+          '${notice.userBuf.map((v) => v.toRadixString(16).padLeft(2, '0')).join()}');
+    }
     final text = msg == null
         ? '登录未通过（服务端返回 type=${r.type}）'
         : '${msg.$1}：${msg.$2}';
