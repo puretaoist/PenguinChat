@@ -259,7 +259,7 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 /// |---|---|---|
 /// | 8.2.11 | `request/n.java`（jadx-main） | `0x193/0x2 → 0x8 → 0x104 → 0x116 → 0x547`（**5 项**） |
 /// | 8.9.50 | `WtloginHelper.java:938-990`（jadx8950） | 同上 + `0x544`（**6 项**） |
-/// | 9.3.60 | `WtloginHelper.java:9396-9445`（m2-out） | 再 + `0x553(fekit,"0x810","0x2")`（**7 项**） |
+/// | 9.3.60/TIM | `WtloginHelper.java:482-531`（**tim-dex**，ssoVer=22 同代） | 再 + `0x544("810_2")` + `0x553("0x2")`（**7 项**） |
 ///
 /// 关键官方语义（全部逐行核对）：
 ///
@@ -271,8 +271,14 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 ///   `CheckPictureAndGetSt`（传统图片验证码 → 0x2(sig,code)）。我们走滑块。
 /// * **`0x544`**：8.9.50 起恒带（`get_tlv_544(uin,"810_2",subcmd)`，
 ///   安全 SDK 不可用 → 空 body）；8.2.11 的流程里没有它。
-/// * **`0x553`**：9.3.60 特有，`getFeKitAttach(...,"0x810","0x2")`——注意
-///   第二参数是**子命令 2**，不是密码登录的 "0x9"。
+/// * **`0x553`**：9.3.60/TIM 特有，`getFeKitAttach(...,"0x810","0x2")`——注意
+///   第四参是**子命令 2**，不是密码登录的 "0x9"。此前因 9.3.60 的
+///   `WtloginHelper.java` 本体缺失而标"无法核对"；现已由 **TIM 完整反编译**
+///   证实：`tim-classes2.dex/WtloginHelper.java:509`（`"0x810","0x2"`）与
+///   `:507`（`get_tlv_544(j3,"810_2",subcmd=2)`）逐行对上。
+///   降级语义：`tlv_t553.get_tlv_t553(null)` → **空 body**（非单字节 00）；我们
+///   档案里的 `tlv553DegradedBody=[0]` 是降级占位（fekit 为 native 计算，拿不到
+///   真实值），与官方 `null→空` 差 1 字节——同为无效降级签名，影响可忽略。
 /// * **没有 `0x542`！** 8.9.50 的 `get_tlv_542` 只出现在**子命令 8**
 ///   （请求下发短信，带 174/17a 令牌）的流程里（`WtloginHelper:8501`）。
 ///   维护版 oicq 把它错位带进了滑块提交——我们此前跟随它发了 542，
