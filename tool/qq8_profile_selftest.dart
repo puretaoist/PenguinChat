@@ -375,8 +375,8 @@ void main() {
     }
   }
   check(
-    '默认档案是 8.9.50',
-    identical(qq8DefaultProfile, qq8ProfileQQ8950),
+    '默认档案是 9.3.60（2026-09-21 因 type=45 版本门从 8.9.50 换过来）',
+    identical(qq8DefaultProfile, qq8ProfileQQ9360),
     qq8DefaultProfile.label,
   );
   check('档案表有 5 项（含 8.9.50-yyb）', qq8ClientProfiles.length == 5,

@@ -120,8 +120,12 @@ final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
 /// （真实服务器模式 + 有效同意）由它把关，见 [Qq8LoginService.gate]。
 final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
   final identity = ref.watch(qq8DeviceIdentityProvider);
+  final profile = ref.watch(qq8ProfileProvider);
+  // 档案必须进日志：服务端的裁决与"我们自称哪个版本"直接相关
+  //（2026-09-21 的 type=45 版本门就是这么看出来的），但日志里原先没有这一行。
+  Log.get('QQ8').i('客户端档案: $profile');
   final svc = Qq8LoginService(
-    profile: ref.watch(qq8ProfileProvider),
+    profile: profile,
     tokenStore: ref.watch(qq8TokenStoreProvider),
     transportBuilder: ref.watch(qq8TransportBuilderProvider),
     gate: ref.watch(safetyGateProvider),
