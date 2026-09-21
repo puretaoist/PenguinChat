@@ -327,19 +327,33 @@ closed，**官方自己也连不上**（日志 `SocketTimeoutException`）。别
 **2026-09-21：验证页已搬进应用内（待真机跑）**
 
 `lib/ui/pages/qq8_verify_page.dart`：登录页"打开验证页"不再 `url_launcher` 丢给系统浏览器，
-而是在**本应用的 WebView**（`flutter_inappwebview`，文档开头注入探针脚本）里打开同一个
-`0x192` 地址。ticket 三条路一起收：跳转 URL（`shouldOverrideUrlLoading` + 钩 `window.open`
-/`history`）、JS 桥（`onJsPrompt`/`onJsAlert` + 注入的 `window.PenguinCaptcha`）、页面正文
-（定时上报 + 加载完主动取 `innerText`）；认字符串的规则在 `lib/kernel/wlogin8/qq8_captcha.dart`
-（真值 214 字符 `t0…*`，自测 `tool/qq8_captcha_selftest.dart`）。识别到就填进输入框，
-**由人点提交**（不自动解题、不改 UA、不开无痕）。
+而是在**本应用的 WebView**（官方 `webview_flutter`）里打开同一个 `0x192` 地址。
+ticket 三条路一起收：跳转 URL（`onNavigationRequest`/`onPageStarted` + 加载完成后注入的探针
+钩 `window.open`/`history`）、JS 桥（`setOnJavaScriptTextInputDialog` 拦 `prompt` +
+注入的 `window.PenguinCaptcha` 通道）、页面正文（定时取 `location.href` / `innerText`）。
+认字符串的规则在 `lib/kernel/wlogin8/qq8_captcha.dart`（真值 214 字符 `t0…*`，
+自测 `tool/qq8_captcha_selftest.dart`）。识别到就填进输入框，**由人点提交**
+（不自动解题、不改 UA、不开无痕）。
 
 真机跑的时候看两件事：
 
 1. 捕获记录里 ticket 从哪个 `kind` 出来（`nav` / `prompt` / `text`…）——这决定以后要不要
-   保留整条注入链；
+   保留整条观测链；
 2. 提交后的 `type`：**仍是 1 → (a) 作废**，只剩 `0x544` 真签名这条 native 路（该收手了）；
    `0` 或 `160` → (a) 成立，ticket 的来源确实是被拒的原因。
+
+**踩到的坑（2026-09-21 CI 实测）**：第一版用了 `flutter_inappwebview`（能在文档开头注入
+脚本，看着最合适），但它的 Android 实现 `flutter_inappwebview_android` 最新版仍是 1.1.3
+（2024-10 后未再发版），在**当前工具链（Flutter 3.44 / AGP 9 / Gradle 9.6）上构建不过**：
+
+```
+A problem occurred evaluating project ':flutter_inappwebview_android'.
+> `getDefaultProguardFile('proguard-android.txt')` is no longer supported since it includes `-dontoptimize`
+```
+
+换官方 `webview_flutter` 后同一套观测口仍然齐全（`AndroidWebViewController` 提供
+`onJsPrompt`/`onJsAlert`/`onConsoleMessage`），只少了"文档开头注入"——
+验证码是**人滑完之后**才产生的，加载完成后注入的钩子来得及。
 
 顺带修了一处真问题：`android/app/src/main/AndroidManifest.xml` 原本**没有** `INTERNET`
 权限（只有 debug/profile 变体有），release 包等于无网——协议线 TCP 与 WebView 都靠它。

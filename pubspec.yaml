@@ -40,10 +40,15 @@ dependencies:
   # 为什么必须应用内：验证页所在环境采集到的东西会与登录包里的设备身份比对，
   # 系统浏览器那条路已被实测排除（见 docs/PITFALLS.md C8 候选 (a)），
   # 且只有应用内 WebView 才拿得到页面回传的 ticket（lib/ui/pages/qq8_verify_page.dart）。
-  # 选 inappwebview 而不是 webview_flutter：前者能在**文档开头**注入脚本、
-  # 并拦到 JS 的 alert/prompt（腾讯系 WebView 桥常用 prompt 回传），
-  # 这三样正是"ticket 从哪条路回来"要观测的东西。
-  flutter_inappwebview: ^6.1.5
+  #
+  # ⚠️ 别换成 flutter_inappwebview：它能在文档开头注入脚本，看着更合适，
+  # 但它的 Android 实现（1.1.3，2024-10 后未再发版）在 AGP 9 上构建不过——
+  # `getDefaultProguardFile('proguard-android.txt')` 已被 AGP 移除，
+  # 2026-09-21 CI 实测 `:flutter_inappwebview_android` 评估直接失败。
+  webview_flutter: ^4.14.1
+  # 显式声明 Android 实现：本页要直接用它独有的观测口
+  # （onJsPrompt/onJsAlert/onConsoleMessage——腾讯系 WebView 桥常拿 prompt 传参）。
+  webview_flutter_android: ^4.13.0
 
   # 分享日志/文件到系统分享面板（登录页"导出日志"用）
   share_plus: ^10.0.0

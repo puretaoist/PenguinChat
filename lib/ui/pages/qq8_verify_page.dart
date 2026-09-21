@@ -14,16 +14,26 @@
 ///
 /// | 口子 | 观测手段 |
 /// |---|---|
-/// | 跳转（`location` / 服务端 302 / 新窗口） | `shouldOverrideUrlLoading` + 注入脚本钩 `window.open`、`history.pushState` |
-/// | 页面里 JS 桥的返回值 | `onJsPrompt` / `onJsAlert`（腾讯系 WebView 桥常用 `prompt`）+ 注入的 JS 通道 |
-/// | 页面正文直接把验证码显示出来让人抄 | 注入脚本定时上报正文 + 加载完成后主动取一次 `innerText` |
+/// | 跳转（`location` / 302 / 新窗口） | `onNavigationRequest`/`onPageStarted` + 加载完成后注入的探针钩 `window.open`、`history.pushState` |
+/// | 页面里 JS 桥的返回值 | `setOnJavaScriptTextInputDialog`（腾讯系 WebView 桥常用 `prompt` 传参）+ 注入的 JS 通道 |
+/// | 页面正文直接把验证码显示出来让人抄 | 定时 `runJavaScriptReturningResult` 取 `location.href` / `innerText` + 探针经 JS 通道上报 |
 ///
-/// 三条路都汇到 [Qq8VerifyPage] 的 `_observe`：用 `qq8FindTicket`（L2）认字符串，
-/// 认出来就填进输入框、亮出提交按钮。**不自作主张提交**——提交由人点
-/// （AGENTS §1.6：不代替人完成验证，也不自动解题）。
+/// 三条路都汇到 `_observe`：用 `qq8FindTicket`（L2）认字符串，认出来就填进输入框、
+/// 亮出提交按钮。**不自作主张提交**——提交由人点（AGENTS §1.6：不代替人完成验证，
+/// 也不自动解题）。
 ///
 /// 页面上还有一份"捕获记录"（默认折叠）：真机第一次跑时，靠它就能看出 ticket
 /// 到底从哪条路回来的；落进文件日志的那份**已打码**（凭据不进日志，AGENTS §1.5）。
+///
+/// ## 为什么用官方 `webview_flutter` 而不是 `flutter_inappwebview`
+///
+/// 后者能在**文档开头**注入脚本，本来更适合"钩住页面自己的跳转"；但它的 Android
+/// 实现（`flutter_inappwebview_android` 1.1.3，2024-10 之后没再发版）在 AGP 9 上
+/// **构建不过**：`getDefaultProguardFile('proguard-android.txt')` 已被 AGP 移除
+/// （CI 实测 `:flutter_inappwebview_android` 评估失败）。官方插件与当前工具链同步，
+/// 且 `AndroidWebViewController` 恰好提供 `onJsPrompt`/`onJsAlert`/`onConsoleMessage`
+/// 这三个观测口——本页只丢掉了"文档开头注入"这一项，用加载完成后注入 + 定时取正文
+/// 顶上（验证码是**人滑完之后**才产生的，那时钩子早已装好）。
 ///
 /// ## 刻意没做的两件事
 ///
@@ -35,12 +45,13 @@
 /// 本文件是 Flutter 层（L4）。
 library;
 
-import 'dart:collection';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../../infra/log/logger.dart';
 import '../../kernel/wlogin8/qq8_captcha.dart';
@@ -54,67 +65,42 @@ const String _kBridgeName = 'PenguinCaptcha';
 /// 捕获记录最多留多少条（够看一次验证的关键路径，也不至于吃内存）。
 const int _kTraceCap = 120;
 
-/// 注入到**每个文档开头**的探针脚本。
+/// 轮询间隔：验证页是**会自己变**的（静默验证 / 跳转 / 显示验证码），
+/// 而 webview_flutter 没有"DOM 变了"的回调，只能自己定时取一次。
+const Duration _kPollInterval = Duration(milliseconds: 1200);
+
+/// 加载完成后注入的探针脚本：只做观测，不改页面行为。
 ///
-/// 只做观测，不改页面行为：钩住"要跳走了"的几个信号、把页面正文变化报回来。
-/// 之所以要在 `AT_DOCUMENT_START` 注入：页面的 JS 一跑就可能跳转，等加载完再
-/// 注入就错过第一跳了。
-///
-/// 通道还没就绪时（脚本先于通道注入的窗口期）先把消息排队，定时补发。
+/// 钩住"要跳走了"的信号，并把每次触发经 JS 通道报回来。之所以在**加载完成后**
+/// （而不是文档开头）注入：官方插件没有文档开头的注入口（见文件头说明）。
+/// 这不影响本页的用途——验证码要等人滑完滑块才产生，那时钩子已经装好了。
 const String _kProbe = r'''
 (function () {
   if (window.__pqProbe) { return; }
-  var queue = [];
-  function flush() {
-    var ch = window.PenguinCaptcha;
-    if (!ch || typeof ch.postMessage !== 'function') { return; }
-    while (queue.length) {
-      try { ch.postMessage(queue.shift()); } catch (e) { return; }
-    }
-  }
-  function post(kind, text) {
-    if (text === null || text === undefined) { return; }
-    queue.push(JSON.stringify({ k: kind, t: String(text).slice(0, 20000) }));
-    if (queue.length > 200) { queue.shift(); }
-    flush();
-  }
-  window.__pqProbe = post;
-  setInterval(flush, 500);
-
-  // 1) 跳转信号
+  window.__pqProbe = function (kind, text) {
+    try {
+      window.PenguinCaptcha.postMessage(JSON.stringify({ k: kind, t: String(text) }));
+    } catch (e) {}
+  };
   try {
     var _open = window.open;
-    window.open = function (u) { post('open', u); return _open ? _open.apply(window, arguments) : null; };
+    window.open = function (u) { window.__pqProbe('open', u); return _open ? _open.apply(window, arguments) : null; };
   } catch (e) {}
   try {
     ['pushState', 'replaceState'].forEach(function (m) {
       var f = history[m];
       if (typeof f !== 'function') { return; }
-      history[m] = function (s, t, u) { if (u) { post('history', u); } return f.apply(history, arguments); };
+      history[m] = function (s, t, u) { if (u) { window.__pqProbe('history', u); } return f.apply(history, arguments); };
     });
   } catch (e) {}
   try {
     document.addEventListener('click', function (ev) {
       var n = ev.target;
       while (n && n.tagName !== 'A') { n = n.parentNode; }
-      if (n && n.href) { post('click', n.href); }
+      if (n && n.href) { window.__pqProbe('click', n.href); }
     }, true);
   } catch (e) {}
-  try {
-    document.addEventListener('submit', function (ev) {
-      var f = ev.target;
-      if (f && f.action) { post('submit', f.action); }
-    }, true);
-  } catch (e) {}
-
-  // 2) 页面正文（验证码可能就直接显示在页面上）
-  var last = '';
-  setInterval(function () {
-    try {
-      var t = (document.body && document.body.innerText) || '';
-      if (t && t !== last) { last = t; post('text', t); }
-    } catch (e) {}
-  }, 1200);
+  window.__pqProbe('probe', 'installed ' + location.href);
 })();
 ''';
 
@@ -133,15 +119,88 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
   final TextEditingController _manual = TextEditingController();
   final List<_Trace> _trace = <_Trace>[];
 
-  InAppWebViewController? _web;
+  late final WebViewController _web;
+  Timer? _poll;
   int _progress = 0;
   String? _pageError;
   bool _showTrace = false;
 
+  /// 页面是否已经加载过一次（没加载完就取 DOM 只会抛异常）。
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _web = WebViewController.fromPlatformCreationParams(
+        const PlatformWebViewControllerCreationParams());
+    unawaited(_configure());
+    _poll = Timer.periodic(_kPollInterval, (_) => unawaited(_pullFromPage()));
+  }
+
   @override
   void dispose() {
+    _poll?.cancel();
     _manual.dispose();
     super.dispose();
+  }
+
+  Future<void> _configure() async {
+    await _web.setJavaScriptMode(JavaScriptMode.unrestricted);
+    await _web.setBackgroundColor(TelegramColors.bgApp);
+    // 通道名对页面意味着 `window.PenguinCaptcha.postMessage(...)`；
+    // 注意它只对**之后加载**的页面生效，所以这里必须早于 loadRequest。
+    await _web.addJavaScriptChannel(_kBridgeName,
+        onMessageReceived: (JavaScriptMessage message) =>
+            _onBridge(message.message));
+    await _web.setNavigationDelegate(NavigationDelegate(
+      onNavigationRequest: (NavigationRequest request) {
+        final uri = Uri.tryParse(request.url);
+        if (uri == null) return NavigationDecision.navigate;
+        _observe('nav', request.url, isUrl: true);
+        // 非 http(s)（页面想拉起 QQ / 自定义 scheme）在 WebView 里也打不开，
+        // 直接拦掉，免得留一个打不开的白页。
+        return uri.scheme.startsWith('http')
+            ? NavigationDecision.navigate
+            : NavigationDecision.prevent;
+      },
+      onPageStarted: (url) {
+        _observe('load', url, isUrl: true);
+        if (_pageError != null) setState(() => _pageError = null);
+      },
+      onPageFinished: (url) async {
+        _observe('loaded', url, isUrl: true);
+        _loaded = true;
+        await _injectProbe();
+        await _pullFromPage();
+      },
+      onProgress: (progress) {
+        if (progress != _progress) setState(() => _progress = progress);
+      },
+      onWebResourceError: (error) {
+        // 子资源出错不是致命问题，只有主框架失败才值得弹出来
+        if (error.isForMainFrame == false) return;
+        setState(() => _pageError = '加载失败：${error.description}');
+        _observe('error', error.description);
+      },
+    ));
+
+    final platform = _web.platform;
+    if (platform is AndroidWebViewController) {
+      await platform.setMediaPlaybackRequiresUserGesture(false);
+      await platform
+          .setOnConsoleMessage((m) => _observe('console', m.message));
+      // 腾讯系 WebView 桥常用 prompt 传参：内容必须看得到。官方插件在没有回调时
+      // 会把 prompt 直接吃掉（返回空串），所以这里接管并记账。
+      await platform.setOnJavaScriptTextInputDialog((request) async {
+        _observe('prompt', '${request.message} | ${request.defaultText}');
+        return '';
+      });
+      await platform.setOnJavaScriptAlertDialog((request) async {
+        _observe('alert', request.message);
+      });
+    }
+
+    await _web.loadRequest(Uri.parse(widget.url));
   }
 
   /// 所有观测口子的汇合点：认验证码 → 填进输入框 → 记账。
@@ -167,22 +226,60 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
     });
   }
 
-  /// JS 通道回值（[_kProbe] 发过来的 `{k, t}` JSON）。
-  void _onBridge(List<dynamic> args) {
-    final raw = args.isEmpty ? null : args.first;
-    if (raw is! String) return;
+  /// JS 通道回值（探针发过来的 `{k, t}` JSON）。
+  void _onBridge(String raw) {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        _observe('${decoded['k']}', '${decoded['t']}',
+        final kind = '${decoded['k']}';
+        _observe(kind, '${decoded['t']}',
             isUrl: const <String>{'open', 'history', 'click', 'submit'}
-                .contains(decoded['k']));
+                .contains(kind));
         return;
       }
     } on FormatException {
       // 不是 JSON 也照样看一眼：桥可能被页面当普通函数用。
     }
     _observe('bridge', raw);
+  }
+
+  /// 注入探针（每次导航完成后都装一遍；页面自己带 `__pqProbe` 就跳过）。
+  Future<void> _injectProbe() async {
+    try {
+      await _web.runJavaScript(_kProbe);
+    } on Object catch (e) {
+      _log.d('注入探针失败：$e');
+    }
+  }
+
+  /// 定时取页面状态：地址 + 正文（兜底通道，探针失效时全靠它）。
+  Future<void> _pullFromPage() async {
+    if (!_loaded) return;
+    try {
+      final href = _jsString(await _web.runJavaScriptReturningResult(
+          'location.href'));
+      _observe('href', href, isUrl: true);
+      final text = _jsString(await _web.runJavaScriptReturningResult(
+          'document.body ? document.body.innerText : ""'));
+      _observe('text', text);
+    } on Object catch (e) {
+      _log.d('取页面状态失败：$e');
+    }
+  }
+
+  /// `runJavaScriptReturningResult` 的返回值是 JSON 编码的字符串（Android 实现），
+  /// 这里把最外层引号去掉，拿回人看到的文本。
+  String _jsString(Object? raw) {
+    final s = raw?.toString() ?? '';
+    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+      try {
+        final decoded = jsonDecode(s);
+        if (decoded is String) return decoded;
+      } on FormatException {
+        // 保持原样
+      }
+    }
+    return s;
   }
 
   /// 提交验证码：把码交回登录页（由它接着走子命令 2）。
@@ -193,21 +290,11 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
   }
 
   Future<void> _reload() async {
-    setState(() => _pageError = null);
-    await _web?.reload();
-  }
-
-  /// 兜底通道：加载完成后主动取一次页面正文（万一注入通道没生效）。
-  Future<void> _pullPageText() async {
-    final web = _web;
-    if (web == null) return;
-    try {
-      final text = await web.evaluateJavascript(
-          source: 'document.body ? document.body.innerText : ""');
-      if (text is String && text.isNotEmpty) _observe('text', text);
-    } on Object catch (e) {
-      _log.d('取页面正文失败：$e');
-    }
+    setState(() {
+      _pageError = null;
+      _loaded = false;
+    });
+    await _web.reload();
   }
 
   @override
@@ -248,77 +335,7 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
               child: Text(_pageError!,
                   style: const TextStyle(fontSize: 12, height: 1.35)),
             ),
-          Expanded(
-            child: InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                // 订阅式验证页依赖 cookie / 本地存储；无痕会把这些清掉
-                incognito: false,
-                clearCache: false,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                thirdPartyCookiesEnabled: true,
-                // 验证域之间来回跳转，允许跳转才能看到 ticket 从哪条 URL 回来
-                useShouldOverrideUrlLoading: true,
-                mixedContentMode:
-                    MixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
-              ),
-              initialUserScripts: UnmodifiableListView<UserScript>(<UserScript>[
-                UserScript(
-                  source: _kProbe,
-                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-                  // 验证页有时在子框架里跑验证，子框架也要注入
-                  forMainFrameOnly: false,
-                ),
-              ]),
-              onWebViewCreated: (controller) {
-                _web = controller;
-                controller.addJavaScriptHandler(
-                    handlerName: _kBridgeName, callback: _onBridge);
-              },
-              onLoadStart: (controller, url) =>
-                  _observe('load', url?.toString() ?? '', isUrl: true),
-              onLoadStop: (controller, url) async {
-                _observe('loaded', url?.toString() ?? '', isUrl: true);
-                await _pullPageText();
-              },
-              onProgressChanged: (controller, progress) {
-                if (progress != _progress) setState(() => _progress = progress);
-              },
-              onReceivedError: (controller, request, error) {
-                // 子资源出错不是致命问题，只有主框架失败才值得弹出来
-                if (request.isForMainFrame != true) return;
-                setState(() => _pageError = '加载失败：${error.description}');
-                _observe('error', error.description);
-              },
-              onConsoleMessage: (controller, message) =>
-                  _observe('console', message.message),
-              // 腾讯系 WebView 桥常用 prompt 传参：内容要看，但别让弹窗卡住页面
-              onJsPrompt: (controller, request) async {
-                _observe(
-                    'prompt', '${request.message} | ${request.defaultValue}');
-                return JsPromptResponse(
-                    handledByClient: true,
-                    action: JsPromptResponseAction.CONFIRM,
-                    value: '');
-              },
-              onJsAlert: (controller, request) async {
-                _observe('alert', request.message ?? '');
-                return JsAlertResponse(handledByClient: true);
-              },
-              shouldOverrideUrlLoading: (controller, action) async {
-                final uri = action.request.url;
-                if (uri == null) return NavigationActionPolicy.ALLOW;
-                _observe('nav', uri.toString(), isUrl: true);
-                // 非 http(s)（页面想拉起 QQ / 自定义 scheme）在 WebView 里也打不开，
-                // 直接拦掉，免得留一个打不开的白页。
-                return uri.scheme.startsWith('http')
-                    ? NavigationActionPolicy.ALLOW
-                    : NavigationActionPolicy.CANCEL;
-              },
-            ),
-          ),
+          Expanded(child: WebViewWidget(controller: _web)),
           _bottomPanel(context),
         ],
       ),
@@ -405,8 +422,7 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
                           final t = _trace[i];
                           return Text(
                             '${t.kind}  ${t.text}',
-                            style: const TextStyle(
-                                fontSize: 11, height: 1.35),
+                            style: const TextStyle(fontSize: 11, height: 1.35),
                             maxLines: 4,
                             overflow: TextOverflow.ellipsis,
                           );
