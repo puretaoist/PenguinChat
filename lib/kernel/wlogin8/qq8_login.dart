@@ -388,6 +388,28 @@ abstract final class Qq8LoginBody {
   }) =>
       tags.where(cond.applies).toList();
 
+  /// 从**已组好的** body 里读出子命令与实际发出的 TLV 编号（排障用）。
+  ///
+  /// 布局见 [build]：`u16 子命令 ‖ u16 个数 ‖ [u16 tag ‖ u16 len ‖ body]…`。
+  /// 为什么不拿 [plan] 的结果代替：guard 会按条件滤项、档案会换表，
+  /// 而真机出问题时"计划发的"和"实际发的"差别正是要找的东西——
+  /// 真机日志原先只有**响应**的 TLV，发出去的一直靠推断（2026-09-21 的教训）。
+  static (int, List<int>) peekBody(Uint8List body) {
+    final r = ByteReader(body);
+    if (r.remaining < 4) return (0, const <int>[]);
+    final subCmd = r.readUint16();
+    final count = r.readUint16();
+    final tags = <int>[];
+    for (var i = 0; i < count && r.remaining >= 4; i++) {
+      final tag = r.readUint16();
+      final len = r.readUint16();
+      tags.add(tag);
+      if (r.remaining < len) break;
+      r.read(len);
+    }
+    return (subCmd, tags);
+  }
+
   /// token 登录（子命令 11，命令字 `wtlogin.exchange_emp`）的便捷入口。
   ///
   /// [d2] 来自上次登录成功时响应 `0x119` 票据块里的 `0x143`（见

@@ -391,24 +391,37 @@ final Map<String, Qq8ClientProfile> qq8ClientProfiles =
   'tim4.1.0': qq8ProfileTim410,
 };
 
-/// 默认档案：**9.3.60**。
+/// 档案在 [qq8ClientProfiles] 里的注册键（没注册过就返回 null）。
 ///
-/// 2026-09-21 真机改的（原来是 8.9.50）。依据是服务端给的原话：
-/// 滑块提交后回 `type=45` + `0x146`「禁止登录 / 登录失败，请前往QQ官网 im.qq.com
-/// 下载最新版QQ后重试」——这是**版本门**，而 8.9.50 与 8.2.11 都低于门槛
-/// （国内版本 < 9.1.30 一律被这条挡住，见 `docs/PITFALLS.md` C8）。
-/// 手头能拿到的最高版本就是 9.3.60（ssoVer 22、登录表 38 项、常数全部来自
-/// 本机 9.3.60 包 + TIM 反编译），所以默认换成它。
+/// UI 用键（`'8.2.11'`）而不是 label（`'QQ 8.2.11 (Play)'`）做下拉项：
+/// 键短、稳定，也不随 label 文案改。
+String? qq8ProfileKeyOf(Qq8ClientProfile profile) {
+  for (final e in qq8ClientProfiles.entries) {
+    if (identical(e.value, profile)) return e.key;
+  }
+  return null;
+}
+
+/// 默认档案：**8.2.11（Play）**。
 ///
-/// 与 8.9.50 的差别（组包侧已实现，不是这次改的）：
-/// 1. 登录 TLV 表多一项 `0x553`（fekit 门控，降级 [Qq8ApkInfo.tlv553DegradedBody]）；
-/// 2. 滑块提交清单因此是 `193/08/104/116/547/544/553`（见 `qq8SliderTlvOrderFor`）；
-/// 3. `0x544` 仍是显式优雅降级（空 body）。
+/// ## 为什么从 9.3.60 又换回来（2026-09-21 真机两跑之后）
 ///
-/// ⚠️ 待验证：9.1.30+ 可能开始**强校验** `0x544` 真签名（我们发的是降级占位）。
-/// 若换成 9.3.60 后服务端改口要签名（而不是版本），那就回到"C8 候选 (b)：
-/// native + 联网"的结论，该收手了。
+/// 1. 换 9.3.60 并没开门：真机提交后**仍是** `type=45` + 「禁止登录 / 下载最新版QQ」。
+///    0x147 发的确实是新版本串（`ctx.apk.ver`），所以这条拒绝**不是"版本串太旧"**，
+///    措辞只是通用文案——门在别的变量上。
+/// 2. 与 ssoVer 的关系一览（真机实测）：
 ///
-/// 想切回别的档案：命令行用 `--profile=8.9.50`（`tool/qq8_live_smoke.dart`），
-/// App 侧改这一个常量即可（档案表见 [qq8ClientProfiles]）。
-final Qq8ClientProfile qq8DefaultProfile = qq8ProfileQQ9360;
+///    | 档案 | ssoVer | 0x544 | 0x553 | ticket 来源 | 裁决 |
+///    |---|---|---|---|---|---|
+///    | 8.2.11 | 7 | 不发 | 不发 | PC 浏览器 | `type=1` |
+///    | 8.9.50 | 19 | 降级 | 不发 | 应用内 | `type=6` / `type=45` |
+///    | 9.3.60 | 22 | 降级 | 降级 | 应用内 | `type=45` |
+///
+///    缺的那一格正是 **8.2.11 + 应用内 ticket**：它才是 C8 (a)/(b) 的**同档案对照**
+///    （只改 ticket 来源）。而且 ssoVer=7 的包**不带**任何需要 attestation 的
+///    0x544/0x553，是"副作用最小"的一条；若 `type=45` 真与"自称高版本却拿不出
+///    真签名"有关，这一格会立刻反映出来。
+/// 3. 三档都能在 App 的登录页里直接切换（`qq8ProfileProvider`），不必为每个变体重建。
+///
+/// 命令行等价：`--profile=8.2.11`；档案表见 [qq8ClientProfiles]。
+final Qq8ClientProfile qq8DefaultProfile = qq8ProfileQQ8211;

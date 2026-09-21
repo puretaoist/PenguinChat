@@ -1447,6 +1447,12 @@ class Qq8LoginService {
       seqId: DateTime.now().millisecondsSinceEpoch & 0x7FFF,
     );
     final cmd = token == null ? qq8LoginCmd : qq8ExchangeEmpCmd;
+    // **发出什么**也要记：原先只记响应，发出去的 TLV 一直靠推断。真机上
+    // "档案换了、实际清单变没变""某项是不是被 guard 滤掉了"都只能靠猜
+    // （2026-09-21 的教训：9.3.60 有没有真发 0x553 无从确认）。
+    final peek = Qq8LoginBody.peekBody(body);
+    _log.i('发登录包 subCmd=${peek.$1} TLV=${peek.$2.length}项 '
+        '${peek.$2.map((t) => '0x${t.toRadixString(16)}').join(',')}');
     final pkt = Qq8Sso.buildLoginPacket(
       ssoCtx,
       cmd,

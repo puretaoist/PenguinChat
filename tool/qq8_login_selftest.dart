@@ -1124,6 +1124,38 @@ Future<void> main() async {
     }
   }
 
+  // -- 发出去的 TLV 读回（peekBody）--------------------------------------
+  stdout.writeln('\n【发出去的包】读回子命令与实际 TLV 编号');
+  {
+    // 为什么要有它：真机日志原先只记响应，发出去的一直靠 plan() 推断；
+    // 档案换表 / guard 滤项之后，两者会不一样（2026-09-21 真机教训）。
+    final body = (ByteWriter()
+          ..u16(2) // 子命令：滑块提交
+          ..u16(2) // TLV 个数
+          ..u16(0x193)
+          ..u16(3)
+          ..raw(<int>[1, 2, 3])
+          ..u16(0x08)
+          ..u16(0))
+        .build();
+    final peek = Qq8LoginBody.peekBody(body);
+    check('peekBody 读出子命令', peek.$1 == 2, '${peek.$1}');
+    check('peekBody 读出 TLV 编号（保持顺序）',
+        peek.$2.join(',') == '403,8', peek.$2.join(','));
+
+    // 真档案上的对照：滑块提交的实际清单 == plan() 的预期
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final slider = Qq8LoginBody.buildSlider(ctx, ticket: 't0dummy');
+    final got = Qq8LoginBody.peekBody(slider);
+    final want = Qq8LoginBody.plan(qq8SliderTlvOrderFor(ctx.apk),
+        cond: Qq8LoginConditions(t104: ctx.t104));
+    check('8.9.50 滑块包：实际 TLV == 预期清单（193/08/104/116/547/544）',
+        got.$2.join(',') == want.join(','),
+        got.$2.map((t) => '0x${t.toRadixString(16)}').join(','));
+    check('8.9.50 滑块包：不含 0x542（2026-09-15 修正）',
+        !got.$2.contains(0x542));
+  }
+
   // -- 汇总 --------------------------------------------------------------
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');

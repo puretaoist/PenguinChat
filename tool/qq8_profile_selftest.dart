@@ -375,9 +375,14 @@ void main() {
     }
   }
   check(
-    '默认档案是 9.3.60（2026-09-21 因 type=45 版本门从 8.9.50 换过来）',
-    identical(qq8DefaultProfile, qq8ProfileQQ9360),
+    '默认档案是 8.2.11（9.3.60 也没打开 type=45 版本门，回退到 ssoVer=7 做同档对照）',
+    identical(qq8DefaultProfile, qq8ProfileQQ8211),
     qq8DefaultProfile.label,
+  );
+  check(
+    '档案键反查：默认档案能查到注册键 8.2.11',
+    qq8ProfileKeyOf(qq8DefaultProfile) == '8.2.11',
+    '${qq8ProfileKeyOf(qq8DefaultProfile)}',
   );
   check('档案表有 5 项（含 8.9.50-yyb）', qq8ClientProfiles.length == 5,
       '${qq8ClientProfiles.length}');

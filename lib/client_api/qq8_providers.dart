@@ -67,8 +67,18 @@ final qq8TokenStoreProvider = Provider<Qq8TokenStore>(
       'qq8TokenStoreProvider 必须被 override（见 main.dart：注入数据目录）'),
 );
 
-/// 使用的客户端档案（默认 8.9.50；可在设置里切换）。
-final qq8ProfileProvider = Provider<Qq8ClientProfile>((ref) => qq8DefaultProfile);
+/// 使用的客户端档案（默认见 [qq8DefaultProfile]，**可在登录页直接切换**）。
+///
+/// 为什么做成可写的：服务端的裁决与"我们自称哪个版本/ssoVer"强相关
+/// （8.2.11 → `type=1`，8.9.50/9.3.60 → `type=45`，见 `docs/PITFALLS.md` C8），
+/// 而每试一档都要真机跑一次。做成可切换后一次安装就能把档案矩阵跑完，
+/// 不必为每个变体各发一版包。
+///
+/// 切换会重建 [qq8LoginServiceProvider]（档案是服务的构造参数），
+/// 所以切换后必须重新发起登录——**不能**在登录流程中途换。
+final qq8ProfileProvider = StateProvider<Qq8ClientProfile>(
+  (ref) => qq8DefaultProfile,
+);
 
 /// 传输层构造器——测试可 override 成脚本传输；生产就是真实 TCP。
 final qq8TransportBuilderProvider = Provider<Qq8Transport Function()>(
@@ -123,7 +133,9 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
   final profile = ref.watch(qq8ProfileProvider);
   // 档案必须进日志：服务端的裁决与"我们自称哪个版本"直接相关
   //（2026-09-21 的 type=45 版本门就是这么看出来的），但日志里原先没有这一行。
-  Log.get('QQ8').i('客户端档案: $profile');
+  // ⚠️ 用 [Qq8ClientProfile.describe]：该类**没有**重写 toString()，
+  // 第一版写成 `$profile` 只印出 `Instance of 'Qq8ClientProfile'`（等于没记）。
+  Log.get('QQ8').i('客户端档案: ${profile.describe()}');
   final svc = Qq8LoginService(
     profile: profile,
     tokenStore: ref.watch(qq8TokenStoreProvider),

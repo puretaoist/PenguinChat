@@ -99,6 +99,32 @@ void main() {
     });
   });
 
+  group('Qq8ConnectView：客户端档案切换', () {
+    testWidgets('显示当前档案；选另一个会回调（研究线按档对照用）', (tester) async {
+      String? picked;
+      await tester.pumpWidget(_wrapView(Qq8ConnectView(
+        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+        profileKey: '8.2.11',
+        profileKeys: const <String>['8.2.11', '8.9.50', '9.3.60'],
+        onProfileChanged: (k) => picked = k,
+      )));
+      expect(find.byKey(const ValueKey('qq8-profile')), findsOneWidget);
+      expect(find.text('8.2.11'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('qq8-profile')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('9.3.60').last);
+      await tester.pumpAndSettle();
+      expect(picked, '9.3.60');
+    });
+
+    testWidgets('没给档案列表时整行不出现（哑视图保持可选）', (tester) async {
+      await tester.pumpWidget(_wrapView(const Qq8ConnectView(
+        status: Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+      )));
+      expect(find.byKey(const ValueKey('qq8-profile')), findsNothing);
+    });
+  });
+
   group('Qq8ConnectView：口令登录', () {
     testWidgets('口令登录：把 uin 与口令原文交给回调', (tester) async {
       int? gotUin;

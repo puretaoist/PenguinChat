@@ -39,6 +39,8 @@ import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
 import '../../client_api/session_providers.dart' show dataDirProvider;
 import '../../infra/log/log_file.dart';
+import '../../kernel/wlogin8/qq8_profiles.dart';
+import '../theme/telegram_theme.dart';
 import '../widgets/real_server_panel.dart';
 import 'home_page.dart';
 import 'qq8_verify_page.dart';
@@ -93,6 +95,13 @@ class Qq8ConnectPage extends ConsumerWidget {
         onFetchQrcode: c.fetchQrcode,
         onPollQrcode: c.pollQrcode,
         onOpenBrowser: (url) => _openVerifyPage(context, ref, url),
+        // 客户端档案可切换（研究线需要按档对照服务端裁决，见 qq8ProfileProvider）。
+        profileKey: qq8ProfileKeyOf(ref.watch(qq8ProfileProvider)),
+        profileKeys: qq8ClientProfiles.keys.toList(),
+        onProfileChanged: (key) {
+          final p = qq8ClientProfiles[key];
+          if (p != null) ref.read(qq8ProfileProvider.notifier).state = p;
+        },
         // 导出日志：生成报告 → 写临时文件 → 系统分享面板。
         onExportLog: () async {
           final report = LogExporter.buildReport(
@@ -140,6 +149,9 @@ class Qq8ConnectView extends StatefulWidget {
     this.onFetchQrcode,
     this.onPollQrcode,
     this.onOpenBrowser,
+    this.profileKey,
+    this.profileKeys = const <String>[],
+    this.onProfileChanged,
     this.onEnterApp,
     this.onExportLog,
   });
@@ -164,6 +176,17 @@ class Qq8ConnectView extends StatefulWidget {
 
   /// 打开系统浏览器（滑块验证页）。null 表示不可用（比如测试环境）。
   final void Function(String url)? onOpenBrowser;
+
+  /// 当前客户端档案的注册键（[qq8ClientProfiles] 的 key；null = 不显示这一行）。
+  ///
+  /// 研究线要按档对照服务端裁决（8.2.11 → `type=1`，8.9.50/9.3.60 → `type=45`），
+  /// 所以把"自称哪个客户端"摆到台面上，别靠改常量重发版。
+  final String? profileKey;
+
+  /// 可选档案键列表（空 = 不显示）。哑视图只认字符串，不认档案对象。
+  final List<String> profileKeys;
+
+  final void Function(String key)? onProfileChanged;
 
   final VoidCallback? onEnterApp;
 
@@ -271,6 +294,9 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
           widget.header!,
           const SizedBox(height: 16),
         ],
+        // 客户端档案（研究线旋钮）：服务端裁决与"自称哪个客户端"强相关，
+        // 摆出来才能真正做按档对照，而不是靠改常量重发版。
+        ..._profileRow(context),
         // 顶部方式切换
         SegmentedButton<_LoginMode>(
           segments: const <ButtonSegment<_LoginMode>>[
@@ -311,6 +337,59 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
           ),
       ],
     );
+  }
+
+  /// 客户端档案一行（下拉 + 一句说明）。测试传空列表即整行不出现。
+  List<Widget> _profileRow(BuildContext context) {
+    if (widget.profileKeys.isEmpty) return const <Widget>[];
+    final current = widget.profileKey != null &&
+            widget.profileKeys.contains(widget.profileKey)
+        ? widget.profileKey
+        : null;
+    return <Widget>[
+      Row(
+        children: <Widget>[
+          Text(
+            '客户端档案',
+            style: TextStyle(
+              color: TelegramColors.textSecondary,
+              fontSize: 12.5,
+            ),
+          ),
+          const SizedBox(width: 10),
+          DropdownButton<String>(
+            key: const ValueKey('qq8-profile'),
+            value: current,
+            hint: const Text('选择档案'),
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            style: TextStyle(
+              color: TelegramColors.textPrimary,
+              fontSize: 13,
+            ),
+            items: <DropdownMenuItem<String>>[
+              for (final k in widget.profileKeys)
+                DropdownMenuItem<String>(value: k, child: Text(k)),
+            ],
+            onChanged: _busy || current == null
+                ? null
+                : (k) {
+                    if (k != null) widget.onProfileChanged?.call(k);
+                  },
+          ),
+        ],
+      ),
+      Text(
+        '换档 = 换我们自称的客户端身份（版本/ssoVer/TLV 表）。切换会重建登录服务，'
+        '必须重新发起登录；同一台设备只改这一个变量，才能对照服务端的裁决码。',
+        style: TextStyle(
+          color: TelegramColors.textMuted,
+          fontSize: 11,
+          height: 1.35,
+        ),
+      ),
+      const SizedBox(height: 12),
+    ];
   }
 
   /// 按当前选中的登录方式渲染提取表单。
