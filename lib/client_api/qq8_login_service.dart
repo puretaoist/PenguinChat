@@ -1621,6 +1621,14 @@ class Qq8LoginService {
           'timeout=${notice.timeoutMs}ms userBuf[${notice.userBuf.length}]='
           '${notice.userBuf.map((v) => v.toRadixString(16).padLeft(2, '0')).join()}');
     }
+    // 服务端文案（0x146 = 标题 + 内容）——**必须进日志**：被拒时这是唯一能读到的
+    // "服务端原话"（0x508 那份详情要么要再走 ts7/ts8 换明文，而那条路实测已死，
+    // 要么就是这段话本身）。以前只把它显示在界面上、不落盘，排查时只能靠人回忆。
+    if (msg != null) {
+      _log.i('0x146 服务端文案: 「${msg.$1}」${msg.$2.isEmpty ? '' : ' / ${msg.$2}'}');
+    } else {
+      _log.i('0x146 缺失：本次响应只有 type=${r.type}，无服务端文案');
+    }
     final text = msg == null
         ? '登录未通过（服务端返回 type=${r.type}）'
         : '${msg.$1}：${msg.$2}';

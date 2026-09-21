@@ -112,6 +112,19 @@ void main() {
         qq8RedactUrl('https://ti.qq.com/safe') == 'https://ti.qq.com/safe');
   }
 
+  section('[6] 日志打码：把 ticket 换成占位，其余文字原样保留');
+  {
+    const prose = '验证成功，请返回 QQ 继续登录';
+    check('无 ticket 的文本原样返回', qq8MaskTickets(prose) == prose);
+    final masked = qq8MaskTickets('验证成功 ticket=$_realTicket 有效');
+    check('ticket 被换成占位', masked.contains('<ticket 214>'), masked);
+    check('ticket 原文不出现', !masked.contains('t03tserver'));
+    check('周围的文字保留', masked.contains('验证成功') && masked.contains('有效'),
+        masked);
+    check('多处 ticket 都打码',
+        qq8MaskTickets('$_realTicket|$_realTicket').split('<ticket').length == 3);
+  }
+
   stdout.writeln('\n=== 结果: $_pass 通过, $_fail 失败 ===');
   exit(_fail == 0 ? 0 : 1);
 }

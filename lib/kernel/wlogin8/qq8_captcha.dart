@@ -82,6 +82,19 @@ List<String> qq8TicketCandidates(String text) {
   return found;
 }
 
+/// 把文本里像 ticket 的串换成 `<ticket N 字符>`。
+///
+/// 用于**要把文本写进日志**的场合（页面正文、JS 控制台、`postMessage` 载荷…）：
+/// 这些内容正是排障要看的（"页面说验证成功还是失败"），但可能整段夹着验证码。
+/// 打码之后日志依旧能读，凭据不落盘（AGENTS §1.5）。
+String qq8MaskTickets(String text) {
+  var masked = text;
+  for (final ticket in qq8TicketCandidates(text)) {
+    masked = masked.replaceAll(ticket, '<ticket ${ticket.length}>');
+  }
+  return masked;
+}
+
 /// 把 URL 的查询串按 [Redact] 的**敏感键名单**打码：命中的键只留 `<len N>`。
 ///
 /// 为什么要打码：验证地址里的 `sig` / `ticket` / `pskey` 一类参数是能顶替身份用的

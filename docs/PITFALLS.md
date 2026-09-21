@@ -358,6 +358,30 @@ A problem occurred evaluating project ':flutter_inappwebview_android'.
 顺带修了一处真问题：`android/app/src/main/AndroidManifest.xml` 原本**没有** `INTERNET`
 权限（只有 debug/profile 变体有），release 包等于无网——协议线 TCP 与 WebView 都靠它。
 
+**2026-09-21 12:16 真机第一跑（新 APK）——观测到的与观测不到的**
+
+好事：应用内验证页**真的开起来了**，地址是真·验证页（
+`ti.qq.com/safe/tools/captcha/sms-verify-login?aid=16&apptype=2&cap_cd=nz3WBNau…&sid=11368695…&uin=0`），
+`uin=0` 是服务端自己给的（验证绑 `cap_cd`/`sid`）；
+
+观测盲区（探针没抓到 ticket，日志里没有任何 `捕获到验证码`）：
+
+* 主框架 `innerText` 全程只有 **5 个字符** → 页面主体就是那个**跨域 iframe**，
+  验证控件在 `t.captcha.qq.com` 里；跨域 DOM 读不到（官方也读不到）。
+* 当时**漏钩了 `postMessage`**——iframe 把结果交回父页面走的正是这条路。已补，
+  另外补了 `fetch`/`XHR`（页面把结果 POST 回服务端，成败看它的响应）与 iframe `src`。
+* 控制台消息、`alert`/`prompt`、页面正文以前**只记长度不记内容**，等于白采；
+  现在都记（ticket 用 `qq8MaskTickets` 换成 `<ticket N>`，凭据仍不落盘）。
+
+服务端那边第一次出现了**新状态**：12:17:51 收到 `type=6` + `0x146` + `0x508`
+（此前整条链路一律 `type=1`）。`0x146` 是服务端文案（标题+内容）——**以前只显示在界面上、
+不落日志**，已补进日志；`0x508` 的 `doFetch=true timeout=1000ms` 就是"去 ts7/ts8
+换明文提示"那条实测已死的路。
+
+⚠️ 待确认（下次跑之前先弄清）：`12:17:51` 那条请求是谁发的——页面自动完成的，
+还是人把**页面上显示的验证码**（可能在 iframe 里，只能肉眼抄）粘进提交框后点的提交。
+这决定 `type=6` 到底是"验证过了但有后续"还是"验证没过"。
+
 ---
 
 ## D. 网络与环境

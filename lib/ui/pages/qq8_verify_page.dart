@@ -71,9 +71,18 @@ const Duration _kPollInterval = Duration(milliseconds: 1200);
 
 /// 加载完成后注入的探针脚本：只做观测，不改页面行为。
 ///
-/// 钩住"要跳走了"的信号，并把每次触发经 JS 通道报回来。之所以在**加载完成后**
-/// （而不是文档开头）注入：官方插件没有文档开头的注入口（见文件头说明）。
-/// 这不影响本页的用途——验证码要等人滑完滑块才产生，那时钩子已经装好了。
+/// 钩子清单（按"验证码可能从哪来"排的）：
+///
+/// 1. `message`：**验证控件是跨域 iframe，它的结果只能以 `postMessage` 回到本页**。
+///    真机第一次跑时主框架 `innerText` 只有 5 个字符，说明页面主体就是那个 iframe
+///    ——这条口子当时漏了，补上；
+/// 2. `fetch` / `XMLHttpRequest`：页面自己把验证结果 POST 回服务端，成败看它的响应；
+/// 3. `window.open` / `history` / `click`：跳转型的交付方式；
+/// 4. iframe 的 `src`：把验证控件指向哪个域记下来（跨域读不到它的 DOM，但 src 可读）。
+///
+/// 之所以在**加载完成后**（而不是文档开头）注入：官方插件没有文档开头的注入口
+/// （见文件头说明）。这不影响本页的用途——验证码要等人滑完滑块才产生，
+/// 那时钩子已经装好了。
 const String _kProbe = r'''
 (function () {
   if (window.__pqProbe) { return; }
@@ -82,6 +91,58 @@ const String _kProbe = r'''
       window.PenguinCaptcha.postMessage(JSON.stringify({ k: kind, t: String(text) }));
     } catch (e) {}
   };
+  function shortJson(v) {
+    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  }
+
+  // 1) iframe → 本页的消息（验证控件的回调载荷走这条）
+  try {
+    window.addEventListener('message', function (ev) {
+      var d = ev && ev.data;
+      if (d === null || d === undefined) { return; }
+      window.__pqProbe('message', typeof d === 'string' ? d : shortJson(d));
+    }, true);
+  } catch (e) {}
+
+  // 2) 页面自己发的请求：URL 与响应正文（验证是否真的过了，看这里）
+  try {
+    var _fetch = window.fetch;
+    if (typeof _fetch === 'function') {
+      window.fetch = function (input, init) {
+        var u = (typeof input === 'string') ? input : (input && input.url);
+        window.__pqProbe('fetch', u);
+        var p = _fetch.apply(this, arguments);
+        if (p && typeof p.then === 'function') {
+          p.then(function (res) {
+            try {
+              res.clone().text().then(function (t) {
+                window.__pqProbe('fetch-body', String(t).slice(0, 4000));
+              }, function () {});
+            } catch (e) {}
+          }, function () {});
+        }
+        return p;
+      };
+    }
+  } catch (e) {}
+  try {
+    var _xopen = XMLHttpRequest.prototype.open;
+    var _xsend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (m, u) {
+      try { window.__pqProbe('xhr', m + ' ' + u); } catch (e) {}
+      return _xopen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+      try {
+        this.addEventListener('load', function () {
+          try { window.__pqProbe('xhr-body', String(this.responseText).slice(0, 4000)); } catch (e) {}
+        });
+      } catch (e) {}
+      return _xsend.apply(this, arguments);
+    };
+  } catch (e) {}
+
+  // 3) 跳转信号
   try {
     var _open = window.open;
     window.open = function (u) { window.__pqProbe('open', u); return _open ? _open.apply(window, arguments) : null; };
@@ -100,6 +161,15 @@ const String _kProbe = r'''
       if (n && n.href) { window.__pqProbe('click', n.href); }
     }, true);
   } catch (e) {}
+
+  // 4) 验证控件在哪个域（跨域读不到 iframe 内部，但 src 读得到）
+  try {
+    var ifs = document.getElementsByTagName('iframe');
+    for (var i = 0; i < ifs.length; i++) {
+      window.__pqProbe('iframe', ifs[i].src || '(no src)');
+    }
+  } catch (e) {}
+
   window.__pqProbe('probe', 'installed ' + location.href);
 })();
 ''';
@@ -156,7 +226,7 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
       onNavigationRequest: (NavigationRequest request) {
         final uri = Uri.tryParse(request.url);
         if (uri == null) return NavigationDecision.navigate;
-        _observe('nav', request.url, isUrl: true);
+        _observe('nav', request.url);
         // 非 http(s)（页面想拉起 QQ / 自定义 scheme）在 WebView 里也打不开，
         // 直接拦掉，免得留一个打不开的白页。
         return uri.scheme.startsWith('http')
@@ -164,11 +234,11 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
             : NavigationDecision.prevent;
       },
       onPageStarted: (url) {
-        _observe('load', url, isUrl: true);
+        _observe('load', url);
         if (_pageError != null) setState(() => _pageError = null);
       },
       onPageFinished: (url) async {
-        _observe('loaded', url, isUrl: true);
+        _observe('loaded', url);
         _loaded = true;
         await _injectProbe();
         await _pullFromPage();
@@ -203,38 +273,67 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
     await _web.loadRequest(Uri.parse(widget.url));
   }
 
+  /// 地址类事件：值按"域名 + 参数名"记账（域和参数名是判断"ticket 从哪条路回来"的
+  /// 直接证据，参数值一律打码）。
+  static const Set<String> _kUrlKinds = <String>{
+    'nav',
+    'load',
+    'loaded',
+    'open',
+    'history',
+    'click',
+    'submit',
+    'href',
+    'fetch',
+    'iframe',
+  };
+
   /// 所有观测口子的汇合点：认验证码 → 填进输入框 → 记账。
   ///
-  /// [isUrl] 为 true 时把内容当选址处理（按域名+参数名记账，值打码）；
-  /// 为 false（页面正文、JS 桥回值）时**只记长度**，正文本身不进日志——
-  /// 它很可能整段包含验证码。
-  void _observe(String kind, String text, {bool isUrl = false}) {
+  /// 记账分两份：屏幕上那份给用户看（长一点），文件日志那份给排障看（短一点）。
+  /// **两份都打码**——地址类只留域名与参数名，其余把 ticket 换成 `<ticket N>`：
+  /// 日志要能读"页面说了什么、请求打到哪"，但不能把凭据写进去（AGENTS §1.5）。
+  void _observe(String kind, String text) {
     if (text.isEmpty) return;
     final ticket = qq8FindTicket(text);
     if (ticket != null && _manual.text != ticket) {
       _log.i('捕获到验证码（来源 $kind，${ticket.length} 字符）');
       _manual.text = ticket;
     }
-    final line = isUrl ? qq8RedactUrl(text) : text;
+    final line = _renderLine(kind, text);
     _log.i('验证事件 $kind len=${text.length}'
         '${ticket == null ? '' : ' 含验证码'}' //
-        '${isUrl ? ' $line' : ''}');
+        '${line.isEmpty ? '' : ' ${_clip(line, 300)}'}');
     if (!mounted) return;
     setState(() {
-      _trace.add(_Trace(kind, line));
+      _trace.add(_Trace(kind, _clip(line, 400)));
       if (_trace.length > _kTraceCap) _trace.removeAt(0);
     });
   }
+
+  /// 一条事件该显示成什么样（打码规则见 [_observe]）。
+  String _renderLine(String kind, String text) {
+    if (_kUrlKinds.contains(kind)) return qq8RedactUrl(text);
+    // `xhr` 是"方法 + 地址"拼起来的，把地址那半截按 URL 处理。
+    if (kind == 'xhr') {
+      final sp = text.indexOf(' ');
+      if (sp > 0) {
+        return '${text.substring(0, sp)} '
+            '${qq8RedactUrl(text.substring(sp + 1))}';
+      }
+    }
+    return qq8MaskTickets(text);
+  }
+
+  static String _clip(String s, int max) =>
+      s.length <= max ? s : '${s.substring(0, max)}…';
 
   /// JS 通道回值（探针发过来的 `{k, t}` JSON）。
   void _onBridge(String raw) {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
-        final kind = '${decoded['k']}';
-        _observe(kind, '${decoded['t']}',
-            isUrl: const <String>{'open', 'history', 'click', 'submit'}
-                .contains(kind));
+        _observe('${decoded['k']}', '${decoded['t']}');
         return;
       }
     } on FormatException {
@@ -258,7 +357,7 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
     try {
       final href = _jsString(await _web.runJavaScriptReturningResult(
           'location.href'));
-      _observe('href', href, isUrl: true);
+      _observe('href', href);
       final text = _jsString(await _web.runJavaScriptReturningResult(
           'document.body ? document.body.innerText : ""'));
       _observe('text', text);
