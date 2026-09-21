@@ -28,6 +28,7 @@
 /// 本文件是 Flutter 层（L4）。
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -183,14 +184,43 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
   /// 当前选中的登录方式（默认口令）。
   _LoginMode _mode = _LoginMode.password;
 
+  /// 等扫码阶段的自动轮询计时器（见 [_syncQrPoll]）。
+  Timer? _qrPoll;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncQrPoll();
+  }
+
   @override
   void dispose() {
+    _qrPoll?.cancel();
     _uin.dispose();
     _password.dispose();
     _phone.dispose();
     _ticket.dispose();
     _sms.dispose();
     super.dispose();
+  }
+
+  /// 进入"等待扫码"就自动轮询（2 秒一次）。
+  ///
+  /// 官方客户端也是自动轮询：确认动作发生在**手机上**，手动点「刷新扫码状态」
+  /// 很容易在确认之后才想起去点，白等一轮；而轮询本身开销极小。
+  /// 服务层刻意不带定时器（节奏归 UI），所以计时器长在这里。
+  void _syncQrPoll() {
+    final shouldPoll = widget.status.stage == Qq8LoginStage.waitingQrScan &&
+        widget.onPollQrcode != null;
+    if (shouldPoll && _qrPoll == null) {
+      _qrPoll = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (widget.status.busy) return; // 上一次还没回来就跳过这一拍
+        widget.onPollQrcode?.call();
+      });
+    } else if (!shouldPoll && _qrPoll != null) {
+      _qrPoll?.cancel();
+      _qrPoll = null;
+    }
   }
 
   /// 账号输入框里的 uin（解析失败返回 null）。
@@ -215,6 +245,7 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         _mode != _LoginMode.qrcode) {
       _mode = _LoginMode.qrcode;
     }
+    _syncQrPoll();
   }
 
   /// 当前应展示的登录方式：密码 / 二维码 / 短信 / 免密。

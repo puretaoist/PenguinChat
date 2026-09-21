@@ -160,6 +160,9 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('qq8-poll-qrcode')));
       await tester.pump();
       expect(polled, 1);
+      // 自动轮询：进入等待扫码后每 2 秒一拍（官方也是自动轮询，不用手点）
+      await tester.pump(const Duration(seconds: 2));
+      expect(polled, 2);
     });
   });
 

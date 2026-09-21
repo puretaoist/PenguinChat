@@ -249,6 +249,9 @@ class Qq8LoginService {
   Uint8List? _qrsig;
   Uint8List? _qrToken;
 
+  /// 上一次轮询到的 retcode（只在**状态变化**时记一条日志，避免秒级刷屏）。
+  int? _lastQrRetcode;
+
   // 手机号短信验证登录的中间态（三次请求跨调用保持）
   String? _smsPhone;
   Uint8List? _smsRandom;
@@ -1137,6 +1140,11 @@ class Qq8LoginService {
       final sso = qq8UnwrapRecv(frame);
       onDiagnostic?.call('fetch', frame, null);
       final r = Qq8Qrcode.parseFetch(sso.payload, _ecdh!.shareKey);
+      // 扫码这条链走的是 code2d 命令（0x12），不经过 _sendLoginBody，所以那里的
+      // "登录响应 type=… + 0x146 文案" 日志在这里不生效——真机上取码失败时
+      // 什么都看不到（只有一个 retcode）。这里补一条，够判断"码是不是真码"。
+      _log.i('取码响应 retcode=${r.retcode} ok=${r.ok} '
+          'qrToken=${r.qrToken.length}字节 qrsig=${r.qrsig.length}字节');
       if (!r.ok) {
         _emit(Qq8LoginSnapshot(
           stage: Qq8LoginStage.failed,
@@ -1146,6 +1154,7 @@ class Qq8LoginService {
       }
       _qrsig = r.qrsig;
       _qrToken = r.qrToken;
+      _lastQrRetcode = null;
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.waitingQrScan,
         qrToken: r.qrToken,
@@ -1182,6 +1191,14 @@ class Qq8LoginService {
       final sso = qq8UnwrapRecv(frame);
       onDiagnostic?.call('poll', frame, null);
       final q = Qq8Qrcode.parseQuery(sso.payload, _ecdh!.shareKey);
+      // 轮询是秒级的：只在 retcode **变了**时记一条。这条日志用来回答
+      // "码是不是真码"——UP 主提醒过：mock 签名下服务端会 ret=0 但没真处理，
+      // 所以还要看后面 register/心跳是否真的通。
+      if (_lastQrRetcode != q.retcode) {
+        _lastQrRetcode = q.retcode;
+        _log.i('扫码轮询 retcode=${q.retcode} confirmed=${q.confirmed} '
+            'uin=${q.uin ?? 0} msg=${q.message}');
+      }
 
       if (!q.confirmed) {
         final terminal = q.retcode == Qq8QrcodeResult.timeout ||
