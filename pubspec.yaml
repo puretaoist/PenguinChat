@@ -33,8 +33,17 @@ dependencies:
   # 而 ChatStore 需要一个可持久化的 dataDir（systemTemp 会被系统清理）。
   path_provider: ^2.1.6
 
-  # 打开系统浏览器（滑块验证 / 二维码溢出时用；QQ8 登录页）
+  # 打开系统浏览器（验证页兜底入口 / 二维码溢出时用）
   url_launcher: ^6.3.0
+
+  # 应用内 WebView：滑动验证要**在应用内**完成（与官方同形）。
+  # 为什么必须应用内：验证页所在环境采集到的东西会与登录包里的设备身份比对，
+  # 系统浏览器那条路已被实测排除（见 docs/PITFALLS.md C8 候选 (a)），
+  # 且只有应用内 WebView 才拿得到页面回传的 ticket（lib/ui/pages/qq8_verify_page.dart）。
+  # 选 inappwebview 而不是 webview_flutter：前者能在**文档开头**注入脚本、
+  # 并拦到 JS 的 alert/prompt（腾讯系 WebView 桥常用 prompt 回传），
+  # 这三样正是"ticket 从哪条路回来"要观测的东西。
+  flutter_inappwebview: ^6.1.5
 
   # 分享日志/文件到系统分享面板（登录页"导出日志"用）
   share_plus: ^10.0.0

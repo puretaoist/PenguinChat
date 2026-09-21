@@ -599,7 +599,7 @@ Future<void> main(List<String> argv) async {
   out('--- 账号 ---');
   out('  uin: $uin');
   out(
-    '  设备: ${deterministic ? "固定夹具（dry-run 可复现）" : "按 uin 派生（同账号恒定同一套）"}',
+    '  设备: ${args['identity'] != null && args['identity']!.isNotEmpty ? '见下方「身份注入」（真机身份材料）' : (deterministic ? "固定夹具（dry-run 可复现）" : "按 uin 派生（同账号恒定同一套）")}',
   );
   if (useToken) {
     out('  口令: 不需要（本次是 token 续期）');
@@ -616,12 +616,43 @@ Future<void> main(List<String> argv) async {
   out('');
 
   // ---------- 组包 ----------
-  // 设备身份：真发用 `Qq8Device.generate(uin)`——同一账号恒定同一套
-  // imei/guid/mac，避免"设备频繁变化"这个风控信号（oicq 用
-  // device-<uin>.json 持久化也是同一个思路）。dry-run 用固定夹具。
-  var device = deterministic
-      ? _buildDevice(deterministic: true)
-      : Qq8Device.generate(uin);
+  // 真机身份注入（`--identity <file>`）：用官方客户端在本机实际使用并上报的
+  // 身份值（androidId/mac/guid/qimei…）替代 uin 合成派生。
+  //
+  // 为什么：服务端的**设备信任是按身份值记的**。合成派生出来的是一台"不存在的
+  // 设备"，服务端只会当新设备处理（要验证码）；真值上报才可能被认成已知设备。
+  // 值的来源与验证见 `analysis/QQ-官方三版本登录流程对照.md` §11。
+  final identityPath = args['identity'];
+  Qq8DeviceIdentity? identity;
+  if (identityPath != null && identityPath.isNotEmpty) {
+    final f = File(identityPath);
+    if (!f.existsSync()) {
+      out('✗ --identity 文件不存在: $identityPath');
+      exit(2);
+    }
+    final decoded = jsonDecode(f.readAsStringSync());
+    if (decoded is! Map) {
+      out('✗ --identity 不是 JSON 对象: $identityPath');
+      exit(2);
+    }
+    identity = Qq8DeviceIdentity.fromJson(Map<String, Object?>.from(decoded));
+    if (identity == null) {
+      out('✗ --identity 缺少必需项 android_id / mac');
+      exit(2);
+    }
+    out('  身份注入: $identity');
+  }
+
+  // 设备身份：显式注入 > dry-run 固定夹具 > uin 合成派生。
+  //
+  // 真发默认走 `Qq8Device.generate(uin)`——同一账号恒定同一套 imei/guid/mac，
+  // 避免"设备频繁变化"这个风控信号（oicq 用 device-<uin>.json 持久化也是同一个
+  // 思路）。注入是显式意图，**不随 dry-run 关掉**，这样离线也能核对包内容。
+  var device = identity != null
+      ? Qq8Device.fromIdentity(identity)
+      : (deterministic
+          ? _buildDevice(deterministic: true)
+          : Qq8Device.generate(uin));
   // token 续期时 tgtgt = MD5(d2key)：没有密码就没法用 t106 派生新的
   // tgtgt，只能沿用这个约定值（oicq `login-password.js` 的 token 分支同款）。
   if (useToken) {
@@ -664,9 +695,12 @@ Future<void> main(List<String> argv) async {
   //   * `--qimei=<str>`  ：手工注入已有 QIMEI（不联网）
   //   * `--t544=oicq`    ：0x544 改发参考实现 oicq 的 v==2 结构占位
   final qimeiArg = args['qimei'];
-  String? qimei = (qimeiArg != null && qimeiArg.isNotEmpty) ? qimeiArg : null;
+  // 优先级：`--qimei` 手工串 > 身份文件里的 qimei（同一台设备的真值）
+  String? qimei =
+      (qimeiArg != null && qimeiArg.isNotEmpty) ? qimeiArg : identity?.qimei;
   if (qimei != null) {
-    out('  QIMEI: 手工注入 ${qimei.length} 字符');
+    out('  QIMEI: ${qimeiArg != null && qimeiArg.isNotEmpty ? '--qimei 手工' : '身份文件'}'
+        '注入 ${qimei.length} 字符');
   } else if (args.containsKey('fetch-qimei')) {
     // 取号也是联网（POST 腾讯灯塔）：与真发同一道闸门，**不能绕过确认串**。
     // （这块代码在"真发前两道闸门"之前，所以必须自己再查一次。）
@@ -966,7 +1000,9 @@ Future<void> main(List<String> argv) async {
         'url': r.sliderUrl,
         'at': DateTime.now().toIso8601String(),
       };
-      if (t547Hex != null) state['t547'] = t547Hex;
+      if (t547Hex != null) {
+        state['t547'] = t547Hex;
+      }
       // ⚠️ 响应没带 0x546（或解不出）→ **显式清掉**状态里可能残留的旧 t547。
       // 它属于上一次（可能是别的档案/别的会话）的挑战；patch 合并模式下不清
       // 就会一直残留，提交时带上一个"与会话不绑定"的应答，服务端必拒——

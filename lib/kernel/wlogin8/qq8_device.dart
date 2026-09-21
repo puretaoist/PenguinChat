@@ -32,6 +32,7 @@
 /// 本文件是纯 Dart。
 library;
 
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -169,6 +170,60 @@ class Qq8Device {
     );
   }
 
+  /// 由**真机身份材料**构造设备（对齐官方采集/派生链，2026-09-19）。
+  ///
+  /// 与 [Qq8Device.generate] 的区别：那条是 uin 合成派生（oicq 传习，
+  /// 服务端看到的是"一台不存在的设备"）；这条用真机上报的真实值，用于
+  /// **让服务端认成已知设备**。
+  ///
+  /// 几处按官方语义处理（都有反编译/真机日志出处，见
+  /// `analysis/QQ-官方三版本登录流程对照.md` §11）：
+  ///
+  /// * `guid`：缺省按官方 `util.generateGuid` 派生 = `MD5(androidId ‖ mac)`；
+  /// * `imsi`：官方 0x194 = `MD5(imsi 原文)`，且**读不到就 MD5 空串**（不是跳过），
+  ///   所以这里存的是摘要而非随机 16 字节；
+  /// * `mac`：Android 6+ 上普通应用读到的是常量 `02:00:00:00:00:00`，
+  ///   真机身份文件里应如实填它。
+  factory Qq8Device.fromIdentity(
+    Qq8DeviceIdentity id, {
+    Uint8List? tgtgt,
+    Uint8List Function(int n)? randomBytes,
+  }) {
+    final rnd = randomBytes ?? _defaultRandom;
+    final guid = id.guidBytes ?? qq8DeriveGuid(id.androidId, id.macAddress);
+    return Qq8Device(
+      product: id.product ?? '',
+      device: id.device ?? '',
+      board: id.board ?? '',
+      brand: id.brand ?? '',
+      model: id.model ?? '',
+      bootloader: id.bootloader ?? '',
+      fingerprint: id.fingerprint ?? '',
+      bootId: id.bootId ?? '',
+      procVersion: id.procVersion ?? '',
+      baseband: id.baseband ?? '',
+      sim: id.sim ?? '',
+      apn: id.apn ?? 'wifi',
+      osType: id.osType ?? 'android',
+      macAddress: id.macAddress,
+      ipAddress: id.ipAddress ?? '',
+      // 官方 0x202 第一段是 MD5(bssid 小写)；没有独立 bssid 时退回 mac
+      wifiBssid: id.wifiBssid ?? id.macAddress,
+      wifiSsid: id.wifiSsid ?? '',
+      imei: id.imei ?? '',
+      androidId: id.androidId,
+      version: Qq8AndroidVersion(
+        release: id.release ?? '10',
+        codename: id.codename ?? 'REL',
+        incremental: id.incremental ?? '0',
+        sdk: id.sdk ?? 29,
+      ),
+      imsi: md5Bytes(utf8.encode(id.imsi ?? '')),
+      tgtgt: tgtgt ?? rnd(16),
+      guid: guid,
+    );
+  }
+
   /// 复制一份设备，只替换 [tgtgt]。
   ///
   /// token 续期路径要求 `tgtgt = MD5(d2key)`：没有密码就没法用 t106 派生
@@ -285,4 +340,168 @@ class Qq8Device {
 
   static String _hex(Uint8List b) =>
       b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+}
+
+/// 官方 `util.generateGuid`：`guid = MD5(androidId ‖ mac)`。
+///
+/// 原串**直接拼接**，无分隔符、无截断（反编译 8.2.11 `tools/util.java:402-413`；
+/// 8.9.50 `utils/a.java` 同）。
+///
+/// 真机验证（Redmi 25091RP04C，Android 16）：
+/// `MD5("25cf6881290b58f7" + "02:00:00:00:00:00")` 正好等于官方日志与
+/// `WLOGIN_DEVICE_INFO` 里的 guid `7d9cf98da15d5c95f87507273280cbbf`。
+Uint8List qq8DeriveGuid(String androidId, String mac) =>
+    md5Bytes(utf8.encode('$androidId$mac'));
+
+/// 真机身份材料——喂给 [Qq8Device.fromIdentity] 就能上报"本机真实身份"。
+///
+/// ## 为什么要它
+///
+/// [Qq8Device.generate] 是 uin 合成派生（oicq 传习），服务端看到的是
+/// "一台不存在的设备"。而服务端的**设备信任是按身份值记的**：官方客户端
+/// 在同一账号上登录成功后，服务端就把那套 guid/指纹/QIMEI 记为已知设备。
+/// 用真值上报，才可能被直接放行（而不是被要验证码）。
+///
+/// ## 值从哪来
+///
+/// 官方自己写的材料，两个来源（都无需猜测）：
+///
+/// | 字段 | 来源 |
+/// |---|---|
+/// | `android_id` / `mac` / `guid` / 设备串 | 官方 wlogin 文件日志（`decode_wtlogin_log.py` 解码） |
+/// | `qimei` | `shared_prefs/DENGTA_META.xml` 的 `QIMEI_DENGTA` |
+/// | 指纹快照（自校验用） | `shared_prefs/WLOGIN_DEVICE_INFO.xml` 的 `last_*` |
+///
+/// JSON 形状见 `analysis/_ref/official-logs/identity-25091RP04C.json`。
+class Qq8DeviceIdentity {
+  /// Android ID 原文（16 hex 字符；Android 8+ 按应用签名隔离，必须取官方的值）。
+  final String androidId;
+
+  /// mac 原文。Android 6+ 普通应用读到的是常量 `02:00:00:00:00:00`。
+  final String macAddress;
+
+  /// Wi-Fi BSSID / SSID 原文（0x202 用；缺省退回 mac / 空）。
+  final String? wifiBssid;
+  final String? wifiSsid;
+
+  /// IMSI 原文（Android 10+ 普通应用读不到 → 留空，官方按 `MD5("")` 发 0x194）。
+  final String? imsi;
+
+  final String? imei;
+
+  /// guid 的 32 位 hex。**缺省按官方算法派生**（`MD5(androidId ‖ mac)`）。
+  final String? guidHex;
+
+  final String? model;
+  final String? brand;
+  final String? product;
+  final String? device;
+  final String? board;
+  final String? bootloader;
+  final String? fingerprint;
+  final String? bootId;
+  final String? procVersion;
+  final String? baseband;
+  final String? sim;
+  final String? apn;
+  final String? osType;
+  final String? ipAddress;
+
+  /// 安卓版本（0x124 / 0x52D 用）。
+  final String? release;
+  final String? codename;
+  final String? incremental;
+  final int? sdk;
+
+  /// QIMEI 原文（36 位）。0x545 的 body 按版本取 `MD5(它)` 或它本身。
+  final String? qimei;
+
+  const Qq8DeviceIdentity({
+    required this.androidId,
+    required this.macAddress,
+    this.wifiBssid,
+    this.wifiSsid,
+    this.imsi,
+    this.imei,
+    this.guidHex,
+    this.model,
+    this.brand,
+    this.product,
+    this.device,
+    this.board,
+    this.bootloader,
+    this.fingerprint,
+    this.bootId,
+    this.procVersion,
+    this.baseband,
+    this.sim,
+    this.apn,
+    this.osType,
+    this.ipAddress,
+    this.release,
+    this.codename,
+    this.incremental,
+    this.sdk,
+    this.qimei,
+  });
+
+  /// guid 的字节形式；[guidHex] 非法（非 32 位 hex）时返回 null（走派生）。
+  Uint8List? get guidBytes {
+    final h = guidHex;
+    if (h == null || h.length != 32) return null;
+    final out = Uint8List(16);
+    for (var i = 0; i < 16; i++) {
+      final b = int.tryParse(h.substring(i * 2, i * 2 + 2), radix: 16);
+      if (b == null) return null;
+      out[i] = b;
+    }
+    return out;
+  }
+
+  /// 从 JSON 解析。`android_id` 与 `mac` 是必需项，缺任一返回 null（不猜）。
+  static Qq8DeviceIdentity? fromJson(Map<String, Object?> json) {
+    String? s(String k) {
+      final v = json[k];
+      if (v == null) return null;
+      final t = '$v'.trim();
+      return t.isEmpty ? null : t;
+    }
+
+    final aid = s('android_id');
+    final mac = s('mac');
+    if (aid == null || mac == null) return null;
+    return Qq8DeviceIdentity(
+      androidId: aid,
+      macAddress: mac,
+      wifiBssid: s('wifi_bssid'),
+      wifiSsid: s('wifi_ssid'),
+      imsi: s('imsi'),
+      imei: s('imei'),
+      guidHex: s('guid'),
+      model: s('model'),
+      brand: s('brand'),
+      product: s('product'),
+      device: s('device'),
+      board: s('board'),
+      bootloader: s('bootloader'),
+      fingerprint: s('fingerprint'),
+      bootId: s('boot_id'),
+      procVersion: s('proc_version'),
+      baseband: s('baseband'),
+      sim: s('sim'),
+      apn: s('apn'),
+      osType: s('os_type'),
+      ipAddress: s('ip_address'),
+      release: s('release'),
+      codename: s('codename'),
+      incremental: s('incremental'),
+      sdk: json['sdk'] is num ? (json['sdk']! as num).toInt() : null,
+      qimei: s('qimei'),
+    );
+  }
+
+  /// 诊断用（**不打印 qimei 全值**，它是跨业务共享的设备标识）。
+  @override
+  String toString() => 'Qq8DeviceIdentity(androidId=$androidId, mac=$macAddress, '
+      'guid=${guidHex ?? '(派生)'}, qimei=${qimei == null ? '无' : '有(${qimei!.length}字符)'})';
 }

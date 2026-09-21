@@ -40,12 +40,14 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:riverpod/riverpod.dart';
 
 import '../infra/log/logger.dart';
+import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
 import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
@@ -73,16 +75,60 @@ final qq8TransportBuilderProvider = Provider<Qq8Transport Function()>(
   (ref) => () => Qq8TcpTransport(),
 );
 
+/// 真机身份材料（`<dataDir>/qq8/identity.json`）——**存在才用**，不存在保持原行为。
+///
+/// ## 为什么要有这个口子
+///
+/// 服务端的**设备信任是按身份值记的**。默认的 `Qq8Device.generate(uin)` 是
+/// 合成派生（一台"不存在的设备"），服务端只会当新设备处理（要验证码）。
+/// 把官方客户端在本机实际使用并上报的 guid/androidId/mac/QIMEI 注入进来，
+/// 才可能被认成已知设备、直接放行。
+///
+/// 这不是伪造：值全部取自**同一台设备的官方客户端**自己写的材料
+/// （wlogin 文件日志 + SharedPreferences），四个变换已逐字节验证
+/// （见 `analysis/QQ-官方三版本登录流程对照.md` §11）。
+///
+/// 文件形状见 `analysis/_ref/official-logs/identity-25091RP04C.json`。
+final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
+  final log = Log.get('QQ8');
+  final dir = ref.watch(dataDirProvider);
+  final f = File(
+      '${dir.path}${Platform.pathSeparator}qq8${Platform.pathSeparator}identity.json');
+  if (!f.existsSync()) return null;
+  try {
+    final decoded = jsonDecode(f.readAsStringSync());
+    if (decoded is! Map) {
+      log.w('identity.json 不是 JSON 对象，忽略（保持合成派生）');
+      return null;
+    }
+    final id = Qq8DeviceIdentity.fromJson(Map<String, Object?>.from(decoded));
+    if (id == null) {
+      log.w('identity.json 缺必需项 android_id / mac，忽略（保持合成派生）');
+      return null;
+    }
+    log.i('已加载真机身份: $id');
+    return id;
+  } catch (e) {
+    log.w('identity.json 解析失败，忽略（保持合成派生）', error: e);
+    return null;
+  }
+});
+
 /// 登录/会话服务实例（随 provider 生命周期创建与关闭）。
 ///
 /// 注入与 OneBot 线**同一个** [safetyGateProvider]：协议线的联网前置校验
 /// （真实服务器模式 + 有效同意）由它把关，见 [Qq8LoginService.gate]。
 final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
+  final identity = ref.watch(qq8DeviceIdentityProvider);
   final svc = Qq8LoginService(
     profile: ref.watch(qq8ProfileProvider),
     tokenStore: ref.watch(qq8TokenStoreProvider),
     transportBuilder: ref.watch(qq8TransportBuilderProvider),
     gate: ref.watch(safetyGateProvider),
+    // 有真机身份就用它，否则沿用默认的 uin 派生
+    deviceBuilder:
+        identity == null ? null : (int uin) => Qq8Device.fromIdentity(identity),
+    qimei: identity?.qimei,
   );
   ref.onDispose(() => svc.close());
   return svc;

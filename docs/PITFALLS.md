@@ -266,6 +266,84 @@ merge 写入天然倾向保留旧值，而协议里"上一次的材料"几乎总
 （0x542）已作为根因修正（`qq8SliderTlvOrderFor`），其余判定输入仍在服务端。
 ③ `type=45/243` 的解析不在 wlogin_sdk（业务层/MSF 层），抓包看不到属正常。
 
+**2026-09-19 真机实证后的更新（重要，两条旧结论作废）**：
+
+读官方客户端**自己的** wlogin 文件日志（`decode_wtlogin_log.py`）拿到 8.2.11 在
+**新设备**上的完整成功流程：`subcmd 9 → type=2`、`subcmd 2 → type=160`、
+`subcmd 8 → 下发短信`、`subcmd 7 → type=0`。由此：
+
+* **"非 NT 滑块通道对 ssover=7 已降级"作废**——官方在 ssover=7 上把这整条链路
+  走通了，通道是活的。
+* **`0x547` PoW 不是 subcmd 2 的门槛**：官方 `libpow.so` 缺失 → `syncCalcPow`
+  直接抛异常（挑战为空）→ 发出空 0x547 → 照样 `type=160`。
+
+本轮把客户端侧能变的量逐个试过，**仍然 `type=1`**：
+
+| 变量 | 取值 | 结果 |
+|---|---|---|
+| 滑块 TLV 清单 | 官方 5 项 193/8/104/116/547 | type=1 |
+| `0x547` | 空（与官方一致） | type=1 |
+| 设备身份 | **注入官方真值**（guid `7d9cf98d…`/androidId/mac/QIMEI，逐字节验证） | type=1 |
+| 会话连续性 | `--save-session` + `--load-session` 复用 ECDH/sessionId/randomKey | type=1 |
+
+**剩余嫌疑（按可行性）**：
+1. **`0x544` 真签名**：官方那步是 QSec 真签名（日志 `tgt 0x544 cost:8`），我们发
+   4 字节降级占位 `00 00 00 00`。服务端可能据此给设备打风险分，再在验证提交时
+   一并判定。**需要 native `libcodecwrapperV2.so` + 联网，属研究范围**。
+2. **ticket 来源**：官方在应用内 WebView 里完成"视图验证"，我们是在外部浏览器里
+   解、再从 F12 掏 ticket（`ti.qq.com/safe/tools/captcha/sms-verify-login`）。
+   若服务端把 ticket 与"发起验证的那个客户端会话"绑定，这条就对不上。
+3. **MSF 层会话**：官方全程走 MSF 长连接（同进程、`Seq:1` 到底），我们是每次新建
+   TCP。ECDH 复用了，但 socket 层面的会话标识没复用。
+
+**`0x508` 那条"换明文提示"的路已死**：`ts7/ts8.qq.com:8080` 实测 TCP 全部
+closed，**官方自己也连不上**（日志 `SocketTimeoutException`）。别再往这里投入。
+
+**2026-09-19 14:15 官方二次登录（同一设备、同一账号）——判别结果**：
+
+```
+14:15:19  subCmd=0x9 → type:2      ← 第一步【仍然】要验证（"已知设备"不会静默）
+14:15:27  subCmd=0x2 → type:0      ← 提交验证【直接成功】，这次连短信都不需要
+（gap 仅 5 秒；第一次 13:15 那次是 16 秒，且提交后是 160→短信）
+```
+
+两条硬结论：
+1. **这个账号当前就是"每次都要验证"**（与设备是否已知无关）——所以"躲开验证"没有意义，
+   目标只能是"把验证走完"。
+2. **服务端接受官方的提交、拒绝我们的**（我们 type=1，官方 type=0）——差别**在客户端**，
+   且不在我们已经排除的四项（清单/PoW/身份/会话）里。
+
+**剩余两个候选**：
+* **(a) ticket 的来源与指纹**：官方在**应用内**完成验证（5 秒 → 很可能走"无感/静默验证"，
+  TCaptcha 在 WebView 里采设备指纹），我们是在**PC 浏览器**解题 + F12 掏 ticket。
+  服务端若把 captcha 侧采集的指纹与登录包里的设备身份（我们注入的 Redmi 真值）交叉比对，
+  就会出现 **"包说自己是 Redmi，captcha 却来自 Windows 浏览器"** 的明显矛盾 → 拒。
+* **(b) `0x544` 真签名**：官方是 QSec 真签名（`tgt 0x544 cost:8`），我们是 4 字节降级占位。
+
+**下一步最便宜的验证**：把验证页放到**手机**上解（同设备、同网络），窗口压到 1 分钟内，
+再提交。若翻绿 → 是 captcha 侧指纹；(a) 成立。若仍 type=1 → 只剩 (b)，那是 native + 联网，
+属研究范围，该考虑收手。
+
+**2026-09-21：验证页已搬进应用内（待真机跑）**
+
+`lib/ui/pages/qq8_verify_page.dart`：登录页"打开验证页"不再 `url_launcher` 丢给系统浏览器，
+而是在**本应用的 WebView**（`flutter_inappwebview`，文档开头注入探针脚本）里打开同一个
+`0x192` 地址。ticket 三条路一起收：跳转 URL（`shouldOverrideUrlLoading` + 钩 `window.open`
+/`history`）、JS 桥（`onJsPrompt`/`onJsAlert` + 注入的 `window.PenguinCaptcha`）、页面正文
+（定时上报 + 加载完主动取 `innerText`）；认字符串的规则在 `lib/kernel/wlogin8/qq8_captcha.dart`
+（真值 214 字符 `t0…*`，自测 `tool/qq8_captcha_selftest.dart`）。识别到就填进输入框，
+**由人点提交**（不自动解题、不改 UA、不开无痕）。
+
+真机跑的时候看两件事：
+
+1. 捕获记录里 ticket 从哪个 `kind` 出来（`nav` / `prompt` / `text`…）——这决定以后要不要
+   保留整条注入链；
+2. 提交后的 `type`：**仍是 1 → (a) 作废**，只剩 `0x544` 真签名这条 native 路（该收手了）；
+   `0` 或 `160` → (a) 成立，ticket 的来源确实是被拒的原因。
+
+顺带修了一处真问题：`android/app/src/main/AndroidManifest.xml` 原本**没有** `INTERNET`
+权限（只有 debug/profile 变体有），release 包等于无网——协议线 TCP 与 WebView 都靠它。
+
 ---
 
 ## D. 网络与环境

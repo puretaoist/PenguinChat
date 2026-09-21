@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 联网权限：协议线要用原始 TCP 连腾讯服务器（lib/kernel/transport），
+         应用内验证页（lib/ui/pages/qq8_verify_page.dart）还要用 WebView 打开
+         https 验证地址。以前只有 debug/profile 变体声明了它，release 包实际
+         是"没网权限"的——两条线都靠它，必须放在 main 里。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="qqclient"
         android:name="${applicationName}"

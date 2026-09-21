@@ -219,6 +219,58 @@ void testDevice() {
   checkEq('withTgtgt 不动 guid', toHex(c.guid), toHex(a1.guid));
   checkEq('withTgtgt 不动 imei', c.imei, a1.imei);
   checkEq('withTgtgt 不动 mac', c.macAddress, a1.macAddress);
+
+  // 真机身份注入（`analysis/QQ-官方三版本登录流程对照.md` §11 的真值）
+  //
+  // 这组断言把"官方采集/派生链"钉死在代码里：真值是官方客户端在
+  // Redmi 25091RP04C 上实际使用并上报的，四个变换已逐字节验证过。
+  const aid = '25cf6881290b58f7';
+  const mac = '02:00:00:00:00:00';
+  const qimei = 'c5da7bd11af782c8a3dec3d710001591a806';
+  final id = Qq8DeviceIdentity.fromJson(<String, Object?>{
+    'android_id': aid,
+    'mac': mac,
+    'guid': '7d9cf98da15d5c95f87507273280cbbf',
+    'qimei': qimei,
+    'model': '25091RP04C',
+    'brand': 'Xiaomi',
+    'release': '16',
+    'sdk': 36,
+  });
+  check('身份 JSON 可解析', id != null);
+  if (id != null) {
+    checkEq('JSON 保留 android_id', id.androidId, aid);
+    checkEq('JSON 保留 qimei', id.qimei, qimei);
+
+    // guid = MD5(androidId ‖ mac)：与官方日志/SP 的真值逐字节一致
+    checkEq('官方派生 guid = MD5(androidId+mac)',
+        toHex(qq8DeriveGuid(aid, mac)), '7d9cf98da15d5c95f87507273280cbbf');
+
+    final d = Qq8Device.fromIdentity(id);
+    checkEq('注入后 guid 用真值', toHex(d.guid),
+        '7d9cf98da15d5c95f87507273280cbbf');
+    checkEq('注入后 androidId 用真值', d.androidId, aid);
+    checkEq('注入后 mac 用真值', d.macAddress, mac);
+    checkEq('注入后 model 用真值', d.model, '25091RP04C');
+    checkEq('注入后 Android 版本', d.version.release, '16');
+    // 官方 0x194 = MD5(imsi 原文)；读不到 imsi 时是 MD5("")（不是跳过、不是随机）
+    checkEq('imsi 存的是 MD5(空串)（官方读不到时的行为）',
+        toHex(d.imsi), toHex(md5Bytes(Uint8List(0))));
+
+    // guidHex 非法时退回派生（不静默用坏值）
+    final bad = Qq8DeviceIdentity.fromJson(<String, Object?>{
+      'android_id': aid,
+      'mac': mac,
+      'guid': 'not-a-hex',
+    });
+    check('非法 guid → 退回派生',
+        bad != null && toHex(bad.guidBytes ?? qq8DeriveGuid(aid, mac)) ==
+            '7d9cf98da15d5c95f87507273280cbbf');
+
+    // 必需项缺失 → null（不猜）
+    check('缺 mac → fromJson 返回 null',
+        Qq8DeviceIdentity.fromJson(<String, Object?>{'android_id': aid}) == null);
+  }
 }
 
 // ---------------------------------------------------------------------------

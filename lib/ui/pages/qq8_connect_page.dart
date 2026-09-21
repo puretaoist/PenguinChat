@@ -14,8 +14,9 @@
 /// * 顶部一个**方式切换**（口令 / 二维码 / 短信 / 票据），默认口令；
 /// * 一次只显示**当前要做的这一件事**，配一个明确的「继续 / 登录」主按钮
 ///   ——不再四个按钮平铺（旧版被吐槽"看不出怎么登录"）；
-/// * 滑块验证用 `url_launcher` 打开系统浏览器，解完把验证码粘回来
-///   （手机上无 F12，不能像 PC 那样抓 ticket）；
+/// * 滑块验证在**应用内**的 WebView 里完成
+///   （[Qq8VerifyPage]）：验证页所在环境要与登录包里的设备身份对得上，
+///   而且只有应用内才拿得到页面回传的验证码——它会被自动识别并直接提交；
 /// * 文案全部人话化，不出现"票据 / ticket / 协议线"等术语。
 ///
 /// ## 拆成两层是为了能测
@@ -32,7 +33,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
@@ -40,10 +40,28 @@ import '../../client_api/session_providers.dart' show dataDirProvider;
 import '../../infra/log/log_file.dart';
 import '../widgets/real_server_panel.dart';
 import 'home_page.dart';
+import 'qq8_verify_page.dart';
 
 /// 协议线登录页（把 [Qq8ConnectView] 接到 provider 上）。
 class Qq8ConnectPage extends ConsumerWidget {
   const Qq8ConnectPage({super.key});
+
+  /// 打开**应用内**验证页（[Qq8VerifyPage]），拿回验证码就直接提交。
+  ///
+  /// 与旧做法的区别：不再把地址丢给系统浏览器再让用户抄验证码回来。
+  /// 抄回来的那条路在服务端看是"另一个环境"，而且人肉搬运必然超时；
+  /// 应用内验证页会把识别到的验证码直接交回来（见该页头部说明）。
+  ///
+  /// 用户取消（返回 null）时什么都不做——**不猜、不重试**。
+  Future<void> _openVerifyPage(
+      BuildContext context, WidgetRef ref, String url) async {
+    final controller = ref.read(qq8ConnectControllerProvider.notifier);
+    final ticket = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(builder: (_) => Qq8VerifyPage(url: url)),
+    );
+    if (ticket == null || ticket.isEmpty) return;
+    await controller.submitSliderTicket(ticket);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -73,8 +91,7 @@ class Qq8ConnectPage extends ConsumerWidget {
         onUnlock: c.unlockDevice,
         onFetchQrcode: c.fetchQrcode,
         onPollQrcode: c.pollQrcode,
-        onOpenBrowser: (url) => launchUrl(Uri.parse(url),
-            mode: LaunchMode.externalApplication),
+        onOpenBrowser: (url) => _openVerifyPage(context, ref, url),
         // 导出日志：生成报告 → 写临时文件 → 系统分享面板。
         onExportLog: () async {
           final report = LogExporter.buildReport(
@@ -181,7 +198,7 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
 
   bool get _busy => widget.status.busy;
 
-  /// 用 `onOpenBrowser` 打开滑块页（回调由页面注入 launchUrl）。
+  /// 用 `onOpenBrowser` 打开验证页（回调由页面注入：应用内 WebView）。
   void _openSliderBrowser() {
     final url = widget.status.sliderUrl;
     final open = widget.onOpenBrowser;
@@ -410,7 +427,8 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
       case Qq8LoginStage.needsSlider:
         return <Widget>[
           const SizedBox(height: 12),
-          const Text('需要完成滑动验证。点下面打开浏览器，滑完后把验证码复制回来：'),
+          const Text('需要完成滑动验证。点下面在本应用内打开验证页，'
+              '验证完成后会自动识别验证码：'),
           const SizedBox(height: 8),
           if (s.sliderUrl != null && s.sliderUrl!.isNotEmpty)
             SelectableText(s.sliderUrl!,
@@ -419,8 +437,8 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
           OutlinedButton.icon(
             key: const ValueKey('qq8-open-browser'),
             onPressed: widget.onOpenBrowser == null ? null : _openSliderBrowser,
-            icon: const Icon(Icons.open_in_browser, size: 18),
-            label: const Text('在浏览器打开滑块页'),
+            icon: const Icon(Icons.verified_outlined, size: 18),
+            label: const Text('打开验证页'),
           ),
           const SizedBox(height: 8),
           TextField(

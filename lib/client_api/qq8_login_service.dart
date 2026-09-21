@@ -191,8 +191,15 @@ class Qq8LoginService {
   final Qq8Transport Function() transportBuilder;
 
   /// 设备构造器——默认按 uin 派生（同一账号恒定同一台设备）。
-  /// 测试注入固定夹具；将来要复用持久化的设备信息也从这里接。
+  /// 测试注入固定夹具；真机身份材料也从这里接（`Qq8Device.fromIdentity`）。
   final Qq8Device Function(int uin)? deviceBuilder;
+
+  /// 注入的 QIMEI（真机身份材料里的那个，36 字符）。
+  ///
+  /// 非空时进 TLV `0x545`（8.2.11 的 body = `MD5(它)`，16 字节）；为空则
+  /// **整条不发**——这是官方行为（`k.java:383-393` 取不到就跳过），不是缺陷。
+  /// App 侧由 `qq8DeviceIdentityProvider` 从身份文件读出来注入。
+  final String? qimei;
 
   /// ECDH 构造器——默认随机密钥对；测试注入固定私钥以便预先造出密文。
   final EcdhKeyPair Function()? ecdhBuilder;
@@ -255,6 +262,7 @@ class Qq8LoginService {
     Qq8TokenStore? tokenStore,
     Qq8Transport Function()? transportBuilder,
     this.deviceBuilder,
+    this.qimei,
     this.ecdhBuilder,
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
@@ -396,13 +404,14 @@ class Qq8LoginService {
                       accountIsUin: false,
                       loginType: 3,
                       t104: ctx.t104,
+                      qimei: qimei,
                       t548: ctx.t548)
-                  : Qq8LoginConditions(t548: ctx.t548),
-              args: smsLogin
-                  ? <int, List<Object?>>{
-                      0x112: <Object?>[_smsPhone],
-                    }
-                  : const <int, List<Object?>>{},
+                  : Qq8LoginConditions(qimei: qimei, t548: ctx.t548),
+              // 0x545 的 body 从 args 取（ctx 只做承载）；注入 QIMEI 时才进包。
+              args: <int, List<Object?>>{
+                if (smsLogin) 0x112: <Object?>[_smsPhone],
+                if (qimei != null) 0x545: <Object?>[qimei],
+              },
             )
           : Qq8LoginBody.buildToken(ctx, d2: token.d2);
       await _sendLoginBody(uin, ctx, body, token: token);
