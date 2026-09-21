@@ -1190,7 +1190,20 @@ class Qq8LoginService {
       );
       final sso = qq8UnwrapRecv(frame);
       onDiagnostic?.call('poll', frame, null);
-      final q = Qq8Qrcode.parseQuery(sso.payload, _ecdh!.shareKey);
+      // 响应外壳偶有未知形态（2026-09-21 17:18：d2 长度解出 0x14000000 的乱值），
+      // 此时把会话作废、引导重新取码，而不是把异常直接抛给 UI 卡死流程。
+      final Qq8QrQuery q;
+      try {
+        q = Qq8Qrcode.parseQuery(sso.payload, _ecdh!.shareKey);
+      } on Qq8LoginException catch (e) {
+        _qrsig = null;
+        _qrToken = null;
+        _emit(Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '二维码状态响应解析异常（${e.message}），请重新获取二维码',
+        ));
+        return;
+      }
       // 轮询是秒级的：只在 retcode **变了**时记一条。这条日志用来回答
       // "码是不是真码"——UP 主提醒过：mock 签名下服务端会 ret=0 但没真处理，
       // 所以还要看后面 register/心跳是否真的通。
@@ -1229,11 +1242,15 @@ class Qq8LoginService {
       _qrToken = null;
 
       final loginCtx = _tlvCtx(uin, passwordMd5: null, token: null);
+      // 官方扫码登录（TIM 反编译，2026-09-21）：
+      // 0x106 body = concat(t24料, t30料) 原样（j.java case 262 的 _tmp_pwd 路径），
+      // 0x16A ← t25(nopicsig)、0x318 ← t101(tgtQR)。见 buildQrLogin 头注释。
       final body2 = Qq8LoginBody.buildQrLogin(
         loginCtx,
-        t106: q.t106!,
+        t106Data: q.t106!,
+        tgtgt: q.tgtgt!,
         t16a: q.t16a!,
-        t318: q.t318!,
+        tgtQR: q.t318!,
       );
       await _sendLoginBody(uin, loginCtx, body2);
     } on Object catch (e, st) {

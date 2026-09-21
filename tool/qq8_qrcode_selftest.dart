@@ -395,30 +395,40 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
-  section('4. 内核：二维码登录包（子命令 9 + 注入三块材料）');
+  section('4. 内核：二维码登录包（子命令 9 + 官方 _tmp_pwd 组装）');
   {
     final ctx = _tlvCtx(10001);
-    final t106 = _hex('aa' * 40);
+    final t106Data = _hex('aa' * 40);
+    final tgtgt = _hex('dd' * 16);
     final t16a = _hex('bb' * 30);
-    final t318 = _hex('cc' * 20);
+    final tgtQR = _hex('cc' * 20);
     final body = Qq8LoginBody.buildQrLogin(ctx,
-        t106: t106, t16a: t16a, t318: t318);
+        t106Data: t106Data, tgtgt: tgtgt, t16a: t16a, tgtQR: tgtQR);
     final tlvs = qq8ReadTlv(body, offset: 4);
     check('子命令 = 9', (body[0] << 8 | body[1]) == 9);
     check('24 项且顺序与参考一致',
         tlvs.length == 24 &&
             tlvs.keys.join(',') == qq8QrLoginTlvOrder.join(','),
         '${tlvs.length} 项');
-    check('0x106 = 扫到的整块（原样）', _hexOf(tlvs[0x106]!) == _hexOf(t106));
+    // 官方（TIM j.java case 262 的 _tmp_pwd 路径，2026-09-21 定案）：
+    // 0x106 body = concat(t106料, tgtgt) 原样，不加密、不重建。
+    // 之前只回带 t106料，真机四连 type=155「你太久没有操作」。
+    final want106Len = t106Data.length + tgtgt.length;
+    final want106 = Uint8List(want106Len)
+      ..setRange(0, t106Data.length, t106Data)
+      ..setRange(t106Data.length, want106Len, tgtgt);
+    check('0x106 = concat(t106料, tgtgt) 原样',
+        _hexOf(tlvs[0x106]!) == _hexOf(want106),
+        'got ${tlvs[0x106]!.length}B want ${want106.length}B');
     check('0x16A = 扫到的 t16a', _hexOf(tlvs[0x16A]!) == _hexOf(t16a));
-    check('0x318 = 扫到的 t318', _hexOf(tlvs[0x318]!) == _hexOf(t318));
+    check('0x318 = 扫到的 tgtQR', _hexOf(tlvs[0x318]!) == _hexOf(tgtQR));
     check('不含 0x104/0x544（二维码流程不发这两个）',
         !tlvs.containsKey(0x104) && !tlvs.containsKey(0x544));
 
     var threw = false;
     try {
       Qq8LoginBody.buildQrLogin(ctx,
-          t106: Uint8List(0), t16a: t16a, t318: t318);
+          t106Data: Uint8List(0), tgtgt: tgtgt, t16a: t16a, tgtQR: tgtQR);
     } on Qq8LoginException {
       threw = true;
     }

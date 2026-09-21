@@ -530,22 +530,54 @@ abstract final class Qq8LoginBody {
   }
   /// 二维码扫码登录（子命令 9，命令字 `wtlogin.login`）。
   ///
-  /// 扫到的三块材料**原样回带**：[t106] 整块进 `0x106`、[t16a] 进 `0x16A`、
-  /// [t318] 进 `0x318`（清单见 [qq8QrLoginTlvOrder]）。
+  /// ## `0x106` 的官方语义（2026-09-21 真机 type=155 后从 TIM 反编译定案）
+  ///
+  /// 确认后的轮询响应给四块料：t24(0x18)=t106料、t25(0x19)=nopicsig、
+  /// t30(0x1E)=tgtgt、t101(0x65)=tgtQR。官方 `WtloginHelper:5252`（GetStWithPasswd
+  /// 的扫码分支）把它们组装成：
+  ///
+  /// ```java
+  /// _tmp_pwd       = d.l;   // = oicq_request.a(t24料, t30料) —— 纯拼接（6737 段）
+  /// _tmp_no_pic_sig = d.m;  // = t25 料
+  /// _tmp_pwd_type   = 1;    // 长度 <16 直接 -1016 拒发
+  /// ```
+  ///
+  /// 而 t106 构造器（`j.java` case 262）对非空 `_tmp_pwd` **不做任何加工**：
+  /// `set_data(bArr5); get_buf()` —— 即
+  ///
+  /// ```text
+  /// 0x106 body = concat(t106料, tgtgt)   ← 原样字节，不加密、不重建
+  /// ```
+  ///
+  /// （顺带：`0x16A ← nopicsig`（`j.java:413` case 362）、
+  /// `0x318 ← async_context.tgtQR`（`:633` case 792），与我们原有行为一致。）
+  ///
+  /// ⚠️ 2026-09-21 之前我们只回带了 t106料（缺 tgtgt 后缀），真机四连 `type=155`
+  /// 「你太久没有操作」——正是这里的差异。
   ///
   /// ⚠️ 成功响应的 `0x119` 要用**扫码得到的 tgtgt** 解密——调用方必须在发这条
   /// 之前把设备 tgtgt 换成它（`Qq8LoginService` 里就是这么做的），
   /// 否则票据解不出来。
   static Uint8List buildQrLogin(
     Qq8TlvContext ctx, {
-    required Uint8List t106,
+    required Uint8List t106Data,
+    required Uint8List tgtgt,
     required Uint8List t16a,
-    required Uint8List t318,
+    required Uint8List tgtQR,
   }) {
-    if (t106.isEmpty || t16a.isEmpty || t318.isEmpty) {
+    if (t106Data.isEmpty || tgtgt.isEmpty || t16a.isEmpty || tgtQR.isEmpty) {
       throw Qq8LoginException(
-          '二维码登录缺少扫码材料（t106=${t106.length}B / t16a=${t16a.length}B / '
-          't318=${t318.length}B）');
+          '二维码登录缺少扫码材料（t106料=${t106Data.length}B / tgtgt=${tgtgt.length}B / '
+          't16a=${t16a.length}B / tgtQR=${tgtQR.length}B）');
+    }
+    // 官方 `_tmp_pwd`：t106料 ‖ tgtgt（纯拼接，oicq_request.a(byte[],byte[])）
+    final tmpPwdLen = t106Data.length + tgtgt.length;
+    final tmpPwd = Uint8List(tmpPwdLen)
+      ..setRange(0, t106Data.length, t106Data)
+      ..setRange(t106Data.length, tmpPwdLen, tgtgt);
+    if (tmpPwd.length < 16) {
+      // 官方同款下限（WtloginHelper：`bArr5.length < 16 → -1016`）
+      throw Qq8LoginException('扫码材料拼接后不足 16 字节（${tmpPwd.length}B），官方会拒发');
     }
     return build(
       ctx,
@@ -553,11 +585,11 @@ abstract final class Qq8LoginBody {
       qq8QrLoginTlvOrder,
       // 0x16A 的 guard 看的是条件对象里的 t16a（短信流程同款语义），
       // 二维码流程要显式把它带上，否则这一项会被滤掉、24 项变 23 项。
-      cond: Qq8LoginConditions(tgtQR: t318, t16a: t16a),
+      cond: Qq8LoginConditions(tgtQR: tgtQR, t16a: t16a),
       args: <int, List<Object?>>{
-        0x106: <Object?>[t106],
+        0x106: <Object?>[tmpPwd],
         0x16A: <Object?>[t16a],
-        0x318: <Object?>[t318],
+        0x318: <Object?>[tgtQR],
       },
     );
   }
@@ -568,9 +600,10 @@ abstract final class Qq8LoginBody {
 /// 出处：参考实现 `analysis/_ref/oicq-src/lib/core/base-client.ts` 的
 /// `qrcodeLogin()` 里那个 writer 的顺序。与密码登录的区别：
 ///
-/// * `0x106` 用**扫到的整块 t106**（原样回带，不重新生成）；
-/// * `0x16a` 用扫到的 t16a；
-/// * 末尾追加 `0x318`（tgtQR）；
+/// * `0x106` = **concat(t106料, tgtgt) 原样**（TIM `j.java` case 262 的
+///   `_tmp_pwd` 路径，2026-09-21 定案；之前只回带 t106料，真机 type=155）；
+/// * `0x16a` 用扫到的 t25（nopicsig）；
+/// * 末尾追加 `0x318`（tgtQR，`j.java:633` case 792）；
 /// * 不发 `0x544/0x545/0x400/0x104` 那些。
 const List<int> qq8QrLoginTlvOrder = <int>[
   0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x142, 0x144, 0x145, 0x147,
