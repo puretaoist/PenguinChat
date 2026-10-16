@@ -135,6 +135,33 @@ Future<void> main(List<String> argv) async {
 // ---------------------------------------------------------------------------
 
 Future<void> _run(Map<String, String> args) async {
+  // ---- 离线口令探针（零风险，不联网、不限流）----
+  //
+  // 为什么要它：历次真跑的日志只留下打码后的指纹（前 4 字节）。要判断
+  // "现在输入的这串是不是当年那串"，唯一办法就是拿候选口令本地算一遍再比。
+  // MD5 不可逆，但可以正着试——而且完全不碰服务器。
+  final probe = args['pwd-probe'];
+  if (probe != null) {
+    final h = md5Bytes(Uint8List.fromList(utf8.encode(probe)));
+    final hex = h.map((v) => v.toRadixString(16).padLeft(2, '0')).join();
+    out('  明文长度: ${utf8.encode(probe).length} 字节');
+    out('  MD5: $hex');
+    out('  指纹: head=${hex.substring(0, 8)}…');
+    // 历史日志里出现过的两个指纹，附各自的结局
+    const known = <String, String>{
+      '00d08ed0': '09-13 全部 + 10-16（派生设备）→ type=2；'
+          '今天以真机身份发 → type=1，之后每次滑块提交回 type=1 或 237',
+      '28ade243': '09-19 五次真机身份发 → 全部 type=2',
+    };
+    final hit = known[hex.substring(0, 8)];
+    if (hit != null) {
+      out('  ➜ 匹配历史指纹 ${hex.substring(0, 8)}：$hit');
+    } else {
+      out('  ➜ 与历史两个指纹都不匹配（既不是 00d08ed0 也不是 28ade243）');
+    }
+    return;
+  }
+
   final send = args.containsKey('send');
   final confirm = Platform.environment['QQ_LIVE_CONFIRM'];
   final profile = _pickProfile(args['profile'] ?? 'default');
