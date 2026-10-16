@@ -310,14 +310,16 @@ const _vectors = <({int tag, List<Object?> args, String hex})>[
 // 下面是从参考实现（oicq）内部拦截 tea.encrypt 得到的真实密钥与明文。
 // ---------------------------------------------------------------------------
 
-const _teaRef106Key = 'e7baf3ef7096349ed4ac09fd395fcbe7';
-
-/// **官方**公式算出的 0x106 密钥：`MD5(guid ‖ u64(uin))`。
+/// 0x106 的 TEA 密钥（官方公式，oicq 在 msalt=0 时逐字节等价）。
 ///
-/// 与 [_teaRef106Key]（oicq 的 `MD5(password_md5 ‖ 0000 ‖ uin_u32be)`）不同。
-/// 官方三个版本（8.2.11 / 8.9.50 / 9.3.60）的 `tlv_t106` 逐行一致，
-/// 均使用本公式；本实现已按官方修正。
-const _officialKey106 = '0647463a6a1ad304a7a7e5b3de28bd7f';
+/// 官方（tlv_t106.java，WtloginHelper 密码路径）：
+///   key = MD5(口令MD5(16) ‖ u64(msalt≠0 ? msalt : uin)(8))
+///   —— 种子前 16 字节来自调用链第 8 参 `_tmp_pwd`（口令 MD5），
+///      guid（t.A）只进 body 槽位、不参与密钥。
+/// oicq（lib/core/tlv.ts:107）：
+///   key = MD5(md5pass ‖ 0x00000000 ‖ u32be(uin))
+///   msalt=0 时 u64(uin) 高 4 字节为零 ⇒ 与官方等价。
+const _teaRef106Key = 'e7baf3ef7096349ed4ac09fd395fcbe7';
 const _teaRef106Plain =
     '0004abababab0000000700000010000000000000000000002711cfe568000000000001'
     '11111111111111111111111111111111ffeeddccbbaa9988776655443322110000000000'
@@ -343,37 +345,23 @@ void testTeaTlvs() {
   stdout.writeln('     垫入任意字节（服务端解密后丢弃）。因此**密文不可复现**，');
   stdout.writeln('     比密文等于在比"填充怎么选"，而不是比算法。这里改为验证：');
   stdout.writeln('       ① 密钥派生  ② 明文内容与参考逐字节一致');
-  stdout.writeln('     注意 0x106 的密钥派生已按**官方**修正，与 oicq 不同。');
+  stdout.writeln('     注意：0x106 密钥 = MD5(口令MD5 ‖ u64(uin/msalt))，官方=oicq 等价。');
 
   final ctx = buildContext();
 
   // --- 0x106：口令登录包 ---
   //
-  // ⚠️ 密钥派生**刻意与 oicq 不同**：官方三个版本用的是
-  //    MD5(guid(16) ‖ u64(uin 或 msalt)(8))
-  // 而 oicq 用的是 MD5(password_md5 ‖ 0000 ‖ uin_u32be)。以官方为准。
+  // 密钥 = MD5(口令MD5(16) ‖ u64(uin 或 msalt)(8))。
+  // 官方（tlv_t106.java + WtloginHelper 密码路径）与 oicq（tlv.ts:107）
+  // 在 msalt=0 时逐字节等价（u64(uin) 高 4 字节为零）。
   final key106 = md5Bytes(<int>[
-    ...ctx.device.guid,
+    ...ctx.passwordMd5,
     ...(ByteWriter()..u64(ctx.uin)).build(),
   ]);
-  if (toHex(key106) == _officialKey106) {
-    ok('0x106 密钥 = MD5(guid ‖ u64(uin))（官方三版本一致）', _officialKey106);
+  if (toHex(key106) == _teaRef106Key) {
+    ok('0x106 密钥 = MD5(口令MD5 ‖ u64(uin))（官方=oicq 等价）', _teaRef106Key);
   } else {
-    bad('0x106 官方密钥派生', '期望 $_officialKey106，实际 ${toHex(key106)}');
-  }
-
-  // 同时确认我们确实没用 oicq 的公式
-  final oicqKey106 = md5Bytes(<int>[
-    ...ctx.passwordMd5,
-    ...Uint8List(4),
-    ...(ByteWriter()..u32(ctx.uin)).build(),
-  ]);
-  if (toHex(oicqKey106) == _teaRef106Key &&
-      toHex(oicqKey106) != toHex(key106)) {
-    ok('与 oicq 的密钥确实不同（已按官方修正）',
-        'oicq=${toHex(oicqKey106).substring(0, 16)}…');
-  } else {
-    bad('密钥对比', 'oicq 公式结果 ${toHex(oicqKey106)}');
+    bad('0x106 密钥派生', '期望 $_teaRef106Key，实际 ${toHex(key106)}');
   }
 
   // 明文结构未变，仍应与参考实现逐字节一致

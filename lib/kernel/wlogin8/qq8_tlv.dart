@@ -792,20 +792,26 @@ abstract final class Qq8Tlv {
                   ..bytes16(utf8.encode(ctx.account ?? '${ctx.uin}')))
               .build())
           ..u16(0);
-        // TEA 密钥种子 = guid(16) ‖ u64(msalt 非 0 时用 msalt，否则用 uin)(8)
+        // TEA 密钥种子 = 口令MD5(16) ‖ u64(msalt 非 0 时用 msalt，否则用 uin)(8)
         //
-        // ⚠️ 这里**刻意与参考实现 oicq 不同**。
+        // ⚠️ 2026-10-16 修正：此前误把密钥种子写成 guid(16)‖u64(...)，导致
+        // 服务端永远解不开 0x106，真机登录全部回 type=1「账号或密码错误」。
         //
-        //   oicq：MD5(password_md5 ‖ 0x00000000 ‖ uin_u32be)
-        //   官方：MD5(guid(16) ‖ u64(uin 或 msalt)(8))
+        // 官方调用链（反编译逐参核对）：
+        //   WtloginHelper.java:1512 `async_contextVarB._tmp_pwd = MD5.toMD5Byte(str2)`
+        //   → 1539 `kVar2.a(..., async_contextVarB._tmp_pwd, ...)`（第 8 参）
+        //   → k.java:48 的 26 参 a() 形参 bArr3
+        //   → k.java:110 case 262 `get_tlv_106(..., bArr3, _msalt, ...)`
+        //   → tlv_t106.java `bArr9[0..16]=bArr3; u64@16 = (j4==0 ? j3 : j4)`
+        //     （j4=_msalt，j3=uin）；`key = MD5(bArr9)`。
+        //   bArr3 同时被拷进明文 body（u8 save-password 之后），guid（t.A）
+        //   只进 body 的 16 字节槽位、**不参与密钥**。
         //
-        // 官方三个版本（8.2.11 / 8.9.50 / 9.3.60）的 tlv_t106 逐行对比后
-        // **完全一致**（只有 _SSoVer 从 7 → 19 → 22 递增），而 oicq 的公式
-        // 与三者都不符——见 ../analysis/ 下的对照文档与反编译产物。
-        // 以官方为准。
+        // oicq（lib/core/tlv.ts:107）的公式 `MD5(md5pass ‖ 0x00000000 ‖ u32be(uin))`
+        // 在 msalt=0 时与官方逐字节等价 —— oicq 一直是对的。
         final seed = Uint8List(24);
-        final guidLen = d.guid.length < 16 ? d.guid.length : 16;
-        seed.setRange(0, guidLen, d.guid);
+        final pwdLen = ctx.passwordMd5.length < 16 ? ctx.passwordMd5.length : 16;
+        seed.setRange(0, pwdLen, ctx.passwordMd5);
         seed.setRange(
           16,
           24,

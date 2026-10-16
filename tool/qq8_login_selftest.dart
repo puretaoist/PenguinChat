@@ -1122,7 +1122,7 @@ Future<void> main() async {
       check('带 0x185（cond.loginType == 3 才发）', smsTags.contains(0x185));
       final b106 = _tlvBody(smsBody, 0x106);
       final seed = Uint8List(24)
-        ..setRange(0, 16, base.device.guid)
+        ..setRange(0, 16, smsCtx.passwordMd5)
         ..setRange(16, 24, <int>[
           for (var i = 7; i >= 0; i--) (msalt >> (8 * i)) & 0xFF,
         ]);

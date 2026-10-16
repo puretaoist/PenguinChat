@@ -109,10 +109,10 @@ Qq8TlvContext _context(Qq8ClientProfile p) {
   );
 }
 
-/// TLV 0x106 的 TEA 密钥 = `MD5(guid(16) ‖ u64(uin 或 msalt))`。
+/// TLV 0x106 的 TEA 密钥 = `MD5(口令MD5(16) ‖ u64(uin 或 msalt))`。
 Uint8List _key106(Qq8TlvContext ctx) {
   final seed = Uint8List(24);
-  seed.setRange(0, 16, ctx.device.guid);
+  seed.setRange(0, 16, ctx.passwordMd5);
   seed[16] = (ctx.uin >> 56) & 0xff;
   seed[17] = (ctx.uin >> 48) & 0xff;
   seed[18] = (ctx.uin >> 40) & 0xff;
