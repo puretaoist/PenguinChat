@@ -50,6 +50,7 @@ import '../infra/log/logger.dart';
 import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
 import '../kernel/wlogin8/qq8_push.dart';
+import '../kernel/wlogin8/qq8_qimei.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
 import '../kernel/wlogin8/qq8_tran.dart';
 import 'chat_store.dart';
@@ -145,6 +146,18 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
     deviceBuilder:
         identity == null ? null : (int uin) => Qq8Device.fromIdentity(identity),
     qimei: identity?.qimei,
+    // 身份文件没带 QIMEI 时自动向灯塔取号（纯 HTTPS，无需 root/hook，
+    // 见 `lib/kernel/wlogin8/qq8_qimei.dart`）。取号只提交设备属性，
+    // 不含 uin/口令/票据；失败就整条 0x545 不发，不阻断登录。
+    // 设备由服务层传进来（用的是它自己那台，保证 guid 与登录包一致）。
+    qimeiFetcher: identity?.qimei != null
+        ? null
+        : (Qq8Device device) => Qq8Qimei.fetch(
+              device: device,
+              apk: profile.apk,
+              beaconAppKey: profile.beaconAppKey,
+              onLog: (line) => Log.get('QQ8').d('QIMEI 取号: $line'),
+            ).then((r) => r.q16),
   );
   ref.onDispose(() => svc.close());
   return svc;

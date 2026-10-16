@@ -201,6 +201,23 @@ class Qq8LoginService {
   /// App 侧由 `qq8DeviceIdentityProvider` 从身份文件读出来注入。
   final String? qimei;
 
+  /// QIMEI **自动取号**接缝（灯塔 OLA 接口，见 `Qq8Qimei.fetch`）。
+  ///
+  /// 为什么不直接在本类里调 `Qq8Qimei.fetch`：那是联网动作，必须过 [gate]，
+  /// 且要能被单测换成假实现（本项目的单测纪律是"不联网"）。所以只留接缝：
+  /// **不注入这个函数就永远不取号**，沿用 [qimei] 字段。
+  ///
+  /// 取号只提交设备属性（**没有 uin、没有口令、没有票据**），不涉及账号；
+  /// 返回 null / 抛异常都表示取不到 → 整条 `0x545` 不发（与官方一致）。
+  /// 取到的号缓存在实例里，同一实例只取一次。
+  ///
+  /// 传入的 [Qq8Device] 是服务层本次登录用的那台——取号请求里的
+  /// `androidId`/`guid` 必须与登录包一致，否则两者对不上（同一台设备）。
+  final Future<String?> Function(Qq8Device device)? qimeiFetcher;
+
+  /// 本次会话已取到的 QIMEI（[qimeiFetcher] 的结果；null = 没取/取不到）。
+  String? _fetchedQimei;
+
   /// ECDH 构造器——默认随机密钥对；测试注入固定私钥以便预先造出密文。
   final EcdhKeyPair Function()? ecdhBuilder;
 
@@ -266,6 +283,7 @@ class Qq8LoginService {
     Qq8Transport Function()? transportBuilder,
     this.deviceBuilder,
     this.qimei,
+    this.qimeiFetcher,
     this.ecdhBuilder,
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
@@ -395,6 +413,9 @@ class Qq8LoginService {
       }
 
       final ctx = _tlvCtx(uin, passwordMd5: passwordMd5, token: token, smsLogin: smsLogin);
+      // QIMEI：优先用手工/身份文件注入的值；没有才去灯塔取号（只取一次）。
+      // 取号失败不阻断登录——官方取不到 0x545 就整条不发（`k.java` case 1349）。
+      final effectiveQimei = await _resolveQimei();
       final body = token == null
           ? Qq8LoginBody.build(
               ctx,
@@ -407,13 +428,13 @@ class Qq8LoginService {
                       accountIsUin: false,
                       loginType: 3,
                       t104: ctx.t104,
-                      qimei: qimei,
+                      qimei: effectiveQimei,
                       t548: ctx.t548)
-                  : Qq8LoginConditions(qimei: qimei, t548: ctx.t548),
-              // 0x545 的 body 从 args 取（ctx 只做承载）；注入 QIMEI 时才进包。
+                  : Qq8LoginConditions(qimei: effectiveQimei, t548: ctx.t548),
+              // 0x545 的 body 从 args 取（ctx 只做承载）；有 QIMEI 时才进包。
               args: <int, List<Object?>>{
                 if (smsLogin) 0x112: <Object?>[_smsPhone],
-                if (qimei != null) 0x545: <Object?>[qimei],
+                if (effectiveQimei != null) 0x545: <Object?>[effectiveQimei],
               },
             )
           : Qq8LoginBody.buildToken(ctx, d2: token.d2);
@@ -1426,6 +1447,38 @@ class Qq8LoginService {
       loginType: smsLogin ? 3 : 1,
       account: smsLogin ? _smsPhone : null,
     );
+  }
+
+  /// 解析本次登录要用的 QIMEI：先看注入值，再（可选）走灯塔取号。
+  ///
+  /// 取号只提交设备属性（无 uin / 无口令 / 无票据），所以不涉及账号；
+  /// 但它仍是联网动作 → 先过 [gate]，被拦就跳过（不阻断登录）。
+  /// 结果缓存进 [_fetchedQimei]，同一实例不重复取。
+  Future<String?> _resolveQimei() async {
+    if (qimei != null && qimei!.isNotEmpty) return qimei;
+    if (_fetchedQimei != null) return _fetchedQimei;
+    final fetch = qimeiFetcher;
+    final device = _device;
+    if (fetch == null || device == null) return null;
+    final blocked = _gateBlockReason();
+    if (blocked != null) {
+      _log.i('跳过 QIMEI 取号：$blocked');
+      return null;
+    }
+    try {
+      final v = await fetch(device);
+      if (v != null && v.isNotEmpty) {
+        _fetchedQimei = v;
+        _log.i('QIMEI 取号成功（${v.length} 字符）→ 进 TLV 0x545');
+        return v;
+      }
+      _log.i('QIMEI 取号未返回值 → 0x545 整条不发（与官方一致）');
+    } on Object catch (e) {
+      // 取不到就整条不发，**不阻断登录**：官方拿不到 QIMEI 时同样跳过 0x545
+      //（`k.java` case 1349 只在非空时组包）。
+      _log.w('QIMEI 取号失败 → 0x545 整条不发（不阻断登录）', error: e);
+    }
+    return null;
   }
 
   /// 组三层信封 → 发送 → 拆壳 → 判读分支。
