@@ -176,6 +176,12 @@ Future<void> _run(Map<String, String> args) async {
     passwordMd5 ??= Uint8List(16);
   }
   out('  uin: $uin');
+  if (passwordMd5 != null) {
+    // 与 live_smoke 同款：只留长度 + 前 4 字节，够跨次比对、不泄漏口令。
+    // 历次被服务端接受（type=2）的指纹：00d08ed0… / 28ade243…
+    out('  口令: 已提供');
+    out('    ${Redact.fingerprint('pwd_md5', passwordMd5)}');
+  }
 
   if (send && confirm != kConfirmToken) {
     errOut('✗ 真发需要 QQ_LIVE_CONFIRM=$kConfirmToken'
@@ -256,12 +262,21 @@ Future<void> _run(Map<String, String> args) async {
       return;
   }
 
-  final t544Mode = args['t544'] ?? 'oicq';
+  // ⚠️ 默认必须与 live_smoke 一致（'official'）。
+  //
+  // 历史真机跑里，凡是 0x544 = 4 字节官方降级体的，服务端都回 type=2
+  // （密码正确、要滑块）；改成 39 字节 oicq 真签名后回 type=1。
+  // 官方降级体是"官方自己在安全 SDK 不可用时会发的东西"，服务端认得；
+  // 我们本地算出来的签名则可能与该设备在服务端的既有记录对不上。
+  final t544Mode = args['t544'] ?? 'official';
   if (t544Mode != 'official' && t544Mode != 'oicq' && t544Mode != 'oicq-salt') {
     errOut('✗ --t544 只支持 official / oicq / oicq-salt');
     exitCode = 2;
     return;
   }
+
+  out('  0x544 形态: $t544Mode'
+      '${t544Mode == 'official' ? '（4 字节官方降级体）' : '（39 字节纯算法签名）'}');
 
   // ---- 会话（只建一次，全程复用）----
   final ecdh = Ecdh.exchange(
@@ -443,7 +458,7 @@ Future<void> _run(Map<String, String> args) async {
 
     if (!r1.needsSlider) {
       out('  ✗ 没有要求滑动验证（type=${r1.type}），本工具无事可做。');
-      _printTlvs(r1.plain);
+      _printResponseTlvs(r1);
       await limiter.recordFailure(reasonCode: 'type=${r1.type}');
       return;
     }
@@ -518,7 +533,7 @@ Future<void> _run(Map<String, String> args) async {
     out('  响应 ${frame2.length} 字节 / '
         '${DateTime.now().difference(t2).inMilliseconds}ms');
     out('  type = ${r2.type}  (${_typeMeaning(r2.type)})');
-    _printTlvs(r2.plain);
+    _printResponseTlvs(r2);
     final m2 = r2.serverMessage;
     if (m2 != null) out('  服务端提示: [${m2.$1}] ${m2.$2}');
 
@@ -560,7 +575,38 @@ void _printTlvs(Uint8List body) {
   }
   out('  子命令=$sub  声明 TLV 个数=$n  实际解析=${tags.length}'
       '${n == tags.length ? ' ✓' : ' ✗'}');
-  out('  TLV: ${tags.map((t) => '0x${t.toRadixString(16).padLeft(4, '0')}').join(' ')}');
+  // 带长度打印：跨次真跑对比时，长度比编号更能定位差异（0x106/0x144 等
+  // 由口令派生的 TLV 一旦长度不对就能立刻看出来）。
+  for (final t in tags) {
+    final off = _tlvOffset(body, t);
+    final len = off == null ? -1 : (body[off + 2] << 8) | body[off + 3];
+    out('    0x${t.toRadixString(16).padLeft(4, '0')}'
+        '${len.toString().padLeft(7)} 字节');
+  }
+}
+
+/// 打印**响应**里的 TLV（用解析好的 map，不猜明文头布局）。
+///
+/// 响应明文头是 `u16 ?` + `u8 type` + `u16 ?`，与请求体的
+/// `u16 子命令` + `u16 个数` 不同构——早期版本这里直接拿 `plain` 当请求体解析，
+/// 打出了 `声明 TLV 个数=256 / 0x0201` 这种垃圾。
+void _printResponseTlvs(Qq8LoginResponse r) {
+  final tags = r.tlvs.keys.toList()..sort();
+  out('  响应 TLV (${tags.length} 项): '
+      '${tags.map((t) => '0x${t.toRadixString(16).padLeft(4, '0')}'
+          '(${r.tlvs[t]!.length}B)').join(' ')}');
+}
+
+/// 在请求体里找某个 tag 的偏移（返回 tag 起始位置）。
+int? _tlvOffset(Uint8List body, int want) {
+  var i = 4;
+  while (i + 4 <= body.length) {
+    final tag = (body[i] << 8) | body[i + 1];
+    final len = (body[i + 2] << 8) | body[i + 3];
+    if (tag == want) return i;
+    i += 4 + len;
+  }
+  return null;
 }
 
 int _u32(Uint8List b) => (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
