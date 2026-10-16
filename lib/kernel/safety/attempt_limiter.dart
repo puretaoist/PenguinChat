@@ -286,12 +286,26 @@ class LoginAttemptLimiter {
   /// 若按失败累计，解一次验证就记一次，五轮下来把自己锁 24 小时。
   static bool isProgressCode(String? rc) => rc == 'type=2' || rc == 'type=204';
 
-  /// 从记录尾部重算连败次数：跳过"要求验证"与未定结果的占位记录，遇到成功即止。
+  /// 「瞬态重试」响应码：`type=15`/`type=16`（票据失效，服务端要求重新登录）。
+  ///
+  /// 官方语义（oicq_request.java case 15/16 同分支）：`will clean sig for uin`
+  /// —— 清掉本地票据重新走登录；oicq 同样删 token 后 3 秒原样重发。
+  /// 服务端能回 15/16 说明口令分支**已经通过**（口令错只会回 type=1），
+  /// 它不是"凭据错误"，按失败累计会把自己锁死在服务端要求的状态机里。
+  static bool isTransientCode(String? rc) =>
+      rc == 'type=15' || rc == 'type=16';
+
+  /// 从记录尾部重算连败次数：跳过"要求验证"、瞬态重试与未定结果的占位记录，
+  /// 遇到成功即止。
   int _recomputeConsecutive() {
     var n = 0;
     for (final r in _records.reversed) {
       if (r.success) break;
-      if (r.pending || isProgressCode(r.reasonCode)) continue;
+      if (r.pending ||
+          isProgressCode(r.reasonCode) ||
+          isTransientCode(r.reasonCode)) {
+        continue;
+      }
       n++;
     }
     return n;
@@ -301,7 +315,11 @@ class LoginAttemptLimiter {
   DateTime? _lastRealFailureAt() {
     for (final r in _records.reversed) {
       if (r.success) break;
-      if (r.pending || isProgressCode(r.reasonCode)) continue;
+      if (r.pending ||
+          isProgressCode(r.reasonCode) ||
+          isTransientCode(r.reasonCode)) {
+        continue;
+      }
       return r.at;
     }
     return null;

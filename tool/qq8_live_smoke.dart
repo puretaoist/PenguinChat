@@ -1203,13 +1203,20 @@ Future<void> main(List<String> argv) async {
     }
   } else {
     // 「要求验证」是流程中间态（接着要提交 ticket 或走设备锁流程），
-    // 不计入连败；其余非成功码才算失败。
+    // 不计入连败；type=15/16 是服务端要求清状态重登（票据失效），同样不算
+    // 凭据失败——能回 15/16 说明口令分支已通过；其余非成功码才算失败。
     final rc = 'type=${r.type}';
     if (LoginAttemptLimiter.isProgressCode(rc)) {
       await limiter.recordProgress(reasonCode: rc);
       out('');
       out('  ↻ 要求验证（$rc）：按提示人工完成验证后，'
           '用 --slider-ticket 继续；这一步**不计入失败次数**。');
+    } else if (LoginAttemptLimiter.isTransientCode(rc)) {
+      await limiter.recordProgress(reasonCode: rc);
+      out('');
+      out('  ↻ 瞬态响应（$rc）：服务端要求清票据重新登录'
+          '（官方 oicq_request.java case 15/16：will clean sig for uin）。');
+      out('    这不是凭据错误——稍等片刻后原样重试即可（官方/参考实现都这么做）。');
     } else {
       await limiter.recordFailure(reasonCode: rc);
       out('');
