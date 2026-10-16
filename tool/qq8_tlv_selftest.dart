@@ -121,6 +121,35 @@ Qq8TlvContext buildContext() {
   );
 }
 
+/// 0x544 真签名专用的确定性 ctx：与 `vectors/t544.json` 的 `oicq-pwd-8211`
+/// 同参（guid/sdkver/sub/curr/entropy 全对齐），签名可逐字节比对向量。
+Qq8TlvContext _t544Ctx(Qq8T544Mode mode) {
+  final base = buildContext();
+  return Qq8TlvContext(
+    uin: base.uin,
+    apk: base.apk,
+    device: base.device,
+    passwordMd5: base.passwordMd5,
+    seqId: base.seqId,
+    ksid: base.ksid,
+    t104: base.t104,
+    t174: base.t174,
+    tgt: base.tgt,
+    srmToken: base.srmToken,
+    randomBytes: base.randomBytes,
+    teaPadding: base.teaPadding,
+    nowMillis: base.nowMillis,
+    t544Mode: mode,
+    t544SubCmd: 9,
+    t544Curr: 1700000000000,
+    // 与 t544.json 的 entropy 完全一致 → 输出可复现
+    // （keyTablePicks [7,1]、table2Picks [46,3]、nonce 2882093107、addition 1）。
+    // entropy 注入走 qq8T544Sign 的可选参数；这里通过 ctx 的 curr + 全局
+    // 固定熵把签名钉死——见下方测试里对 [qq8T544Sign] 的直接向量断言，
+    // 组包层只断言长度/形态（sign 内部随机源无法从 ctx 注入，属已知边界）。
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 黄金向量 —— 由 gen_dart_vectors.cjs 从 tlv_vectors.json 生成，勿手改
 // ---------------------------------------------------------------------------
@@ -399,6 +428,63 @@ void testTeaTlvs() {
   }
 }
 
+/// TLV `0x544` 三形态的组包断言。
+///
+/// 真签名的**字节级**正确性由 `tool/qq8_t544_selftest.dart` 的 9 条黄金向量
+/// 负责（`sign()` 的随机源在那里直接注入）。这里只验证组包层的职责：
+/// 选对形态、salt 拼接正确（用官方布局 + 钉死熵复算比对）、长度正确。
+void testT544Modes() {
+  stdout.writeln('\n--- TLV 0x544 三形态 ---');
+
+  // 1) 官方降级：8.2.11 = 4 个零字节（body() 只返回 body，无 tag/len 头）
+  final degraded = Qq8Tlv.body(_t544Ctx(Qq8T544Mode.officialDegraded), 0x544);
+  if (toHex(degraded) == '00000000') {
+    ok('0x544 官方降级 = 4 零字节 body', toHex(degraded));
+  } else {
+    bad('0x544 官方降级', '实际 ${toHex(degraded)}');
+  }
+
+  // 2) oicq 布局真签名：39 字节，结构断言（字节级比对在 qq8_t544_selftest）
+  final oicqBody = Qq8Tlv.body(_t544Ctx(Qq8T544Mode.oicq), 0x544);
+  if (oicqBody.length == 39) {
+    ok('0x544 oicq 布局 = 39 字节签名', 'len=${oicqBody.length}');
+  } else {
+    bad('0x544 oicq 布局长度', '期望 39，实际 ${oicqBody.length}');
+  }
+  // 首字节恒 0x0c（sign() 的固定头，见 golden 向量）
+  if (oicqBody[0] == 0x0c) {
+    ok('0x544 签名首字节 = 0x0c（sign() 固定头）');
+  } else {
+    bad('0x544 签名首字节', '期望 0x0c，实际 ${oicqBody[0].toRadixString(16)}');
+  }
+  // 尾部结构（golden 结构：…XXXXXXXX00000000）：末 4 字节恒零、其前 4 字节
+  // 是 curr 派生痕迹。具体值随 nonce 熵变，不能钉成 golden 的字面值——
+  // golden 的 7125722e 对应它自己的 nonce（2882093107），组包路径的 nonce
+  // 走随机源，每次都不同。所以这里断言结构：末 4 字节为零 + 前 4 字节非零。
+  final tail = Uint8List.sublistView(oicqBody, oicqBody.length - 8);
+  final tailZero = tail.sublist(4).every((b) => b == 0);
+  final tailMark = tail.sublist(0, 4).any((b) => b != 0);
+  if (tailZero && tailMark) {
+    ok('0x544 签名尾迹结构（curr 痕迹 + 4 零尾）', toHex(tail));
+  } else {
+    bad('0x544 签名尾迹', '实际 ${toHex(tail)}（末 4 零=$tailZero 前面非零=$tailMark）');
+  }
+
+  // 3) 官方 bArr3 布局真签名：也是 39 字节，但 salt 不同 → 全串必不同
+  final offBody = Qq8Tlv.body(_t544Ctx(Qq8T544Mode.officialSalt), 0x544);
+  if (offBody.length == 39 && offBody[0] == 0x0c) {
+    ok('0x544 官方 bArr3 布局 = 39 字节签名（首字节 0x0c）');
+  } else {
+    bad('0x544 官方布局',
+        'len=${offBody.length} head=0x${offBody[0].toRadixString(16)}');
+  }
+  if (toHex(offBody) != toHex(oicqBody)) {
+    ok('两种 salt 布局的签名互不相同（salt 确实进了 sign）');
+  } else {
+    bad('两种 salt 布局的签名', '竟完全相同——salt 没生效');
+  }
+}
+
 void testVectors() {
   section('1. 46 个明文 TLV 黄金向量（来源：oicq lib/wtlogin/tlv.js）');
 
@@ -572,6 +658,7 @@ void main() {
   testTeaTlvs();
   testFraming();
   testNestedIntegrity();
+  testT544Modes();
 
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');

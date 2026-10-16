@@ -512,6 +512,31 @@ A problem occurred evaluating project ':flutter_inappwebview_android'.
 
 另注：155 也可能掺杂当日反复登录的风控成分——修复后若仍 155，隔天再试一次再下结论。
 
+### C9. 设备指纹三层栈的两层已自给（2026-10-16），只剩 0x544 一层
+
+| 层 | TLV | 状态 |
+|---|---|---|
+| L1 guid | 0x106 内料 | ✅ 客户端自证身份，16 字节随机即可（服务端只存不校验） |
+| L2 QIMEI | 0x545 | ✅ **2026-10-16 打通**：灯塔 OLA 纯 HTTPS 自取号，见 C9.1 |
+| L3 设备码 | 0x544 | 🔄 纯算法签名移植中（oicq 2.3.1 `encryption.ts` 的 `sign()`） |
+
+**C9.1 QIMEI 不需要 hook 就能拿到。** 维护版 icqq 0.6.10 的
+`lib/core/qimei.js` 给了完整纯 JS 实现：`POST https://snowflake.qq.com/ola/android`，
+1024-bit RSA(PKCS1) 包 AES-128-CBC 密钥，参数用 MD5 做签名（secret `ZdJqM15EeO2zWc08`）。
+本机实测 HTTP 200 / 148 字节 / 251 ms，36 字符 q16 到手。
+请求体**只有设备属性**（androidId/guid/model/sdkver…），没有 uin、没有口令、没有票据。
+
+两个教训：
+* 之前结论「QIMEI 必须 hook 官方客户端」**过时了**——那是 Beacon 旧版 SDK
+  （`DENGTA_META/QIMEI_DENGTA`）时代的事，新版 snowflake 端点是纯 HTTPS。
+* **appKey 每 app 一套**的老结论仍然成立（TIM 的 `0AND0*` 不能用于 QQ），
+  但 `0S200MNJT807V3GE`（老 DENGTA 层）三代官方 QQ 通用，灯塔取号用的就是它。
+  icqq 全部 18 个移动档案也共用这一个 app_key。
+
+C8 那句「密码链在纯 Dart 侧已到头」因此**放宽**：0x545 从「拿不到」变成「可自取」，
+0x544 从「只有 native」变成「存在公开纯算法实现（oicq/icqq 同源，2023-05）」。
+是否仍被服务端接受，只有真机能裁决。
+
 ---
 
 ## D. 网络与环境

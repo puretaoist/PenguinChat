@@ -727,11 +727,15 @@ Future<void> main(List<String> argv) async {
     }
   }
   final t544Mode = args['t544'] ?? 'official';
-  if (t544Mode != 'official' && t544Mode != 'oicq') {
-    errOut('✗ --t544 只支持 official / oicq，收到 "$t544Mode"');
+  if (t544Mode != 'official' && t544Mode != 'oicq' && t544Mode != 'oicq-salt') {
+    errOut('✗ --t544 只支持 official / oicq / oicq-salt，收到 "$t544Mode"');
     exit(2);
   }
-  out('  0x544 形态: ${t544Mode == 'oicq' ? 'oicq v=2 结构占位（实验）' : '官方降级（默认）'}');
+  out('  0x544 形态: ${switch (t544Mode) {
+        'oicq' => 'oicq 布局纯算法真签名（39 字节）',
+        'oicq-salt' => '官方 bArr3 布局纯算法真签名（39 字节）',
+        _ => '官方降级（默认）',
+      }}');
   out('  0x545（QIMEI）: ${qimei == null ? '不发（取不到就是官方行为）' : '发'}');
 
   // 0x548（客户端自构造 PoW）：只在密码首登包携带（维护版 oicq v1.26.25）。
@@ -774,17 +778,23 @@ Future<void> main(List<String> argv) async {
     // 挑战带 0x546 时，提交要回 0x547（本地算出的防刷应答）；没有就不带
     t547: sliderPowHex == null ? null : _hex(sliderPowHex),
     t548: selfT548,
-    // 0x544 实验形态：v==2 结构占位（值 = 子命令号）；不改密码/续期/验证各条
-    // 请求的子命令号，直接按用途取。
-    t544SubCmd: t544Mode == 'oicq'
-        ? (useSlider
-            ? Qq8SubCmd.slider
-            : (useSubmitSms
-                ? Qq8SubCmd.submitSms
-                : (useSendSms
-                    ? Qq8SubCmd.sendSms
-                    : (useToken ? Qq8SubCmd.token : Qq8SubCmd.password))))
-        : null,
+    // 0x544：official = 官方降级体；oicq / oicq-salt = 纯算法真签名
+    // （q8T544Sign，salt 布局二选一，见 Qq8T544Mode 注释）。子命令号按
+    // 当前分支取（不改密码/续期/验证各条请求的用途）。
+    t544Mode: switch (t544Mode) {
+      'oicq' => Qq8T544Mode.oicq,
+      'oicq-salt' => Qq8T544Mode.officialSalt,
+      _ => Qq8T544Mode.officialDegraded,
+    },
+    t544SubCmd: useSlider
+        ? Qq8SubCmd.slider
+        : (useSubmitSms
+            ? Qq8SubCmd.submitSms
+            : (useSendSms
+                ? Qq8SubCmd.sendSms
+                : (useToken ? Qq8SubCmd.token : Qq8SubCmd.password))),
+    // deterministic 时 curr 钉死，保证包可复现
+    t544Curr: deterministic ? 1700000000000 : null,
   );
 
   final body = useSlider

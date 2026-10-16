@@ -34,6 +34,7 @@ import '../../infra/coder.dart';
 import '../crypto/digest.dart';
 import '../crypto/tea.dart';
 import 'qq8_device.dart';
+import 'qq8_t544.dart' show qq8T544Sign;
 
 /// 官方客户端**登录请求**的 TLV 清单与顺序。
 ///
@@ -421,6 +422,21 @@ class Qq8ApkInfo {
   });
 }
 
+/// TLV `0x544`（设备码）发哪种形态。
+enum Qq8T544Mode {
+  /// 官方降级体：安全 SDK 加载失败时官方自己发的字节串
+  /// （8.2.11 = 4 个零字节，出处 `ByteData.getCode` 的 `status` 数组）。
+  officialDegraded,
+
+  /// oicq 2.3.1 的纯算法真签名，oicq salt 布局（`lib/core/tlv.ts` 的 0x544）。
+  /// 签名 = `qq8T544Sign(curr, salt)`，39 字节，黄金向量见 `vectors/t544.json`。
+  oicq,
+
+  /// 同一个纯算法签名，但 salt 用官方 `tlv_t544.java` 的 `bArr3` 布局。
+  /// 与 [oicq] 只差 salt 排列——两种布局哪个被服务端接受，只有真机能裁决。
+  officialSalt,
+}
+
 /// TLV 打包所需的上下文。
 ///
 /// 随机源与时间源均可注入——**这是让 TLV 输出可复现、可对照参考实现的前提**
@@ -494,17 +510,24 @@ class Qq8TlvContext {
   /// uin 的十进制串，手机号登录时是手机号；为空则退回 `'$uin'`。
   final String? account;
 
-  /// TLV `0x544` 的形态开关（**实验字段**，null = 官方降级路径）。
+  /// TLV `0x544` 的形态（默认官方降级，不改变既有行为）。
   ///
-  /// * `null`：发官方的"安全 SDK 不可用"降级 body（`apk.tlv544DegradedBody`）。
-  /// * 非 null：发**参考实现 oicq 的 v==2 结构**，值就是当前的子命令号：
-  ///   `u32(0) ‖ tlv(guid) ‖ tlv(sdkver) ‖ u32(子命令) ‖ u32(0)`
-  ///   （oicq `lib/core/tlv.ts` 的 `0x544` 打包函数，密码登录传 `(2, 9)`）。
+  /// * [Qq8T544Mode.officialDegraded]：官方「安全 SDK 不可用」降级 body
+  ///   （`apk.tlv544DegradedBody`，8.2.11 = 4 个零字节）。
+  /// * [Qq8T544Mode.oicq]：oicq 2.3.1 的**纯算法真签名**——salt 布局
+  ///   `u32(0)‖tlv(guid)‖tlv(sdkver)‖u32(sub)‖u32(0)`，喂 `qq8T544Sign` 发 39 字节。
+  /// * [Qq8T544Mode.officialSalt]：官方 `tlv_t544.java` 的 `bArr3` 布局
+  ///   （`u32 uin‖u16 len(t.A)‖t.A‖u16 len(sdk)‖sdk‖u32 subcmd`）喂同一个
+  ///   `qq8T544Sign`——两种 salt 布局哪个被服务端接受只有真机能裁决。
   ///
-  /// 为什么要有它：官方那份是真签名（来自安全 SDK），我们发不出来；oicq 用
-  /// 结构占位在实测里能过。两种形态哪个被服务端接受，只有真机能回答——
-  /// 默认仍是官方降级（不改变既有行为），实验时显式打开。
+  /// 子命令号取 [t544SubCmd]（登录 = 9），curr 取 [t544Curr]（不设用挂钟）。
+  final Qq8T544Mode t544Mode;
+
+  /// TLV `0x544` 签名里的子命令号（密码登录 = 9，滑块 = 2，短信 = 7/8）。
   final int? t544SubCmd;
+
+  /// TLV `0x544` 签名的 curr（毫秒时间戳；`sign()` 内部只取 `% 1000000`）。
+  final int? t544Curr;
 
   /// 当前时间（毫秒）。
   final int Function() nowMillis;
@@ -524,7 +547,9 @@ class Qq8TlvContext {
     this.msalt = 0,
     this.loginType = 1,
     this.account,
+    this.t544Mode = Qq8T544Mode.officialDegraded,
     this.t544SubCmd,
+    this.t544Curr,
     this.seqId = 0,
     this.randomBytes = _secureRandomImpl,
     this.teaPadding = _secureRandomImpl,
@@ -544,6 +569,48 @@ Uint8List _secureRandomImpl(int n) {
 
 /// 默认时间源。
 int _wallClockImpl() => DateTime.now().millisecondsSinceEpoch;
+
+/// oicq 布局的 0x544 salt（`sign()` 的输入）。
+///
+/// 出处 oicq 2.3.1 `lib/core/tlv.ts` 的 `0x544` packer：
+/// `v == 2`（密码登录）时 `u32(0) ‖ writeTlv(guid) ‖ writeTlv(sdkver) ‖
+/// u32(sub) ‖ u32(0)`，其余形态没有最后的 `u32(0)`。`writeTlv` = u16 长度 +
+/// 内容，与 TLV 头同款（`len` 只计内容）。
+Uint8List _t544SaltOicq(
+  Qq8TlvContext ctx, {
+  required int t544SubCmd,
+  bool form2 = true,
+}) {
+  final w = ByteWriter();
+  w.u32(0);
+  _writeU16Prefixed(w, ctx.device.guid);
+  _writeU16Prefixed(w, Uint8List.fromList(utf8.encode(ctx.apk.sdkver)));
+  w.u32(t544SubCmd);
+  if (form2) {
+    w.u32(0);
+  }
+  return w.build();
+}
+
+/// 官方布局的 0x544 salt（`tlv_t544.java` 交给 `ByteData.getCode` 的 `bArr3`）。
+///
+/// 布局 `u32 uin ‖ u16 len(t.A) ‖ t.A ‖ u16 len(sdk) ‖ sdk ‖ u32 subcmd`。
+/// `t.A` 是官方在 `T.SingleTon` 里维护的可选附加块——**首登时为空**（长度 0），
+/// 所以这里留空；若日后真机抓到非空样本，再加 ctx 字段承载。
+Uint8List _t544SaltOfficial(Qq8TlvContext ctx, {required int t544SubCmd}) {
+  final w = ByteWriter();
+  w.u32(ctx.uin);
+  _writeU16Prefixed(w, Uint8List(0)); // t.A：首登为空
+  _writeU16Prefixed(w, Uint8List.fromList(utf8.encode(ctx.apk.sdkver)));
+  w.u32(t544SubCmd);
+  return w.build();
+}
+
+/// u16 长度前缀 + 内容（TLV 头同款；oicq `writeTlv` / 官方 `make_byte`）。
+void _writeU16Prefixed(ByteWriter w, List<int> body) {
+  w.u16(body.length);
+  w.raw(Uint8List.fromList(body));
+}
 
 /// TLV 打包器。
 abstract final class Qq8Tlv {
@@ -805,21 +872,37 @@ abstract final class Qq8Tlv {
         w.u32(1600000226); // app id list[0]
 
       case 0x544:
-        // 安全 SDK 不可用时官方的降级 body（默认路径，出处见上方文档）。
+        // 三种形态，由 `ctx.t544Mode` 选择（见 Qq8T544Mode 的注释）：
         //
-        // 实验开关：`ctx.t544SubCmd` 非空时改发参考实现 oicq 的 v==2 结构
-        //   u32(0) ‖ tlv(guid) ‖ tlv(sdkver) ‖ u32(子命令) ‖ u32(0)
-        // （oicq `tlv.ts` 的 `0x544`；它没有真正的签名，只是把格式填满。
-        //   哪个形态服务端认，只有真机能回答——见 ctx 字段的注释。）
-        final t544Sub = ctx.t544SubCmd;
-        if (t544Sub == null) {
-          w.raw(Uint8List.fromList(ctx.apk.tlv544DegradedBody));
-        } else {
-          w.u32(0);
-          _tlv(w, ctx.device.guid);
-          _tlv(w, utf8.encode(ctx.apk.sdkver));
-          w.u32(t544Sub);
-          w.u32(0);
+        //   official —— 官方降级体 `tlv544DegradedBody`（8.2.11 = 4 个零字节，
+        //               出处 ByteData.getCode 的 `status`；SDK 正常时它发的才是
+        //               真签名，但那个值来自 libpoxy native + 联网，拿不到）。
+        //
+        //   oicq     —— oicq 2.3.1 的纯算法签名（`lib/core/tlv.ts:334` 的
+        //               `0x544` packer）：salt 布局 `u32(0)‖tlv(guid)‖tlv(sdkver)‖
+        //               u32(sub)‖u32(0)`（v==2），再整体喂 `sign(curr, salt)`，
+        //               发 39 字节签名。**2026-10-16 之前我们只发了 salt 本身**
+        //               （那正是 sign() 的输入，不是输出）——本次补上真正的
+        //               `qq8T544Sign` 调用，黄金向量 9/9 逐字节复现
+        //               （`tool/qq8_t544_selftest.dart`）。
+        //
+        //   officialSalt —— 官方 `tlv_t544.java` 喂给 `ByteData.getCode` 的
+        //               `bArr3` 布局（`u32 uin‖u16 len(t.A)‖t.A‖u16 len(sdk)‖
+        //               sdk‖u32 subcmd`）也喂同一个 `sign()`——oicq 与官方的
+        //               salt 布局不同，哪个被服务端接受只有真机能裁决，所以
+        //               两种布局都留了向量（`vectors/t544.json` 的
+        //               `official-*` 条目）。
+        final t544Mode = ctx.t544Mode;
+        switch (t544Mode) {
+          case Qq8T544Mode.officialDegraded:
+            w.raw(Uint8List.fromList(ctx.apk.tlv544DegradedBody));
+          case Qq8T544Mode.oicq:
+            final salt =
+                _t544SaltOicq(ctx, t544SubCmd: ctx.t544SubCmd ?? 0);
+            w.raw(qq8T544Sign(ctx.t544Curr ?? ctx.nowMillis(), salt));
+          case Qq8T544Mode.officialSalt:
+            final salt = _t544SaltOfficial(ctx, t544SubCmd: ctx.t544SubCmd ?? 0);
+            w.raw(qq8T544Sign(ctx.t544Curr ?? ctx.nowMillis(), salt));
         }
 
       case 0x545:
