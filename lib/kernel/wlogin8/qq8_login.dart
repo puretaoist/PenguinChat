@@ -434,7 +434,12 @@ abstract final class Qq8LoginBody {
   ///
   /// [ctx] 里的 `t104` 必须是**上一条响应下发的盐**（`0x104`）：没有它
   /// 这条请求无意义，官方参考实现也直接拒绝发送——所以这里显式校验。
-  static Uint8List buildSlider(Qq8TlvContext ctx, {required String ticket}) {
+  static Uint8List buildSlider(
+    Qq8TlvContext ctx, {
+    required String ticket,
+    Qq8SliderTicketForm form = Qq8SliderTicketForm.websig,
+    Uint8List? pictureSign,
+  }) {
     if (ctx.t104.isEmpty) {
       throw Qq8LoginException(
         '滑动验证提交缺少盐（ctx.t104 为空）：盐来自上一条响应（type=2）的 0x104',
@@ -443,17 +448,24 @@ abstract final class Qq8LoginBody {
     if (ticket.trim().isEmpty) {
       throw Qq8LoginException('滑动验证提交的 ticket 为空');
     }
+    final t = ticket.trim();
     return build(
       ctx,
       Qq8SubCmd.slider,
       // 官方三版本对照（2026-09-15）：193/8/104/116/547 恒在（547 空时发空
       // body），8.9.50+ 加 544（空 body），无 542——见 qq8SliderTlvOrderFor。
-      qq8SliderTlvOrderFor(ctx.apk),
+      // 首项随 form 在 0x193 / 0x02 间切换（官方 request/n.java 的 n.K）。
+      qq8SliderTlvOrderFor(ctx.apk, form: form),
       // 盐要同时在 guard（条件对象）与 body（ctx.t104）两侧可见：
       // guard 决定 0x104 是否进包，body 决定它的内容。
       cond: Qq8LoginConditions(t104: ctx.t104),
       args: <int, List<Object?>>{
-        0x193: <Object?>[ticket.trim()],
+        if (form == Qq8SliderTicketForm.picture)
+          // 官方 `tlv_t2.get_tlv_2(ticket, t105.get_sign())`：第二段是图片签名，
+          // 没有 0x105 挑战时为空（尾段 `0000`）。
+          0x02: <Object?>[t, pictureSign ?? Uint8List(0)]
+        else
+          0x193: <Object?>[t],
       },
     );
   }

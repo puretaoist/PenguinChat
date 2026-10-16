@@ -193,6 +193,23 @@ Future<void> main(List<String> argv) async {
   final sliderTicket = args['slider-ticket'];
   final useSlider = sliderTicket != null;
 
+  // 滑块提交的首项 TLV 形态（官方 `request/n.java` 的 `n.K` 开关）：
+  //   websig （默认）= 0x193，官方 CheckWebsigAndGetSt / submitPuzzleVerifyCodeTicket
+  //   picture        = 0x02 ，官方 CheckPictureAndGetSt / submitVerifyCode
+  // ⚠️ 官方两个包装器**打印同一条日志**（私有主流程里 LOGI 字符串写死为
+  // "CheckPictureAndGetSt"），所以日志方法名不能用来判断走了哪条——只有 TLV 本身能。
+  final sliderFormName = args['slider-form'] ?? 'websig';
+  final Qq8SliderTicketForm sliderForm;
+  switch (sliderFormName) {
+    case 'websig':
+      sliderForm = Qq8SliderTicketForm.websig;
+    case 'picture':
+      sliderForm = Qq8SliderTicketForm.picture;
+    default:
+      errOut('✗ --slider-form 只能是 websig 或 picture（收到 "$sliderFormName"）');
+      exit(2);
+  }
+
   // 验证分支（都读 qq8-slider-state.json 里存下的盐/令牌）：
   //   --send-sms        请求下发短信验证码（子命令 8；需 0x104 + 0x174）
   //   --sms-code=NNNNNN 提交短信验证码（子命令 7；需 0x104 + 0x174）
@@ -470,7 +487,7 @@ Future<void> main(List<String> argv) async {
   final sliderPowHex = useSlider ? _sliderT547FromState(sliderStateFile) : null;
   // 官方三版本对照(2026-09-15):滑块提交 547 恒在(空 body 或应答)、
   // 8.9.50+ 带 544、无 542——见 qq8SliderTlvOrderFor。
-  final sliderOrder = qq8SliderTlvOrderFor(profile.apk);
+  final sliderOrder = qq8SliderTlvOrderFor(profile.apk, form: sliderForm);
   // oicq 实验集是旧参考的 24 项（无 548）；ssoVer>12 时按维护版补 0x548/0x542。
   List<int> oicqPasswordOrder() => tlvSet == 'oicq' && profile.apk.ssoVer > 12
       ? <int>[...kOicqPasswordTlvOrder, 0x548, 0x542]
@@ -534,6 +551,10 @@ Future<void> main(List<String> argv) async {
   );
   Uint8List sliderSalt = Uint8List(0);
   Uint8List verifyToken = Uint8List(0);
+  // 传统图片验证码路径（--slider-form=picture）的图片签名：官方
+  // `tlv_t2.get_tlv_2(ticket, async_context._t105.get_sign())` 的第二段。
+  // 响应里没有 0x105 挑战时为空——那就发官方同款的尾段 `0000`。
+  Uint8List sliderPictureSign = Uint8List(0);
   if (useSlider || useSendSms || useSubmitSms || useDeviceUnlock) {
     final saltHex = args['slider-salt'] ?? stateJson['t104'];
     if (saltHex == null || saltHex.isEmpty) {
@@ -558,7 +579,24 @@ Future<void> main(List<String> argv) async {
             : (useSubmitSms ? '提交短信码' : '设备锁解锁'));
     out('--- 验证材料（$branchName）---');
     out('  盐: ${sliderSalt.length} 字节（0x104）');
-    if (useSlider) out('  ticket: ${sliderTicket.length} 字符');
+    if (useSlider) {
+      out('  ticket: ${sliderTicket.length} 字符');
+      out('  首项 TLV: 0x${(sliderForm == Qq8SliderTicketForm.picture ? 0x02 : 0x193).toRadixString(16)}'
+          '（官方 n.K=${sliderForm == Qq8SliderTicketForm.picture ? 'false → CheckPictureAndGetSt' : 'true → CheckWebsigAndGetSt'}）');
+      if (sliderForm == Qq8SliderTicketForm.picture) {
+        final signHex = args['picture-sign'];
+        if (signHex != null && signHex.isNotEmpty) {
+          try {
+            sliderPictureSign = _hex(signHex);
+          } on Object catch (e) {
+            errOut('✗ --picture-sign 不是合法 hex: $e');
+            exit(2);
+          }
+        }
+        out('  图片签名: ${sliderPictureSign.length} 字节（0x105 sign，'
+            '${sliderPictureSign.isEmpty ? '空 → 尾段 0000' : '来自 --picture-sign'}）');
+      }
+    }
     if (useSendSms || useSubmitSms) {
       out('  令牌: ${verifyToken.length} 字节（0x174）'
           '${verifyToken.isEmpty ? '  ⚠ 缺失，这条请求发不出去' : ''}');
@@ -798,7 +836,12 @@ Future<void> main(List<String> argv) async {
   );
 
   final body = useSlider
-      ? Qq8LoginBody.buildSlider(tlvCtx, ticket: sliderTicket)
+      ? Qq8LoginBody.buildSlider(
+          tlvCtx,
+          ticket: sliderTicket,
+          form: sliderForm,
+          pictureSign: sliderPictureSign,
+        )
       : (useSendSms
           ? Qq8LoginBody.buildSendSms(tlvCtx)
           : (useSubmitSms

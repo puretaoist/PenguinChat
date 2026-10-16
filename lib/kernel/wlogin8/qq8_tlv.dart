@@ -284,13 +284,39 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 ///   （请求下发短信，带 174/17a 令牌）的流程里（`WtloginHelper:8501`）。
 ///   维护版 oicq 把它错位带进了滑块提交——我们此前跟随它发了 542，
 ///   真机对应 type=1（2026-09-15 官方对照后修正）。
-List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk) {
-  final order = <int>[0x193, 0x08, 0x104, 0x116, 0x547];
+List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {Qq8SliderTicketForm form = Qq8SliderTicketForm.websig}) {
+  final order = <int>[
+    // 官方 `request/n.java`：`K ? 0x193 : 0x2` —— 首项随 n.K 切换，其余全同。
+    form == Qq8SliderTicketForm.picture ? 0x02 : 0x193,
+    0x08,
+    0x104,
+    0x116,
+    0x547,
+  ];
   if (apk.ssoVer > 12) order.add(0x544);
   // 9.3.60 / TIM：官方滑块提交还带 0x553 —— getFeKitAttach(...,"0x810","0x2")
   // （第二个参数是**子命令 2**）。按档案字段判断：8.2.11/8.9.50 = null 不发。
   if (apk.tlv553DegradedBody != null) order.add(0x553);
   return order;
+}
+
+/// 滑验证提交时**首项 TLV 的形态**——官方 `request/n.java` 里的 `n.K` 开关。
+///
+/// | 值 | 官方入口 | 首项 | 官方语义 |
+/// |---|---|---|---|
+/// | [websig] | `CheckWebsigAndGetSt` / `MsfCommand.submitPuzzleVerifyCodeTicket` | `0x193` | **Web/滑块 puzzle ticket**（ti.qq.com 那套） |
+/// | [picture] | `CheckPictureAndGetSt` / `MsfCommand.submitVerifyCode` | `0x02` | 传统图片验证码（code + 图片签名） |
+///
+/// ⚠️ **日志无法区分两者**：`WtloginHelper` 的私有主流程里 `LOGI` 字符串是硬编码的
+/// `"user:" + uin + " CheckPictureAndGetSt Seq:..."`，`CheckWebsigAndGetSt` 只是先置
+/// `n.K = true` 再转调它，所以官方 wlogin 文件日志里**永远只出现 CheckPictureAndGetSt**。
+/// 判断依据只能是 TLV 内容本身，不能是日志方法名。
+enum Qq8SliderTicketForm {
+  /// `n.K = true` → TLV `0x193`（body = 裸 ticket）。oicq 与我们都走这条。
+  websig,
+
+  /// `n.K = false` → TLV `0x02`（body = `u16 0 ‖ u16len(ticket) ‖ ticket ‖ u16len(sign) ‖ sign`）。
+  picture,
 }
 
 /// 密码登录（子命令 9）的**实际清单**：档案的官方顺序表 + 维护版追加的 `0x542`。
@@ -649,6 +675,26 @@ abstract final class Qq8Tlv {
         w.u32(now & 0xFFFFFFFF);
         w.raw(Uint8List(4)); // ip
         w.u16(0);
+
+      // 传统图片验证码提交（官方 `tlv_t2.get_tlv_2(byte[] bArr, byte[] bArr2)`）。
+      //
+      // 出处：`jadx-main/sources/oicq/wlogin_sdk/tlv_type/tlv_t2.java`（8.2.11）。
+      // `_cmd = 2`、`_sigVer = 0`；body 布局逐字节为
+      //
+      //     u16 _sigVer(0) ‖ u16 len(bArr) ‖ bArr ‖ u16 len(bArr2) ‖ bArr2
+      //
+      // 调用点 `request/n.java` 里 `bArr`=ticket、`bArr2`=`async_context._t105.get_sign()`
+      // （图片签名，无 0x105 挑战时为空数组 → 尾段退化成 `0000`）。
+      //
+      // 与 `case 0x193` 的关系：官方 `request/n.java` 用 `n.K` 在两者间二选一——
+      // `K=true`（`CheckWebsigAndGetSt` / `submitPuzzleVerifyCodeTicket`）→ 0x193；
+      // `K=false`（`CheckPictureAndGetSt`）→ 本 case。⚠️ 两个包装器**都**会打印
+      // 同一句 `user:<uin> CheckPictureAndGetSt Seq:...` 日志（私有主流程里硬编码的
+      // 字符串），所以日志文本**不能**用来判断官方实际走了哪条。
+      case 0x02:
+        w.u16(0); // _sigVer
+        _writeU16Prefixed(w, _bytesArg(args, 0)); // ticket
+        _writeU16Prefixed(w, _bytesArg(args, 1)); // t105 图片签名（通常为空）
 
       case 0x08:
         w.u16(0);

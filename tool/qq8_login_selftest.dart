@@ -561,6 +561,75 @@ Future<void> main() async {
         '${t22.length} 项: ${t22.keys.map((t) => '0x${t.toRadixString(16)}').join(' ')}',
       );
     }
+
+    // -- 官方 n.K 的另一条：CheckPictureAndGetSt → 首项 TLV 0x02 -------------
+    //
+    // 出处 `jadx-main/sources/oicq/wlogin_sdk/tlv_type/tlv_t2.java`：
+    //   get_tlv_2(byte[] bArr, byte[] bArr2)
+    //   body = u16 _sigVer(0) ‖ u16 len(bArr) ‖ bArr ‖ u16 len(bArr2) ‖ bArr2
+    // 调用点 `request/n.java`：bArr = ticket，bArr2 = async_context._t105.get_sign()。
+    // ⚠️ 官方「CheckWebsigAndGetSt」与「CheckPictureAndGetSt」两个包装器**打印同一条
+    // 日志**（私有主流程里 LOGI 字符串写死），所以日志方法名不能判断走了哪条。
+    {
+      final o = qq8SliderTlvOrderFor(qq8ProfileQQ8211.apk,
+          form: Qq8SliderTicketForm.picture);
+      check(
+        'slider/picture：首项换成 0x02，其余 4 项与 websig 完全一致',
+        o.length == 5 &&
+            o[0] == 0x02 &&
+            o.sublist(1).join(',') ==
+                qq8SliderTlvOrderFor(qq8ProfileQQ8211.apk).sublist(1).join(','),
+        o.map((t) => '0x${t.toRadixString(16)}').join(' '),
+      );
+
+      final bPic = Qq8LoginBody.buildSlider(
+        ctx,
+        ticket: ticket,
+        form: Qq8SliderTicketForm.picture,
+      );
+      final tPic = qq8ReadTlv(bPic, offset: 4);
+      check(
+        'slider/picture：包里没有 0x193，只有 0x02（两者互斥）',
+        !tPic.containsKey(0x193) && tPic.containsKey(0x02),
+        tPic.keys.map((t) => '0x${t.toRadixString(16)}').join(' '),
+      );
+
+      // 逐字节核对官方 tlv_t2 布局（无 0x105 → 尾段 0000）。
+      final tk = utf8.encode(ticket);
+      final want = (ByteWriter()
+            ..u16(0) // _sigVer
+            ..u16(tk.length)
+            ..raw(tk)
+            ..u16(0)) // len(t105 sign) = 0
+          .build();
+      check(
+        'slider/picture：0x02 body == 官方 tlv_t2 布局（0000 ‖ u16len(ticket) ‖ ticket ‖ 0000）',
+        tPic[0x02] != null && tPic[0x02]!.join(',') == want.join(','),
+        'got=${tPic[0x02]?.length}B want=${want.length}B',
+      );
+
+      // 带图片签名时，第二段就是签名原文（官方 t105.get_sign()）。
+      final sign = Uint8List.fromList(<int>[0xAA, 0xBB, 0xCC]);
+      final bSign = Qq8LoginBody.buildSlider(
+        ctx,
+        ticket: ticket,
+        form: Qq8SliderTicketForm.picture,
+        pictureSign: sign,
+      );
+      final tSign = qq8ReadTlv(bSign, offset: 4);
+      final wantSign = (ByteWriter()
+            ..u16(0)
+            ..u16(tk.length)
+            ..raw(tk)
+            ..u16(sign.length)
+            ..raw(sign))
+          .build();
+      check(
+        'slider/picture：带 0x105 sign 时第二段 = sign 原文',
+        tSign[0x02]?.join(',') == wantSign.join(','),
+        'got=${tSign[0x02]?.length}B want=${wantSign.length}B',
+      );
+    }
   }
 
   // -- 2e. 密码登录清单的维护版对齐（0x548 自构造 PoW + 0x542）-------------
