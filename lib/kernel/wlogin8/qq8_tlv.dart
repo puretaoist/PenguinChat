@@ -555,6 +555,11 @@ class Qq8TlvContext {
   /// TLV `0x544` 签名的 curr（毫秒时间戳；`sign()` 内部只取 `% 1000000`）。
   final int? t544Curr;
 
+  /// TLV `0x128` 的 guid 来源旗：true = 本次为「现算 guid」（首登语义，官方 guid src 17，
+  /// U=1 / Z=0x11000000）；false = 复用设备 guid 文件（U=0 / Z=0x01000000）。
+  /// 出处：t.java:230-283（t.d() 设 X/V）+ 官方日志 wtlogin_20260919.txt:20 `guid src 17`。
+  final bool guidNew;
+
   /// 当前时间（毫秒）。
   final int Function() nowMillis;
 
@@ -576,6 +581,7 @@ class Qq8TlvContext {
     this.t544Mode = Qq8T544Mode.officialDegraded,
     this.t544SubCmd,
     this.t544Curr,
+    this.guidNew = true,
     this.seqId = 0,
     this.randomBytes = _secureRandomImpl,
     this.teaPadding = _secureRandomImpl,
@@ -1014,11 +1020,18 @@ abstract final class Qq8Tlv {
         _tlv(w, _cut(d.apn, 16));
 
       case 0x128:
+        // 官方 get_tlv_128(t.U, t.V, t.W, t.Z, t.I, t.A, t.P)（k.java case 324）：
+        //   u16(0) ‖ u8 U(guid new) ‖ u8 V(guid available) ‖ u8 W(guid changed) ‖ u32 Z(guid flag) ‖ model ‖ guid ‖ brand
+        // Z = (X<<24)|(Y<<8)，X = guid 来源：文件命中=1 / 现算=17 / 占位=20（t.java t.d()）。
+        // 官方 09-19 真机日志 wtlogin_20260919.txt:20 `guid src 17`（首登现算，无 wlogin_device.dat）
+        // ⇒ U=1,V=1,W=0,Z=0x11000000；旧 guid 文件复用才是 U=0,V=1,W=0,Z=0x01000000。
+        // 默认按「现算」（首登语义）发，与 identity 注入（无设备 guid 文件）对齐；
+        // ctx.guidNew=false 可切回文件命中形态。出处：t.java:230-283 + 官方日志 L20。
         w.u16(0);
-        w.u8(0); // guid new
-        w.u8(1); // guid available
-        w.u8(0); // guid changed
-        w.u32(16777216); // guid flag
+        w.u8(ctx.guidNew ? 1 : 0); // U: 现算=1 / 文件复用=0
+        w.u8(1); // V: guid available
+        w.u8(0); // W: guid changed（首登无旧值可比）
+        w.u32(ctx.guidNew ? 0x11000000 : 0x01000000); // Z = (X<<24)：X=17 现算 / X=1 文件
         _tlv(w, _cut(d.model, 32));
         _tlv(w, _cutBytes(d.guid, 16));
         _tlv(w, _cut(d.brand, 16));
