@@ -1213,10 +1213,12 @@ abstract final class Qq8Tlv {
 
       case 0x511:
         const domains = <String>[
-          'tenpay.com', 'openmobile.qq.com', 'docs.qq.com', 'connect.qq.com',
-          'qzone.qq.com', 'vip.qq.com', 'qun.qq.com', 'game.qq.com',
-          'qqweb.qq.com', 'office.qq.com', 'ti.qq.com', 'mail.qq.com',
-          'gamecenter.qq.com', 'mma.qq.com',
+          // 域名清单与顺序 = 官方 App 层 com/tencent/mobileqq/msf/core/auth/l.java:30-46
+          // （auth/l.b() 填充，15 项含 qun.qq.com 重复——保持逐项一致）。
+          'game.qq.com', 'mail.qq.com', 'qzone.qq.com', 'qun.qq.com',
+          'openmobile.qq.com', 'tenpay.com', 'connect.qq.com', 'qun.qq.com',
+          'qqweb.qq.com', 'office.qq.com', 'ti.qq.com', 'mma.qq.com',
+          'docs.qq.com', 'vip.qq.com', 'gamecenter.qq.com',
         ];
         w.u16(domains.length);
         for (final v in domains) {
