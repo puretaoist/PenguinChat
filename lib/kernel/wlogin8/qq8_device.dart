@@ -180,8 +180,8 @@ class Qq8Device {
   /// `analysis/QQ-官方三版本登录流程对照.md` §11）：
   ///
   /// * `guid`：缺省按官方 `util.generateGuid` 派生 = `MD5(androidId ‖ mac)`；
-  /// * `imsi`：官方 0x194 = `MD5(imsi 原文)`，且**读不到就 MD5 空串**（不是跳过），
-  ///   所以这里存的是摘要而非随机 16 字节；
+  /// * `imsi`：官方 0x194 = `MD5(imsi 原文)`，**读不到则整条不发**（k.java
+  ///   case 404 guard，不是 MD5 空串）；identity 无 imsi 时设备里就是空；
   /// * `mac`：Android 6+ 上普通应用读到的是常量 `02:00:00:00:00:00`，
   ///   真机身份文件里应如实填它。
   factory Qq8Device.fromIdentity(
@@ -218,7 +218,13 @@ class Qq8Device {
         incremental: id.incremental ?? '0',
         sdk: id.sdk ?? 29,
       ),
-      imsi: md5Bytes(utf8.encode(id.imsi ?? '')),
+      // 0x194 官方语义：t.L（MD5(IMSI)）**为空则整条跳过**（k.java case 404
+      // guard：`if (t.L == null || t.L.length == 0) skip`），不是 MD5 空串。
+      // 真机日志 wtlogin_20260919.txt：无 SIM 平板登录时不发 0x194。identity
+      // 无 imsi 键 → 留空 → guard 跳过，与官方一致。
+      imsi: (id.imsi == null || id.imsi!.isEmpty)
+          ? Uint8List(0)
+          : md5Bytes(utf8.encode(id.imsi!)),
       tgtgt: tgtgt ?? rnd(16),
       guid: guid,
     );

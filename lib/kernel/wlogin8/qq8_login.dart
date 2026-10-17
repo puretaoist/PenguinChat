@@ -143,7 +143,10 @@ class Qq8LoginConditions {
   final Uint8List? echoedR;
 
   /// 静态 `k.L`；`0x201` 仅非空时发。
-  final Uint8List? staticL;
+  final Uint8List? staticL;
+  /// `t.L`（MD5(IMSI)）的等价物；`0x194` 仅非空时发（官方 k.java case 404
+  /// guard）。identity 无 imsi 键时留空 → 与官方无 SIM 设备一致不发。
+  final Uint8List? imsiMd5;
 
   /// `t.an`；`0x548` 的官方路径——仅非空时发。
   ///
@@ -193,7 +196,8 @@ class Qq8LoginConditions {
     this.loginType = 1,
     this.t104,
     this.echoedR,
-    this.staticL,
+    this.staticL,
+    this.imsiMd5,
     this.an,
     this.t548,
     this.tgtQR,
@@ -216,13 +220,18 @@ class Qq8LoginConditions {
   /// ## 与官方 guard 的一处**有意偏离**
   ///
   /// 官方对 `0x187`（`t.N`）/ `0x188`（`t.O`）/ `0x194`（`t.L`）/
-  /// `0x202`（`t.R`）都有"静态字段为空则跳过"的判断。但那四个静态字段是由
-  /// `QQAppInterface` 在运行期填的，**在我们的实现里它们的值是直接从设备对象
-  /// 派生的**（`MD5(mac)` / `MD5(android_id)` / `imsi` / `bssid+ssid`），
-  /// 永不为空。
+  /// `0x202`（`t.R`）都有"静态字段为空则跳过"的判断。那四个静态字段在官方
+  /// 是运行期从系统读的：`t.N = MD5(mac)`（t.java:288-291，读不到保持空）、
+  /// `t.O = MD5(android_id)`（:296-299）、`t.L = MD5(IMSI)`（:302-305）。
   ///
-  /// 参考实现 oicq 也正是**无条件发送**这四个，且长期实测可用。
-  /// 因此这里**不加空判**，跟 oicq 走。
+  /// 2026-10-17 真机 identity 实测证据：官方 8.2.11 在测试平板上
+  /// （wtlogin_20260919.txt）读不到 IMSI（平板无蜂窝身份）→ 官方那次登录
+  /// **没发 0x194**。我们此前 `imsi = MD5('')` 恒非空 → 多发了一项
+  /// `0x194 = MD5(空串)`，服务端看到的是「有 SIM 身份的设备」，与
+  /// 0x144/0x52D 里无 IMSI 的其余上报自相矛盾——已对齐为可关闭。
+  ///
+  /// `0x187`/`0x188` 在官方真机（有 android_id 与 mac 占位）恒有值，
+  /// 与 oicq 的无条件发送一致，维持恒发；`0x194` 例外见 imsiMd5。
   bool applies(int tag) {
     switch (tag) {
       case 0x104:
@@ -239,6 +248,11 @@ class Qq8LoginConditions {
         return loginType == 3;
       case 0x201:
         return _nonEmpty(staticL);
+      case 0x194:
+        // 官方：t.L（MD5(IMSI)）为空则整条跳过（k.java case 404 guard，
+        // k.java:243-247）。官方真机日志实证：无 SIM 的平板登录时不发 0x194。
+        // identity 里没有 imsi 键 → imsiMd5 为空 → 跳过，与官方一致。
+        return _nonEmpty(imsiMd5);
       case 0x318:
         return _nonEmpty(tgtQR); // 二维码路径专用
       case 0x400:
@@ -597,7 +611,8 @@ abstract final class Qq8LoginBody {
       qq8QrLoginTlvOrder,
       // 0x16A 的 guard 看的是条件对象里的 t16a（短信流程同款语义），
       // 二维码流程要显式把它带上，否则这一项会被滤掉、24 项变 23 项。
-      cond: Qq8LoginConditions(tgtQR: tgtQR, t16a: t16a),
+      // 0x194 跟设备走：官方 guard 看 t.L（MD5(IMSI)），设备里 IMSI 为空就整条不发。
+      cond: Qq8LoginConditions(tgtQR: tgtQR, t16a: t16a, imsiMd5: ctx.device.imsi),
       args: <int, List<Object?>>{
         0x106: <Object?>[tmpPwd],
         0x16A: <Object?>[t16a],

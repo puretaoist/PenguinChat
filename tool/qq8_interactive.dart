@@ -356,7 +356,9 @@ Future<void> _run(Map<String, String> args) async {
     loginCtx,
     Qq8SubCmd.password,
     qq8PasswordTlvOrderFor(profile.apk),
-    cond: Qq8LoginConditions(qimei: qimei, t548: selfT548),
+    // identity 里 IMSI 缺失时设备.imsi 为空 → 0x194 被 guard 跳过
+    // （官方无 SIM 平板同款，wtlogin_20260919.txt 实证）。
+    cond: Qq8LoginConditions(qimei: qimei, t548: selfT548, imsiMd5: device.imsi),
     args: qimei == null
         ? const <int, List<Object?>>{}
         : <int, List<Object?>>{

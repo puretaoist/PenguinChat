@@ -9,6 +9,7 @@
 /// ```
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -253,9 +254,18 @@ void testDevice() {
     checkEq('注入后 mac 用真值', d.macAddress, mac);
     checkEq('注入后 model 用真值', d.model, '25091RP04C');
     checkEq('注入后 Android 版本', d.version.release, '16');
-    // 官方 0x194 = MD5(imsi 原文)；读不到 imsi 时是 MD5("")（不是跳过、不是随机）
-    checkEq('imsi 存的是 MD5(空串)（官方读不到时的行为）',
-        toHex(d.imsi), toHex(md5Bytes(Uint8List(0))));
+    // 0x194 官方语义：t.L（MD5(IMSI)）为空则整条跳过（k.java case 404 guard，
+    // `if (t.L == null || t.L.length == 0) skip`）；真机日志 wtlogin_20260919.txt
+    // 无 SIM 平板不发 0x194。identity 无 imsi 键 → 设备.imsi 必须是空（不是 MD5 空串）。
+    checkEq('identity 无 imsi → 设备.imsi 为空（官方 guard 语义）',
+        toHex(d.imsi), toHex(Uint8List(0)));
+    // 有 imsi 时才存摘要
+    final d2 = Qq8Device.fromIdentity(Qq8DeviceIdentity.fromJson(<String, Object?>{
+      'android_id': aid, 'mac': mac, 'imsi': '460079876543210',
+      'guid': '7d9cf98da15d5c95f87507273280cbbf',
+    })!);
+    checkEq('有 imsi → 存 MD5(原文)', toHex(d2.imsi),
+        toHex(md5Bytes(Uint8List.fromList(utf8.encode('460079876543210')))));
 
     // guidHex 非法时退回派生（不静默用坏值）
     final bad = Qq8DeviceIdentity.fromJson(<String, Object?>{

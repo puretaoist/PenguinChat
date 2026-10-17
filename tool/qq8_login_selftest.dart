@@ -245,11 +245,16 @@ Future<void> main() async {
   );
   check('0x16A：源为空时不发', !first.applies(0x16A));
   check(
-    '0x187/0x188/0x194/0x202：跟 oicq 走，恒发（值从设备派生，不会为空）',
-    first.applies(0x187) &&
-        first.applies(0x188) &&
-        first.applies(0x194) &&
-        first.applies(0x202),
+    '0x187/0x188/0x202：跟 oicq 走，恒发（值从设备派生，不会为空）',
+    first.applies(0x187) && first.applies(0x188) && first.applies(0x202),
+  );
+  // 0x194 例外：官方 t.L（MD5(IMSI)）为空则整条跳过（k.java case 404 guard），真机
+  // 日志 wtlogin_20260919.txt 无 SIM 平板不发 0x194 —— 与 0x187/0x188 不同，不再恒发。
+  check('0x194：IMSI 缺失（默认）→ 不发', !first.applies(0x194));
+  check(
+    '0x194：有 IMSI 摘要时才发',
+    Qq8LoginConditions(imsiMd5: Uint8List.fromList(List.filled(16, 1)))
+        .applies(0x194),
   );
   check('0x400：首登无票据 → 不发', !first.applies(0x400));
   check(

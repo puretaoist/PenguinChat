@@ -857,7 +857,11 @@ Future<void> main(List<String> argv) async {
                           cond: qimei == null
                               ? Qq8LoginConditions(t548: selfT548)
                               : Qq8LoginConditions(
-                                  qimei: qimei, t548: selfT548),
+                                  qimei: qimei,
+                                  t548: selfT548,
+                                  // identity 里 IMSI 缺失时设备.imsi 为空 →
+                                  // 0x194 被 guard 跳过（官方无 SIM 平板同款）。
+                                  imsiMd5: device.imsi),
                           args: qimei == null
                               ? const <int, List<Object?>>{}
                               : <int, List<Object?>>{
