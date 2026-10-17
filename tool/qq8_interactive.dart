@@ -488,7 +488,17 @@ Future<void> _run(Map<String, String> args) async {
     if (!r1.needsSlider) {
       out('  ✗ 没有要求滑动验证（type=${r1.type}），本工具无事可做。');
       _printResponseTlvs(r1);
-      await limiter.recordFailure(reasonCode: 'type=${r1.type}');
+      // 记账与 live_smoke 对齐（tool/qq8_live_smoke.dart:1212）：type=2/204 是
+      // 流程中间态、type=15/16 是瞬态（能回它说明口令分支已过），都只记
+      // progress 不算连败；其余非成功码才算失败。2026-10-17 教训：裸
+      // recordFailure 让 14:52 那次 type=1 静默漏记（占位记录悬空）。
+      final rc1 = 'type=${r1.type}';
+      if (LoginAttemptLimiter.isProgressCode(rc1) ||
+          LoginAttemptLimiter.isTransientCode(rc1)) {
+        await limiter.recordProgress(reasonCode: rc1);
+      } else {
+        await limiter.recordFailure(reasonCode: rc1);
+      }
       return;
     }
 
