@@ -150,11 +150,14 @@ void main() {
       '${p.apk.appid}',
     );
     check(
-      '${p.label}：三个 sigmap 与官方一致',
-      p.apk.miscBitmap == 150470524 &&
-          p.apk.mainSigMap == 16724722 &&
-          p.apk.subSigMap == 66560,
-      '${p.apk.miscBitmap}/${p.apk.mainSigMap}/${p.apk.subSigMap}',
+      '${p.label}：miscBitmap/subSigMap 与官方一致',
+      p.apk.miscBitmap == 150470524 && p.apk.subSigMap == 66560,
+      '${p.apk.miscBitmap}/${p.apk.subSigMap}',
+    );
+    check(
+      '${p.label}：mainSigMap 为该渠道实证值（8.2.11=0x21410e0 真机日志 wtlogin_20260919.txt:51；其余=构造器默认 16724722）',
+      p.apk.mainSigMap == (p.versionCode == 1380 ? 34869472 : 16724722),
+      '${p.apk.mainSigMap}',
     );
     check(
       '${p.label}：qua 里嵌的 versionCode 与档案一致',

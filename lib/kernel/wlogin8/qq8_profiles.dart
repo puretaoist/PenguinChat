@@ -147,7 +147,11 @@ final Qq8ClientProfile qq8ProfileQQ8211 = Qq8ClientProfile(
     appid: 16,
     subid: 537064117,
     miscBitmap: 150470524,
-    mainSigMap: 16724722,
+    // 出处：真机官方 8.2.11 登录日志 wtlogin_20260919.txt:51
+    // `dwMainSigMap:0x21410e0`——即 App 层 `SetSigMap(0x2141020)|RET_FAIL(192)`：
+    // 0x2141020 = DA2|PSKEY|D2|SKEY|STWEB（WtloginHelper.java:81-99 位表）。
+    // 构造器默认 16724722 在真实登录路径上已被 App 覆盖，0x100 发的是本值。
+    mainSigMap: 34869472,
     subSigMap: 66560,
     buildtime: 1582559746,
     sign: Uint8List.fromList(const <int>[
