@@ -45,12 +45,34 @@ class Qq8AndroidVersion {
   final String incremental;
   final int sdk;
 
+  /// `android.os.Build.DISPLAY`（官方 `getInnerVersion` 的首选来源）。
+  ///
+  /// 缺省为空串：此时 [innerVersion] 退回 [incremental]，与旧行为等价。
+  final String display;
+
   const Qq8AndroidVersion({
     this.release = '10',
     this.codename = 'REL',
     this.incremental = '0',
     this.sdk = 29,
+    this.display = '',
   });
+
+  /// 官方 `oicq.wlogin_sdk.tools.util.getInnerVersion()` 的等价物。
+  ///
+  /// 原文（jadx-main `oicq/wlogin_sdk/tools/util.java:803-808`）：
+  /// ```java
+  /// if (android.os.Build.DISPLAY.contains(android.os.Build.VERSION.INCREMENTAL)) {
+  ///     return android.os.Build.DISPLAY;
+  /// }
+  /// return android.os.Build.VERSION.INCREMENTAL;
+  /// ```
+  /// ⚠️ 判定方向是「DISPLAY **包含** INCREMENTAL」。真机上二者通常相同，
+  /// 于是返回 DISPLAY；只有厂商定制 build 里 DISPLAY 不含 INCREMENTAL 时才退回
+  /// INCREMENTAL。TLV `0x52d` 的 protobuf 字段 9（`bytes_inner_ver`）用的就是它。
+  String get innerVersion => display.isNotEmpty && display.contains(incremental)
+      ? display
+      : incremental;
 }
 
 /// 一份设备信息。
@@ -216,6 +238,7 @@ class Qq8Device {
         release: id.release ?? '10',
         codename: id.codename ?? 'REL',
         incremental: id.incremental ?? '0',
+        display: id.display ?? '',
         sdk: id.sdk ?? 29,
       ),
       // 0x194 官方语义：t.L（MD5(IMSI)）**为空则整条跳过**（k.java case 404
@@ -417,6 +440,10 @@ class Qq8DeviceIdentity {
   final String? release;
   final String? codename;
   final String? incremental;
+
+  /// `android.os.Build.DISPLAY`。0x52D 字段 9（`bytes_inner_ver`）优先取它
+  /// （见 [Qq8AndroidVersion.innerVersion]）。缺省时退回 [incremental]。
+  final String? display;
   final int? sdk;
 
   /// QIMEI 原文（36 位）。0x545 的 body 按版本取 `MD5(它)` 或它本身。
@@ -447,6 +474,7 @@ class Qq8DeviceIdentity {
     this.release,
     this.codename,
     this.incremental,
+    this.display,
     this.sdk,
     this.qimei,
   });
@@ -501,6 +529,7 @@ class Qq8DeviceIdentity {
       release: s('release'),
       codename: s('codename'),
       incremental: s('incremental'),
+      display: s('display'),
       sdk: json['sdk'] is num ? (json['sdk']! as num).toInt() : null,
       qimei: s('qimei'),
     );

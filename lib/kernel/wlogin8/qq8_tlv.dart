@@ -1253,6 +1253,15 @@ abstract final class Qq8Tlv {
         }
 
       case 0x52D:
+        // 官方 `util.get_android_dev_info(context)`（jadx-main util.java:957-999）
+        // 组装 `device_report.DeviceReport` 的 9 个 bytes 字段，顺序由
+        // `oicq/wlogin_sdk/pb/device_report.java:9` 的 `__fieldMap__` 定死：
+        //   1 bytes_bootloader   2 bytes_version     3 bytes_codename
+        //   4 bytes_incremental  5 bytes_fingerprint 6 bytes_boot_id
+        //   7 bytes_android_id   8 bytes_baseband    9 **bytes_inner_ver**
+        // ⚠️ 字段 9 是 `util.getInnerVersion()`（DISPLAY 含 INCREMENTAL 则取
+        //    DISPLAY，否则取 INCREMENTAL），**不是** incremental 的重复。
+        //    此处曾误写成 `d.version.incremental`，使字段 4 与 9 恒等。
         w.raw(protoEncode(<int, Object?>{
           1: d.bootloader,
           2: d.procVersion,
@@ -1262,7 +1271,7 @@ abstract final class Qq8Tlv {
           6: d.bootId,
           7: d.androidId,
           8: d.baseband,
-          9: d.version.incremental,
+          9: d.version.innerVersion,
         }));
 
       default:

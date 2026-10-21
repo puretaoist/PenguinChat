@@ -636,6 +636,160 @@ C9 末尾留的「真机裁决」这一问，2026-10-21 用参考实现跑完了
 
 ---
 
+### C13. 签名器不在 APK 里：三版本 `libfekit.so` 逐个验尸（2026-10-21）
+
+「把官方 APK 里的 `.so` 抠出来自己调」这条路，被三个版本的实测逐条堵死。
+三次检查都是**同一批机器码**上的独立事实，不是推断：
+
+**① 三个版本的 `libfekit.so` 根本不是同一个东西。**
+
+| 版本 | `libfekit.so` | 大小 | `JNI_OnLoad` | `RegisterNatives` | `Lcom/` 类描述符 | `wtlogin`/`SsoNTLogin` |
+|---|---|---|---|---|---|---|
+| QQ 8.2.11 | **不存在** | — | — | — | — | — |
+| QQ 8.9.50 | 有 | 9,773,276 | 有 | **0** | **0** | **0** |
+| QQ 9.3.60 | 有 | 7,671,988 | 有 | 3 | `Lcom/tencent/mobileqq/fe/FEKit;` | 10 / 14 |
+
+8.9.50 那个 `.so` 的字符串池是 `com/tencent/mobileqq/qsec/qsecest/QsecEst`、
+`/proc/self/cmdline`、`ro.debuggable`、`ro.kernel.qemu`、`su`/`busybox`/`magisk`、
+`/system/xbin` —— 它是**环境检测库**（root / 模拟器 / 调试探测），
+不是签名器。9.3.60 那个才有 `FEKit` + `ChannelProxy` + `(Ljava/lang/String;[BJ)I`
+回调签名，才是签名器。
+
+8.9.50 的 `com.tencent.mobileqq.sign.QQSecuritySign.getSign(...)` 反编译出来是
+**`private native`**，可是全 APK 156 个 arm64 `.so` 里**没有任何一个**注册它：
+`Java_com_tencent_mobileqq_sign` 零命中，`QQSecuritySign` 字符串零命中，
+含 `RegisterNatives` 的只有 5 个库（`libKcsdk`/`libUE4Bundle`/`libcuckoo`/
+`libnative-memory-library-lib`/`libwcdb`），全与本功能无关。
+
+**② 那个 native 实现是运行时从服务器下载的。**
+
+`com/tencent/mobileqq/fe/c.java`（8.9.50 `classes11.dex`）：
+`d = "fekit"`、`e = "FEKit_SO_PATH_20220713"`、`f = "FEKit_SO_VERSION_20220823"`、
+`g = "FEKit_V1_20220713"`，构造函数里 `this.b = "2.2.166"`（本地版本）。
+`c.a()` 先读 SP 里的 `FEKit_SO_VERSION_20220823`，比对 `2.2.166` 更高就把
+**下载下来的 so** `System.load(file.getAbsolutePath())`；下载物缺失或版本不新，
+才 `f.k(context, "fekit")` 回落到本地那个环境检测库。
+
+`com/tencent/mobileqq/fe/utils/soload/f.java` 是解压+校验（`d_so_key` 存 MD5）
++ `System.load` 的完整加载器。
+
+**⇒ 即使把官方 APK 的 `libfekit.so` 原封不动打进自己的 APP，拿到的也只是
+环境检测库；真正的签名器要联网从腾讯 CDN 取，且取到后还要过 `RegisterNatives`
+的 Java 侧回调（`ChannelProxy.sendMessageInner` 走 MSF），不是自由可调的函数。**
+
+**③ oicq 那套纯算法在官方库里一个字节都没有。**
+
+oicq `lib/internal/encryption.ts` 的 `sign()` 依赖 20 字节 XOR 流
+`550504a20fd4f219c36087685573c224881743b7`（及 19 字节前缀）。在
+8.9.50 全部 156 个 `.so`、9.3.60 的 `libMSFKernel.so`/`libkernel.so`/
+`libfekit.so`/`libQSec.so`/`libcodecwrapperV2.so` 中，**该常量零命中**。
+⇒ oicq 的签名器与官方当前实现不是同一套算法，即使当年 `11b480d` 修好过，
+也不能作为当代实现的等价物。
+
+**结论（与 C10 合读）**：`type=45` 是 ssoVer 代际裁决（C10），而唯一可能突破
+代际的签名能力，其实现既不在 APK 的静态 `.so` 里、也不在公开算法里，
+是「**下载的 native 库 + Java 侧 MSF 回调 + 服务端下发**」三位一体。
+纯 Dart 自研协议在当前代际**原理上不可达**，不是工程量问题。
+
+> 附注：`libMSFKernel.so` 里 `setSecSignWhiteList` / `mSecSignFlag` /
+> `refresh uin:%s ... signs-A2:%s-D2:%s-key:%s` 说明签名凭据按 uin 缓存、
+> 由 MSF 层统一下发 —— 这是「逐 cmd 请求-响应」而非「本地自由签名」的又一佐证。
+> 该库另含完整 OpenSSL（`ECDSA_sign_ex`/`PKCS7`/`SM2` 等），那是 TLS/证书用的，
+> 与登录签名无关，别被字符串误导。
+
+---
+
+### C14. 「官方和我方在 `0x100` 里发的 sigmap 不一样」——真机日志 + 反编译双向钉死（2026-10-21）
+
+**现象**：官方 8.2.11 真机登录日志 `wtlogin_20260919.txt:51` 打印：
+
+```
+GetStWithPasswd ... dwMainSigMap:0x21410e0 Seq:1
+```
+
+而我方 `qq8_profiles.dart` 里 8.2.11 档案一直是 `16724722`（`0xFF32F2`），
+二者 **16 个 bit 位只重合 5 个**，差得非常远。
+
+**这根线是怎么钉死的（三步，缺一不可）：**
+
+1. **真机侧**：日志里 `0x21410e0` 是**实测值**，不是猜的。
+2. **反编译侧定位赋值点**：`com/tencent/mobileqq/msf/core/auth/l.java:248`
+
+   ```java
+   e.GetStWithPasswd(toServiceMsg.getUin(), 16L,
+                     com.tencent.mobileqq.msf.core.auth.n.d, appId, jArr, ...)
+   ```
+
+   `n.java:9` 里 `public static final int d = 34869344;`（= `0x2141060`）。
+3. **位运算侧补最后一步**：`WtloginHelper` 内部 `i5 = i | 0xC0`，
+   `34869344 | 0xC0 = 34869472 = 0x21410E0` —— 与日志**逐位吻合**。
+
+**⇒ 结论**：官方真实登录路径上 `0x100` 的 sigmap 槽发的是 `|0xC0` 之后的值，
+`16724722` 只是 `WtloginHelper` 构造器的默认值，**在 App 层就被覆盖了**。
+`RET_FAIL(192)` 那两位是 SDK 自己加的，所以「档案里填多少」必须填**覆盖后**的值。
+
+**已落地**：`qq8_profiles.dart` 的 8.2.11 与 8.9.50 档案均改为 `34869472`，
+注释写明出处链条；`tool/qq8_profile_selftest.dart` 加了
+「8.2.11 = 0x21410e0 真机日志实证」与「YYB/ALYY 两渠道取值不同」两条断言。
+
+> 教训：**「SDK 构造器默认值」不等于「线上实际发的值」**。凡是在
+> `msf/core/auth/` 这类 App 层再包一层的参数，都要顺着 `Set*` / `GetStWith*`
+> 的调用点找到真正入参，再算上 SDK 内部的位运算修正。
+
+---
+
+### C15. `0x52d` 的 protobuf 字段 9 是 `getInnerVersion()`，不是 `incremental`（2026-10-21）
+
+**现象**：`qq8_tlv.dart` 的 `case 0x52D` 里，字段 4 与字段 9 都写
+`d.version.incremental` —— 看起来像「把设备信息填两遍」的冗余。
+
+**真相**：官方 `util.get_android_dev_info(context)`
+（`jadx-main/sources/oicq/wlogin_sdk/tools/util.java:957-999`）填的是
+`device_report.DeviceReport` 的 **9 个不同字段**，字段顺序由
+`oicq/wlogin_sdk/pb/device_report.java:9` 的 `__fieldMap__` 定死：
+
+| # | 字段名 | 来源 |
+|---|---|---|
+| 1 | `bytes_bootloader` | `Build.BOOTLOADER` |
+| 2 | `bytes_version` | `getProcVersion()`（`/proc/version`） |
+| 3 | `bytes_codename` | `Build.VERSION.CODENAME` |
+| 4 | `bytes_incremental` | `Build.VERSION.INCREMENTAL` |
+| 5 | `bytes_fingerprint` | `Build.FINGERPRINT` |
+| 6 | `bytes_boot_id` | `getBootId()`（`/proc/sys/kernel/random/boot_id`） |
+| 7 | `bytes_android_id` | `Settings.Secure.ANDROID_ID` |
+| 8 | `bytes_baseband` | `getBaseband()` |
+| **9** | **`bytes_inner_ver`** | **`util.getInnerVersion()`** |
+
+`getInnerVersion()`（`util.java:803-808`）：
+
+```java
+if (android.os.Build.DISPLAY.contains(android.os.Build.VERSION.INCREMENTAL)) {
+    return android.os.Build.DISPLAY;
+}
+return android.os.Build.VERSION.INCREMENTAL;
+```
+
+⚠️ **判定方向是「DISPLAY 包含 INCREMENTAL」，不是反过来**。真机上二者通常
+相等或 DISPLAY 更长且含 INCREMENTAL，于是拿到 DISPLAY；只有厂商定制 build
+里 DISPLAY 不含 INCREMENTAL 才退回 INCREMENTAL。
+
+**为什么这个 bug 藏了这么久**：既有测试夹具里 `display` 根本不填，退回
+INCREMENTAL 后字段 4 与字段 9 恰好同值，**从报文上完全看不出差异**。
+真机上也看不出 —— 除非构造 `DISPLAY ≠ INCREMENTAL` 的设备。
+
+**已落地**：`Qq8AndroidVersion` 新增 `display` 字段与 `innerVersion` getter；
+`Qq8DeviceIdentity` 新增 `display`（JSON 键 `display`）以便真机注入；
+`case 0x52D` 字段 9 改取 `d.version.innerVersion`；
+`tool/qq8_tlv_selftest.dart` 新增 `test52dInnerVersion()` 4+2 条断言，
+其中「0x52d 字段 4 = incremental / 字段 9 = DISPLAY」两条是**能真正抓住这个
+回归的**（构造 `incremental: 'INC-AAAA'`、`display: 'DSP-INC-AAAA-BBBB'`）。
+
+> 教训：**测试夹具填得太「一致」会掩盖字段错位**。当一个 protobuf 消息里
+> 出现两个看起来重复的字段，优先怀疑「我们少实现了一个来源」，而不是
+> 「官方就是冗余」。要证明，必须构造让两个来源**取值不同**的输入。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

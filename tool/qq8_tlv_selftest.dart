@@ -610,6 +610,114 @@ void testNestedIntegrity() {
   }
 }
 
+/// `0x52d` 的 protobuf 字段 9 是官方 `getInnerVersion()`，**不是** incremental。
+///
+/// 出处：`oicq/wlogin_sdk/tools/util.java:957-999` 组装 `DeviceReport`，
+/// 第 9 个字段 `bytes_inner_ver` 取 `getInnerVersion()`；
+/// `oicq/wlogin_sdk/pb/device_report.java:9` 的 `__fieldMap__` 定死字段顺序。
+///
+/// 真机上 `DISPLAY` 与 `INCREMENTAL` 通常相同，所以只看真机报文无法区分
+/// 「取 DISPLAY」和「取 INCREMENTAL」——必须构造二者不同的设备来判定。
+void test52dInnerVersion() {
+  final base = buildContext();
+
+  Qq8Device withVer(Qq8AndroidVersion v) => Qq8Device(
+        product: base.device.product,
+        device: base.device.device,
+        board: base.device.board,
+        brand: base.device.brand,
+        model: base.device.model,
+        bootloader: base.device.bootloader,
+        fingerprint: base.device.fingerprint,
+        bootId: base.device.bootId,
+        procVersion: base.device.procVersion,
+        baseband: base.device.baseband,
+        sim: base.device.sim,
+        apn: base.device.apn,
+        osType: base.device.osType,
+        macAddress: base.device.macAddress,
+        ipAddress: base.device.ipAddress,
+        wifiBssid: base.device.wifiBssid,
+        wifiSsid: base.device.wifiSsid,
+        imei: base.device.imei,
+        androidId: base.device.androidId,
+        version: v,
+        imsi: base.device.imsi,
+        tgtgt: base.device.tgtgt,
+        guid: base.device.guid,
+      );
+
+  Qq8TlvContext ctxWith(Qq8AndroidVersion v) => Qq8TlvContext(
+        uin: base.uin,
+        apk: base.apk,
+        device: withVer(v),
+        passwordMd5: base.passwordMd5,
+        seqId: base.seqId,
+        ksid: base.ksid,
+        t104: base.t104,
+        t174: base.t174,
+        tgt: base.tgt,
+        srmToken: base.srmToken,
+        randomBytes: base.randomBytes,
+        teaPadding: base.teaPadding,
+        nowMillis: base.nowMillis,
+      );
+
+  // ① getInnerVersion 的判定方向：DISPLAY 含 INCREMENTAL → 取 DISPLAY
+  const containsBoth = Qq8AndroidVersion(
+    incremental: '1234567',
+    display: 'OICQX/1234567/release',
+  );
+  if (containsBoth.innerVersion == 'OICQX/1234567/release') {
+    ok('getInnerVersion：DISPLAY 含 INCREMENTAL 时取 DISPLAY',
+        containsBoth.innerVersion);
+  } else {
+    bad('getInnerVersion 取 DISPLAY', '得到 ${containsBoth.innerVersion}');
+  }
+
+  // ② DISPLAY 不含 INCREMENTAL → 退回 INCREMENTAL
+  const displayNoInc = Qq8AndroidVersion(
+    incremental: '1234567',
+    display: 'CUSTOM-BUILD',
+  );
+  if (displayNoInc.innerVersion == '1234567') {
+    ok('getInnerVersion：DISPLAY 不含 INCREMENTAL 时退回 INCREMENTAL',
+        displayNoInc.innerVersion);
+  } else {
+    bad('getInnerVersion 退回 INCREMENTAL', '得到 ${displayNoInc.innerVersion}');
+  }
+
+  // ③ display 缺省（空串）→ 退回 INCREMENTAL（兼容旧夹具，向量不变）
+  const noDisplay = Qq8AndroidVersion(incremental: '1234567');
+  if (noDisplay.innerVersion == '1234567') {
+    ok('getInnerVersion：display 缺省时退回 INCREMENTAL', noDisplay.innerVersion);
+  } else {
+    bad('getInnerVersion 缺省退回', '得到 ${noDisplay.innerVersion}');
+  }
+
+  // ④ 真正要防的回归：0x52d 字段 4 与字段 9 必须是**不同来源**。
+  //    ⚠️ 构造用例必须让 DISPLAY **包含** INCREMENTAL（否则 innerVersion 会
+  //    按官方规则退回 INCREMENTAL，两个字段又变成同值，测不出差异）。
+  const distinct = Qq8AndroidVersion(
+    codename: 'REL',
+    incremental: 'INC-AAAA',
+    display: 'DSP-INC-AAAA-BBBB',
+  );
+  final t52d = Qq8Tlv.body(ctxWith(distinct), 0x52D);
+  final ascii = String.fromCharCodes(t52d);
+  if (ascii.contains('INC-AAAA')) {
+    ok('0x52d 字段 4 = incremental', '命中 INC-AAAA');
+  } else {
+    bad('0x52d 字段 4', '未找到 INC-AAAA');
+  }
+  if (ascii.contains('DSP-INC-AAAA-BBBB')) {
+    ok('0x52d 字段 9 = innerVersion(=DISPLAY)，不是 incremental 重复',
+        '命中 DSP-INC-AAAA-BBBB');
+  } else {
+    bad('0x52d 字段 9', '未找到 DSP-INC-AAAA-BBBB（说明又写成了 incremental）');
+  }
+}
+
 /// 简易 protobuf 字段计数（只处理 wire type 0 与 2）。
 int _countProtoFields(Uint8List data) {
   var pos = 0;
@@ -654,6 +762,7 @@ void main() {
   testFraming();
   testNestedIntegrity();
   testT544Modes();
+  test52dInnerVersion();
 
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
