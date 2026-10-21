@@ -369,7 +369,12 @@ final Qq8ClientProfile qq8ProfileTim410 = Qq8ClientProfile(
     appid: 16,
     subid: 537298353,
     miscBitmap: 150470524,
-    mainSigMap: 16724722,
+    // TIM 与 8.2.11 用**同一个**主签名图常量（不是构造器默认值）：
+    // `msf/core/auth/l.java:49 public static final int f1058f = 34869344;`
+    // 由 `msf/core/auth/i.java:922 n.GetStWithPasswd(uin, j2, l.f1058f, ...)`
+    // 作为第 3 实参传入，SDK 内部再 `| 0xC0` ⇒ 34869472（0x21410E0）。
+    // 与 C14 的 8.2.11 结论同源同值。
+    mainSigMap: 34869472,
     subSigMap: 66560,
     buildtime: 1724313621, // util.BUILD_TIME（2024-08-22）
     // ⚠️ TIM **不用** QQ 那张证书：`META-INF/TIM_QQ_C.RSA` 里是 873 字节的

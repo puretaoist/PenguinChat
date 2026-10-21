@@ -61,6 +61,7 @@ import 'dart:typed_data';
 
 import '../../infra/coder.dart';
 import '../crypto/tea.dart';
+import 'qq8_protocol_det.dart';
 import 'qq8_tlv.dart';
 
 /// 登录 body 里的子命令。
@@ -143,9 +144,9 @@ class Qq8LoginConditions {
   final Uint8List? echoedR;
 
   /// 静态 `k.L`；`0x201` 仅非空时发。
-  final Uint8List? staticL;
-  /// `t.L`（MD5(IMSI)）的等价物；`0x194` 仅非空时发（官方 k.java case 404
-  /// guard）。identity 无 imsi 键时留空 → 与官方无 SIM 设备一致不发。
+  final Uint8List? staticL;
+  /// `t.L`（MD5(IMSI)）的等价物；`0x194` 仅非空时发（官方 k.java case 404
+  /// guard）。identity 无 imsi 键时留空 → 与官方无 SIM 设备一致不发。
   final Uint8List? imsiMd5;
 
   /// `t.an`；`0x548` 的官方路径——仅非空时发。
@@ -196,7 +197,7 @@ class Qq8LoginConditions {
     this.loginType = 1,
     this.t104,
     this.echoedR,
-    this.staticL,
+    this.staticL,
     this.imsiMd5,
     this.an,
     this.t548,
@@ -852,6 +853,62 @@ class Qq8LoginResponse {
 
   /// 票据块 `0x119`（仅成功时有值）。
   Uint8List? get t119 => tlvs[0x119];
+
+  /// 服务端下发的「本机登录出口 IP 记录」（TLV `0x537`，tag 1335）。
+  ///
+  /// 官方 `oicq_request.java:1632-1637`：
+  /// ```java
+  /// tlv_t tlv_tVar4 = new tlv_t(1335);
+  /// int i7 = tlv_tVar4.get_tlv(bArr16, 2, length);
+  /// if (i7 >= 0 && (bArr8 = tlv_tVar4.get_data()) != null && bArr8.length > 0) {
+  ///     byte[] bArr18 = new byte[bArr8.length - 2];   // 去掉 2 字节前缀
+  ///     System.arraycopy(bArr8, 2, bArr18, 0, bArr8.length - 2);
+  ///     LOGI("0x537 resp:" + i7 + ":" + bArr8.length
+  ///          + " setRes:" + ProtocolDet.setLoginExtraData(t.t, bArr18)
+  ///          + " tuple:" + bArr18.length, ...);
+  /// }
+  /// ```
+  /// ⇒ **这条记录是服务端告诉客户端的**（它知道客户端的公网出口 IP），
+  /// 客户端不需要自己算，直接 `setLoginExtraData` 落盘进 `pd2.dat`。
+  ///
+  /// 日志实证（`qq8211/wtlogin_20260930.txt:386`）：
+  /// `0x537 resp:872:23 setRes:0 tuple:21` —— `resp` 是 TLV 偏移 872，
+  /// `23` 是 TLV 总长（4 头 + 19 body），`tuple:21` 是去掉 2 字节前缀后的
+  /// 21 字节裸条目，`setRes:0` = 写入成功。
+  ///
+  /// 返回 **21 或 33 字节的裸条目**（已去掉那 2 字节前缀）；长度不符返回 null。
+  /// 用 [Qq8ProtocolDet.decodeSingle] 解出字段。
+  Uint8List? get t537 {
+    final b = tlvs[0x537];
+    if (b == null || b.length <= 2) return null;
+    // 官方 `bArr18 = new byte[bArr8.length - 2]` + `arraycopy(bArr8, 2, ...)`
+    final body = Uint8List.sublistView(b, 2);
+    if (body.length != 21 && body.length != 33) return null;
+    return body;
+  }
+
+  /// 服务端下发的图片验证挑战签名（TLV `0x105` 的 sign 段）。
+  ///
+  /// 官方 `tlv_t105.java` 的 body 布局是两段长度前缀：
+  /// ```java
+  /// _enlen  = buf_to_int16(_buf, _head_len);              // 第一段：sign
+  /// _piclen = buf_to_int16(_buf, _head_len + 2 + _enlen);  // 第二段：图片
+  /// get_sign() → _head_len + 2 起 _enlen 字节
+  /// get_pic()  → _head_len + 2 + _enlen + 2 起 _piclen 字节
+  /// ```
+  /// 它在下一次请求里的用途见官方 `request/n.java:16-46`：
+  /// `tlv_t2.get_tlv_2(ticket, async_context._t105.get_sign())` —— 也就是
+  /// 传统图片验证码提交（子命令 2）的**第二段**。0x193 那条路径（网页滑块）
+  /// 不带它。
+  ///
+  /// 没收到挑战（或段长越界）返回 null，调用方据此发官方同款的空尾段 `0000`。
+  Uint8List? get t105Sign {
+    final b = tlvs[0x105];
+    if (b == null || b.length < 2) return null;
+    final enlen = (b[0] << 8) | b[1];
+    if (enlen <= 0 || 2 + enlen > b.length) return null;
+    return Uint8List.sublistView(b, 2, 2 + enlen);
+  }
 
   /// 服务端的错误/提示文案（TLV `0x146`，标题+内容）；没有就是 null。
   ///

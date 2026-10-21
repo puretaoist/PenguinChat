@@ -76,6 +76,7 @@
 /// |---|---|
 /// | `--profile=8.2.11` | 换老档案（ssoVer 7，最接近 oicq 实测能通的形态） |
 /// | `--tlv-set=oicq` | 密码登录改发 oicq 的 24 项清单（去掉 `0x544` 空体） |
+/// | `--pd2=<file>` | 带官方 ProtocolDet 历史出口缓存（0x536 变 65 字节） |
 ///
 /// 两者默认都不开：默认走官方档案 + 官方清单（37 项超集经 guard 后实发）。
 ///
@@ -105,6 +106,7 @@ import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pow.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_protocol_det.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_qimei.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_recv.dart';
@@ -584,7 +586,11 @@ Future<void> main(List<String> argv) async {
       out('  首项 TLV: 0x${(sliderForm == Qq8SliderTicketForm.picture ? 0x02 : 0x193).toRadixString(16)}'
           '（官方 n.K=${sliderForm == Qq8SliderTicketForm.picture ? 'false → CheckPictureAndGetSt' : 'true → CheckWebsigAndGetSt'}）');
       if (sliderForm == Qq8SliderTicketForm.picture) {
-        final signHex = args['picture-sign'];
+        // 优先显式 --picture-sign；否则用上一条响应自动落盘的 0x105 sign。
+        final signHex = args['picture-sign'] ??
+            ((stateJson['t105'])?.isNotEmpty == true
+                ? stateJson['t105']
+                : null);
         if (signHex != null && signHex.isNotEmpty) {
           try {
             sliderPictureSign = _hex(signHex);
@@ -594,7 +600,7 @@ Future<void> main(List<String> argv) async {
           }
         }
         out('  图片签名: ${sliderPictureSign.length} 字节（0x105 sign，'
-            '${sliderPictureSign.isEmpty ? '空 → 尾段 0000' : '来自 --picture-sign'}）');
+            '${sliderPictureSign.isEmpty ? '空 → 尾段 0000' : (args['picture-sign'] != null ? '来自 --picture-sign' : '来自响应 0x105')}）');
       }
     }
     if (useSendSms || useSubmitSms) {
@@ -679,6 +685,36 @@ Future<void> main(List<String> argv) async {
       exit(2);
     }
     out('  身份注入: $identity');
+  }
+
+  // 0x525 内嵌 0x536：官方 ProtocolDet 的历史登录出口 IP 缓存（`pd2.dat`）。
+  //
+  // 为什么必须有：官方成功样本（`qq8211/wtlogin_20260930.txt:375`）发的是
+  // **65 字节** = `01 03` + 3×21 字节；我们之前恒发 `01 00`（"零条历史出口"），
+  // 等于每次都自称全新环境。三个官方样本对照见 `docs/PITFALLS.md` C17。
+  //
+  // 用法：`--pd2=<path>`，路径指向从真机 /data/data/<pkg>/files/pd2.dat 拉下来的
+  // 原始 63 字节文件（磁盘形态是**裸条目、无 2 字节头**）。
+  final pd2Path = args['pd2'];
+  Uint8List? protocolDet;
+  if (pd2Path != null && pd2Path.isNotEmpty) {
+    final f = File(pd2Path);
+    if (!f.existsSync()) {
+      out('✗ --pd2 文件不存在: $pd2Path');
+      exit(2);
+    }
+    final raw = f.readAsBytesSync();
+    final entries = Qq8ProtocolDet.decodeFile(raw);
+    if (entries.isEmpty) {
+      out('✗ --pd2 解不出条目（${raw.length} 字节；官方磁盘形态是无头的裸条目）');
+      exit(2);
+    }
+    protocolDet = Qq8ProtocolDet.encode(entries);
+    out('  ProtocolDet: ${entries.length} 条历史出口 → 0x536 body '
+        '${protocolDet.length} 字节');
+    for (final e in entries) {
+      out('    uin=${e.uin} ip=${e.ipText} time=${e.time} ver=${e.version}');
+    }
   }
 
   // 设备身份：显式注入 > dry-run 固定夹具 > uin 合成派生。
@@ -833,6 +869,8 @@ Future<void> main(List<String> argv) async {
                 : (useToken ? Qq8SubCmd.token : Qq8SubCmd.password))),
     // deterministic 时 curr 钉死，保证包可复现
     t544Curr: deterministic ? 1700000000000 : null,
+    // 0x525 内嵌 0x536：null ⇒ TLV 层退回官方空形态 `01 00`
+    protocolDet: protocolDet,
   );
 
   final body = useSlider
@@ -1067,6 +1105,17 @@ Future<void> main(List<String> argv) async {
       // 维护版 oicq 此时 sig.t547 为空、根本不发这项（`if (this.sig.t547.length)`）。
       else {
         state['t547'] = '';
+      }
+      // 0x105 图片验证挑战：官方 request/n.java:16-46 把它当 tlv_t2 的第二段
+      // （`tlv_t2.get_tlv_2(ticket, t105.get_sign())`）。响应里有就自动带上，
+      // 不用人手抄；没有就保持官方空尾段 `0000`。
+      final t105 = r.t105Sign;
+      if (t105 != null) {
+        state['t105'] = _plainHex(t105);
+        out('  ✓ 响应带 0x105 图片验证签名（${t105.length} 字节），'
+            '提交时会作为 tlv_t2 第二段回带');
+      } else {
+        state['t105'] = '';
       }
       _saveSliderState(
         stateFile,

@@ -522,6 +522,94 @@ Future<void> main() async {
       tlvs[0x193] != null && String.fromCharCodes(tlvs[0x193]!) == ticket,
       'len=${tlvs[0x193]?.length}',
     );
+
+    // 0x02（图片验证码提交）的第二段 = 0x105 sign（官方 n.java:16-46
+    // `tlv_t2.get_tlv_2(ticket, async_context._t105.get_sign())`）。
+    // 之前只有 --picture-sign 手填一条路，现在响应侧能自动取。
+    {
+      final sign = Uint8List.fromList(const <int>[0xAA, 0xBB, 0xCC, 0xDD]);
+      final picBody = Qq8LoginBody.buildSlider(
+        ctx,
+        ticket: ticket,
+        form: Qq8SliderTicketForm.picture,
+        pictureSign: sign,
+      );
+      final picTlvs = qq8ReadTlv(picBody, offset: 4);
+      check(
+        'picture：首项是 0x02（官方 n.K=false → CheckPictureAndGetSt）',
+        picBody[2] << 8 | picBody[3] == 0x0002 ||
+            picTlvs.containsKey(0x02),
+        '',
+      );
+      final t02 = picTlvs[0x02];
+      check('picture：带 0x02 TLV', t02 != null, '');
+      if (t02 != null) {
+        // u16 sigVer(0) ‖ u16 len(ticket) ‖ ticket ‖ u16 len(sign) ‖ sign
+        final l1 = t02[2] << 8 | t02[3];
+        final signOff = 4 + l1;
+        final l2 =
+            signOff + 2 <= t02.length ? (t02[signOff] << 8 | t02[signOff + 1]) : -1;
+        check(
+          'picture：0x02 尾段 = 传入的 0x105 签名（4 字节）',
+          l2 == 4 && t02.sublist(signOff + 2).join(',') == sign.join(','),
+          'l2=$l2 body=${t02.join(',')}',
+        );
+        check('picture：0x02 的 _sigVer 恒 0', t02[0] == 0 && t02[1] == 0, '');
+      }
+
+      // 不传 sign → 官方同款空尾段 `0000`
+      final picEmpty = qq8ReadTlv(
+        Qq8LoginBody.buildSlider(
+          ctx,
+          ticket: ticket,
+          form: Qq8SliderTicketForm.picture,
+        ),
+        offset: 4,
+      );
+      final e02 = picEmpty[0x02];
+      check('picture：无 0x105 时尾段为空（官方同款）',
+          e02 != null && e02[e02.length - 2] == 0 && e02[e02.length - 1] == 0,
+          'body=${e02?.join(',')}');
+    }
+
+    // 响应侧解析：0x105 = u16(enlen) ‖ sign ‖ u16(piclen) ‖ pic
+    {
+      final sign = <int>[0x11, 0x22, 0x33, 0x44, 0x55];
+      final pic = <int>[0xDE, 0xAD, 0xBE, 0xEF];
+      final body = <int>[
+        (sign.length >> 8) & 0xFF, sign.length & 0xFF, ...sign,
+        (pic.length >> 8) & 0xFF, pic.length & 0xFF, ...pic,
+      ];
+      final r = Qq8LoginResponse(
+        type: Qq8LoginResultType.slider,
+        tlvs: <int, Uint8List>{0x105: Uint8List.fromList(body)},
+        plain: Uint8List(0),
+      );
+      final got = r.t105Sign;
+      check('响应 0x105：解出 sign 段（5 字节）',
+          got != null && got.join(',') == sign.join(','), '${got?.join(',')}');
+      check('响应 0x105：只取 sign 不取图片（图是 4 字节 DE AD BE EF）',
+          got != null && got.length == 5 && !got.contains(0xDE), '');
+
+      // 无 0x105 → null
+      final r2 = Qq8LoginResponse(
+        type: Qq8LoginResultType.slider,
+        tlvs: const <int, Uint8List>{},
+        plain: Uint8List(0),
+      );
+      check('响应无 0x105 → t105Sign 为 null', r2.t105Sign == null, '');
+
+      // enlen 越界 → null（不许 OOB 读）
+      final bad = Qq8LoginResponse(
+        type: Qq8LoginResultType.slider,
+        tlvs: <int, Uint8List>{
+          0x105: Uint8List.fromList(const <int>[0xFF, 0xFF, 1, 2]),
+        },
+        plain: Uint8List(0),
+      );
+      check('响应 0x105：enlen 越界返回 null', bad.t105Sign == null, '');
+    }
+
     check(
       'slider：0x104 = 响应下发的盐',
       tlvs[0x104] != null && tlvs[0x104]!.join(',') == ctx.t104.join(','),

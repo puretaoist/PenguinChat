@@ -34,6 +34,7 @@ import '../../infra/coder.dart';
 import '../crypto/digest.dart';
 import '../crypto/tea.dart';
 import 'qq8_device.dart';
+import 'qq8_protocol_det.dart';
 import 'qq8_t544.dart' show qq8T544Sign;
 
 /// 官方客户端**登录请求**的 TLV 清单与顺序。
@@ -628,6 +629,12 @@ class Qq8TlvContext {
   /// 当前时间（毫秒）。
   final int Function() nowMillis;
 
+  /// TLV `0x525` 内嵌 `0x536` 的 body（官方 `ProtocolDet.getLoginExtraData`）。
+  ///
+  /// 由 [Qq8ProtocolDet.encode] 产出；为空时 `0x525` 退回官方空形态 `01 00`。
+  /// 见 `qq8_protocol_det.dart` 顶部关于「为何必须实现」的说明。
+  final Uint8List? protocolDet;
+
   const Qq8TlvContext({
     required this.uin,
     required this.apk,
@@ -646,6 +653,7 @@ class Qq8TlvContext {
     this.t544Mode = Qq8T544Mode.officialDegraded,
     this.t544SubCmd,
     this.t544Curr,
+    this.protocolDet,
     this.guidNew = true,
     this.seqId = 0,
     this.randomBytes = _secureRandomImpl,
@@ -1302,9 +1310,24 @@ abstract final class Qq8Tlv {
         w.u16(0);
 
       case 0x525:
+        // 官方 `k.java:331-347` case 1317：
+        //   内层 = `tlv_t(1334)`，body = `ProtocolDet.getLoginExtraData(ctx)`
+        //   外层 = `u16(1)`（TLV 计数）‖ `0x536` TLV
+        // `getLoginExtraData` 取不到数据时返回 `packExtraData(null)` = `01 00`，
+        // **不是不打包**——所以外层永远发；内层长度才是变量。
+        //
+        // 2026-10-21 修正：此前把内层硬编码成 `01 00`（等价于「零条历史出口」）。
+        // 对照官方真机日志，密码登录**成功**那次（`qq8211/wtlogin_20260930.txt:375`）
+        // 内层是 65 字节 = `01 03` + 3 条 21 字节记录。恒发 2 字节等于每次
+        // 都告诉服务端「我是全新环境」，与老账号老地方登录的事实相悖。
+        // 现在由 [Qq8TlvContext.protocolDet] 承载；为空时退回官方的 `01 00`。
+        final det525 = ctx.protocolDet;
         w.u16(1); // tlv 计数
         w.u16(0x536);
-        _tlv(w, Uint8List.fromList(const [0x01, 0x00]));
+        _tlv(
+          w,
+          det525 == null || det525.isEmpty ? Qq8ProtocolDet.emptyBody : det525,
+        );
 
       case 0x52C:
         // 短信验证登录的"额外验证标志 + 额外 uin"（官方 `tlv_t52c.get_tlv_52c(i, j)` =

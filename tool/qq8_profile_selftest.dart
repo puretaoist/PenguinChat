@@ -160,8 +160,9 @@ void main() {
       '${p.apk.effectiveMiscBitmap}',
     );
     check(
-      '${p.label}：mainSigMap 为该渠道实证值（8.2.11=0x21410e0 真机日志 wtlogin_20260919.txt:51；其余=构造器默认 16724722）',
-      p.apk.mainSigMap == (p.versionCode == 1380 ? 34869472 : 16724722),
+      '${p.label}：mainSigMap 为该渠道实证值（8.2.11=真机日志 0x21410e0；TIM=msf/core/auth/l.java:49 f1058f=34869344|0xC0；其余=构造器默认 16724722）',
+      p.apk.mainSigMap ==
+          (const <int>[1380, 4050].contains(p.versionCode) ? 34869472 : 16724722),
       '${p.apk.mainSigMap}',
     );
     check(

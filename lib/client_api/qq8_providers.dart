@@ -49,6 +49,7 @@ import 'package:riverpod/riverpod.dart';
 import '../infra/log/logger.dart';
 import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
+import '../kernel/wlogin8/qq8_protocol_det.dart';
 import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_qimei.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
@@ -125,6 +126,69 @@ final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
   }
 });
 
+/// 历史登录出口 IP 缓存（官方 `ProtocolDet` / `files/pd2.dat`）的读取接缝。
+///
+/// 官方每次登录成功后往 `pd2.dat` 追加一条「uin + 出口 IP + 时间 + subAppId」，
+/// 下次登录把最近至多 3 条塞进 `0x525` 内嵌的 `0x536`。官方真机的密码登录
+/// **成功**样本里这块是 65 字节（3 条）；本方此前恒发 `01 00`（0 条），
+/// 等于每次都对服务端自称「全新环境」。
+///
+/// ## 文件位置
+///
+/// App 自己的 `pd2.dat` 放在 `<dataDir>/qq8/pd2.dat`。它可以是：
+/// * **从官方客户端抄来的**（最优——直接复用服务端已认的出口历史）；
+/// * 本方自己累积的（每次登录成功后追加，需要 [protocolDetRecorder]）。
+///
+/// 文件不存在 / 读失败 → 返回 null → TLV 层退回官方空形态 `01 00`。
+/// **不会阻断登录**（官方 ProtocolDet 自己也把异常吞成 `01 00`）。
+final qq8ProtocolDetProvider = Provider<Uint8List?>((ref) {
+  final log = Log.get('QQ8');
+  final dir = ref.watch(dataDirProvider);
+  final f = File('${dir.path}${Platform.pathSeparator}qq8'
+      '${Platform.pathSeparator}${Qq8ProtocolDet.cacheFileName}');
+  if (!f.existsSync()) return null;
+  try {
+    final raw = f.readAsBytesSync();
+    final entries = Qq8ProtocolDet.decodeFile(raw);
+    if (entries.isEmpty) {
+      log.w('pd2.dat 存在但解不出条目（${raw.length} 字节），按无历史处理');
+      return null;
+    }
+    log.i('pd2.dat: ${entries.length} 条历史出口 '
+        '(${entries.map((e) => e.ipText).join(', ')})');
+    return Qq8ProtocolDet.encode(entries);
+  } catch (e) {
+    log.w('pd2.dat 读取失败，按无历史处理', error: e);
+    return null;
+  }
+});
+
+/// 登录成功后把服务端下发的 `0x537` 并进 `<dataDir>/qq8/pd2.dat`。
+///
+/// 照官方 `ProtocolDet.updateCachedExtraDataFile`：不满 3 条就追加，
+/// 满了就**替换 mTime 最小的那条**（不是 FIFO 轮转）。
+///
+/// 写盘失败只记日志，绝不影响登录（官方也把异常吞掉）。
+void _recordProtocolDetEntry(Ref ref, Qq8ProtocolDetEntry entry) {
+  final log = Log.get('QQ8');
+  final dir = ref.read(dataDirProvider);
+  final f = File('${dir.path}${Platform.pathSeparator}qq8'
+      '${Platform.pathSeparator}${Qq8ProtocolDet.cacheFileName}');
+  try {
+    final existing = f.existsSync()
+        ? Qq8ProtocolDet.decodeFile(f.readAsBytesSync())
+        : const <Qq8ProtocolDetEntry>[];
+    final merged = Qq8ProtocolDet.merge(existing, entry);
+    f.parent.createSync(recursive: true);
+    f.writeAsBytesSync(Qq8ProtocolDet.encodeFile(merged));
+    // 让下次登录的 protocolDetBuilder 立刻看到新内容。
+    ref.invalidate(qq8ProtocolDetProvider);
+    log.i('pd2.dat 已更新: ${existing.length} → ${merged.length} 条');
+  } catch (e) {
+    log.w('pd2.dat 写盘失败（不影响登录）', error: e);
+  }
+}
+
 /// 登录/会话服务实例（随 provider 生命周期创建与关闭）。
 ///
 /// 注入与 OneBot 线**同一个** [safetyGateProvider]：协议线的联网前置校验
@@ -158,6 +222,11 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
               beaconAppKey: profile.beaconAppKey,
               onLog: (line) => Log.get('QQ8').d('QIMEI 取号: $line'),
             ).then((r) => r.q16),
+    // 0x525 内嵌 0x536：历史登录出口 IP（官方 ProtocolDet）。
+    // 没有 pd2.dat 时返回 null → TLV 层退回官方空形态 `01 00`。
+    protocolDetBuilder: () => ref.read(qq8ProtocolDetProvider),
+    // 登录成功后把服务端下发的 0x537 并进 pd2.dat（官方同位置行为）。
+    protocolDetRecorder: (entry) => _recordProtocolDetEntry(ref, entry),
   );
   ref.onDispose(() => svc.close());
   return svc;

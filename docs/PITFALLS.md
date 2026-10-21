@@ -869,6 +869,110 @@ DA2 是 **bit 25**，原本没有）。
 
 ---
 
+### C17. `0x525` 内嵌的 `0x536` 是「历史登录出口 IP」，不是固定 `01 00`
+
+**症状**：密码首包恒回 `type=1`，而官方同账号同设备成功（`qq8211/wtlogin_20260930.txt:453`
+`subCmd= 0x9 type:0 ret:0`）。逐 TLV 对账时，`0x525` 我方恒 8 字节，官方成功样本 71 字节。
+
+**根因**：`0x525` 不是常量包，它的内层 `0x536` 是 `com.tencent.loginsecsdk.ProtocolDet`
+的历史登录出口 IP 缓存（`pd2.dat`）。
+
+* 官方 `oicq/wlogin_sdk/request/k.java:327-347` `case 1317`：内层 `tlv_t(1334)` 的 body 是
+  `ProtocolDet.getLoginExtraData(this.a)`，外层 = `u16(1) ‖ 0x536-TLV`。
+  **只有 `getLoginExtraData` 返回空/异常才整条不发**；有数据就发 65 或 77 字节。
+* 我方原实现硬编码 `u16(1) ‖ u16(0x536) ‖ tlv([0x01, 0x00])` = 8 字节，
+  等于每次都告诉服务端「这台机器没有任何历史出口」，即全新环境。
+
+**三个真实样本对照**：
+
+| 日志 | 内层长度 | 结果 |
+|---|---|---|
+| `wtlogin_20260919.txt:73` | `2:0100`（2 字节） | `subCmd=0x9 type=2` 失败 |
+| `wtlogin_20260919-b.txt:2931` | `65` 字节 | `type=2`（同日已有风控） |
+| `qq8211/wtlogin_20260930.txt:375` | `65` 字节 | **`type=0 ret=0` 成功** |
+
+⇒ 2 字节不是成功形态。
+
+**格式（`com/tencent/loginsecsdk/ProtocolDet.java` 逐行核对）**
+
+* 磁盘 `pd2.dat` = **裸条目串联、无头**：
+  `条目 = writeLong(mUin) ‖ writeByte(mlen) ‖ write(mIp) ‖ writeInt(mTime) ‖ writeInt(mVersion)`，
+  `mlen` 只能是 4（IPv4）或 16（IPv6），否则 `getExtraDataFromBuffer` 打
+  `"error: IP Length fault "` 返回 null / `convertExtraDataListToBuffer` 直接 `break`。
+* 上线 body = `packExtraData` 现加的 2 字节头：`writeByte(1) ‖ writeByte(条目数) ‖ 条目…`；
+  `bArr == null` 时 `cNum = 0` ⇒ **`01 00`**（这就是官方「无历史」形态）。
+* 常量：`EXTRA_IPV4_DATA_ITEM_SIZE = 21`、`EXTRA_IPV6_DATA_ITEM_SIZE = 33`、
+  `MAX_CACHED_FILE_SIZE = 4096`、`MAX_CACHED_ITEM_COUNT = 3`。
+* **写盘策略 `updateCachedExtraDataFile`（`:431-469`）**：不满 3 条就 `list.add(new)`；
+  满了就**替换 mTime 最小的那条**（`oldest > list.get(i).mTime` 找下标再 `list.set`）——
+  **不是 FIFO 轮转**。我第一版按轮转写，读源码后纠正。
+* **记录来源是服务端**（`oicq_request.java:1632-1637`）：响应 TLV `0x537`，
+  客户端 `arraycopy(bArr8, 2, ...)` 去掉 2 字节前缀后直接 `setLoginExtraData`。
+  ⇒ **不需要自己算公网 IP**。日志实证 `qq8211/wtlogin_20260930.txt:386`：
+  `0x537 resp:872:23 setRes:0 tuple:21`。
+
+**真机 `pd2.dat` 实测**（63 B = 3×21 B）：
+`#0 uin=2089495846 ip=101.70.146.3 t=1791273382`、
+`#1 uin=3499239040 ip=101.70.146.3 t=1791273379`、
+`#2 uin=2089495846 ip=101.70.146.3 t=1791274229`，ver 恒 `537064117`。
+⇒ **存的 uin 可以不是当前登录账号**（多号共用一个文件）。
+
+**已落地的修正**（读 + 写两侧闭环）
+
+* 新建 `lib/kernel/wlogin8/qq8_protocol_det.dart`：`Qq8ProtocolDetEntry`、
+  `encode`（上线带 `01 0N` 头）/ `decodeFile`（磁盘裸条目）/ `decodeSingle`（21/33 单条）/
+  `merge`（替换 mTime 最小者）/ `encodeFile`（磁盘形态）。
+* `lib/kernel/wlogin8/qq8_tlv.dart`：`Qq8TlvContext` 加 `protocolDet`，
+  `case 0x525` 改用它，为 null/空才退回 `Qq8ProtocolDet.emptyBody`。
+* `lib/kernel/wlogin8/qq8_login.dart`：`Qq8LoginResponse.t537`（去 2 字节前缀、校验 21/33）。
+* `lib/client_api/qq8_login_service.dart`：两个接缝 `protocolDetBuilder`（读）与
+  `protocolDetRecorder`（写）。**留接缝而不是直接读文件**，理由同 `qimeiFetcher`：
+  `client_api` 不该知道 App 数据目录在哪。
+* `lib/client_api/qq8_providers.dart`：`qq8ProtocolDetProvider` 读
+  `<dataDir>/qq8/pd2.dat`；`_recordProtocolDetEntry` 合并后写回并 `invalidate`。
+* `tool/qq8_live_smoke.dart`：`--pd2=<path>`，dry-run 打印条目明细。
+
+**验证**：官方同身份 + 真机 `pd2.dat` dry-run →
+`0x525` 由 8 字节变 **71 字节**（= 4 头 + 2 外层 + 65 内层），
+内层长度 65 与官方成功样本逐字节同长。
+
+> 教训：**「某个 TLV 一直这么写」不等于它是常量。** `0x525` 看着像固定小方块，
+> 实际是「本机历史状态」的序列化。凡是 body 里出现长度前缀嵌套的 TLV，都要先问
+> 「内层是谁生成的、会不会随会话变化」。
+
+---
+
+### C18. 传统图片验证码（子命令 2）的第二段是 `0x105` 的 sign，别手抄
+
+**背景**：`0x193`（网页滑块）和 `0x02`（图片验证码）是**两条互斥路径**，
+由官方 `request/n.java:16-46` 的静态开关 `K` 决定：
+
+```java
+bArr5 = K ? tlv_t193.get_tlv_193(ticket) : tlv_t2.get_tlv_2(ticket, bArr3);
+// bArr3 的实参是 async_context._t105.get_sign()
+```
+
+`tlv_t2.java` 的 body = `u16(_sigVer=0) ‖ u16(len(ticket)) ‖ ticket ‖ u16(len(sign)) ‖ sign`。
+**`_sigVer` 恒 0**，不是版本号。
+
+`tlv_t105.java` 的 body 是两段长度前缀：
+`u16(enlen) ‖ enlen 字节 sign ‖ u16(piclen) ‖ piclen 字节图片`。
+`get_sign()` 取第一段，`get_pic()` 取第二段。
+
+**此前的问题**：`tool/qq8_live_smoke.dart` 的 `--picture-sign` 只能手填，
+响应里的 `0x105` 没有被自动取用——手工 hex 抄错一个字节服务端就拒。
+
+**已落地**：`Qq8LoginResponse.t105Sign` 按官方 `verify()` 的读法解第一段
+（`enlen <= 0 || 2 + enlen > b.length` 一律返回 null，绝不 OOB 读）；
+`qq8_live_smoke` 收到 `0x105` 时自动写进 `qq8-slider-state.json` 的 `t105`，
+下一次提交自动带上（`--picture-sign` 仍可显式覆盖）。没有 `0x105` 时保持
+官方同款空尾段 `0000`。
+
+> 教训：**协议里「可选参数」常常是「上一条响应给你的东西」**。看到某个字段
+> 靠命令行手填，就该反问：官方是从哪拿的？多半就在响应 TLV 里躺着。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

@@ -59,6 +59,7 @@ import '../kernel/wlogin8/qq8_msg.dart';
 import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_pow.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
+import '../kernel/wlogin8/qq8_protocol_det.dart';
 import '../kernel/wlogin8/qq8_qrcode.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
 import '../kernel/wlogin8/qq8_session.dart';
@@ -277,6 +278,28 @@ class Qq8LoginService {
   int? _smsMsgCnt;
   int? _smsTimeLimit;
 
+  /// TLV `0x525` 内嵌 `0x536` 的 body 构造接缝（官方 `ProtocolDet.getLoginExtraData`）。
+  ///
+  /// 官方这块数据是**历史登录出口 IP 缓存**（`files/pd2.dat`），每次登录成功后
+  /// 追加一条，下次登录带上最近至多 3 条，供服务端判断「是不是常用出口」。
+  /// 官方真机的密码登录**成功**样本（`qq8211/wtlogin_20260930.txt:375`）里
+  /// 这内层是 65 字节（3 条）；我方此前恒发 `01 00`（0 条），等于每次都自称
+  /// 全新环境。
+  ///
+  /// 留成接缝而不是在本类里直接读文件：本层是 `client_api`，不该知道 App 的
+  /// 数据目录在哪（同 [qimeiFetcher] 的理由）。App 侧注入一个从磁盘读
+  /// `pd2.dat` 的实现即可；不注入则退回官方的空形态 `01 00`。
+  ///
+  /// 编码用 `Qq8ProtocolDet.encode`，解码用 `Qq8ProtocolDet.decodeFile`。
+  final Uint8List? Function()? protocolDetBuilder;
+
+  /// 登录成功后把服务端下发的 `0x537` 记录落盘的接缝。
+  ///
+  /// 官方在同一位置（`oicq_request.java:1632`）调
+  /// `ProtocolDet.setLoginExtraData`，满 3 条时替换最旧一条。
+  /// 不注入就只打日志、不落盘。
+  final void Function(Qq8ProtocolDetEntry entry)? protocolDetRecorder;
+
   Qq8LoginService({
     Qq8ClientProfile? profile,
     Qq8TokenStore? tokenStore,
@@ -284,6 +307,8 @@ class Qq8LoginService {
     this.deviceBuilder,
     this.qimei,
     this.qimeiFetcher,
+    this.protocolDetBuilder,
+    this.protocolDetRecorder,
     this.ecdhBuilder,
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
@@ -1446,7 +1471,60 @@ class Qq8LoginService {
       msalt: smsLogin ? _smsMsalt : 0,
       loginType: smsLogin ? 3 : 1,
       account: smsLogin ? _smsPhone : null,
+      // 0x525 内嵌 0x536：官方 ProtocolDet 的历史出口 IP 缓存。
+      // 未注入构造器（或构造器返回空）时由 TLV 层退回官方空形态 `01 00`。
+      protocolDet: _buildProtocolDet(),
     );
+  }
+
+  /// 把服务端给的 `0x537` 裸条目交给 [protocolDetRecorder] 落盘。
+  ///
+  /// 官方在同一位置（`oicq_request.java:1632-1637`）把去掉 2 字节前缀的
+  /// 21/33 字节交给 `ProtocolDet.setLoginExtraData`，后者解析成
+  /// `LoginExtraData` 再 `updateCachedExtraDataFile`（满 3 条时**替换最旧的那条**，
+  /// 见 `ProtocolDet.java` 的 `updateCachedExtraDataFile`）。
+  ///
+  /// 本层只做转发与日志，不碰文件系统（同上 [protocolDetBuilder] 的分层理由）。
+  /// 记录失败绝不阻断登录。
+  void _recordProtocolDet(Uint8List? raw) {
+    if (raw == null || raw.length < 21) return;
+    final entry = Qq8ProtocolDet.decodeSingle(raw);
+    if (entry == null) {
+      _log.d('0x537 条目解析失败（${raw.length}B），跳过记录');
+      return;
+    }
+    _log.i('0x537 出口记录: uin=${entry.uin} ip=${entry.ipText} '
+        'time=${entry.time} ver=${entry.version}');
+    final rec = protocolDetRecorder;
+    if (rec == null) return;
+    try {
+      rec(entry);
+    } on Object catch (e) {
+      _log.w('pd2.dat 记录失败（不影响登录）', error: e);
+    }
+  }
+
+  /// 组装 `0x536` body，并记一条诊断日志（条数能直接反映"带了几条历史出口"）。
+  Uint8List? _buildProtocolDet() {
+    final build = protocolDetBuilder;
+    if (build == null) return null;
+    final Uint8List? body;
+    try {
+      body = build();
+    } on Object catch (e) {
+      // 读盘失败绝不能阻断登录——官方 ProtocolDet 自己也把异常吞成 `01 00`。
+      _log.d('ProtocolDet 构造失败，退回空形态', error: e);
+      return null;
+    }
+    if (body == null || body.length < 2) return null;
+    if (body[0] != Qq8ProtocolDet.emptyBody[0]) {
+      _log.d('ProtocolDet 版本字节异常（${body[0]}），退回空形态');
+      return null;
+    }
+    // body = [版本][条目数][条目...]，条目数 0（`01 00`）等价于"没有历史"。
+    final n = body[1];
+    _log.d('ProtocolDet: $n 条历史出口，${body.length} 字节');
+    return body;
   }
 
   /// 解析本次登录要用的 QIMEI：先看注入值，再（可选）走灯塔取号。
@@ -1630,6 +1708,10 @@ class Qq8LoginService {
       final bundle = Qq8SigBundle.parse(t119, _device!.tgtgt);
       _sig = bundle;
       await tokenStore.save(Qq8TokenData.fromSigBundle(uin, bundle));
+      // 服务端下发的「本次登录出口」记录（0x537）→ 交给上层落进 pd2.dat，
+      // 下次登录的 0x525/0x536 就能带上真实历史（官方 oicq_request.java:1632
+      // 在**同一步**调 ProtocolDet.setLoginExtraData）。记录失败不影响登录。
+      _recordProtocolDet(r.t537);
       // 成功之后清掉验证材料，避免下一次登录误用
       _t104 = Uint8List(0);
       _t174 = Uint8List(0);
