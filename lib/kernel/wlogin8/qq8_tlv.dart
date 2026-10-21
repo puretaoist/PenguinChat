@@ -389,6 +389,26 @@ enum Qq8QimeiMode {
 ///
 /// `subSigMap` / `miscBitmap` / `mainSigMap` 三代**完全相同**
 /// （`WtloginHelper` 里都是 66560 / 150470524 / 16724722）。
+///
+/// ## ⚠ 构造器默认值 ≠ 线上实际值（第三次踩同一个坑）
+///
+/// 上面表里的 `miscBitmap = 150470524`（`0x08F7FF7C`）是 `WtloginHelper`
+/// 构造器赋的初值。但 MSF 在每个密码登录入口都调 `SetUinDeviceToken(true)`，
+/// 该开关让 SDK 在发请求前做一次 `miscBitmap |= WLOGIN_DA2`：
+///
+/// * `com/tencent/mobileqq/msf/core/auth/l.java:247` `e.SetUinDeviceToken(true);`
+///   紧贴着 `:248` 的 `e.GetStWithPasswd(...)`（密码登录）
+/// * `com/tencent/mobileqq/msf/core/auth/d.java:120` 同调用（换票 / `checkToken`）
+/// * `oicq/wlogin_sdk/request/WtloginHelper.java:252` `t.ab = z`
+/// * `oicq/wlogin_sdk/request/WtloginHelper.java:1416-1417`
+///   `i6 = this.mMiscBitmap; if (t.ab) i6 |= 33554432;`
+/// * `33554432` = `SigType.WLOGIN_DA2`（`WtloginHelper.java:85`）
+/// * 释放点只在 `com/tencent/mobileqq/msf/core/auth/n.java:192`：
+///   登录成功且 `_device_token` 非空才 `SetUinDeviceToken(false)`
+///
+/// ⇒ **登录请求发出去时这一位一定在**，实发 `150470524 | 33554432 = 184024956`
+/// （`0x0AF7FF7C`）。本类保留构造器初值（那是可核验的客观常量），
+/// 由 [uinDeviceToken] 开关在 TLV `0x116` 组装时叠加，公式与官方逐位一致。
 class Qq8ApkInfo {
   final String id;
   final String ver;
@@ -399,7 +419,30 @@ class Qq8ApkInfo {
 
   final int appid;
   final int subid;
+
+  /// `WtloginHelper` 构造器赋的 `mMiscBitmap` 初值（官方 = `150470524`）。
+  ///
+  /// **不要直接当线上实发值用**——见 [uinDeviceToken]，线上还要或上
+  /// `WLOGIN_DA2`（`33554432`）。
   final int miscBitmap;
+
+  /// `SetUinDeviceToken(true)` 是否已生效（默认 `true`，与 MSF 登录入口一致）。
+  ///
+  /// 生效时 TLV `0x116` 的 bitmap 字段 = `miscBitmap | 33554432`，
+  /// 与官方 `WtloginHelper.java:1416-1417` 的 `i6 |= 33554432` 逐位相同。
+  ///
+  /// 唯一该关掉的场景是：**登录已成功、已拿到 `_device_token`**——官方在
+  /// `com/tencent/mobileqq/msf/core/auth/n.java:192` 才把它复位为 `false`，
+  /// 之后走的是换票而不是密码登录。
+  final bool uinDeviceToken;
+
+  /// `WLOGIN_DA2 = 33554432`（`WtloginHelper.SigType.WLOGIN_DA2`，`:85`）。
+  static const int wloginDa2Bit = 33554432;
+
+  /// TLV `0x116` 实际写入的 bitmap。
+  int get effectiveMiscBitmap =>
+      uinDeviceToken ? (miscBitmap | wloginDa2Bit) : miscBitmap;
+
   final int mainSigMap;
   final int subSigMap;
   final int buildtime;
@@ -438,6 +481,7 @@ class Qq8ApkInfo {
     required this.mainSigMap,
     required this.buildtime,
     required this.sign,
+    this.uinDeviceToken = true,
     this.name = '',
     this.subSigMap = 66560,
     this.ssoVer = 7,
@@ -446,6 +490,27 @@ class Qq8ApkInfo {
     this.tlv553DegradedBody,
     this.qimeiMode = Qq8QimeiMode.md5OfSource,
   });
+
+  /// 复制一份，只改 [uinDeviceToken]。
+  Qq8ApkInfo withDeviceToken(bool on) => Qq8ApkInfo(
+        id: id,
+        ver: ver,
+        sdkver: sdkver,
+        appid: appid,
+        subid: subid,
+        miscBitmap: miscBitmap,
+        mainSigMap: mainSigMap,
+        buildtime: buildtime,
+        sign: sign,
+        name: name,
+        subSigMap: subSigMap,
+        ssoVer: ssoVer,
+        loginTlvOrder: loginTlvOrder,
+        tlv544DegradedBody: tlv544DegradedBody,
+        tlv553DegradedBody: tlv553DegradedBody,
+        qimeiMode: qimeiMode,
+        uinDeviceToken: on,
+      );
 }
 
 /// TLV `0x544`（设备码）发哪种形态。
@@ -924,7 +989,10 @@ abstract final class Qq8Tlv {
 
       case 0x116:
         w.u8(0);
-        w.u32(ctx.apk.miscBitmap);
+        // `WtloginHelper.java:1416-1417`：`i6 = mMiscBitmap; if (t.ab) i6 |= 33554432;`
+        // MSF 密码登录入口（`msf/core/auth/l.java:247`）恒开 `t.ab`，故实发
+        // `0x0AF7FF7C`（184024956）而不是构造器初值 `0x08F7FF7C`（150470524）。
+        w.u32(ctx.apk.effectiveMiscBitmap);
         w.u32(ctx.apk.subSigMap); // 0x10400，三代相同
         w.u8(1); // app id list 长度
         w.u32(1600000226); // app id list[0]

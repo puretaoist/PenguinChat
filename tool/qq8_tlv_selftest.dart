@@ -196,7 +196,12 @@ const _vectors = <({int tag, List<Object?> args, String hex})>[
   (tag: 0x108, args: [], hex: '0108001033333333333333333333333333333333'),
   (tag: 0x109, args: [], hex: '0109001040bab137c0b007a222fa3fa1782c5ea7'),
   (tag: 0x10A, args: [], hex: '010a00081122334455667788'),
-  (tag: 0x116, args: [], hex: '0116000e0008f7ff7c00010400015f5e10e2'),
+  // 0x116 故意偏离 oicq：oicq 写构造器初值 misc_bitmap(150470524)，
+  // 官方线上实发值多一位 —— MSF 登录入口恒调 SetUinDeviceToken(true)
+  // （msf/core/auth/l.java:247），SDK 随即 |= WLOGIN_DA2(33554432)
+  // （WtloginHelper.java:1416-1417），150470524|33554432 = 184024956 = 0x0AF7FF7C。
+  // 见 analysis/scripts/gen_tlv_vectors.cjs 的 OFFICIAL_OVERRIDES。
+  (tag: 0x116, args: [], hex: '0116000e000af7ff7c00010400015f5e10e2'),
   (
     tag: 0x124,
     args: [],

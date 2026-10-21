@@ -17,7 +17,7 @@
 /// | `sdkVersion` / `buildTime` | `oicq.wlogin_sdk.tools.util` 的 `SDK_VERSION` / `BUILD_TIME` 常量 |
 /// | `apkName` | **不在 APK 里**——按 oicq 约定从 `AppSetting` 构建号串推导（见下） |
 /// | `subAppId` | `AppSetting_params` 的 `#` 分隔第 1 段 |
-/// | `miscBitmap` / `mainSigMap` / `subSigMap` | `WtloginHelper` 构造器 |
+/// | `miscBitmap` / `mainSigMap` / `subSigMap` | `WtloginHelper` **构造器初值**；线上实发值另有覆盖，见下 |
 /// | `ssoVer` | `tlv_t100._sso_ver` == `tlv_t106._SSoVer` |
 /// | `loginTlvOrder` | `request/j.java`（或 `k`/`l`）里的 `int[]`，DEX payload 头读长度 |
 ///
@@ -31,6 +31,21 @@
 ///
 /// 但**不能反过来推出"QIMEI 通用"**：`APPKEY_DENGTA` 只属于旧 Beacon，
 /// 8.9.50 起 QIMEI 换新 SDK、appkey 每 app 一套——见 [qq8ProfileQQ8950] 的更正。
+///
+/// ## ⚠️ 第三条更正：「构造器初值」不等于「线上实发值」
+///
+/// 这条已经是同一个坑的第三次（前两次：0x100 的 `mainSigMap`、0x106 的 TEA 密钥）。
+/// `WtloginHelper` 构造器里那三个 bitmap 只是**初值**，App 层 / MSF 层在发请求前
+/// 都会再动一次：
+///
+/// | 字段 | 构造器初值 | 线上实发 | 谁改的 |
+/// |---|---|---|---|
+/// | `mainSigMap`（0x100 off18） | `16724722` | `34869472` (`0x21410e0`) | App 层 `SetSigMap(0x2141020)` + SDK 内部 `\| RET_FAIL(0xC0)` |
+/// | `miscBitmap`（0x116 off1） | `150470524` | `184024956` (`0x0AF7FF7C`) | MSF 恒调 `SetUinDeviceToken(true)` → `\|= WLOGIN_DA2` |
+/// | `subSigMap`（0x116 off5） | `66560` | `66560` | 没人改（唯一对得上的） |
+///
+/// 因此档案字段存构造器初值（客观、可核验），实发值由
+/// `Qq8ApkInfo.effectiveMiscBitmap` 与 `mainSigMap` 各自携带的覆盖逻辑给出。
 ///
 /// ## ⚠️ 第二条更正：`apkName` 怎么取
 ///
@@ -122,6 +137,23 @@ class Qq8ClientProfile {
       'subid=$subAppId  channel=$channel  '
       'tlv=${apk.loginTlvOrder.length}项'
       '${unverified.isEmpty ? '' : '  ⚠未验证: ${unverified.join('/')}'}';
+
+  /// 复制一份档案，只改 `SetUinDeviceToken` 状态。
+  ///
+  /// 官方只在**登录成功拿到 `_device_token` 之后**才复位为 `false`
+  /// （`com/tencent/mobileqq/msf/core/auth/n.java:192`）。密码登录发请求时
+  /// 恒为 `true`，故默认档案都是 `true`；本方法只用于换票路径的对照测试。
+  Qq8ClientProfile withDeviceToken(bool on) => Qq8ClientProfile(
+        label: label,
+        versionName: versionName,
+        versionCode: versionCode,
+        appSettingParams: appSettingParams,
+        channelOverride: channelOverride,
+        beaconAppKey: beaconAppKey,
+        qua: qua,
+        apk: apk.withDeviceToken(on),
+        unverified: unverified,
+      );
 }
 
 /// QQ 8.2.11（Play 版）—— 无 fekit，链路最简单。

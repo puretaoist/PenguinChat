@@ -150,9 +150,14 @@ void main() {
       '${p.apk.appid}',
     );
     check(
-      '${p.label}：miscBitmap/subSigMap 与官方一致',
+      '${p.label}：miscBitmap 存构造器初值 150470524（实发值另算，见 effectiveMiscBitmap）',
       p.apk.miscBitmap == 150470524 && p.apk.subSigMap == 66560,
       '${p.apk.miscBitmap}/${p.apk.subSigMap}',
+    );
+    check(
+      '${p.label}：effectiveMiscBitmap = 初值|WLOGIN_DA2 = 184024956',
+      p.apk.uinDeviceToken && p.apk.effectiveMiscBitmap == 184024956,
+      '${p.apk.effectiveMiscBitmap}',
     );
     check(
       '${p.label}：mainSigMap 为该渠道实证值（8.2.11=0x21410e0 真机日志 wtlogin_20260919.txt:51；其余=构造器默认 16724722）',
@@ -255,10 +260,18 @@ void main() {
 
     // 0x116：u8(0) | u32 miscBitmap | u32 subSigMap | ...
     final b116 = Qq8Tlv.body(ctx, 0x116);
+    // 线上实发值 = 构造器初值 | WLOGIN_DA2(33554432)
+    // 出处 WtloginHelper.java:1416-1417 + msf/core/auth/l.java:247 的
+    // SetUinDeviceToken(true)。150470524 | 33554432 = 184024956 = 0x0AF7FF7C。
     check(
-      '${p.label}：0x116 miscBitmap 正确',
-      _u32be(b116, 1) == 150470524,
+      '${p.label}：0x116 miscBitmap = 初值|DA2 = 184024956（非构造器初值）',
+      _u32be(b116, 1) == 184024956,
       '0x${_u32be(b116, 1).toRadixString(16)}',
+    );
+    check(
+      '${p.label}：0x116 miscBitmap 的 DA2 位（bit25）已置位',
+      (_u32be(b116, 1) & 33554432) != 0 &&
+          (_u32be(b116, 1) & ~33554432) == 150470524,
     );
     check(
       '${p.label}：0x116 subSigMap 正确',
@@ -455,6 +468,30 @@ void main() {
     'TIM 的 sign ≠ QQ 的 sign',
     hexOf(qq8ProfileTim410.apk.sign) != hexOf(qq8ProfileQQ8950.apk.sign),
   );
+
+  // -- 8. uinDeviceToken 开关语义 ----------------------------------------
+  // 官方只在登录成功拿到 _device_token 之后才 SetUinDeviceToken(false)
+  // （msf/core/auth/n.java:192）。关掉时必须退回构造器初值，不得残留 DA2 位。
+  stdout.writeln('\n【8】uinDeviceToken 开关语义');
+  {
+    final on = _context(qq8ProfileQQ8211);
+    final off = _context(qq8ProfileQQ8211.withDeviceToken(false));
+    final bOn = Qq8Tlv.body(on, 0x116);
+    final bOff = Qq8Tlv.body(off, 0x116);
+    check('开关开：0x116 bitmap = 184024956', _u32be(bOn, 1) == 184024956,
+        '${_u32be(bOn, 1)}');
+    check('开关关：0x116 bitmap 退回构造器初值 150470524',
+        _u32be(bOff, 1) == 150470524, '${_u32be(bOff, 1)}');
+    check('开关关：DA2 位（bit25）必须为 0',
+        (_u32be(bOff, 1) & 33554432) == 0);
+    check('两种状态只差 DA2 一位（其余位相同）',
+        (_u32be(bOn, 1) ^ _u32be(bOff, 1)) == 33554432,
+        '0x${(_u32be(bOn, 1) ^ _u32be(bOff, 1)).toRadixString(16)}');
+    check('effectiveMiscBitmap 与 0x116 实发值一致（单一真源）',
+        qq8ProfileQQ8211.apk.effectiveMiscBitmap == _u32be(bOn, 1) &&
+            qq8ProfileQQ8211.withDeviceToken(false).apk.effectiveMiscBitmap ==
+                _u32be(bOff, 1));
+  }
 
   // -- 汇总 --------------------------------------------------------------
   stdout.writeln('\n${'=' * 66}');

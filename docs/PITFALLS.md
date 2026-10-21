@@ -827,6 +827,48 @@ baseband 是空**）。修复后 0x52d = **196 字节**，字段 9 = `OS3.0.307.
 
 ---
 
+### C16. `miscBitmap` 也一样：构造器初值 ≠ 线上实发值（2026-10-21）
+
+同一个坑的**第三次**（前两次：C14 的 `mainSigMap`、0x106 的 TEA 密钥）。凡是
+`WtloginHelper` 构造器里赋的 bitmap，都要再确认一遍「发出去之前有没有人改它」。
+
+**官方链路（`jadx-main`）**
+
+| 步 | 坐标 | 内容 |
+|---|---|---|
+| 1 | `com/tencent/mobileqq/msf/core/auth/l.java:247` | `e.SetUinDeviceToken(true);` —— **紧贴在 `:248` 的 `e.GetStWithPasswd(...)` 之前**，每个密码登录入口都会走 |
+| 2 | `com/tencent/mobileqq/msf/core/auth/d.java:120` | 同调用（换票 / `checkToken` 路径） |
+| 3 | `oicq/wlogin_sdk/request/WtloginHelper.java:252` | `SetUinDeviceToken(boolean z) { oicq.wlogin_sdk.request.t.ab = z; }` |
+| 4 | `oicq/wlogin_sdk/request/WtloginHelper.java:1416-1417` | `int i6 = this.mMiscBitmap; if (oicq.wlogin_sdk.request.t.ab) { i6 \|= 33554432; }` |
+| 5 | `oicq/wlogin_sdk/request/WtloginHelper.java:85` | `SigType.WLOGIN_DA2 = 33554432` —— 即这个位是「索取 DA2 票」 |
+| 6 | `com/tencent/mobileqq/msf/core/auth/n.java:192` | `if (wUserSigInfo._device_token != null && wUserSigInfo._device_token.length > 0) { ... SetUinDeviceToken(false); }` —— **只有登录成功拿到 device_token 之后才复位** |
+
+算术：`150470524 | 33554432 = 184024956`，即 `0x08F7FF7C → 0x0AF7FF7C`。
+
+bit 分解（`150470524` 已有 bits `[2,3,4,5,6,8,9,10,11,12,13,14,15,16,17,18,20,21,22,23,27]`，
+DA2 是 **bit 25**，原本没有）。
+
+**我方修复**
+
+* `lib/kernel/wlogin8/qq8_tlv.dart`：`Qq8ApkInfo` 新增 `uinDeviceToken`（默认 `true`）
+  与 `effectiveMiscBitmap` getter；`case 0x116` 改用它。
+  档案字段 `miscBitmap` **保留构造器初值**（客观可核验），不把两个语义揉进一个字段。
+* `lib/kernel/wlogin8/qq8_config.dart`：新增 `wloginDa2Bit` / `effectiveMiscBitmap`，
+  并给 `miscBitmap` / `mainSigMap` 两个旧常量补上「这不是线上值」的警告。
+* `analysis/scripts/gen_tlv_vectors.cjs`：新增 `OFFICIAL_OVERRIDES[0x116]`，
+  与既有 `0x147` 同一机制——**有意偏离 oicq，以官方为准**。
+  重生成后 `vectors/tlv.json` 只有 0x116 一条变化（`08f7ff7c` → `0af7ff7c`）。
+* `tool/qq8_tlv_selftest.dart` / `tool/qq8_profile_selftest.dart`：断言改为
+  `184024956`，并新增 5 条开关语义断言（关掉必须退回 `150470524` 且 DA2 位为 0，
+  两种状态只差这一位）。
+
+> 教训：**「构造器初值」是一个陷阱词**。看到 `WtloginHelper` 里的 `mXxx = <常量>`
+> 就当成协议常量写进档案，是本项目重复三次的错误模式。正确的问法是
+> 「这个值在 `snd_rcv_req` 之前被谁改过」。凡有 `SetXxx` 二传手的字段，
+> 档案里都要同时留「初值」与「生效条件」两样东西。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

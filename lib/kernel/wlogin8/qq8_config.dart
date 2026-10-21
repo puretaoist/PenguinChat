@@ -108,14 +108,27 @@ abstract final class Qq8Config {
     0x52, 0x77, 0x16, 0xf6, 0xf3, 0x6e, 0xb6, 0x8d,
   ];
 
-  /// 杂项能力位（`WtloginHelper.mMiscBitmap`）。
+  /// 杂项能力位**构造器初值**（`WtloginHelper.mMiscBitmap = 150470524`）。
   ///
-  /// 声明客户端支持哪些特性。参考实现 oicq 中 aPad 条目同为 `150470524`。
+  /// ⚠ 线上实发值不是它：MSF 登录入口恒调 `SetUinDeviceToken(true)`
+  /// （`msf/core/auth/l.java:247` → `WtloginHelper.java:252` 置 `t.ab`），
+  /// SDK 随即 `|= WLOGIN_DA2(33554432)`（`WtloginHelper.java:1416-1417`），
+  /// 实发 `184024956`（`0x0AF7FF7C`）。TLV 0x116 走
+  /// `Qq8ApkInfo.effectiveMiscBitmap`，不要直接用本常量。
   static const int miscBitmap = 150470524;
 
-  /// 主签名算法位图（`WtloginHelper.mMainSigMap`）。
+  /// `WLOGIN_DA2` 位（`WtloginHelper.SigType.WLOGIN_DA2 = 33554432`）。
+  static const int wloginDa2Bit = 33554432;
+
+  /// 密码登录时 TLV 0x116 的**实发** bitmap。
+  static const int effectiveMiscBitmap = miscBitmap | wloginDa2Bit;
+
+  /// 主签名算法位图**构造器初值**（`WtloginHelper.mMainSigMap = 16724722`）。
   ///
-  /// 写入 TLV 0x106。
+  /// ⚠ 同样不是线上值：App 层 `SetSigMap(0x2141020)` 会覆盖，再加 SDK 内部的
+  /// `| RET_FAIL(0xC0)`，真机日志实测发 `0x21410e0`
+  /// （`analysis/_ref/official-logs/wtlogin_20260919.txt:51`）。
+  /// 取值以 `Qq8ApkInfo.mainSigMap` 为准，写入 TLV `0x100`。
   static const int mainSigMap = 16724722;
 
   /// 子签名算法位图（`WtloginHelper.mSubSigMap`）。
