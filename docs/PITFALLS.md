@@ -287,14 +287,32 @@ merge 写入天然倾向保留旧值，而协议里"上一次的材料"几乎总
 | 会话连续性 | `--save-session` + `--load-session` 复用 ECDH/sessionId/randomKey | type=1 |
 
 **剩余嫌疑（按可行性）**：
-1. **`0x544` 真签名**：官方那步是 QSec 真签名（日志 `tgt 0x544 cost:8`），我们发
-   4 字节降级占位 `00 00 00 00`。服务端可能据此给设备打风险分，再在验证提交时
-   一并判定。**需要 native `libcodecwrapperV2.so` + 联网，属研究范围**。
+1. ~~**`0x544` 真签名**~~ —— **2026-10-21 排除**。见 C13 与下面的「0x544 真相」：
+   官方 8.2.11 发的也是 4 字节 `00 00 00 00`，我方降级形态与官方**逐字节一致**，
+   两边没有差异可言。
 2. **ticket 来源**：官方在应用内 WebView 里完成"视图验证"，我们是在外部浏览器里
    解、再从 F12 掏 ticket（`ti.qq.com/safe/tools/captcha/sms-verify-login`）。
    若服务端把 ticket 与"发起验证的那个客户端会话"绑定，这条就对不上。
 3. **MSF 层会话**：官方全程走 MSF 长连接（同进程、`Seq:1` 到底），我们是每次新建
    TCP。ECDH 复用了，但 socket 层面的会话标识没复用。
+
+**0x544 真相（2026-10-21，`ByteData.java` 全文读毕）**：
+日志里 `tgt 0x544 cost:8` 的 `cost` 是**毫秒耗时**，不是长度。官方
+`com.tencent.secprotocol.ByteData` 的 `status` 字段构造时就初始化为
+`new byte[]{0, 0, 0, 0}`，`getCode(...)` 第一道判断是：
+
+```java
+if (this.status[1] != 0 || checkObject(obj4) || !this.mPoxyNativeLoaded || !this.mPoxyInit) {
+    return this.status;           // = {0, 0, 0, 0}
+}
+```
+
+而 `libpoxy.so` **不在 APK 里**（`loadUpgradedLibrary()` 从
+`QPDirUtils.getQQProtectQSecLibsDir() + "/libpoxy.so"` 读文件、`verifySoFile`
+校验签名后 `System.load`，运行时下载）。8.2.11 的 11 个 dex 里
+`libfekit`/`QQSecuritySign`/`fekit` 命中数为 **0**。
+⇒ **官方 8.2.11 真机上 0x544 就是 4 个零字节**，`cost:8` 是走完这段短路判断
+的耗时。我方 `tlv544DegradedBody: [0,0,0,0]` 与官方等价。
 
 **`0x508` 那条"换明文提示"的路已死**：`ts7/ts8.qq.com:8080` 实测 TCP 全部
 closed，**官方自己也连不上**（日志 `SocketTimeoutException`）。别再往这里投入。
@@ -787,6 +805,25 @@ INCREMENTAL 后字段 4 与字段 9 恰好同值，**从报文上完全看不出
 > 教训：**测试夹具填得太「一致」会掩盖字段错位**。当一个 protobuf 消息里
 > 出现两个看起来重复的字段，优先怀疑「我们少实现了一个来源」，而不是
 > 「官方就是冗余」。要证明，必须构造让两个来源**取值不同**的输入。
+
+**闭环验证（2026-10-21，字节级）**：用官方真机身份重算 0x52d，与真机日志
+`wtlogin_20260919.txt:69` 的 `get_tlv_52d success **196**` 逐字节对账通过。
+
+对账过程顺带抓出身份夹具里的第二个错：
+
+| 字段 | 身份 JSON 原值 | 官方日志实际 | 长度影响 |
+|---|---|---|---|
+| `bytes_baseband` | `OS3.0.307.0.WPYCNXM` | **空**（`:66` 是空行） | **19 字节** |
+| `bytes_inner_ver` | 未填（退回 incremental） | `OS3.0.307.0.WPYCNXM` | 0 |
+
+即：原夹具 215 字节，扣掉误填的 baseband 19 字节 = **196**，与官方完全吻合。
+`baseband` 被改写成了 `incremental` 的值（两者在真机上确实同串，但**上报的
+baseband 是空**）。修复后 0x52d = **196 字节**，字段 9 = `OS3.0.307.0.WPYCNXM`。
+
+> 第二个教训：**身份夹具的每个字段都要有日志出处**。`baseband` 与
+> `incremental` 取值相同不代表来源相同——一个来自 `Build.VERSION.INCREMENTAL`，
+> 一个来自 `getBaseband()`（读 `/system/lib/libsec-ril.so` 版本串），真机上
+> 后者经常为空。夹具里「看起来合理」的补全，会让总量凭空多出 19 字节。
 
 ---
 
