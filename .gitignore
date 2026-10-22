@@ -74,3 +74,9 @@ app.*.map.json
 ui_out.txt
 ui2.txt
 *_out.txt
+
+# 逆向调试的一次性探针（不进主树；结论已写进 docs/PITFALLS.md）
+/tool/tmp/
+
+# 第三方 IDE 生成的计划文档（不属于本仓库内容）
+/.trae/
