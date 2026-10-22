@@ -69,12 +69,22 @@ Future<void> main() async {
   final deviceInfo =
       Platform.isAndroid ? AndroidDeviceInfo() : const NoopDeviceInfo();
 
+  // 先把「这一版 APK 到底带了什么」写进日志。有一次真机日志里整段新代码的
+  // 痕迹都看不到，最后靠解包 APK 翻 dex 才确认装的是旧包 —— 那次排查本可省掉。
+  final deviceTag = await deviceInfo.buildTag();
+  Log.get('Main').i(
+    '设备采集: 构建=${deviceTag ?? "无原生实现（非 Android 或通道缺失）"}',
+  );
+
   // 设备身份必须在这里定下来，不能交给异步 provider —— 理由见
   // `resolveQq8DeviceIdentity` 的文档：androidId 进 guid 派生
   // （`guid = MD5(androidId ‖ mac)`），异步就会在一次启动里先后出现两台设备。
   final deviceIdentity = await resolveQq8DeviceIdentity(
     dataDir: dataDir,
     deviceInfo: deviceInfo,
+  );
+  Log.get('Main').i(
+    '设备身份已确定: ${deviceIdentity == null ? "无（将退回合成派生）" : "有（本机采集或人工注入）"}',
   );
 
   runApp(

@@ -32,6 +32,19 @@ class AndroidDeviceInfo implements DeviceInfo {
 
   static const MethodChannel _channel = MethodChannel('qqclient/device');
 
+  /// 原生侧构建标识。仅用于让日志自证「装的是哪一版采集代码」。
+  ///
+  /// 一次真机日志里完全看不到本文件的日志行，翻 APK 里的 dex 才确认装的是
+  /// 旧包 —— 那次排查花的力气本可以省掉。所以让 APK 自己报名字。
+  @override
+  Future<String?> buildTag() async {
+    try {
+      return await _channel.invokeMethod<String>('version');
+    } on Object {
+      return null;
+    }
+  }
+
   @override
   Future<DeviceSnapshot?> snapshot() async {
     try {

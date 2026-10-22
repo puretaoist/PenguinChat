@@ -87,6 +87,12 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "version" ->
+                        // 构建标识：让日志能自证"这个 APK 里到底有没有设备采集代码"。
+                        // 起因是一次真机日志里完全看不到新加的 Dart 日志行，
+                        // 只能靠翻 APK 里的 dex 才知道装的是旧包——不该再靠猜。
+                        result.success(DeviceProbe.BUILD_TAG)
+
                     "snapshot" -> {
                         try {
                             result.success(DeviceProbe.snapshot(this))

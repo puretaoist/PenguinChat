@@ -36,6 +36,15 @@ import java.io.File
  * 空字符串（`util.java:794-801`），我们照做。
  */
 object DeviceProbe {
+    /**
+     * 构建标识（出现在日志「设备采集: 构建=…」里）。
+     *
+     * 唯一用途是**自证**：一次真机日志里完全看不到本文件对应的 Dart 侧日志，
+     * 只能靠解包 APK 翻 dex 才确认装的是旧包。这种事不该靠猜第二次。
+     * 改本文件的采集逻辑时顺手改这个字符串。
+     */
+    const val BUILD_TAG = "device-probe/2-local-android"
+
 
     /** 官方读不到的占位返回值（`util.java:794-801` 的 `"no message"` 分支）。 */
     private const val ABSENT = "no message"

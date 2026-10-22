@@ -135,6 +135,13 @@ abstract class DeviceInfo {
   /// 采集一次快照。不支持采集的平台返回 null。
   Future<DeviceSnapshot?> snapshot();
 
+  /// 原生实现的构建标识（可选）。
+  ///
+  /// 纯诊断用途：采集逻辑改过之后，日志里要能看出「装的是哪一版」，
+  /// 否则只能解包 APK 翻 dex 判断，那种排查方式是在浪费人的时间。
+  /// 默认返回 null（没有原生侧的实现自然也没有版本号）。
+  Future<String?> buildTag() async => null;
+
   /// 释放资源（本接口无长生命周期资源，默认空实现）。
   void dispose() {}
 }
@@ -148,6 +155,11 @@ class NoopDeviceInfo implements DeviceInfo {
 
   @override
   Future<DeviceSnapshot?> snapshot() async => null;
+
+  // `implements` 不继承方法体，所以基类里那个返回 null 的默认实现
+  // 在这里必须重新写一遍（这一点与 `extends` 不同）。
+  @override
+  Future<String?> buildTag() async => null;
 
   @override
   void dispose() {}
