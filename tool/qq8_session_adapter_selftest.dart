@@ -353,7 +353,10 @@ Future<void> main() async {
   section('3. sendMessage（文本段 → 内核发送 → 消息 ID）');
   {
     scripted.scriptedResponses.add(
-        _frame(4, Qq8Msg.sendCmd, Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500})));
+        // 成功判据是 code == 0 且字段 14（serverMsgId）!= 0，
+        // 见 PITFALLS C20 与 icqq friend.js:230。缺字段 14 会被判失败。
+        _frame(4, Qq8Msg.sendCmd,
+            Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500, 14: 77})));
     final id = await adapter.sendMessage(
         'private_22222', <Segment>[const TextSegment('hello '), const TextSegment('world')]);
     check('返回的 id 非空', id != null && id.isNotEmpty, id ?? '(null)');
@@ -795,7 +798,7 @@ Future<void> main() async {
     scripted.scriptedResponses.add(_frame(
         12,
         Qq8Msg.sendCmd,
-        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500})));
+        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500, 14: 78})));
     final replyId = await adapter.sendMessage('private_22222', <Segment>[
       ReplySegment(quoted, text: '被引用的话'),
       const TextSegment('这是我的回复'),
@@ -814,7 +817,7 @@ Future<void> main() async {
     scripted.scriptedResponses.add(_frame(
         13,
         Qq8Msg.sendCmd,
-        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000600})));
+        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000600, 14: 79})));
     final before = scripted.sent.length;
 
     final faceId = await adapter.sendMessage('private_22222', <Segment>[
