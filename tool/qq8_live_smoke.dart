@@ -875,6 +875,10 @@ Future<void> main(List<String> argv) async {
     t544Curr: deterministic ? 1700000000000 : null,
     // 0x525 内嵌 0x536：null ⇒ TLV 层退回官方空形态 `01 00`
     protocolDet: protocolDet,
+    // 官方滑块提交（`WtloginHelper.java:2252`）传的是 `this.mMiscBitmap`
+    // 原值，不叠 WLOGIN_DA2；只有密码首包（`:1415-1418`）才叠。
+    // 滑块分支必须关掉，否则工具产出的包与 App 不一致，验证结论不可信。
+    da2BitActive: !useSlider,
   );
 
   final body = useSlider

@@ -388,6 +388,27 @@ Future<void> _run(Map<String, String> args) async {
       ? qq8BuildClientPow548().body
       : null;
 
+/// 从已组好的 body 里取出 TLV 0x116 的 bitmap 字段（offset 1..5）。
+///
+/// 用于自检「密码包叠 DA2、滑块包不叠」这条官方分档
+/// （`WtloginHelper.java:1415-1418` vs `:2252`）。
+int _miscBitmapOf(Uint8List body) {
+  var p = 4; // 跳过 u16 子命令 + u16 个数
+  while (p + 4 <= body.length) {
+    final tag = (body[p] << 8) | body[p + 1];
+    final len = (body[p + 2] << 8) | body[p + 3];
+    if (tag == 0x116 && len >= 5) {
+      final v = p + 4;
+      return (body[v + 1] << 24) |
+          (body[v + 2] << 16) |
+          (body[v + 3] << 8) |
+          body[v + 4];
+    }
+    p += 4 + len;
+  }
+  return 0;
+}
+
   Qq8TlvContext ctxFor({
     required Uint8List t104,
     Uint8List? t547,
@@ -414,6 +435,10 @@ Future<void> _run(Map<String, String> args) async {
         t544SubCmd: subCmd,
         t544Curr: deterministic ? 1700000000000 : null,
         protocolDet: protocolDet,
+        // 官方滑块提交（`WtloginHelper.java:2252`）传 `this.mMiscBitmap`
+        // 原值，不叠 WLOGIN_DA2；只有密码首包（`:1415-1418`）才叠。
+        // 这里按子命令自动判定，避免调用点漏传导致工具与 App 产包不一致。
+        da2BitActive: subCmd != Qq8SubCmd.slider,
       );
 
   final loginCtx = ctxFor(t104: Uint8List(0), subCmd: Qq8SubCmd.password);
@@ -490,6 +515,18 @@ Future<void> _run(Map<String, String> args) async {
         '（${_u32(slPkt) == slPkt.length ? '自洽 ✓' : '不一致 ✗'}）');
     _printTlvs(slBody);
 
+    // 0x116 的 bitmap 两条路径必须不同：密码包叠 DA2、滑块包不叠。
+    // 这是「一次登录是一条会话」的第二条约束（见 docs/PITFALLS.md C26）。
+    out('');
+    out('--- 0x116 bitmap 分档自检 ---');
+    out('  密码包 bitmap: ${_miscBitmapOf(loginBody)}');
+    out('  滑块包 bitmap: ${_miscBitmapOf(slBody)}');
+    if (_miscBitmapOf(loginBody) == 0x0AF7FF7C &&
+        _miscBitmapOf(slBody) == 0x08F7FF7C) {
+      out('  ✓ 密码包 0x0AF7FF7C（叠 DA2）/ 滑块包 0x08F7FF7C（原值）');
+    } else {
+      out('  ✗ bitmap 不符合官方两条路径（见 WtloginHelper.java:1415 / :2252）');
+    }
     // 关键：dry-run 证明"两步共用同一会话"（本工具与 live_smoke 的区别）
     final slBody2 = Qq8LoginBody.buildSlider(
       ctxFor(t104: fakeSalt, subCmd: Qq8SubCmd.slider),
