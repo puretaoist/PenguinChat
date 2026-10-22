@@ -46,6 +46,7 @@ import 'dart:typed_data';
 
 import 'package:riverpod/riverpod.dart';
 
+import '../infra/device/device_info.dart';
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
 import '../kernel/wlogin8/qq8_device.dart';
@@ -56,6 +57,7 @@ import '../kernel/wlogin8/qq8_qimei.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
 import '../kernel/wlogin8/qq8_tran.dart';
 import 'chat_store.dart';
+import 'qq8_device_store.dart';
 import 'qq8_login_service.dart';
 import 'qq8_session_adapter.dart';
 import 'session.dart';
@@ -92,20 +94,40 @@ final qq8TransportBuilderProvider = Provider<Qq8Transport Function()>(
   (ref) => () => Qq8TcpTransport(),
 );
 
-/// 真机身份材料（`<dataDir>/qq8/identity.json`）——**存在才用**，不存在保持原行为。
+/// 真机身份材料——**优先级三级**，取到第一个可用的就停。
 ///
-/// ## 为什么要有这个口子
+/// ```text
+///   ① identity.json（人工导出，含官方客户端用过的 guid/QIMEI）
+///         ↓ 不存在
+///   ② 本机自采：DeviceInfo 快照 + <dataDir>/qq8/device.json 里持久的三项
+///         ↓ 采不到
+///   ③ null → 上层退回 Qq8Device.generate(uin) 合成派生
+/// ```
 ///
-/// 服务端的**设备信任是按身份值记的**。默认的 `Qq8Device.generate(uin)` 是
-/// 合成派生（一台"不存在的设备"），服务端只会当新设备处理（要验证码）。
-/// 把官方客户端在本机实际使用并上报的 guid/androidId/mac/QIMEI 注入进来，
-/// 才可能被认成已知设备、直接放行。
+/// ## 为什么要 ②（这是 2026-10-22 的改动）
 ///
-/// 这不是伪造：值全部取自**同一台设备的官方客户端**自己写的材料
-/// （wlogin 文件日志 + SharedPreferences），四个变换已逐字节验证
-/// （见 `analysis/QQ-官方三版本登录流程对照.md` §11）。
+/// ① 要求用户 adb push 一个文件，App 内根本没有导入界面（`grep -rn identity
+/// lib/ui/` 零命中）——等于这条路只有我们能走，用户走不了。
 ///
-/// 文件形状见 `analysis/_ref/official-logs/identity-25091RP04C.json`。
+/// 而 ③ 的合成设备有两个硬伤：**在现实里不存在**（`brand=OICQX`、
+/// `model=Konata 2020` 不是任何厂商的机型）与**自相矛盾**（自称 Android 10
+/// 却跑在 Android 16 上）。服务端一比对机型库就知道是假的。
+///
+/// ② 用官方 `util` 同一套系统 API 读真值（见 `DeviceProbe.kt`），
+/// 机型、指纹、boot_id、/proc/version、基带全部真实。
+///
+/// ## ⚠️ 不要指望 ② 能等于官方
+///
+/// Android 8+ 的 `ANDROID_ID` 按「应用签名 + 用户 + 设备」隔离，官方 QQ 与 TIM
+/// 装在同一台机器上都读到不同的值（`25cf6881290b58f7` vs `f23dd554a9f43c9a`）。
+/// 换签名就是第三个值——**这个目标本身不成立**。② 的意义是"整台设备是真的"，
+/// 不是"冒充官方那一个 android_id"。
+///
+/// ## 三个必须持久化的值
+///
+/// 见 [Qq8DeviceState]：`androidId`（读不到时官方生成 15 位随机数字）、
+/// `ksid`（服务端 `0x108` 下发）、`qimei`（灯塔签发）。任何一个每次现算，
+/// 都会让设备标识在两次启动之间漂移。
 final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
   final log = Log.get('QQ8');
   final dir = ref.watch(dataDirProvider);
@@ -130,6 +152,101 @@ final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
     return null;
   }
 });
+
+/// 设备状态存储（`<dataDir>/qq8/device.json`）。
+final qq8DeviceStoreProvider = Provider<Qq8DeviceStore>((ref) {
+  final dir = ref.watch(dataDirProvider);
+  return FileQq8DeviceStore(
+      Directory('${dir.path}${Platform.pathSeparator}qq8'));
+});
+
+/// 解析最终生效的设备身份（**启动路径调用一次**，结果注入
+/// [qq8DeviceIdentityProvider] 的 override）。
+///
+/// 为什么放在启动路径而不是做成 `FutureProvider`：`androidId` 必须在第一帧
+/// UI 之前确定。放进异步 provider 就意味着它会有 `loading` 态，而下游
+/// `deviceBuilder` 是同步的——只能在"还没采到"和"采到了"之间来回切换，
+/// 那期间建出来的设备 guid 是不同的（`guid = MD5(androidId ‖ mac)`），
+/// 等于一次启动里出现了两台设备。
+///
+/// 一次 `MethodChannel` 往返 + 一次几百字节的文件读，代价可以忽略。
+///
+/// ## 参数
+/// * [dataDir] — 应用私有目录（`device.json` 放在它的 `qq8/` 子目录）。
+/// * [deviceInfo] — 平台采集实现；桌面/测试传 [NoopDeviceInfo] 即可。
+/// * [log] — 可选日志器（默认 `Log.get('QQ8')`）。
+Future<Qq8DeviceIdentity?> resolveQq8DeviceIdentity({
+  required Directory dataDir,
+  required DeviceInfo deviceInfo,
+  Logger? log,
+}) async {
+  final l = log ?? Log.get('QQ8');
+  final store = FileQq8DeviceStore(
+      Directory('${dataDir.path}${Platform.pathSeparator}qq8'));
+
+  // ---- ① identity.json（人工注入，含官方用过的 guid/qimei）----
+  final idFile = File(
+      '${dataDir.path}${Platform.pathSeparator}qq8${Platform.pathSeparator}identity.json');
+  if (idFile.existsSync()) {
+    try {
+      final decoded = jsonDecode(idFile.readAsStringSync());
+      if (decoded is Map) {
+        final id =
+            Qq8DeviceIdentity.fromJson(Map<String, Object?>.from(decoded));
+        if (id != null) {
+          l.i('设备身份来源: identity.json（人工注入）→ $id');
+          return id;
+        }
+        l.w('identity.json 缺必需项 android_id / mac，继续走本机采集');
+      } else {
+        l.w('identity.json 不是 JSON 对象，继续走本机采集');
+      }
+    } catch (e) {
+      l.w('identity.json 解析失败，继续走本机采集', error: e);
+    }
+  }
+
+  // ---- ② 本机自采 + 持久状态 ----
+  final state = store.loadSync();
+  DeviceSnapshot? snap;
+  try {
+    snap = await deviceInfo.snapshot();
+  } catch (e) {
+    // snapshot 自己保证不抛，这里只是双保险：采集失败不该阻断启动。
+    l.w('设备信息采集异常，按无快照处理', error: e);
+  }
+
+  if (snap == null) {
+    // 采集不到（桌面 / 通道缺失）。但历史上可能已经存过 androidId ——
+    // 那时仍然能构造出"稳定的部分身份"吗？不行：没有机型/指纹，
+    // 造出来的只会是半真半假的设备，比全合成更可疑。所以直接返回 null。
+    l.i('设备身份来源: 无（采集不到本机信息）→ 退回合成派生');
+    return null;
+  }
+
+  // androidId 缺失时照官方 `getRandomAndroidId` 生成 15 位数字并**立刻落盘**。
+  var androidId = state.androidId;
+  if ((snap.androidId == null || snap.androidId!.isEmpty) &&
+      (androidId == null || androidId.isEmpty)) {
+    androidId = qq8RandomAndroidId();
+    store.saveSync(Qq8DeviceState(androidId: androidId));
+    l.i('系统 ANDROID_ID 读不到，按官方风格生成 15 位随机数并持久化');
+  }
+
+  final id = Qq8DeviceIdentity.fromSnapshot(
+    snap,
+    androidIdFallback: androidId,
+    ksid: state.ksid,
+    qimei: state.qimei,
+  );
+  if (id == null) {
+    l.w('快照里没有可用的 androidId，退回合成派生');
+    return null;
+  }
+  l.i('设备身份来源: 本机采集 → $id');
+  return id;
+}
+
 
 /// 历史登录出口 IP 缓存（官方 `ProtocolDet` / `files/pd2.dat`）的读取接缝。
 ///
@@ -167,6 +284,34 @@ final qq8ProtocolDetProvider = Provider<Uint8List?>((ref) {
     return null;
   }
 });
+
+/// 把服务端下发的 `ksid` / 灯塔签发的 `qimei` 落进 `<dataDir>/qq8/device.json`。
+///
+/// ## 为什么这一步不能省
+///
+/// 这两个值都是「拿到一次、之后永久复用」的：
+/// * `ksid` — 服务端 `0x108` 下发，官方 `util.set_ksid` 只在 SP 为空时写；
+/// * `qimei` — 灯塔按设备属性签发，官方缓存在 `DENGTA_META` / `QimeiSDK`。
+///
+/// 丢掉它们的后果不对称：`ksid` 尤其糟糕，因为它**要登录成功才下发**，
+/// 一旦丢了就形成死循环——失败 → 没有 ksid → 更像新设备 → 失败。
+///
+/// 写盘失败只记日志，绝不影响登录（与 `pd2.dat` 同一原则）。
+void _recordDeviceState(
+  Ref ref, {
+  String? ksid,
+  String? qimei,
+}) {
+  if (ksid == null && qimei == null) return;
+  final log = Log.get('QQ8');
+  try {
+    final store = ref.read(qq8DeviceStoreProvider);
+    final current = store.loadSync();
+    store.saveSync(current.copyWith(ksid: ksid, qimei: qimei));
+  } catch (e) {
+    log.w('设备状态落盘失败（不影响登录）', error: e);
+  }
+}
 
 /// 登录成功后把服务端下发的 `0x537` 并进 `<dataDir>/qq8/pd2.dat`。
 ///
@@ -232,6 +377,11 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
     protocolDetBuilder: () => ref.read(qq8ProtocolDetProvider),
     // 登录成功后把服务端下发的 0x537 并进 pd2.dat（官方同位置行为）。
     protocolDetRecorder: (entry) => _recordProtocolDetEntry(ref, entry),
+    // 设备状态回写：ksid（服务端 0x108 下发）与 QIMEI（灯塔签发）都必须落盘，
+    // 否则每次启动都是一台"新设备"。官方同位置行为见 `util.set_ksid`
+    // （只在 SP 为空时写）与 QIMEI 的 SP 缓存。
+    deviceStateRecorder: ({String? ksid, String? qimei}) =>
+        _recordDeviceState(ref, ksid: ksid, qimei: qimei),
   );
   ref.onDispose(() => svc.close());
   return svc;

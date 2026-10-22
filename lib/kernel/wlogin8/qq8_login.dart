@@ -899,8 +899,42 @@ class Qq8LoginResponse {
     return body;
   }
 
-  /// 服务端下发的图片验证挑战签名（TLV `0x105` 的 sign 段）。
+  /// 服务端下发的 `ksid`（TLV `0x108`，tag 264）。
   ///
+  /// ## 这个值为什么必须持久化
+  ///
+  /// 它不是本地算的，是**服务端首次下发、客户端此后原样回带**。
+  /// 官方原文（`oicq/wlogin_sdk/request/oicq_request.java:1594`）：
+  /// ```java
+  /// if (tlv_t108Var.get_tlv(bArr16, 2, length) >= 0) {
+  ///     oicq.wlogin_sdk.tools.util.set_ksid(oicq.wlogin_sdk.request.t.t,
+  ///                                        tlv_t108Var.get_data());
+  /// }
+  /// ```
+  /// 而 `util.set_ksid`（`tools/util.java:680-698`）是**只在 SP 为空时写**：
+  /// ```java
+  /// byte[] bArr2 = get_ksid(context);
+  /// if (bArr2 == null || bArr2.length <= 0) { SP.putString("ksid", ...); }
+  /// ```
+  /// 即「服务端给一次，之后永远用这一个」。
+  ///
+  /// 若丢掉它，每次登录都自称「没有 ksid」，等于每次都是一台新设备——
+  /// 而 `0x108` 恰恰要等登录**成功**才会下发，形成死循环：
+  /// 失败 → 没有 ksid → 更像新设备 → 失败。
+  /// 所以上层必须把这里返回的值存盘（见 `qq8_device_store.dart`）。
+  ///
+  /// 日志实证（`qq8211/wtlogin_20260930.txt` 成功那次）与真机 SP
+  /// `WLOGIN_DEVICE_INFO.xml` 的 `ksid=188ca8765de720b5207b0adc6c51d3d7`。
+  ///
+  /// 返回原始字节（官方 `string_to_buf` 把它按十六进制解成 16 字节；
+  /// 解码在上层 `qq8KsidBytes` 里做，这里只如实带出）。
+  Uint8List? get t108Ksid {
+    final b = tlvs[0x108];
+    if (b == null || b.isEmpty) return null;
+    return b;
+  }
+
+  /// 服务端下发的图片验证挑战签名（TLV `0x105` 的 sign 段）。  ///
   /// 官方 `tlv_t105.java` 的 body 布局是两段长度前缀：
   /// ```java
   /// _enlen  = buf_to_int16(_buf, _head_len);              // 第一段：sign

@@ -219,6 +219,25 @@ class Qq8LoginService {
   /// 本次会话已取到的 QIMEI（[qimeiFetcher] 的结果；null = 没取/取不到）。
   String? _fetchedQimei;
 
+  /// 设备身份状态的回写接缝：把**服务端下发的 ksid** 与**本次取到的 QIMEI**
+  /// 交给上层落盘。
+  ///
+  /// ## 为什么必须是接缝而不是内部直接写文件
+  ///
+  /// 同 [qimeiFetcher]：L3 不该知道 App 数据目录在哪，也不该在自测里真写盘。
+  /// 上层（`qq8_providers.dart`）接到 `qq8_device_store.dart` 的
+  /// `FileQq8DeviceStore`。
+  ///
+  /// ## 不写会怎样
+  ///
+  /// `ksid` 是「服务端给一次、之后原样回带」的值（官方 `util.set_ksid` 只在
+  /// SP 为空时写）。丢掉它 → 每次登录都自称没有 ksid → 每次都是一台新设备。
+  /// 而它恰恰要登录**成功**才下发，于是形成死循环：
+  /// 失败 → 没有 ksid → 更像新设备 → 失败。
+  ///
+  /// `qimei` 同理：每次启动都换号 = 设备标识漂移。
+  final void Function({String? ksid, String? qimei})? deviceStateRecorder;
+
   /// ECDH 构造器——默认随机密钥对；测试注入固定私钥以便预先造出密文。
   final EcdhKeyPair Function()? ecdhBuilder;
 
@@ -325,6 +344,7 @@ class Qq8LoginService {
     this.deviceBuilder,
     this.qimei,
     this.qimeiFetcher,
+    this.deviceStateRecorder,
     this.protocolDetBuilder,
     this.protocolDetRecorder,
     this.ecdhBuilder,
@@ -1580,6 +1600,8 @@ class Qq8LoginService {
       if (v != null && v.isNotEmpty) {
         _fetchedQimei = v;
         _log.i('QIMEI 取号成功（${v.length} 字符）→ 进 TLV 0x545');
+        // 落盘：否则每次启动都换号 = 设备标识漂移。
+        _recordQimei(v);
         return v;
       }
       _log.i('QIMEI 取号未返回值 → 0x545 整条不发（与官方一致）');
@@ -1589,6 +1611,41 @@ class Qq8LoginService {
       _log.w('QIMEI 取号失败 → 0x545 整条不发（不阻断登录）', error: e);
     }
     return null;
+  }
+
+  /// 记录服务端下发的 `ksid`（TLV `0x108`）。
+  ///
+  /// 官方 `util.string_to_buf` 把 32 位十六进制串解成 16 字节；这里如实把
+  /// **原始字节**交给上层，由上层决定存成 hex 串还是别形态。
+  ///
+  /// 空/超长一律忽略（`0x108` 正常就是 16 字节；见到别的长度说明解析错了，
+  /// 存下来只会污染下次登录）。
+  void _recordKsid(Uint8List? raw) {
+    if (raw == null || raw.isEmpty) return;
+    if (raw.length > 64) {
+      _log.w('0x108 ksid 长度异常（${raw.length} 字节），忽略');
+      return;
+    }
+    final hex = raw.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    _log.i('0x108 ksid 下发（${raw.length} 字节）→ 落盘，下次登录原样回带');
+    final rec = deviceStateRecorder;
+    if (rec == null) return;
+    try {
+      rec(ksid: hex);
+    } on Object catch (e) {
+      _log.w('ksid 落盘失败（不影响登录）', error: e);
+    }
+  }
+
+  /// 记录本次取到的 QIMEI（跨进程稳定的设备标识）。
+  void _recordQimei(String value) {
+    final rec = deviceStateRecorder;
+    if (rec == null) return;
+    try {
+      rec(qimei: value);
+    } on Object catch (e) {
+      _log.w('QIMEI 落盘失败（不影响登录）', error: e);
+    }
   }
 
   /// 组三层信封 → 发送 → 拆壳 → 判读分支。
@@ -1744,6 +1801,10 @@ class Qq8LoginService {
       // 下次登录的 0x525/0x536 就能带上真实历史（官方 oicq_request.java:1632
       // 在**同一步**调 ProtocolDet.setLoginExtraData）。记录失败不影响登录。
       _recordProtocolDet(r.t537);
+      // 服务端下发的 ksid（0x108）——必须落盘。官方在同一步做同样的事
+      // （`oicq_request.java:1594` → `util.set_ksid`，且 set_ksid 只在 SP 为空时写）。
+      // 丢掉它等于每次登录都自称"没有 ksid"，而它要成功才下发 → 死循环。
+      _recordKsid(r.t108Ksid);
       // 成功之后清掉验证材料，避免下一次登录误用
       _t104 = Uint8List(0);
       _t174 = Uint8List(0);

@@ -33,6 +33,9 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "qqclient/keepalive"
 
+        /** 设备信息通道（见 [DeviceProbe]）。 */
+        private const val DEVICE_CHANNEL = "qqclient/device"
+
         /** 通知权限请求码。任意值，只要与别处不冲突。 */
         private const val REQUEST_NOTIFICATIONS = 0x5101
     }
@@ -73,6 +76,28 @@ class MainActivity : FlutterActivity() {
                     "isRunning" -> result.success(KeepAliveService.isRunning)
 
                     "ensurePermission" -> ensureNotificationPermission(result)
+
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 设备信息通道。刻意与保活分成两个 channel：
+        // 两者生命周期完全无关（保活是常驻状态机，设备信息是一次性只读），
+        // 合在一起会让「只想读一次设备」也必须先经过保活的状态判断。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "snapshot" -> {
+                        try {
+                            result.success(DeviceProbe.snapshot(this))
+                        } catch (e: Exception) {
+                            // 采集整体失败（极罕见）：回 null，Dart 侧据此退回合成派生。
+                            result.success(null)
+                        }
+                    }
+
+                    "hasLocationPermission" ->
+                        result.success(DeviceProbe.hasLocationPermission(this))
 
                     else -> result.notImplemented()
                 }

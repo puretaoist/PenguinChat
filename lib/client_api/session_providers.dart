@@ -25,6 +25,7 @@ import 'dart:io';
 import 'package:riverpod/riverpod.dart';
 
 import '../infra/log/logger.dart';
+import '../infra/device/device_info.dart';
 import '../infra/net/media_fetcher.dart';
 import '../infra/lifecycle/keep_alive.dart';
 import '../kernel/onebot/backend_profile.dart';
@@ -84,6 +85,17 @@ final mediaFetcherProvider = Provider<MediaFetcher?>((ref) {
 /// 放这里而不是直接让 `KeepAliveScope` new 一个：测试里能 override 成假实现，
 /// 从而验证「什么时候该挂、什么时候不该挂」这条判据本身。
 final keepAliveProvider = Provider<KeepAlive>((ref) => const NoopKeepAlive());
+
+/// 本机设备信息采集。
+///
+/// 默认 [NoopDeviceInfo]：桌面、纯 Dart 自测、以及任何没有 Android API 的
+/// 场景都返回 null，调用方据此退回合成派生。`main.dart` 在 Android 上
+/// override 成 `AndroidDeviceInfo`（走 `MethodChannel` → `DeviceProbe.kt`）。
+///
+/// 两个理由说明为什么它必须是一个可注入的 provider：①测试要能 override 成
+/// 固定快照，否则自测会依赖真机；②这条能力只在 Android 有意义，注入点
+/// 集中在一处比散落各处好审。
+final deviceInfoProvider = Provider<DeviceInfo>((ref) => const NoopDeviceInfo());
 
 /// 后端适配表。**必须**由 `main.dart` override（L4 从 asset bundle 读 JSON）。
 final backendRegistryProvider = Provider<BackendProfileRegistry>(

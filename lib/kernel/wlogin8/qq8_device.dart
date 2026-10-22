@@ -37,6 +37,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import '../crypto/digest.dart';
+import '../../infra/device/device_info.dart';
 
 /// Android 版本信息。
 class Qq8AndroidVersion {
@@ -509,6 +510,81 @@ class Qq8DeviceIdentity {
       out[i] = b;
     }
     return out;
+  }
+
+  /// 从**本机采集的快照**构造身份（对齐官方 `util` 的读取链）。
+  ///
+  /// 与 [fromJson] 的区别：那个读人工导出的 `identity.json`，这个直接吃
+  /// [DeviceSnapshot]（L1 `lib/infra/device/device_info.dart`，由原生
+  /// `DeviceProbe.kt` 用官方同一套系统 API 读出）。**用户不再需要 adb
+  /// push 任何文件**。
+  ///
+  /// ## 为什么这不等于"伪装成官方"
+  ///
+  /// Android 8+ 的 `ANDROID_ID` 按「应用签名 + 用户 + 设备」隔离，官方 QQ 与
+  /// TIM 装在同一台机器上读到的都不同（`25cf6881290b58f7` vs
+  /// `f23dd554a9f43c9a`）。所以**我们永远拿不到官方那个值**，也不该往这个
+  /// 方向使劲。能做到的是让**其余字段全部真实**：机型、指纹、boot_id、
+  /// /proc/version、基带都从本机读真值，"这台设备在现实里存在"这一条成立
+  /// ——而合成设备（`brand=OICQX`、`model=Konata 2020`、自称 Android 10
+  /// 却跑在 Android 16 上）在这一条上直接露。
+  ///
+  /// ## `androidId` 缺失时的处理
+  ///
+  /// 官方不是留空，而是生成 **15 位随机数字**并持久化到 SP
+  /// `WLOGIN_DEVICE_INFO` 的 `random_AndroidId`（`util.java:415-430`），
+  /// 之后每次登录都用它。持久化需要可写目录（L3 的事），所以这里接受
+  /// [androidIdFallback]——由调用方从磁盘读回或首次生成。两者都没有就返回
+  /// null（**不编**，让上层退回合成派生）。
+  ///
+  /// [ksid] / [qimei] 同理：都是服务端下发或跨会话共享的值，必须由上层
+  /// 从持久化存储带进来，这里不生成。
+  static Qq8DeviceIdentity? fromSnapshot(
+    DeviceSnapshot snapshot, {
+    String? androidIdFallback,
+    String? ksid,
+    String? qimei,
+  }) {
+    var androidId = snapshot.androidId;
+    if (androidId == null || androidId.isEmpty) {
+      androidId = androidIdFallback;
+    }
+    if (androidId == null || androidId.isEmpty) return null;
+
+    // mac 在 Android 6+ 恒为常量；真读不到就用官方同一个常量，
+    // 因为 guid = MD5(androidId ‖ mac) 少了它就算不出来。
+    final mac = (snapshot.macAddress == null || snapshot.macAddress!.isEmpty)
+        ? '02:00:00:00:00:00'
+        : snapshot.macAddress!;
+
+    return Qq8DeviceIdentity(
+      androidId: androidId,
+      macAddress: mac,
+      wifiBssid: snapshot.wifiBssid,
+      wifiSsid: snapshot.wifiSsid,
+      // IMSI 在 Android 10+ 普通应用读不到，官方同样读不到 → 留空 → 不发 0x194。
+      imsi: null,
+      ksid: ksid,
+      model: snapshot.model,
+      brand: snapshot.brand,
+      product: snapshot.product,
+      device: snapshot.device,
+      board: snapshot.board,
+      bootloader: snapshot.bootloader,
+      fingerprint: snapshot.fingerprint,
+      bootId: snapshot.bootId,
+      procVersion: snapshot.procVersion,
+      baseband: snapshot.baseband,
+      sim: snapshot.sim,
+      apn: snapshot.apn,
+      osType: snapshot.osType,
+      release: snapshot.release,
+      codename: snapshot.codename,
+      incremental: snapshot.incremental,
+      display: snapshot.display,
+      sdk: snapshot.sdk,
+      qimei: qimei,
+    );
   }
 
   /// 从 JSON 解析。`android_id` 与 `mac` 是必需项，缺任一返回 null（不猜）。

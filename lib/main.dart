@@ -29,6 +29,7 @@ import 'package:path_provider/path_provider.dart';
 import 'client_api/qq8_providers.dart';
 import 'client_api/qq8_token_store.dart';
 import 'client_api/session_providers.dart';
+import 'infra/device/device_info.dart';
 import 'infra/lifecycle/keep_alive.dart';
 import 'infra/log/log_file.dart';
 import 'infra/log/logger.dart';
@@ -36,6 +37,7 @@ import 'kernel/onebot/backend_profile.dart';
 import 'kernel/safety/safety_gate.dart';
 import 'ui/lifecycle/keep_alive_scope.dart';
 import 'ui/pages/home_page.dart';
+import 'ui/platform/android_device_info.dart';
 import 'ui/platform/foreground_keep_alive.dart';
 import 'ui/theme/telegram_theme.dart';
 import 'ui/theme/theme_mode.dart';
@@ -63,6 +65,18 @@ Future<void> main() async {
   _installLogging(dataDir);
   final registry = await _loadBackendRegistry();
 
+  // 设备信息采集（只在 Android 有实现）。
+  final deviceInfo =
+      Platform.isAndroid ? AndroidDeviceInfo() : const NoopDeviceInfo();
+
+  // 设备身份必须在这里定下来，不能交给异步 provider —— 理由见
+  // `resolveQq8DeviceIdentity` 的文档：androidId 进 guid 派生
+  // （`guid = MD5(androidId ‖ mac)`），异步就会在一次启动里先后出现两台设备。
+  final deviceIdentity = await resolveQq8DeviceIdentity(
+    dataDir: dataDir,
+    deviceInfo: deviceInfo,
+  );
+
   runApp(
     ProviderScope(
       overrides: [
@@ -73,6 +87,11 @@ Future<void> main() async {
         qq8TokenStoreProvider.overrideWithValue(
           FileQq8TokenStore(Directory('${dataDir.path}${Platform.pathSeparator}qq8')),
         ),
+        // 设备身份：null 表示"采不到 → 让上层退回合成派生"，这是合法状态，
+        // 所以必须 override（不 override 的话 provider 会自己去读 identity.json，
+        // 绕过这里的优先级判断）。
+        qq8DeviceIdentityProvider.overrideWithValue(deviceIdentity),
+        deviceInfoProvider.overrideWithValue(deviceInfo),
         // 后台保活：只有 Android 有前台服务这个概念。
         // 桌面端注入 Noop 而不是直接留默认值——留默认值也一样，但显式写出来
         // 能让"这条能力只在 Android 生效"这件事在代码里可见。

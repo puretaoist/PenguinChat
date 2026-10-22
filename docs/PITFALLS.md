@@ -1506,6 +1506,103 @@ wtlogin_20260919-b.txt:3215  CheckPictureAndGetSt Seq:6 ret=0
    同源」。排查时先确认「这两个包属于同一次会话吗」，再去比对包体字段。
 
 ---
+## C27. 设备身份：不要「造一台机器」，要「读这台机器」
+
+`Qq8Device.generate(uin)` 合成出来的设备以前一直在用，症状是「登录能过、滑块提交回
+`type=16` 用户身份已失效」。查下来它不是"参数不够真"，而是**整台机器在现实里不存在**。
+
+### 现象与根因
+
+| 观察 | 根因 |
+|---|---|
+| `brand='OICQX'`、`model='Konata 2020'` | 这两个值不属于任何厂商/机型 |
+| 自称 Android 10 / SDK 29，实际跑在 Android 16 / SDK 36 | 自相矛盾：真有 Android 10 的设备不会跑在 16 的内核上 |
+| 滑块提交秒回 `type=16`（1.24 秒，ticket 绝对新鲜） | 与包体字段无关，是设备身份整体不可信 |
+
+排查过程中先怀疑过「ticket 过期」，实测 1.24 秒内提交仍失败，**这条假设被彻底排除**。
+
+### 关键认知：`ANDROID_ID` 本来就「等于不了官方」
+
+同一台机器、同一时刻：
+
+```text
+官方 QQ : android_id  25cf6881290b58f7
+官方 TIM: android_id  f23dd554a9f43c9a
+```
+
+Android 8+ 起 `ANDROID_ID` 按「**应用签名密钥 + 用户 + 设备**」三元组隔离。就算把官方
+APK 拆开、用官方签名重签、再读一次，拿到的也不会是官方客户端那一份。
+
+⇒ **「复刻官方设备」这个目标本身不成立**。可行目标是「诚实描述本机」：服务端要的是
+「这个设备看起来是一台真实存在、内部自洽的机器」，不是「和官方一模一样」。
+
+### 官方怎么读（`analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/tools/util.java`）
+
+| 字段 | 读法 | 权限 |
+|---|---|---|
+| `Build.MODEL/BRAND/PRODUCT/DEVICE/BOARD/BOOTLOADER/FINGERPRINT` | `Build.*` | 无 |
+| `androidId`（0x188 源） | `Settings.Secure.getString(cr, "android_id")`；为空则 `getRandomAndroidId()` 生成 **15 位随机数字**并持久化到 SP `random_AndroidId` | 无 |
+| `mac`（0x187 源） | `WifiInfo.getMacAddress()`，Android 6+ 恒回 `"02:00:00:00:00:00"` | 无 |
+| `boot_id` | `/proc/sys/kernel/random/boot_id` | 无 |
+| `procVersion` | `/proc/version` | 无 |
+| `baseband` | 反射 `SystemProperties.get("gsm.version.baseband","no message")` | 无 |
+| `innerVersion` | `DISPLAY.contains(INCREMENTAL) ? DISPLAY : INCREMENTAL` | 无 |
+| `BSSID` / `SSID` | `WifiInfo.getBSSID()/getSSID()` | **需定位权限** |
+| `network_type` | `getActiveNetworkInfo().getType()`：`0→移动`、`1→wifi` | `ACCESS_NETWORK_STATE` |
+| `apn` | 移动网 `getExtraInfo()`，否则 `"wifi"` | `ACCESS_NETWORK_STATE` |
+| `IMSI`（0x194） | `getSubscriberId()` | **Android 10+ 已封死，官方自己读不到，从不发 0x194** |
+| `ksid` | SP `WLOGIN_DEVICE_INFO` 的 `ksid`，`string_to_buf` **十六进制解码 16 字节** | 无 |
+
+`imei` 值得一提：官方 `util.java` 里 `getIMEI|getImei|getDeviceId` **零命中** —— 官方
+从不采集 IMEI，它只是本地派生输入（ksid 与 SSO 头），保持合成值即可。
+
+### 三个必须跨进程持久化的值
+
+`lib/client_api/qq8_device_store.dart` 管这三个，落 `<dataDir>/qq8/device.json`：
+
+1. **`androidId`** —— 读不到时官方才生成随机 15 位。不持久化 ⇒ `guid = MD5(androidId‖mac)`
+   每次都变 ⇒ 设备信任归零，等于每次登录都是新设备。
+2. **`ksid`** —— 服务端 `0x108` 下发，且 `util.set_ksid()` **只在 SP 为空时写**。
+   不持久化会形成**死循环**：登录失败 → 没有 ksid → 下次更像新设备 → 更容易失败。
+3. **`qimei`** —— 灯塔签发。不持久化则标识每次都漂移。
+
+写盘必须**先写临时文件再 `rename`**：半个 JSON 会让下次启动解析失败 → androidId 重新
+生成 → 信任归零，比不写还糟。
+
+### Android 侧实现要点（`DeviceProbe.kt`）
+
+- 逐字段 `runCatching`，**读不到就不放键，绝不编**（宁可让 Dart 侧看到 `null` 退回合成，
+  也不要填一个"看起来像"的假值 —— 假值比缺值更难排查）。
+- `MethodChannel('qqclient/device')` 与保活的 `qqclient/keepalive` **刻意分成两个 channel**：
+  保活是常驻状态机、设备信息是一次性只读，生命周期完全无关。
+- 新增三条**非运行时**权限（装包即生效、不弹框）：`ACCESS_WIFI_STATE`、
+  `ACCESS_NETWORK_STATE`、`READ_PHONE_STATE`。
+- **刻意不申请 `ACCESS_FINE_LOCATION`**：会弹框，而「聊天客户端要定位干什么」这个问题
+  很难回答。拿不到 BSSID/SSID 就留空 —— 官方没授权时同样拿到 `<unknown ssid>`，
+  不是只有我们这样。
+
+### 三级优先级（`resolveQq8DeviceIdentity`）
+
+```text
+① <dataDir>/qq8/identity.json   人工注入（诊断用，真机日志里采集的值）
+② 本机自采（DeviceInfo 快照 + <dataDir>/qq8/device.json 持久项）
+③ null                          → 上层退回 Qq8Device.generate(uin)
+```
+
+② 的快照为 `null` 时**直接返回 null**，不拿①的字段和③的合成值拼接 —— 半真半假比全合成
+更可疑（服务端看到"真机 android_id + 假机型"只会更警惕）。
+
+**教训**：
+
+1. **「参数都填了」不等于「身份可信」**。可信度是整体判断，不是逐字段打分。一台
+   `brand=OICQX` 的设备，`android_id` 再真也没用。
+2. **不要去追「和官方一样」**。先把「官方到底读了什么」查清，再问「这个目标在
+   当前系统上是否可达」。`ANDROID_ID` 分域就是不可达的例子 —— 早发现能省一整轮。
+3. **该持久的东西一开始就要持久**。`ksid` 缺失会形成负反馈死循环，而它的写入权限
+   在服务端手里（成功才下发）。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

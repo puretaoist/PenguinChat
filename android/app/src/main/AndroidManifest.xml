@@ -17,6 +17,21 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- 设备信息采集（见 DeviceProbe.kt）。这三条都**不是**运行时权限，
+         装包即生效，不会弹框：
+           ACCESS_WIFI_STATE   读 WifiInfo 的 MAC/BSSID/SSID
+           ACCESS_NETWORK_STATE 判断当前是 Wi-Fi 还是移动网（决定 apn 槽的值）
+           READ_PHONE_STATE    SIM 运营商名（0x124 的 sim 槽）
+         ⚠️ BSSID/SSID 在 Android 10+ 还需要**定位权限**才能拿到真实值。
+         我们刻意**不申请**定位：一是它会弹框（用户会问「一个聊天客户端
+         要定位干什么」），二是拿不到时这两个字段留空即可——官方客户端
+         在没给定位权限时同样拿到 `<unknown ssid>`，不是只有我们这样。
+         官方 APK 确实声明了 ACCESS_FINE_LOCATION，但那是它整套 SDK 的
+         历史包袱，不是登录必需。 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+
     <application
         android:label="qqclient"
         android:name="${applicationName}"
