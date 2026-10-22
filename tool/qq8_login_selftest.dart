@@ -408,10 +408,18 @@ Future<void> main() async {
       '${(body[0] << 8 | body[1])}',
     );
     check(
-      'token：共 16 项、顺序与清单一致（官方记载同为 16）',
-      tlvs.length == 16 &&
-          tlvs.keys.join(',') == qq8ExchangeEmpTlvOrder.join(','),
-      '${tlvs.length} 项',
+      // 官方 m.java 的顺序表是 21 项（2026-10-22 据 `m.java` 的 arraycopy
+      // 拼接序更正，含 0x108/0x544 并修了 0x511 的位置）。本夹具的
+      // Qq8LoginConditions 会 guard 掉 0x172/0x194/0x201，故实发 18 项。
+      'token：项数 = 顺序表减去被 guard 掉的三项（官方 m.java 21 项）',
+      tlvs.length == 18 && tlvs.length == qq8ExchangeEmpTlvOrder.length - 3,
+      '${tlvs.length} 项 / 清单 ${qq8ExchangeEmpTlvOrder.length} 项',
+    );
+    check(
+      'token：实发顺序是清单的子序列（不重排、不插队）',
+      tlvs.keys.join(',') ==
+          qq8ExchangeEmpTlvOrder.where(tlvs.containsKey).join(','),
+      tlvs.keys.map((k) => '0x${k.toRadixString(16)}').join(','),
     );
     check(
       'token：0x143 = d2 本体',

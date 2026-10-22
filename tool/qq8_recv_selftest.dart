@@ -192,16 +192,17 @@ void testShellFlags() {
   }
   checkEq('未知外壳 flag 抛错', threw, true);
 
-  // magic 不对
+  // magic 既不是 0x0A 也不是 0x0B（0x0B 自 2026-10-22 起是 UNI 应答外壳，
+  // 见 `qq8UnwrapRecv` 的 `_unwrapUni`，故这里用 0x0C 作非法值）。
   threw = false;
   final badMagic = Uint8List.fromList(_ssoFrame(shellFlag: 0, payload: payload));
-  badMagic[3] = 0x0B;
+  badMagic[3] = 0x0C;
   try {
     qq8UnwrapRecv(badMagic);
   } on Qq8LoginException {
     threw = true;
   }
-  checkEq('magic 非 0x0A 抛错', threw, true);
+  checkEq('magic 非 0x0A/0x0B 抛错', threw, true);
 
   // retcode 非 0
   threw = false;

@@ -269,6 +269,18 @@ class Qq8LoginConditions {
         return _nonEmpty(d2); // token 登录专有：没有 d2 发出去只会被拒
       case 0x174:
         return _nonEmpty(t174); // 短信码流程要回带的二次验证令牌
+      case 0x108:
+        // 官方 `m.java`：`bArr2 != null && bArr2.length > 0` 时才发
+        // （`tlv_t108Var.get_tlv_108(bArr2)`，实参 `t.ac` = ksid =
+        // `|imei|apkName`）。我们的 ksid 由设备串拼出、恒非空，
+        // 与官方常态一致 → 恒发。
+        return true;
+      case 0x544:
+        // 官方 `m.java`：`bArr43 != null` 才追加到末尾。而
+        // `tlv_t544.get_tlv_544(...)` 在 `ByteData.getCode` 降级时返回
+        // `new byte[]{0,0,0,0}`（非 null），故官方实际恒发 4 字节零。
+        // 三种 Qq8T544Mode 都产出非空结果 → 恒发。
+        return true;
       default:
         return true;
     }

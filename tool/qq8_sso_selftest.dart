@@ -124,8 +124,18 @@ Qq8SsoContext buildContext() {
       srmToken: hex('99aabbcc'),
     ),
     seqId: 101,
+    // 这批黄金向量由参考实现 **oicq 2.3.1** 的 `buildOicqPacket` 生成，它的
+    // reserve fields 段写死成 `.writeU32(4)`（`lib/core/base-client.ts:876`），
+    // 语义等价于「空 body 的 withLength」= 4 字节 `00000004`。
+    // 2026-10-22 起生产代码改用 icqq/真机的 protobuf 版本
+    // （`buildReserveFields`，见第 6 节），旧的 8 条向量要靠这个覆写继续锁住
+    // 信封的其余部分——否则只能删掉向量，覆盖率反而下降。
+    reserveFieldsOverride: _oicqLegacyReserveFields,
   );
 }
+
+/// oicq 2.3.1 `lib/core/base-client.ts:876` 的 `.writeU32(4)` 字面量。
+final _oicqLegacyReserveFields = Uint8List.fromList(const <int>[0, 0, 0, 4]);
 
 /// 测试用的业务体（与 Node 侧一致）。
 final _bodies = <String, Uint8List>{
@@ -583,6 +593,155 @@ void testUniPacket() {
 }
 
 // ---------------------------------------------------------------------------
+// 6. reserve fields（SSO 头的第 13 段）
+// ---------------------------------------------------------------------------
+
+/// 这一段 2026-10-22 才装上真值，是"登录成功之后发业务包"的关键差异点：
+/// oicq 2.3.1 写死 `.writeU32(4)`（`lib/core/base-client.ts:876`），
+/// icqq 0.6.10 与官方真机是 `withLength(protobuf)`（`buildReserveFields`）。
+/// 第 2/3 节的向量走 oicq 形态（靠 `reserveFieldsOverride`），本节单独锁
+/// icqq 形态。
+void testReserveFields() {
+  section('6. reserve fields（icqq / 官方真机形态）');
+
+  // 注意：buildContext() 带 `reserveFieldsOverride`（供第 2/3 节的 oicq 向量），
+  // 本节要测的是**现算**路径，必须用不带 override 的 ctx。
+  final ctx = buildContext();
+  final plain = Qq8SsoContext(
+    uin: ctx.uin,
+    apk: ctx.apk,
+    device: ctx.device,
+    sessionId: ctx.sessionId,
+    randomKey: ctx.randomKey,
+    ecdhPublicKey: ctx.ecdhPublicKey,
+    ecdhShareKey: ctx.ecdhShareKey,
+    sig: ctx.sig,
+    seqId: ctx.seqId,
+  );
+  final rf = plain.reserveFields;
+
+  // 期望值来自 icqq `base-client.js:361-394` 的字段表：
+  //   {9:1, 12:qImei36, 14:0, 16:uin, 18:0, 19:1, 20:1, 21:0, 24:"", 28:3}
+  // 手工按 protobuf varint 逐字段断言（不做整段 hex 硬编码——那样一改
+  // 字段表就得重生成，且出错时看不出是哪一项）。
+  final m = _readPbVars(rf);
+  checkEq('tag 9 (u32) = 1', m[9], <int>[1]);
+  checkEq('tag 14 (u32) = 0', m[14], <int>[0]);
+  checkEq('tag 16 (u32) = uin', m[16], <int>[10001]);
+  checkEq('tag 18 (u32) = 0', m[18], <int>[0]);
+  checkEq('tag 19 (u32) = 1', m[19], <int>[1]);
+  checkEq('tag 20 (u32) = 1', m[20], <int>[1]);
+  checkEq('tag 21 (u32) = 0', m[21], <int>[0]);
+  checkEq('tag 28 (u32) = 3', m[28], <int>[3]);
+  // tag 24 = sec_info：无需签名的命令上是**空 length-delimited**，但字段本身
+  // 仍然写出来（icqq 传 BUF0 时 pb.encode 同样产出 `c2 01 00`）。
+  checkEq('tag 24 (sec_info) 存在', m.containsKey(24), true);
+  checkEq('tag 24 (sec_info) 为空', m[24], <int>[]);
+  checkEq('无 qimei36 时不写 tag 12', m.containsKey(12), false);
+
+  // 有 qimei36 → tag 12 是 length-delimited
+  final ctx2 = Qq8SsoContext(
+    uin: plain.uin,
+    apk: plain.apk,
+    device: plain.device,
+    sessionId: plain.sessionId,
+    randomKey: plain.randomKey,
+    ecdhPublicKey: plain.ecdhPublicKey,
+    ecdhShareKey: plain.ecdhShareKey,
+    sig: plain.sig,
+    seqId: plain.seqId,
+    qimei36: 'c5da7bd11af782c8a3dec3d710001591a806',
+  );
+  final rf2 = ctx2.reserveFields;
+  final i12 = _findPbBytes(rf2, 12);
+  checkEq('有 qimei36 → tag 12 = 36 字符',
+      i12 == null ? -1 : i12.length, 36);
+
+  // 覆写优先：给了 override 就原样返回，不算 protobuf
+  checkEq('reserveFieldsOverride 优先', toHex(ctx.reserveFields), '00000004');
+
+  // 信封层面：protobuf 形态下 headlen 比 oicq 形态大（多出的就是字段表）
+  const cmd = 'StatSvc.register';
+  final body = Uint8List.fromList(const <int>[0xde, 0xad, 0xbe, 0xef]);
+  final legacy = Qq8Sso.buildLoginPacket(ctx, cmd, body, Qq8LoginType.online);
+  final modern = Qq8Sso.buildLoginPacket(ctx2, cmd, body, Qq8LoginType.online);
+  checkEq('protobuf 形态比 writeU32(4) 形态更长',
+      modern.length > legacy.length, true);
+}
+
+/// 极简 protobuf 解析：varint 字段取值，length-delimited 只记存在性。
+///
+/// 注意 **key 本身也是 varint**——tag ≥ 16 时 key ≥ 128，要用两字节
+/// （第一版把 key 当单字节读，导致 tag 16/24/28 全部丢失）。
+Map<int, List<int>> _readPbVars(Uint8List b) {
+  var i = 0;
+
+  int readVarint() {
+    var v = 0;
+    var shift = 0;
+    while (i < b.length) {
+      final x = b[i++];
+      v |= (x & 0x7F) << shift;
+      if (x < 0x80) break;
+      shift += 7;
+    }
+    return v;
+  }
+
+  final out = <int, List<int>>{};
+  while (i < b.length) {
+    final key = readVarint();
+    final tag = key >> 3;
+    final wt = key & 7;
+    if (wt == 0) {
+      (out[tag] ??= <int>[]).add(readVarint());
+    } else if (wt == 2) {
+      out[tag] ??= <int>[];
+      // 注意：不能写 `i += readVarint()`——`+=` 会先读 `i` 的旧值，而
+      // `readVarint()` 自己又推进 `i`，最终用旧值加长度，指针错位。
+      final len = readVarint();
+      i += len;
+    } else {
+      break;
+    }
+  }
+  return out;
+}
+
+/// 取 length-delimited 字段的裸字节。
+List<int>? _findPbBytes(Uint8List b, int want) {
+  var i = 0;
+
+  int readVarint() {
+    var v = 0;
+    var shift = 0;
+    while (i < b.length) {
+      final x = b[i++];
+      v |= (x & 0x7F) << shift;
+      if (x < 0x80) break;
+      shift += 7;
+    }
+    return v;
+  }
+
+  while (i < b.length) {
+    final key = readVarint();
+    final tag = key >> 3;
+    final wt = key & 7;
+    if (wt == 0) {
+      readVarint();
+    } else if (wt == 2) {
+      final len = readVarint();
+      if (tag == want) return b.sublist(i, i + len);
+      i += len;
+    } else {
+      return null;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 
 void main() {
   stdout.writeln('QQ 8.2.11 SSO 包构建离线自测');
@@ -595,6 +754,7 @@ void main() {
   testLoginPacket();
   testStructure();
   testUniPacket();
+  testReserveFields();
 
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');

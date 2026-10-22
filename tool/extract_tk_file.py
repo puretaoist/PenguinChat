@@ -416,6 +416,26 @@ class JavaDeserializer:
 # ---------------------------------------------------------------------------
 # 从反序列化结果里抽票据
 # ---------------------------------------------------------------------------
+def _iter_pairs(pairs):
+    """把 TreeMap 的 `#entries` 规整成 [(key_value, obj), ...]。
+
+    键是 `java.lang.Long` 包装对象，其字段 `value` 才是数值；真机上还观察到
+    键/值错位的形态（键位置出现 None、值位置出现 Long），所以这里做双向容错：
+    哪一边是 Long 就把它当键，另一边当值。
+    """
+    out = []
+    for a, b in pairs:
+        av = a.fields.get("value") if isinstance(a, JObj) else a
+        bv = b.fields.get("value") if isinstance(b, JObj) else b
+        if isinstance(a, JObj) and "WloginSigInfo" in a.cls:
+            out.append((bv, a))
+        elif isinstance(b, JObj) and "WloginSigInfo" in b.cls:
+            out.append((av, b))
+        else:
+            out.append((av if av is not None else bv, b if av is not None else a))
+    return out
+
+
 def _as_bytes(v):
     """把解析结果统一成 bytes。
 
@@ -507,6 +527,13 @@ def main():
     # 我们的解析器把 TreeMap 的 defaultWriteObject 字段读进 root.fields，
     # 而 size 与键值对在 root 之后的对象流里。为稳妥，直接扫 handles 里的
     # 所有 WloginAllSigInfo 对象。
+    # 真机 tk_file 的根对象是 **TreeMap<Long, WloginAllSigInfo>**（外层 key 才是
+    # uin），里面每个 WloginAllSigInfo 的 `_uin` 字段是 0（官方不填它），真正的
+    # uin 在外层 key 和 `_useInfo._uin` 里。所以优先按外层 key 归属。
+    root_entries = []
+    if isinstance(root, JObj) and root.cls.endswith("TreeMap"):
+        root_entries = root.fields.get("#entries") or []
+
     all_sig = [h for h in jd.handles
                if isinstance(h, JObj) and "WloginAllSigInfo" in h.cls]
     if not all_sig:
@@ -517,27 +544,39 @@ def main():
         sys.exit("✗ 没找到 WloginAllSigInfo 对象")
     print(f"WloginAllSigInfo: {len(all_sig)} 个")
 
+    # 外层 key -> AllSig 的映射（真机形态）
+    uin_of = {}
+    for k, v in root_entries:
+        kv = k.fields.get("value") if isinstance(k, JObj) else k
+        if isinstance(kv, int) and isinstance(v, JObj) and "WloginAllSigInfo" in v.cls:
+            uin_of[id(v)] = kv
+
     found = []
     for a in all_sig:
-        uin = a.fields.get("_uin", 0)
-        # _tk_map 是 TreeMap<Long, WloginSigInfo>，解析器把键值对挂在
-        # `#entries` 上：[(Long, WloginSigInfo), ...]。
+        # uin 三个来源按可信度排：外层 key > _useInfo._uin > _uin
+        uin = uin_of.get(id(a))
+        if uin is None:
+            ui = a.fields.get("_useInfo")
+            if isinstance(ui, JObj):
+                uin = ui.fields.get("_uin")
+        if not uin:
+            uin = a.fields.get("_uin", 0)
+        # _tk_map 是 TreeMap<Long, WloginSigInfo>，键值对挂在 `#entries` 上
         tk = a.fields.get("_tk_map")
         pairs = []
         if isinstance(tk, JObj):
             pairs = tk.fields.get("#entries") or []
-        sigs = [v for (_k, v) in pairs
+        sigs = [(kslot, v) for (kslot, v) in _iter_pairs(pairs)
                 if isinstance(v, JObj) and "WloginSigInfo" in v.cls]
         if not sigs:
             # 兜底：TreeMap 没解出键值对时，退回扫句柄表
-            sigs = [h for h in jd.handles
+            sigs = [(None, h) for h in jd.handles
                     if isinstance(h, JObj) and "WloginSigInfo" in h.cls]
         found.append((uin, a, sigs))
         print(f"  uin={uin} mainSigMap={a.fields.get('mainSigMap')} "
               f"_tk_map 条目×{len(pairs)} WloginSigInfo×{len(sigs)}")
-        for k, v in pairs:
-            kv = k.fields.get("value") if isinstance(k, JObj) else k
-            print(f"    key={kv} -> {v.cls if isinstance(v, JObj) else v}")
+        for kslot, v in sigs:
+            print(f"    入口 key={kslot} -> {v.cls}")
 
     if args.uin is not None:
         sel = [f for f in found if f[0] == args.uin]
@@ -551,7 +590,24 @@ def main():
     if not sigs:
         sys.exit("✗ 没有 WloginSigInfo")
 
-    sig = sigs[0]
+    # 一个 WloginAllSigInfo 下有多个 WloginSigInfo（按 appid 区分）：
+    #   16           = QQ 主 app（我们要的）
+    #   1600000226   = 协议内部的次要 appid
+    # 优先取 16，退其次取第一个有 d2 的。
+    chosen = None
+    for kslot, v in sigs:
+        if kslot == 16 and _pick(v.fields, "_D2"):
+            chosen = (kslot, v)
+            break
+    if chosen is None:
+        for kslot, v in sigs:
+            if _pick(v.fields, "_D2"):
+                chosen = (kslot, v)
+                break
+    if chosen is None:
+        sys.exit("✗ 所有 WloginSigInfo 都没有 _D2")
+    kslot, sig = chosen
+    print(f"\n选用入口 appid={kslot}（其余 {len(sigs) - 1} 个跳过）")
     f = sig.fields
     out = {
         "uin": uin,

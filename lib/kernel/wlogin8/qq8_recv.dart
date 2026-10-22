@@ -41,6 +41,7 @@
 /// 本文件是纯 Dart。
 library;
 
+import 'dart:io' show Platform, gzip, zlib;
 import 'dart:typed_data';
 
 import '../crypto/tea.dart';
@@ -52,6 +53,10 @@ class Qq8SsoResponse {
   final int flag;
 
   /// SSO 头里的序列号（对应请求的 seq）。
+  ///
+  /// 配对用 SSO 头里的 seq（与 icqq `base-client.js:1429` 一致）。
+  /// `magic=0x0B`（UNI 应答）时外壳里另有一个 seq，仅在 SSO 头那位为 0
+  /// 时兜底。
   final int seq;
 
   /// SSO 命令字（如 `wtlogin.login`）。
@@ -87,9 +92,12 @@ Qq8SsoResponse qq8UnwrapRecv(Uint8List frame, {Uint8List? d2key}) {
 
   // ---------- ① 外壳 ----------
   final magic = (frame[0] << 24) | (frame[1] << 16) | (frame[2] << 8) | frame[3];
+  if (magic == 0x0B) {
+    return _unwrapUni(frame, d2key: d2key);
+  }
   if (magic != 0x0A) {
     throw Qq8LoginException(
-      '响应外壳 magic=0x${magic.toRadixString(16)}（期望 0x0A）——'
+      '响应外壳 magic=0x${magic.toRadixString(16)}（期望 0x0A 或 0x0B）——'
       '报文布局与已知模型不符，请保留原始字节排查',
     );
   }
@@ -124,12 +132,99 @@ Qq8SsoResponse qq8UnwrapRecv(Uint8List frame, {Uint8List? d2key}) {
   }
 
   // ---------- ② SSO 头 ----------
+  final head = _parseSsoHead(plain);
+
+  return Qq8SsoResponse(
+    flag: flag,
+    seq: head.seq,
+    cmd: head.cmd,
+    retcode: head.retcode,
+    payload: head.payload,
+  );
+}
+
+/// `magic=0x0B` 的 UNI 应答外壳。
+///
+/// ## 与 `0x0A` 的区别（实测 2026-10-22，`tool/qq8_raw_probe.dart`）
+///
+/// 请求侧 `icqq` 的 `buildUniPkt`（`lib/core/base-client.js:1636-1660`）写的是：
+/// ```text
+/// u32 0x0B ‖ u8 type(=1) ‖ i32 seq ‖ u8 0 ‖ withLen(uin 字符串) ‖ TEA(sso, d2key)
+/// ```
+/// —— 比 `0x0A` 少了 d2 段（`0x0A` 是 `u32 0x0A ‖ u8 type ‖ withLen(d2) ‖ u8 0 ‖ withLen(uin)`），
+/// 并且 seq 就在外壳里（`0x0A` 外壳没有 seq）。
+///
+/// 应答同样以 `0x0B` 打头。此前 `qq8UnwrapRecv` 只认 `0x0A`，遇到 UNI
+/// 应答直接抛「magic=0xb」，导致 `OidbSvc.0x480_9_IMCore` 等到超时——
+/// 这就是补这个分支的原因。
+Qq8SsoResponse _unwrapUni(Uint8List frame, {Uint8List? d2key}) {
+  if (frame.length < 11) {
+    throw Qq8LoginException('UNI 应答太短（${frame.length} 字节）');
+  }
+  final flag = frame[4];
+  final seq = (frame[5] << 24) | (frame[6] << 16) | (frame[7] << 8) | frame[8];
+  final uinLenField = frame[9];
+  final uinLen = uinLenField >= 4 ? uinLenField - 4 : uinLenField;
+  final ctStart = 10 + uinLen;
+  if (ctStart >= frame.length) {
+    throw Qq8LoginException('UNI 应答声明的 uin 长度超出报文（$ctStart/${frame.length}）');
+  }
+  final ct = Uint8List.sublistView(frame, ctStart);
+
+  final Uint8List plain;
+  if (flag == 0) {
+    plain = ct;
+  } else if (flag == 1) {
+    if (d2key == null || d2key.isEmpty) {
+      throw Qq8LoginException('UNI 应答 flag=1 需要 d2key，但当前没有');
+    }
+    plain = qqTeaDecrypt(ct, d2key);
+  } else if (flag == 2) {
+    plain = qqTeaDecrypt(ct, Uint8List(16));
+  } else {
+    throw Qq8LoginException('未知的 UNI 应答外壳 flag=$flag');
+  }
+
+  final head = _parseSsoHead(plain);
+  return Qq8SsoResponse(
+    flag: flag,
+    // 与 icqq 一致：配对用 SSO 头里的 seq（`base-client.js:1429`
+    // `if (this[HANDLERS].has(sso.seq))`）。外壳 seq 只在 SSO 头那位为 0
+    // 时兜底——UNI 路径上服务端确实回填了 SSO seq，2026-10-22 实测。
+    seq: head.seq != 0 ? head.seq : seq,
+    cmd: head.cmd,
+    retcode: head.retcode,
+    payload: head.payload,
+  );
+}
+
+/// 解析 SSO 头（`0x0A` 与 `0x0B` 共用）。
+///
+/// 与 `icqq` 的 `parseSso`（`lib/core/base-client.js:1342-1399`）逐字段一致：
+/// ```text
+/// u32 headlen
+/// i32 seq
+/// i32 retcode
+/// withLen(retmsg)      ← 只在 retcode != 0 时非空
+/// withLen(cmd)
+/// withLen(session)
+/// i32 compressed       0=明文 / 1=gzip（zlib.unzip）/ 8=整体偏移
+/// withLen(?)
+/// withLen(payload)
+/// ```
+/// `compressed == 1` 时 `payload` 要过 `zlib.unzip`（icqq `constants.js:41`
+/// `exports.unzip = promisify(zlib.unzip)`，`base-client.js:1389` 直接调用）。
+({int seq, int retcode, String cmd, Uint8List payload}) _parseSsoHead(
+  Uint8List plain,
+) {
   int u32At(int off) {
     if (off < 0 || off + 4 > plain.length) {
       throw Qq8LoginException('SSO 头越界：读 u32@$off，共 ${plain.length} 字节');
     }
-    return ((plain[off] << 24) | (plain[off + 1] << 16) |
-            (plain[off + 2] << 8) | plain[off + 3]) &
+    return ((plain[off] << 24) |
+            (plain[off + 1] << 16) |
+            (plain[off + 2] << 8) |
+            plain[off + 3]) &
         0xFFFFFFFF;
   }
 
@@ -141,6 +236,16 @@ Qq8SsoResponse qq8UnwrapRecv(Uint8List frame, {Uint8List? d2key}) {
   final headlen = u32At(0);
   final seq = i32At(4);
   final retcode = i32At(8);
+  // 诊断开关：QQ8_RECV_TRACE=1 时打印 SSO 头前 64 字节，便于定位
+  // 「seq/cmd 解出垃圾」这类问题（无帧格式信息则无从下手）。
+  final trace = Platform.environment['QQ8_RECV_TRACE'] == '1';
+  if (trace) {
+    final n = plain.length < 64 ? plain.length : 64;
+    final hex = List<String>.generate(
+        n, (i) => plain[i].toRadixString(16).padLeft(2, '0')).join();
+    // ignore: avoid_print
+    print('[recv] SSO 头 headlen=$headlen seq=$seq retcode=$retcode 前$n=$hex');
+  }
   if (retcode != 0) {
     throw Qq8LoginException('SSO 返回码非 0：retcode=$retcode（seq=$seq）');
   }
@@ -154,28 +259,49 @@ Qq8SsoResponse qq8UnwrapRecv(Uint8List frame, {Uint8List? d2key}) {
   offset += cmdLen;
 
   final sessLen = u32At(offset);
+  if (sessLen < 4 || offset + sessLen > plain.length) {
+    throw Qq8LoginException('SSO session 长度非法：$sessLen（off=$offset/${plain.length}）');
+  }
   offset += sessLen;
   final compressed = i32At(offset);
+  offset += 4;
 
   final int payloadStart;
-  if (compressed == 0) {
-    payloadStart = headlen + 4;
-  } else if (compressed == 8) {
-    payloadStart = headlen;
-  } else if (compressed == 1) {
-    throw Qq8LoginException('SSO 负载是 gzip（flag=1），本实现未支持');
-  } else {
-    throw Qq8LoginException('未知的 SSO 压缩标志 flag=$compressed');
+  switch (compressed) {
+    case 0:
+      payloadStart = headlen + 4;
+    case 8:
+      payloadStart = headlen;
+    case 1:
+      // gzip：负载仍在 headlen+4，但要解压。见下方。
+      payloadStart = headlen + 4;
+    default:
+      throw Qq8LoginException('未知的 SSO 压缩标志 flag=$compressed');
   }
   if (payloadStart < 0 || payloadStart > plain.length) {
     throw Qq8LoginException('SSO headlen=$headlen 使负载起点越界（${plain.length} 字节）');
   }
 
-  return Qq8SsoResponse(
-    flag: flag,
-    seq: seq,
-    cmd: cmd,
-    retcode: retcode,
-    payload: Uint8List.sublistView(plain, payloadStart),
-  );
+  var payload = Uint8List.sublistView(plain, payloadStart);
+  if (compressed == 1) {
+    payload = _inflate(payload);
+  }
+
+  return (seq: seq, retcode: retcode, cmd: cmd, payload: payload);
+}
+
+/// zlib / gzip 解压。
+///
+/// `icqq` 用 Node 的 `zlib.unzip`（自动识别 zlib 与 gzip 两种头），Dart 的
+/// `ZLibDecoder` 只吃 zlib、`GZipDecoder` 只吃 gzip，所以这里按魔数分派：
+/// `0x1F 0x8B` → gzip，否则 zlib。两者都失败则原样返回（不让解压问题掩盖
+/// 协议问题，解出来的垃圾交给调用方判断）。
+Uint8List _inflate(Uint8List data) {
+  final isGzip = data.length >= 2 && data[0] == 0x1F && data[1] == 0x8B;
+  try {
+    final out = isGzip ? gzip.decode(data) : zlib.decode(data);
+    return Uint8List.fromList(out);
+  } catch (_) {
+    return data;
+  }
 }

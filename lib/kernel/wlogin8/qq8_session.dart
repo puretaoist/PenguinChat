@@ -58,8 +58,20 @@ class Qq8Session {
   /// 与服务端的时间差（秒），[correctTime] 之后有值。
   int timeDiffSeconds = 0;
 
+  /// QIMEI36（36 字符），写进 SSO 头的 reserve fields（tag 12）。
+  ///
+  /// 官方客户端总有值；为空时该 tag 不写，服务端多数命令仍接受，但
+  /// `StatSvc.register` 这类业务包建议带上（2026-10-22 真机实证）。
+  final String? qimei36;
+
   /// 收包解析失败的回调（不中断会话）。
   void Function(Object error)? onError;
+
+  /// 原始帧旁路（诊断用）：每个解出的帧在解析**之前**回调一次。
+  ///
+  /// 与 [pushes] 的区别：这里给的是没被任何一层解析过的原始字节，用于
+  /// 排查「解析丢帧 / seq 对不上」这类问题。
+  void Function(Uint8List frame)? onRawFrame;
 
   /// 心跳连失败两次（视为掉线）时的回调。
   void Function()? onOffline;
@@ -85,6 +97,7 @@ class Qq8Session {
     Qq8SigInfo? sig,
     Uint8List? randomKey,
     int seqStart = 0,
+    this.qimei36,
   })  : sig = sig ?? Qq8SigInfo(),
         randomKey = randomKey ?? _secureBytes(16),
         _seq = seqStart;
@@ -120,6 +133,7 @@ class Qq8Session {
   // ------------------------------------------------------------------
 
   void _onFrame(Uint8List frame) {
+    onRawFrame?.call(frame);
     final Qq8SsoResponse r;
     try {
       r = qq8UnwrapRecv(frame, d2key: sig.d2key);
@@ -150,6 +164,7 @@ class Qq8Session {
         ecdhShareKey: ecdhShareKey,
         sig: sig,
         seqId: seq,
+        qimei36: qimei36,
       );
 
   Future<Qq8SsoResponse> _send(

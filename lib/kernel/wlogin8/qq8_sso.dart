@@ -38,6 +38,7 @@ import 'dart:typed_data';
 import '../../infra/coder.dart';
 import '../crypto/tea.dart';
 import 'qq8_device.dart';
+import 'qq8_pb.dart';
 import 'qq8_tlv.dart';
 
 /// SSO 包头里的固定未知字段（oicq `BUF_UNKNOWN`）。
@@ -140,6 +141,23 @@ class Qq8SsoContext {
   /// 当前序列号。
   final int seqId;
 
+  /// QIMEI36（36 字符）。写进 reserve fields 的 tag 12。
+  ///
+  /// 服务端在 `StatSvc.register` 这类业务包上会看它——为空也能上线，但
+  /// 官方客户端总有值，对齐更安全（null 时该 tag 不写）。
+  final String? qimei36;
+
+  /// `reserveFields` 的**整段覆写**（null = 按官方/icqq 规则现算）。
+  ///
+  /// 唯一用途是黄金向量：oicq 2.3.1 的 `lib/core/base-client.ts:876` 把这一段
+  /// 写死成 `.writeU32(4)`（字面 4 个字节 `00 00 00 04`，**没有** length 前缀 +
+  /// payload 的结构），而 icqq 0.6.10 与真机实测是 `withLength(protobuf)`
+  /// （`buildReserveFields`）。两种形态字节不同，要让旧的 8 条逐字节向量继续
+  /// 锁住信封其余部分，就得能按字节精确复现 oicq 那一版。
+  ///
+  /// 给了值就**原样写入**（不套 [Qq8Sso._withLength]）。
+  final Uint8List? reserveFieldsOverride;
+
   Qq8SsoContext({
     required this.uin,
     required this.apk,
@@ -150,6 +168,8 @@ class Qq8SsoContext {
     required this.ecdhShareKey,
     Qq8SigInfo? sig,
     this.seqId = 0,
+    this.qimei36,
+    this.reserveFieldsOverride,
   }) : sig = sig ?? Qq8SigInfo();
 
   /// ksid：**由设备与客户端名派生**，不是随机值。
@@ -157,6 +177,43 @@ class Qq8SsoContext {
   /// 格式 `|<IMEI>|<apkName>`。
   Uint8List get ksid =>
       Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'));
+
+  /// SSO 头里的「保留字段」（reserve fields），protobuf 编码。
+  ///
+  /// ## 为什么必须有（2026-10-22 真机实证）
+  ///
+  /// 此前这里写的是 `..u32(4)` —— 一个长度 4 的**空** blob。用它跑
+  /// `StatSvc.register` 时服务端**完全不回包**（等到 10 秒超时），而同一
+  /// 连接上 `Heartbeat.Alive` / `Client.CorrectTime` 都正常。补上下面这些
+  /// 字段后 register 立即通了。
+  ///
+  /// 参考实现 icqq `lib/core/base-client.js:361-394` 的 `buildReserveFields`：
+  /// ```js
+  /// let qImei36 = this.device.qImei36 || this.device.qImei16;
+  /// reserveFields = { 9: 1, 12: qImei36, 14: 0, 16: this.uin, 18: 0,
+  ///                   19: 1, 20: 1, 21: 0, 24: sec_info, 28: 3 };
+  /// ```
+  /// （另一个分支 `ssover >= 20 && false` 恒不生效，故只用上面这套。）
+  ///
+  /// `24`（`sec_info`）在无需签名的命令上是空字节串；`0x544` 的签名结果
+  /// 要走这里，但 8.2.11 代际的 `sec_info` 恒空，故先按空处理。
+  Uint8List get reserveFields {
+    final override = reserveFieldsOverride;
+    if (override != null) return override;
+    final q = qimei36;
+    return Qq8Pb.encode(<int, Object?>{
+      9: 1,
+      12: q == null || q.isEmpty ? null : q,
+      14: 0,
+      16: uin,
+      18: 0,
+      19: 1,
+      20: 1,
+      21: 0,
+      24: Uint8List(0),
+      28: 3,
+    });
+  }
 }
 
 /// SSO 包构建器。
@@ -250,7 +307,7 @@ abstract final class Qq8Sso {
           ..u32(4)
           ..u16(ksid.length + 2)
           ..raw(ksid)
-          ..u32(4))
+          ..let((w) => _writeReserveFields(w, ctx)))
         .build();
 
     sso = (ByteWriter()
@@ -376,6 +433,20 @@ void _withLength(ByteWriter w, List<int> data) {
   final bytes = data is Uint8List ? data : Uint8List.fromList(data);
   w.u32(bytes.length + 4);
   w.raw(bytes);
+}
+
+/// 写 SSO 头的 reserve fields 段。
+///
+/// 给了 [Qq8SsoContext.reserveFieldsOverride] 就**原样写入**（那是 oicq 2.3.1
+/// 的 `writeU32(4)` 形态，供黄金向量复现）；否则按 `withLength(protobuf)`
+/// 写 icqq / 官方真机的形态。
+void _writeReserveFields(ByteWriter w, Qq8SsoContext ctx) {
+  final override = ctx.reserveFieldsOverride;
+  if (override != null) {
+    w.raw(override);
+    return;
+  }
+  _withLength(w, ctx.reserveFields);
 }
 
 /// 让链式写法保持可读的小工具。
