@@ -27,7 +27,7 @@ import 'package:riverpod/riverpod.dart';
 import '../infra/log/logger.dart';
 import '../kernel/onebot/backend_profile.dart';
 import '../kernel/onebot/onebot_client.dart';
-import '../kernel/onebot/onebot_session.dart';
+import 'onebot_session.dart';
 import '../kernel/safety/safety_gate.dart';
 import 'chat_store.dart';
 import 'objects.dart';

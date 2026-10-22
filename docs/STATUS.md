@@ -57,6 +57,7 @@
 | `onebot/backend_profile.dart` | 325 | 完成 | `backend_profile_selftest.dart` | A（对照 NapCat/Lagrange/LLOneBot 实际响应） |
 | `onebot/json_path.dart` | 235 | 完成 | 同上（72 项合计） | A |
 | `onebot/onebot_session.dart` | 571 | 完成 | `session_selftest.dart` 93 项 | **B** |
+**注**：`onebot_session.dart` 已于 2026-10-22 迁到 `lib/client_api/`（原先在 L2 却 import L3 的 `objects/segment/session`，是唯一一处反向依赖）。
 
 **这条线是能用的。** 自测里起了真实的本地 WebSocket 服务器，走完整的
 「连接 → 握手 → 调 API → 收事件 → 断线重连」链路。

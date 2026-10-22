@@ -33,11 +33,11 @@ library;
 
 import 'dart:async';
 
-import '../../client_api/objects.dart';
-import '../../client_api/segment.dart';
-import '../../client_api/session.dart';
-import 'backend_profile.dart';
-import 'onebot_client.dart';
+import '../kernel/onebot/backend_profile.dart';
+import '../kernel/onebot/onebot_client.dart';
+import 'objects.dart';
+import 'segment.dart';
+import 'session.dart';
 
 /// [Session] 的 OneBot 11 实现。
 class OneBotSession implements Session {

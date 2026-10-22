@@ -7,23 +7,38 @@
 /// 因为 [Session] 的返回类型是 [Chat] / [ChatMessage] / [Segment]，
 /// 把契约放进 L2 就等于让 L2 依赖 L3（反向）。
 ///
-/// 放在 L3 则是标准的**依赖倒置**：
+/// 放在 L3 则是标准的**依赖倒置**。
+///
+/// ## 契约与实现都在 L3（2026-10-22 校正）
+///
+/// 最初把实现放在 L2（`lib/kernel/onebot/onebot_session.dart`），理由是
+/// 「L2 实现 L3 契约」。但实现类必须 import `objects.dart` / `segment.dart`
+/// / `session.dart` 三个 L3 文件——**这就是 L2 依赖 L3**，依赖并没有被倒置
+/// 掉，只是换了个说法。2026-09-22 的复审把它列为全仓唯一一处分层违规。
+///
+/// 现在的分层是：
 ///
 /// ```
-///   L3 定义契约（本文件）           ← 不依赖任何人
-///        ▲
-///        │ implements
-///   L2 实现契约（OneBotSession）     ← 依赖 L3 的契约类型，不依赖 L3 的逻辑
+///   L2 kernel/onebot/   onebot_client.dart（WS 传输）
+///                       backend_profile.dart（字段归一化）
+///                       json_path.dart
+///                             ▲
+///                             │ 只依赖 L2，不认识 Chat/Segment
+///   L3 client_api/      session.dart（契约）
+///                       objects.dart / segment.dart（数据对象）
+///                       onebot_session.dart（装配 L2 三件套 → 实现契约）
+///                       qq8_session_adapter.dart（同理）
 /// ```
 ///
-/// 内核整体可替换（`OneBotSession` / `MsfSession`）而 L4 UI 零改动——这正是
-/// 目标里"双内核"要的效果，且不产生反向依赖。
+/// **判据**：L2 里不得出现 `Chat` / `ChatMessage` / `Segment` / `Session`
+/// 这些名字。谁需要装配它们，谁就在 L3。内核整体仍可替换
+/// （`OneBotSession` / `Qq8SessionAdapter`）而 L4 UI 零改动。
 ///
 /// ## 为什么不采用"内核返回原始 Map、L3 再归一化"
 ///
 /// Icalingua++ 和 Stapxs 都是这个路子（bridge 出原始结构，渲染层再提取）。
 /// 对本项目是重复劳动：**字段归一化已经在后端适配表里做完了**
-/// （见 `kernel/onebot/backend_profile.dart`），让 L2 直接产出 L3 对象
+/// （见 `kernel/onebot/backend_profile.dart`），归一化完直接装配成 L3 对象
 /// 才是单次转换。
 ///
 /// 本文件是纯 Dart，不依赖 Flutter，可在 `tool/*.dart` 里离线自测。

@@ -149,8 +149,7 @@ qqclient/
 │   │   ├── onebot/                     日用线内核 ★
 │   │   │   ├── onebot_client.dart      WS 客户端（echo↔Completer 关联）
 │   │   │   ├── backend_profile.dart    后端适配表（数据驱动字段映射）
-│   │   │   ├── json_path.dart          JSONPath 子集
-│   │   │   └── onebot_session.dart     Session 实现 ★
+│   │   │   └── json_path.dart          JSONPath 子集
 │   │   ├── wlogin8/                    研究线内核（QQ 8.x）
 │   │   │   ├── qq8_tlv.dart            48 个 TLV 打包（有 oicq 黄金向量）
 │   │   │   ├── qq8_sso.dart            三层信封
@@ -163,7 +162,12 @@ qqclient/
 │   ├── client_api/                     L3
 │   │   ├── session.dart                Session 契约 ★（内核接缝）
 │   │   ├── objects.dart                Chat / ChatMessage / ChatMember
-│   │   └── segment.dart                sealed Segment（13 种消息段）
+│   │   ├── segment.dart                sealed Segment（13 种消息段）
+│   │   ├── onebot_session.dart         OneBot Session 实现 ★（2026-10-22 从 L2 迁入）
+│   │   ├── qq8_session_adapter.dart    QQ8 Session 适配器（复用 qq8_login_service）
+│   │   ├── chat_store.dart             数据层：乐观插入 / echo 合并 / 撤回打补丁
+│   │   ├── session_providers.dart      连接前必须过 SafetyGate（_passGate）
+│   │   └── qq8_*.dart                  研究线：登录服务 / 票据存储 / providers
 │   └── ui/                             L4
 │       ├── pages/home_page.dart        三栏主界面（**当前吃假数据**，见 §4）
 │       ├── theme/telegram_theme.dart   配色与尺寸

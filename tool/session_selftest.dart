@@ -21,7 +21,7 @@ import 'package:qqclient/client_api/segment.dart';
 import 'package:qqclient/client_api/session.dart';
 import 'package:qqclient/kernel/onebot/backend_profile.dart';
 import 'package:qqclient/kernel/onebot/onebot_client.dart';
-import 'package:qqclient/kernel/onebot/onebot_session.dart';
+import 'package:qqclient/client_api/onebot_session.dart';
 
 // ---------------------------------------------------------------------------
 
