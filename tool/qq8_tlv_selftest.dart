@@ -248,7 +248,16 @@ const _vectors = <({int tag, List<Object?> args, String hex})>[
     hex: '0147001e000000100006382e322e31310010a6b745bf24a2c277527716f6f36eb6'
         '8d'
   ),
-  (tag: 0x154, args: [], hex: '0154000400000065'),
+  (
+    // ⚠️ 48 条里第二处**有意偏离 oicq** 的向量。oicq 发 `seq + 1`，
+    // 但官方 `tlv_t154.get_tlv_154(int i)` 的实参是 `this.x.i` = MSF 层
+    // 请求序号（`WUserSigInfo._reserveData` ← `toServiceMsg.getRequestSsoSeq()`），
+    // 与 SSO 包内 seq 是两套独立计数。我们没有 MSF 层 ⇒ 默认 0
+    // （等价官方「没有 reserveData」的 else 分支）。
+    tag: 0x154,
+    args: [],
+    hex: '0154000400000000'
+  ),
   (tag: 0x16A, args: [], hex: '016a000499aabbcc'),
   (tag: 0x16E, args: [], hex: '016e000b4b6f6e6174612032303230'),
   (tag: 0x174, args: [], hex: '01740004aabbccdd'),
@@ -269,7 +278,10 @@ const _vectors = <({int tag, List<Object?> args, String hex})>[
   (
     tag: 0x202,
     args: [],
-    hex: '02020020001030303a35303a35363a43303a30303a30000c54502d4c494e4b2d'
+    // bssid 槽是 MD5(bssid) 不是明文（官方 t.java:292-297），ssid 槽是原文。
+    // 夹具 wifiBssid = '00:50:56:C0:00:08' ⇒ MD5 = 10d2717e7d06a80d409fbb21516ebec0
+    // （与 0x187 同值，因为 0x187 也是 MD5(mac) 且夹具 mac == bssid）。
+    hex: '02020020001010d2717e7d06a80d409fbb21516ebec0000c54502d4c494e4b2d'
         '32373131'
   ),
   (

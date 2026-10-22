@@ -172,11 +172,29 @@ class Qq8SsoContext {
     this.reserveFieldsOverride,
   }) : sig = sig ?? Qq8SigInfo();
 
-  /// ksid：**由设备与客户端名派生**，不是随机值。
+  /// ksid：**服务端下发的 32 位十六进制串**，不是本地派生值。
   ///
-  /// 格式 `|<IMEI>|<apkName>`。
-  Uint8List get ksid =>
-      Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'));
+  /// ⚠️ 2026-10-22 修正：此前这里写成 `|${IMEI}|${apkName}`，那是照 oicq
+  /// 抄的。官方语义完全不同：
+  ///
+  /// 1. `util.get_ksid(ctx)` 读 SP `WLOGIN_DEVICE_INFO.xml` 的 `ksid` 项；
+  /// 2. 该值由**服务端**在响应 TLV `0x108` 里下发，
+  ///    `oicq_request.java:1594` 收到后调 `util.set_ksid()` 落盘；
+  /// 3. `set_ksid` 的语义是「**只在 SP 为空时写入**」（`if (bArr2 == null ||
+  ///    bArr2.length <= 0)`），之后每次登录原样回带；
+  /// 4. `k.java` case 264 发 0x108 的条件是 `bArr7 != null && bArr7.length != 0`
+  ///    —— 也就是「有 ksid 就发，没有就整条不发」。
+  ///
+  /// 真机 SP 实测值：`188ca8765de720b5207b0adc6c51d3d7`（32 字符）。
+  ///
+  /// 所以我们把服务端下发的值从 identity 注入（`device.ksid`）；注入为空时
+  /// 才退回旧的本地派生形态 —— 那是首次登录、服务端还没告诉我们 ksid 时
+  /// 的近似，已知与官方不一致，仅用于保持向后兼容的 dry-run。
+  Uint8List get ksid {
+    final injected = device.ksid;
+    if (injected.isNotEmpty) return Uint8List.fromList(utf8.encode(injected));
+    return Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'));
+  }
 
   /// SSO 头里的「保留字段」（reserve fields），protobuf 编码。
   ///

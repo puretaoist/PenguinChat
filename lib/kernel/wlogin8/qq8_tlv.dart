@@ -560,8 +560,17 @@ class Qq8TlvContext {
   /// 口令的 MD5（16 字节）。
   final Uint8List passwordMd5;
 
-  /// 当前序列号。
+  /// 当前序列号（SSO 包内 seq）。
   final int seqId;
+
+  /// MSF 层请求序号（TLV 0x154 的实参）。
+  ///
+  /// 官方这是 `t.i`，来自 `WUserSigInfo._reserveData`，而后者由
+  /// `com/tencent/mobileqq/msf/core/auth/l.java:209` 用
+  /// `MsfSdkUtils.convertInt2Bytes(toServiceMsg.getRequestSsoSeq())` 填入。
+  /// 也就是说它是 **MSF 那一层的请求计数**，与 SSO 包内的 seq 是两套独立编号。
+  /// 我们没有 MSF 层，故默认 0（等价官方「没有 reserveData」的 else 分支）。
+  final int msfSsoSeq;
 
   /// 会话密钥材料。
   final Uint8List ksid;
@@ -675,6 +684,7 @@ class Qq8TlvContext {
     this.protocolDet,
     this.guidNew = true,
     this.seqId = 0,
+    this.msfSsoSeq = 0,
     this.randomBytes = _secureRandomImpl,
     this.teaPadding = _secureRandomImpl,
     this.nowMillis = _wallClockImpl,
@@ -1232,7 +1242,20 @@ abstract final class Qq8Tlv {
         w.u16(args.isNotEmpty && args[0] is int ? args[0] as int : 0);
 
       case 0x154:
-        w.u32(ctx.seqId + 1);
+        // 官方 `tlv_t154.get_tlv_154(int i)` body = `u32(i)`，实参是 `this.x.i`。
+        // `t.java:80` `public int i = 0`；唯一赋值点（`WtloginHelper.java:570/1239/1468/2273/2457`）：
+        //   if (_reserveData != null && _reserveData.length > 3) {
+        //       tVar.i = util.buf_to_int32(_reserveData, 0);
+        //       LOGI("MSF SSO SEQ:" + tVar.i, str);
+        //   } else { tVar.i = 0; }
+        // `_reserveData` 的真源是 `com/tencent/mobileqq/msf/core/auth/l.java:209`：
+        //   wUserSigInfo._reserveData = MsfSdkUtils.convertInt2Bytes(toServiceMsg.getRequestSsoSeq());
+        // ⇒ 语义是 **MSF 层请求序号**，与 SSO 包内 seq 是两套独立计数。
+        // 官方日志里的 `MSF SSO SEQ:2838` / `MSF SSO SEQ:70250` 就是它。
+        //
+        // 2026-10-22 修正：原实现写 `ctx.seqId + 1`（SSO 包内序号+1），语义不符。
+        // 我们没有 MSF 层，用调用方显式注入的 `ctx.msfSsoSeq`；未注入时为 0（官方 else 分支）。
+        w.u32(ctx.msfSsoSeq);
 
       case 0x16A:
         // 与 0x106 同理：二维码登录要回带扫码拿到的 t16a；平时用 ctx 里的票据。
@@ -1290,7 +1313,17 @@ abstract final class Qq8Tlv {
         _tlv(w, Uint8List(1));
 
       case 0x202:
-        _tlv(w, _cut(d.wifiBssid, 16));
+        // 官方 `t.java:292-297`（`t.d()` 内）：
+        //   R = util.get_bssid_addr(ctx);  若非空 → R = MD5.toMD5Byte(R);
+        //   S = util.get_ssid_addr(ctx);   ← 不哈希
+        // `k.java:262-270` case 514：`t.R` 非空才发 `get_tlv_202(t.R, t.S)`。
+        // `tlv_t202.get_tlv_202(bArr, bArr2)` body = `u16(limit16) ‖ bArr ‖ u16(limit32) ‖ bArr2`。
+        //
+        // 2026-10-22 修正：原实现直接把 17 字符的 MAC 明文截成 16 字节送进去，
+        // 官方送的是 `MD5("02:00:00:00:00:00")` 的 16 字节 —— 这是逐字节差异。
+        // bssid 空时官方走 `bArr = new byte[16]`（全零 16 字节），这里保持同样语义。
+        final bssid202 = d.wifiBssid;
+        _tlv(w, bssid202.isEmpty ? Uint8List(16) : md5Bytes(utf8.encode(bssid202)));
         _tlv(w, _cut(d.wifiSsid, 32));
 
       case 0x400:

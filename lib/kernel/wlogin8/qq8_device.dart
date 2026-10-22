@@ -114,6 +114,12 @@ class Qq8Device {
   /// 多个 TLV 直接使用它（0x33 / 0x128 / 0x145 / 0x202 等）。
   final Uint8List guid;
 
+  /// 服务端下发的 `ksid`（32 位十六进制串）。空 = 未注入，退回本地派生。
+  ///
+  /// 官方语义见 [Qq8DeviceIdentity.ksid] 的注释。它同时进 SSO 头的
+  /// 16 字节槽位（`u16('|'+imei+'|'+apkName)` 那份是错的）与 TLV `0x108`。
+  final String ksid;
+
   const Qq8Device({
     required this.product,
     required this.device,
@@ -138,6 +144,7 @@ class Qq8Device {
     required this.imsi,
     required this.tgtgt,
     required this.guid,
+    this.ksid = '',
   });
 
   /// 由账号确定性派生一份设备信息（移植自 oicq `lib/device.js`）。
@@ -250,6 +257,7 @@ class Qq8Device {
           : md5Bytes(utf8.encode(id.imsi!)),
       tgtgt: tgtgt ?? rnd(16),
       guid: guid,
+      ksid: id.ksid ?? '',
     );
   }
 
@@ -283,6 +291,7 @@ class Qq8Device {
         imsi: imsi,
         tgtgt: newTgtgt,
         guid: guid,
+        ksid: ksid,
       );
 
   /// 诊断用。
@@ -418,6 +427,15 @@ class Qq8DeviceIdentity {
 
   final String? imei;
 
+  /// 服务端下发的 `ksid`（32 位十六进制串）。
+  ///
+  /// ⚠️ 2026-10-22 修正：`ksid` **不是** `|imei|apkName` 本地派生。
+  /// 它由服务端在响应 TLV `0x108` 里下发，客户端 `util.set_ksid()` 只在
+  /// SP 为空时写入 `WLOGIN_DEVICE_INFO.xml` 的 `ksid` 项，之后每次登录
+  /// 原样回带（`k.java` case 264 只在非空时才发 0x108）。
+  /// 真机 SP 实测值 `188ca8765de720b5207b0adc6c51d3d7`。
+  final String? ksid;
+
   /// guid 的 32 位 hex。**缺省按官方算法派生**（`MD5(androidId ‖ mac)`）。
   final String? guidHex;
 
@@ -456,6 +474,7 @@ class Qq8DeviceIdentity {
     this.wifiSsid,
     this.imsi,
     this.imei,
+    this.ksid,
     this.guidHex,
     this.model,
     this.brand,
@@ -511,6 +530,7 @@ class Qq8DeviceIdentity {
       wifiSsid: s('wifi_ssid'),
       imsi: s('imsi'),
       imei: s('imei'),
+      ksid: s('ksid'),
       guidHex: s('guid'),
       model: s('model'),
       brand: s('brand'),

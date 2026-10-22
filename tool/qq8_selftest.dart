@@ -267,6 +267,17 @@ void testDevice() {
     checkEq('有 imsi → 存 MD5(原文)', toHex(d2.imsi),
         toHex(md5Bytes(Uint8List.fromList(utf8.encode('460079876543210')))));
 
+    // ksid：服务端下发值（真机 SP `WLOGIN_DEVICE_INFO.xml` 实测），
+    // 不是 `|imei|apkName` 本地派生。identity 有 ksid 键就原样带进设备。
+    final dk = Qq8Device.fromIdentity(Qq8DeviceIdentity.fromJson(<String, Object?>{
+      'android_id': aid, 'mac': mac,
+      'guid': '7d9cf98da15d5c95f87507273280cbbf',
+      'ksid': '188ca8765de720b5207b0adc6c51d3d7',
+    })!);
+    checkEq('identity 的 ksid 原样注入设备', dk.ksid,
+        '188ca8765de720b5207b0adc6c51d3d7');
+    checkEq('没给 ksid 时设备.ksid 为空（退回本地派生）', d.ksid, '');
+
     // guidHex 非法时退回派生（不静默用坏值）
     final bad = Qq8DeviceIdentity.fromJson(<String, Object?>{
       'android_id': aid,

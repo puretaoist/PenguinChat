@@ -1757,8 +1757,15 @@ Qq8Device _buildDevice({required bool deterministic}) {
   );
 }
 
-Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) =>
-    Uint8List.fromList(utf8.encode('|${d.imei}|${p.apk.name}'));
+/// ksid = 服务端下发的 32 位十六进制串（`WLOGIN_DEVICE_INFO.xml` 的 `ksid`）。
+///
+/// 见 `lib/kernel/wlogin8/qq8_sso.dart` 里 [Qq8SsoContext.ksid] 的注释：
+/// 它不是 `|imei|apkName` 本地派生，而是服务端在响应 TLV `0x108` 里给的。
+/// 没注入时退回旧形态（dry-run 兼容）。
+Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) {
+  if (d.ksid.isNotEmpty) return Uint8List.fromList(utf8.encode(d.ksid));
+  return Uint8List.fromList(utf8.encode('|${d.imei}|${p.apk.name}'));
+}
 
 Uint8List _randomBytes(int n) {
   final r = Random.secure();
