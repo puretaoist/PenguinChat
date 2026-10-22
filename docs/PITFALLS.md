@@ -1127,6 +1127,62 @@ JCE 解码、session、d2key 全部正确（任一环错都解不出真实结构
 
 ---
 
+### C21. Java 反序列化：`TreeMap.writeObject` 的块以 `TC_ENDBLOCKDATA` 收尾（2026-10-22）
+
+**现象**：真机 `tk_file` 里明明有两个账号（`2089495846` 与 `3499239040`），
+`tool/extract_tk_file.py` 只解出第一个，第二个变成一条畸形记录
+（`key=None`、`value=java.lang.Long(3499239040)`），并且解析结束时
+**明文还剩 3764 字节没消费**。
+
+**根因**：`java.util.TreeMap` 走自定义 `writeObject`：
+
+```
+TC_OBJECT TC_CLASSDESC(自身字段: comparator)
+  [defaultWriteObject]   -> comparator 字段
+  TC_BLOCKDATA(int size) -> 随后 size 对 writeObject(key)/writeObject(value)
+  TC_ENDBLOCKDATA (0x78) <- ★ 这一步
+```
+
+解析器读完了 `size` 对键值，但**没有消费末尾那个 `0x78`**。
+调用方（外层对象的下一个字段、或外层 TreeMap 的下一对键值）接着调
+`read_object()`，第一个字节正好是 `0x78`，于是被当成
+`TC_ENDBLOCKDATA` 返回 `<end>`，**从此整条流偏移一个字节**——
+后面的偏移全是错的，但错误不会当场抛，只会让对象错位。
+
+真机数据上的精确坐标（`tk_file-20261022`，明文 9170 字节）：
+
+| 偏移 | 内容 | 说明 |
+|---|---|---|
+| 5085..5095 | `75 71 00 7e 00 0f 00 00 00 00` | 内层 `_tk_map` 第二对的 value 结束 |
+| **5095** | **`78`** | **内层 TreeMap 的 `TC_ENDBLOCKDATA`（漏消费的那个）** |
+| 5096 | `73 72 00 29 ...` | `_useInfo`（`WloginSimpleInfo` 对象）开始 |
+| 5392 | `73 71 00 7e 00 03 ... d0 92 26 80` | 第二个账号的 key = `Long(3499239040)` |
+| 5406 | `73 71 00 7e 00 06 ...` | 第二个 `WloginAllSigInfo` 开始 |
+
+**处理**：读完 TreeMap 的键值对后，若下一个字节是 `TC_ENDBLOCKDATA`
+（`0x78`）就消费掉：
+
+```python
+if self.d[self.p] == TC_ENDBLOCKDATA:
+    self.p += 1
+```
+
+修完后：`剩余 0 字节`，两个账号的 `_tk_map` 各 2 个 appid 全部解出。
+
+**教训**：
+
+1. **自定义 `writeObject` 的协议是「defaultWriteObject + 可选块 + TC_ENDBLOCKDATA」**。
+   只要类带 `writeObject`，块结束标记就一定在；漏消费它，
+   错位不会立即报错，而是让**后面的对象全部错一位**——
+   症状看起来像「某个类解析不了」，实际病灶在几十行前。
+2. **判据不能只看「有没有解出东西」**。这个 bug 从 10-06 那份 `tk_file` 起就存在，
+   当时只解出一个账号也「看起来正常」；真正的判据是
+   **明文是否被完整消费**（`剩余 0 字节`）+ **`#entries` 条数是否与 `TC_BLOCKDATA` 声明的 size 一致**。
+3. 多账号应用（QQ 单实例切号）的数据文件必然有多个根条目；
+   **只解出一个账号时要先怀疑解析器，而不是怀疑文件**。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

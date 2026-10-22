@@ -383,6 +383,13 @@ class JavaDeserializer:
                 v = self.read_object()
                 pairs.append((k, v))
             obj.fields["#entries"] = pairs
+            # TreeMap.writeObject 的自定义块以 TC_ENDBLOCKDATA 收尾。
+            # 不消费这个 0x78，调用方读下一个字段时会把它当成对象的
+            # type code（read_object 里 TC_ENDBLOCKDATA 返回 "<end>"），
+            # 于是后续所有对象整体错位——真机 tk_file 里两个账号时，
+            # 第二个账号的 key 就被错当成外层的 value 读走（见 C21）。
+            if self.d[self.p] == TC_ENDBLOCKDATA:
+                self.p += 1
         return obj
 
     def read_array(self):
