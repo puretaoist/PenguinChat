@@ -973,6 +973,108 @@ bArr5 = K ? tlv_t193.get_tlv_193(ticket) : tlv_t2.get_tlv_2(ticket, bArr3);
 
 ---
 
+### C19. 登录之后的三个坑：0x0B 外壳 / gzip 负载 / reserve fields（2026-10-22）
+
+**背景**：用真机 `tk_file` 的 A1/D2 走 `wtlogin.exchange_emp` 拿到 `type=0`
+（首次真实登录成功）之后，紧接着跑 register / heartbeat / UNI 心跳，结果
+后两步全线失败。三个原因，都是**纯实现缺口**，不是协议理解错误。
+
+#### 坑一：UNI 应答的外壳 magic 是 `0x0B`，不是 `0x0A`
+
+**现象**：`OidbSvc.0x480_9_IMCore` 抛
+`Qq8LoginException: 响应外壳 magic=0xb（期望 0x0A）`。
+
+**根因**：裸 TCP 上只有两种外壳。`0x0A` 是登录信封（带 d2 段、seq 在
+SSO 头里），`0x0B` 是 UNI 信封（**没有 d2 段、seq 在外壳里**）。参考实现
+icqq `lib/core/base-client.js:1636-1660` 的 `buildUniPkt` 写的就是
+`writeU32(0x0B)`；而它的 `packetListener`（`:1401-1438`）**两种外壳共用同一
+段解析**——差别只有外壳字段，内层 SSO 完全一样。
+
+**处理**：`qq8UnwrapRecv` 见到 `0x0B` 转 `_unwrapUni`（`flag=frame[4]`、
+`seq=u32@5`、uinLen 规则同 0x0A、密文起点 `10+uinLen`），只有既非 `0x0A`
+也非 `0x0B` 才抛错。
+
+#### 坑二：SSO 负载的 `flag=1` 可能是 gzip
+
+**现象**：`StatSvc.register` 抛 `SSO 负载是 gzip（flag=1），本实现未支持`。
+
+**根因**：`parseSso`（icqq `:1342-1399`）里那个字段是**三态**，不是布尔：
+
+```
+0 → 明文
+1 → zlib.unzip（constants.js:41 `exports.unzip = promisify(zlib.unzip)`）
+8 → 整体偏移（不压缩，但 payload 起始位置特殊）
+```
+
+原实现把 1 当错误抛掉。
+
+**处理**：`_inflate` 按 `1F 8B` 魔数选 `gzip.decode` / `zlib.decode`，
+**解压异常时原样返回**——不能让解压问题冒充协议问题，否则排查时会往
+错误方向走很远。`flag=8` 走原样。
+
+#### 坑三：SSO 头的 reserve fields 不是一个 `u32(4)`
+
+**现象**：`StatSvc.register` 一直超时（服务器不回 ack），但换掉这一段之后
+`OidbSvc.0x480_9_IMCore` 立刻通了。
+
+**根因**：这段的形态**跨实现不一致**：
+
+| 来源 | 形态 |
+|---|---|
+| oicq 2.3.1 `base-client.ts:876` | `.writeU32(4)` 字面 4 字节 `00 00 00 04` |
+| icqq 0.6.10 `base-client.js:361-394` | `withLength(protobuf)` |
+| 官方真机 | `withLength(protobuf)`（同 icqq） |
+
+icqq 的字段表：`{9:1, 12:qImei36, 14:0, 16:uin, 18:0, 19:1, 20:1, 21:0,
+24:sec_info, 28:3}`（另一个 `ssover >= 20 && false` 分支恒不生效）。
+
+**处理**：改成现算 protobuf，同时加 `Qq8SsoContext.reserveFieldsOverride`
+让旧的 8 条 oicq 黄金向量能**按字节**复现历史布局——否则只能删向量，
+而删向量等于丢覆盖率，正是不该做的事。覆写值是原样写入（不套
+`withLength`），因为 oicq 那一版本来就没有 length 前缀。
+
+> 教训：**"参考实现这么写"不等于"这就是协议"。** oicq 那段 `writeU32(4)`
+> 是偷懒的空段，icqq/官方都换成了 protobuf。当两个参考实现不一致时，信
+> 官方真机——但如果旧实现能登录过，就两个都留着并按需切换，而不是删掉其一。
+
+#### 附带结论：`StatSvc.register` 的响应本来就可能不来
+
+**现象**：register 发出后收不到任何对应的响应帧，只有服务端主动推的
+`ConfigPushSvc.PushReq` / `PushDomain`。
+
+**不是 bug**。看 icqq `:1466-1495`：
+
+```js
+try {
+    const payload = await this[FN_SEND](pkt, 6);   // 6 秒
+    ...
+} catch { err = -2; }                              // 超时
+```
+
+调用方 `tokenLogin` 里：
+
+```js
+const err = await this.register();
+if (err === 1) { /* 真上线 */ }
+else if (err === -2) { return BUF0; }   // ← 超时也当成功，直接继续
+```
+
+⇒ **三态判据**：`1` 收到且 `rsp[9]` 真 / `-1` 收到但 `rsp[9]` 假 /
+`-2` 超时（**不判失败**）。把超时当失败会误判整条链路。
+
+#### 落地的真机结果（2026-10-22，账号 2089495846，QQ 8.2.11 档案）
+
+```
+步骤 1 wtlogin.exchange_emp   ✓ type=0 明文 1601B → 全套新票据
+步骤 2 StatSvc.register       ~ 已发出、无 ack（等价 icqq -2）
+步骤 3 Heartbeat.Alive        ✓ 134B
+步骤 4 Client.CorrectTime     ✓ 时间差 0s
+步骤 5 OidbSvc.0x480_9_IMCore ✓ 26B（0x0B 外壳）
+步骤 6 服务端主动推送         ✓ PushDomain 7566B / PushReq 1016B
+```
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常
