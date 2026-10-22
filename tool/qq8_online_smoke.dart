@@ -52,9 +52,10 @@ import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
 void out(String s) => stdout.writeln(s);
 void errOut(String s) => stderr.writeln(s);
 
-/// `ksid` = `|<imei>|<apkName>`（官方 `util.get_ksid`，与 live_smoke 同款）。
+/// `ksid`：官方 `util.get_ksid` -> `string_to_buf`（十六进制串两字符一字节）。
+/// 共用 `lib/kernel/wlogin8/qq8_sso.dart` 的 [qq8KsidBytes]。
 Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) =>
-    Uint8List.fromList(utf8.encode('|${d.imei}|${p.apk.name}'));
+    qq8KsidBytes(d.ksid, d.imei, p.apk.name);
 
 Uint8List _fromHex(String? s) {
   if (s == null || s.isEmpty) return Uint8List(0);

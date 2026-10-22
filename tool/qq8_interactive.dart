@@ -723,8 +723,9 @@ Qq8ClientProfile _pickProfile(String name) {
   return p;
 }
 
+/// `ksid`：共用 `lib/kernel/wlogin8/qq8_sso.dart` 的 [qq8KsidBytes]。
 Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) =>
-    Uint8List.fromList(utf8.encode('|${d.imei}|${p.apk.name}'));
+    qq8KsidBytes(d.ksid, d.imei, p.apk.name);
 
 Uint8List _randomBytes(int n) {
   final r = math.Random.secure();

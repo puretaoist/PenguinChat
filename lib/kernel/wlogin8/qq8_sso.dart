@@ -190,11 +190,7 @@ class Qq8SsoContext {
   /// 所以我们把服务端下发的值从 identity 注入（`device.ksid`）；注入为空时
   /// 才退回旧的本地派生形态 —— 那是首次登录、服务端还没告诉我们 ksid 时
   /// 的近似，已知与官方不一致，仅用于保持向后兼容的 dry-run。
-  Uint8List get ksid {
-    final injected = device.ksid;
-    if (injected.isNotEmpty) return Uint8List.fromList(utf8.encode(injected));
-    return Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'));
-  }
+  Uint8List get ksid => qq8KsidBytes(device.ksid, device.imei, apk.name);
 
   /// SSO 头里的「保留字段」（reserve fields），protobuf 编码。
   ///
@@ -473,4 +469,40 @@ extension _ChainLet on ByteWriter {
     fn(this);
     return this;
   }
+}
+
+/// `ksid` 的字节形态。工具脚本与服务层共用这一份，避免三处各写一遍。
+///
+/// 官方语义（`jadx-main/sources/oicq/wlogin_sdk/tools/util.java`）：
+/// - `:286-294` `string_to_buf(String)`：SP 里的十六进制串按**两字符一字节**解码；
+/// - `:238-248` `buf_to_string(byte[])`：它的逆运算，`set_ksid` 落盘时用；
+/// - `:683-690` `set_ksid` 只在 SP 为空时写入；
+/// - `:692-698` `get_ksid` 读 SP 后走 `string_to_buf`。
+///
+/// ⚠️ 2026-10-22 修正：此前把注入的 `188ca8765de720b5207b0adc6c51d3d7`
+/// 直接 `utf8.encode` 成 **32 字节**，而官方送进 SSO 头与 `0x108` 的是
+/// `string_to_buf` 解出的 **16 字节**。真机 SP `WLOGIN_DEVICE_INFO.xml`
+/// 里的 `ksid` 就是 32 字符的十六进制串。
+///
+/// [injected] 为空时退回 oicq 式的 `|<imei>|<apkName>` —— 那是首次登录、
+/// 服务端还没下发 ksid 时的近似，已知与官方不一致，仅用于保持 dry-run 兼容。
+Uint8List qq8KsidBytes(String injected, String imei, String apkName) {
+  if (injected.isEmpty) {
+    return Uint8List.fromList(utf8.encode('|$imei|$apkName'));
+  }
+  final n = injected.length ~/ 2;
+  final out = Uint8List(n);
+  for (var i = 0; i < n; i++) {
+    out[i] = (_qq8HexNibble(injected.codeUnitAt(i * 2)) << 4) |
+        _qq8HexNibble(injected.codeUnitAt(i * 2 + 1));
+  }
+  return out;
+}
+
+/// 官方 `util.get_char(byte)`（`:273-283`）：非法字符一律返回 0。
+int _qq8HexNibble(int c) {
+  if (c >= 0x30 && c <= 0x39) return c - 0x30; // '0'..'9'
+  if (c >= 0x61 && c <= 0x66) return c - 0x61 + 10; // 'a'..'f'
+  if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10; // 'A'..'F'
+  return 0;
 }

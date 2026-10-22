@@ -1454,8 +1454,9 @@ class Qq8LoginService {
       device: device,
       passwordMd5: passwordMd5 ?? Uint8List(16),
       seqId: DateTime.now().millisecondsSinceEpoch & 0x7FFF,
-      ksid: Uint8List.fromList(
-          utf8.encode('|${device.imei}|${profile.apk.name}')),
+      // 官方 `util.get_ksid` -> `string_to_buf`：注入的十六进制串按两字符一字节解码
+      // （真机 32 字符 -> 16 字节）。未注入才退回 `|<imei>|<apkName>`。
+      ksid: qq8KsidBytes(device.ksid, device.imei, profile.apk.name),
       t104: _t104,
       t174: _t174,
       tgt: token?.tgt ?? Uint8List(0),

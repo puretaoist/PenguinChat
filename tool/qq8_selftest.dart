@@ -16,6 +16,7 @@ import 'dart:typed_data';
 import 'package:qqclient/kernel/crypto/ecdh.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
 
 // ---------------------------------------------------------------------------
 
@@ -277,6 +278,17 @@ void testDevice() {
     checkEq('identity 的 ksid 原样注入设备', dk.ksid,
         '188ca8765de720b5207b0adc6c51d3d7');
     checkEq('没给 ksid 时设备.ksid 为空（退回本地派生）', d.ksid, '');
+
+    // ksid 的字节形态：官方 `util.string_to_buf` 把 SP 里的十六进制串按
+    // 两字符一字节解码（`util.java:286-294`），不是 utf8 编码。
+    checkEq('ksid 十六进制串 → 16 字节（官方 string_to_buf 语义）',
+        qq8KsidBytes(dk.ksid, dk.imei, 'A8.2.11.4530f87a').length, 16);
+    checkEq('ksid 字节内容 = 逐字节十六进制解码',
+        toHex(qq8KsidBytes(dk.ksid, dk.imei, 'A8.2.11.4530f87a')),
+        '188ca8765de720b5207b0adc6c51d3d7');
+    checkEq('无注入时退回 |imei|apkName 形态',
+        utf8.decode(qq8KsidBytes('', 'IMEI', 'A8.2.11.4530f87a')),
+        '|IMEI|A8.2.11.4530f87a');
 
     // guidHex 非法时退回派生（不静默用坏值）
     final bad = Qq8DeviceIdentity.fromJson(<String, Object?>{
