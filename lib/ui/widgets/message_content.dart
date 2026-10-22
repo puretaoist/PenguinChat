@@ -12,6 +12,7 @@
 /// [Image.network] 的 errorBuilder 必须给，测试里也靠它兜底。
 library;
 
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -28,10 +29,17 @@ class MessageContent extends StatelessWidget {
   /// 自己发的（右侧气泡）——决定正文与次要元素的取色。
   final bool isOut;
 
+  /// 把"某段媒体的本地路径"解析出来的钩子（来自 [ChatStore.mediaPathOf]）。
+  ///
+  /// 为 null 时退化成"只用直链"，与加这个钩子之前的行为完全一致——
+  /// 老测试因此不用改。
+  final String? Function(Segment segment)? localMedia;
+
   const MessageContent({
     super.key,
     required this.message,
     required this.isOut,
+    this.localMedia,
   });
 
   @override
@@ -92,7 +100,11 @@ class MessageContent extends StatelessWidget {
           break; // 引用由气泡顶部的引用条负责
         case ImageSegment():
           flush();
-          blocks.add(_ImageBlock(seg: s, isOut: isOut));
+          blocks.add(_ImageBlock(
+            seg: s,
+            isOut: isOut,
+            localMedia: localMedia,
+          ));
         case RecordSegment():
           flush();
           blocks.add(_MediaRow(
@@ -265,8 +277,27 @@ class _MediaRow extends StatelessWidget {
 class _ImageBlock extends StatelessWidget {
   final ImageSegment seg;
   final bool isOut;
+  final String? Function(Segment segment)? localMedia;
 
-  const _ImageBlock({required this.seg, required this.isOut});
+  const _ImageBlock({
+    required this.seg,
+    required this.isOut,
+    this.localMedia,
+  });
+
+  /// 已经落到本地的文件路径（没有或已不存在则为 null）。
+  ///
+  /// 存在性检查不能省：清理缓存后索引会自愈，但 `build` 可能先于自愈跑，
+  /// 那时路径还在、文件已经没了，`Image.file` 会抛异常刷屏。
+  String? _localPath() {
+    final p = localMedia?.call(seg);
+    if (p == null || p.isEmpty) return null;
+    try {
+      return File(p).existsSync() ? p : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 占位/显示的最大宽度（气泡本身最大也就屏宽的 78%）。
   static const double _maxWidth = 240;
@@ -293,10 +324,22 @@ class _ImageBlock extends StatelessWidget {
 
   Widget _imageOrPlaceholder(BuildContext context) {
     if (seg.flash) return _placeholder('闪照 · 点击查看');
-    final src = seg.url;
-    if (src == null || src.isEmpty) {
-      return _placeholder(_hint());
+
+    // 本地优先：直链几天就过期，本地文件不会。这条路径同时也是"离线可看"。
+    final local = _localPath();
+    if (local != null) {
+      return Image.file(
+        File(local),
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _networkOrPlaceholder(),
+      );
     }
+    return _networkOrPlaceholder();
+  }
+
+  Widget _networkOrPlaceholder() {
+    final src = seg.url;
+    if (src == null || src.isEmpty) return _placeholder(_hint());
     return Image.network(
       src,
       fit: BoxFit.cover,
@@ -346,6 +389,7 @@ class _ImageBlock extends StatelessWidget {
 
   /// 点开看大图。没有直链时就只把文件名/尺寸摊开，便于对着日志排查。
   void _openLarge(BuildContext context) {
+    final localLarge = _localPath();
     final ar = seg.aspectRatio ?? 1.0;
     final maxH = math.min(MediaQuery.of(context).size.height * 0.7, 640.0);
     final maxW = math.min(MediaQuery.of(context).size.width * 0.9, 900.0);
@@ -365,7 +409,7 @@ class _ImageBlock extends StatelessWidget {
               child: SizedBox(
                 width: w,
                 height: h,
-                child: seg.url == null || seg.flash
+                child: localLarge == null && (seg.url == null || seg.flash)
                     ? Container(
                         color: Colors.black87,
                         alignment: Alignment.center,
@@ -402,7 +446,21 @@ class _ImageBlock extends StatelessWidget {
                           ),
                         ),
                       )
-                    : Image.network(
+                    : localLarge != null
+                        ? Image.file(
+                            File(localLarge),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => Container(
+                              color: Colors.black87,
+                              alignment: Alignment.center,
+                              child: const Text(
+                                '本地文件读不出来了（可能刚被缓存清理删掉）',
+                                style: TextStyle(
+                                    color: Colors.white70, fontSize: 12.5),
+                              ),
+                            ),
+                          )
+                        : Image.network(
                         seg.url!,
                         fit: BoxFit.contain,
                         loadingBuilder: (_, child, p) =>

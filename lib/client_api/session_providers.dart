@@ -25,6 +25,7 @@ import 'dart:io';
 import 'package:riverpod/riverpod.dart';
 
 import '../infra/log/logger.dart';
+import '../infra/net/media_fetcher.dart';
 import '../kernel/onebot/backend_profile.dart';
 import '../kernel/onebot/onebot_client.dart';
 import 'onebot_session.dart';
@@ -64,6 +65,16 @@ final dataDirProvider = Provider<Directory>(
 );
 
 /// 后端适配表。**必须**由 `main.dart` override（L4 从 asset bundle 读 JSON）。
+/// 媒体下载器（图片/语音/视频/文件落盘用）。
+///
+/// 单独成 provider 而不是让 `ChatStore` 自己 new：测试里可以 override 成
+/// 打桩实现或 null（null = 只读已有缓存，不联网）。
+final mediaFetcherProvider = Provider<MediaFetcher?>((ref) {
+  final fetcher = HttpMediaFetcher();
+  ref.onDispose(fetcher.close);
+  return fetcher;
+});
+
 final backendRegistryProvider = Provider<BackendProfileRegistry>(
   (ref) => throw UnimplementedError(
       'backendRegistryProvider 未注入：请在 main.dart 里从 assets/backends/ 加载'),
@@ -220,6 +231,7 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
     required this.dataDir,
     required this.profiles,
     required this.gate,
+    this.mediaFetcher,
   }) : super(const ConnectionStatus());
 
   /// 应用私有数据目录（ChatStore 的落盘位置）。
@@ -230,6 +242,9 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
 
   /// 安全闸门。连接前必须过它。
   final SafetyGate gate;
+
+  /// 媒体下载器；null = 只读已有缓存不联网。
+  final MediaFetcher? mediaFetcher;
 
   OneBotSession? _session;
   ChatStore? _store;
@@ -279,7 +294,11 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
 
       await session.connect();
 
-      final store = ChatStore(session: session, dataDir: dataDir);
+      final store = ChatStore(
+        session: session,
+        dataDir: dataDir,
+        mediaFetcher: mediaFetcher,
+      );
       await store.bootstrap();
       _store = store;
 
@@ -394,6 +413,7 @@ final connectionControllerProvider =
     dataDir: ref.watch(dataDirProvider),
     profiles: ref.watch(backendRegistryProvider),
     gate: ref.watch(safetyGateProvider),
+    mediaFetcher: ref.read(mediaFetcherProvider),
   );
   // 热重载 / 退出时必须把 WS 连接与 ChatStore 一起收掉，否则连接会漏。
   // StateNotifier.dispose 是同步的，所以异步清理挂在这里（内部不抛异常）。
@@ -464,7 +484,10 @@ final messagesProvider =
   yield store.messagesOf(chatId);
   yield* store.changes
       .where((c) =>
-          c.kind == ChatStoreChangeKind.messages &&
+          (c.kind == ChatStoreChangeKind.messages ||
+              // 媒体落盘是后台渐进发生的，落下后图片要从占位换成真图，
+              // 所以也要重发一次列表。消息对象本身没变，但 UI 需要重建。
+              c.kind == ChatStoreChangeKind.media) &&
           (c.chatId == null || c.chatId == chatId))
       .map((_) => store.messagesOf(chatId));
 });

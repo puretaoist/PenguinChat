@@ -47,6 +47,7 @@ import 'dart:typed_data';
 import 'package:riverpod/riverpod.dart';
 
 import '../infra/log/logger.dart';
+import '../infra/net/media_fetcher.dart';
 import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
 import '../kernel/wlogin8/qq8_protocol_det.dart';
@@ -59,7 +60,11 @@ import 'qq8_login_service.dart';
 import 'qq8_session_adapter.dart';
 import 'session.dart';
 import 'session_providers.dart'
-    show activeQq8BackendProvider, dataDirProvider, safetyGateProvider;
+    show
+        activeQq8BackendProvider,
+        dataDirProvider,
+        mediaFetcherProvider,
+        safetyGateProvider;
 
 /// 票据存储——**必须由 `main.dart` override 注入**（需要一个可写目录）。
 ///
@@ -344,6 +349,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     required this.dataDir,
     this.log,
     this.onBackendChanged,
+    this.mediaFetcher,
   }) : super(Qq8ConnectStatus.idle) {
     _sub = service.states.listen(_onSnapshot);
     _onSnapshot(service.snapshot);
@@ -354,6 +360,9 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   /// ChatStore 的落盘位置。
   final Directory dataDir;
+
+  /// 媒体下载器；null = 只读已有缓存不联网。
+  final MediaFetcher? mediaFetcher;
 
   /// 日志回调。
   final void Function(String level, String message, [Object? detail])? log;
@@ -467,7 +476,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       uin: _snap.uin,
       onLog: (level, message, [detail]) => log?.call(level, message, detail),
     );
-    final store = ChatStore(session: adapter, dataDir: dataDir);
+    final store = ChatStore(
+      session: adapter,
+      dataDir: dataDir,
+      mediaFetcher: mediaFetcher,
+    );
     await store.bootstrap();
     _adapter = adapter;
     _store = store;
@@ -508,6 +521,7 @@ final qq8ConnectControllerProvider =
   final controller = Qq8ConnectController(
     service: ref.watch(qq8LoginServiceProvider),
     dataDir: ref.watch(dataDirProvider),
+    mediaFetcher: ref.read(mediaFetcherProvider),
     log: (level, message, [detail]) => Log.get('Qq8Connect')
         .i('[$level] $message${detail == null ? '' : ' · $detail'}'),
     onBackendChanged: (session, store) {

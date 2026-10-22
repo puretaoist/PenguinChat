@@ -61,7 +61,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../infra/log/logger.dart';
+import '../infra/net/media_fetcher.dart';
+import '../infra/storage/media_cache.dart';
 import 'objects.dart';
+import 'media_refs.dart';
 import 'segment.dart';
 import 'session.dart';
 
@@ -75,6 +78,14 @@ enum ChatStoreChangeKind {
 
   /// 连接状态变了。
   connection,
+
+  /// 某条消息的媒体刚落到本地（或刚被清掉）。
+  ///
+  /// 单独一个类型而不是复用 [messages]：媒体下载是**后台渐进**发生的，
+  /// 用 messages 会让整个列表反复重建；UI 可以只针对这个类型做轻量刷新
+  /// （实际上 `messagesProvider` 两者都听，但语义上分得开，将来要优化时
+  /// 有地方下手）。
+  media,
 }
 
 /// 一次状态变化通知。
@@ -99,6 +110,7 @@ class ChatStore {
     this.pageSize = 20,
     this.maxCacheBytes = 512 * 1024 * 1024,
     this.keepMediaFor = const Duration(days: 30),
+    this.mediaFetcher,
   }) : _log = logger ?? Log.get('ChatStore');
 
   /// 数据来源。ChatStore **不拥有**它的生命周期——不负责 connect / dispose，
@@ -129,6 +141,20 @@ class ChatStore {
   /// 媒体保留期（TG 的 "Keep media"：3 天 / 1 周 / 1 月 / 永久）。
   /// null = 永久保留（只受 [maxCacheBytes] 约束）。
   final Duration? keepMediaFor;
+
+  /// 媒体字节的来源。
+  ///
+  /// null = 不下载，只命中已有缓存。自测与"只看本地"的场景传 null，
+  /// 生产环境由 `session_providers.dart` 注入 [HttpMediaFetcher]。
+  final MediaFetcher? mediaFetcher;
+
+  /// 媒体缓存（`<dataDir>/media` + `<dataDir>/media_index.json`）。
+  ///
+  /// [bootstrap] 之后才可用；为 null 表示还没初始化。
+  MediaCache? _mediaCache;
+
+  /// 媒体缓存实例（测试与诊断用）。
+  MediaCache? get mediaCache => _mediaCache;
 
   /// 媒体缓存的分类子目录（对齐 TG "存储用量"页的分类）。
   static const List<String> mediaCategories = <String>[
@@ -219,6 +245,17 @@ class ChatStore {
     await _chatsDir.create(recursive: true);
     _loadIndex();
     _bootstrapped = true;
+
+    // 媒体缓存：索引要**先读**，否则启动瞬间的 `mediaPathOf` 全部落空，
+    // 用户会看到一屏"正在下载"的占位——明明文件就在磁盘上。
+    final cache = MediaCache(
+      root: _mediaDir,
+      indexFile: File('${dataDir.path}${Platform.pathSeparator}media_index.json'),
+      fetcher: mediaFetcher,
+      maxBytes: maxCacheBytes,
+    );
+    await cache.load();
+    _mediaCache = cache;
 
     // TG 的做法：启动时顺手清一次媒体缓存（保留期 + 上限），不阻塞启动
     unawaited(pruneMediaCache());
@@ -391,6 +428,11 @@ class ChatStore {
     await _sub?.cancel();
     _sub = null;
     _persistIndex();
+    // 索引里记着"哪条消息的媒体在哪个文件"，丢了只会让下次重新下载，
+    // 但 flush 一下成本几乎为零。
+    await _mediaCache?.flush();
+    _mediaCache?.dispose();
+    _mediaCache = null;
     await _changes.close();
   }
 
@@ -469,6 +511,62 @@ class ChatStore {
   // ---------------------------------------------------------------------------
   // 存储：用量统计 / 清理（按 TG 的做法，见文件头"存储策略"）
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // 媒体缓存（收到的图片/语音/视频/文件落盘）
+  // ---------------------------------------------------------------------------
+
+  /// 该段的本地文件路径；还没下载/不适用时返回 null。
+  ///
+  /// **同步**，可以在 `build()` 里直接调——这是刻意的：异步接口会让每个
+  /// 图片块都要挂一个 FutureBuilder，滚动时全是重建。
+  String? mediaPathOf(Segment seg) {
+    final ref = mediaRefOf(seg);
+    if (ref == null) return null;
+    return _mediaCache?.pathFor(ref.key);
+  }
+
+  /// 确保该段的媒体在本地，返回路径（失败为 null）。
+  ///
+  /// 与 [_prefetchMedia] 的区别：这个可以被 UI 主动 await（比如用户点开大图）。
+  Future<String?> ensureMedia(Segment seg) async {
+    final cache = _mediaCache;
+    final ref = mediaRefOf(seg);
+    if (cache == null || ref == null) return null;
+    final hit = cache.pathFor(ref.key);
+    if (hit != null) return hit;
+    if (ref.url.isEmpty) return null;
+    final path = await cache.ensure(
+      key: ref.key,
+      category: ref.category,
+      url: ref.url,
+    );
+    if (path != null && !_disposed) {
+      _emit(ChatStoreChangeKind.media);
+    }
+    return path;
+  }
+
+  /// 后台预取一条消息里的全部媒体。
+  ///
+  /// 刻意**不 await、不报错**：这是尽力而为的暖缓存。失败就失败，下次打开
+  /// 会话或用户点开大图时 [ensureMedia] 会再试一次。
+  void _prefetchMedia(ChatMessage message) {
+    final cache = _mediaCache;
+    if (cache == null || mediaFetcher == null || _disposed) return;
+    for (final seg in message.segments) {
+      final ref = mediaRefOf(seg);
+      if (ref == null || ref.url.isEmpty) continue;
+      if (cache.pathFor(ref.key) != null) continue;
+      unawaited(cache
+          .ensure(key: ref.key, category: ref.category, url: ref.url)
+          .then((path) {
+        if (path != null && !_disposed) {
+          _emit(ChatStoreChangeKind.media, message.chatId);
+        }
+      }));
+    }
+  }
 
   /// 本地占用统计：**消息库**（不自动清理）与**媒体缓存**（可清）分开报。
   Future<StorageStats> storageStats() async {
@@ -551,6 +649,8 @@ class ChatStore {
     if (freed > 0) {
       _log.i('媒体缓存清理：释放 $freed 字节'
           '（上限 $maxCacheBytes，保留期 ${keepMediaFor ?? '永久'}）');
+      // 上面的删除是按目录走的，索引不知道；对齐一下，否则用量会虚报。
+      _mediaCache?.reconcile();
     }
     return freed;
   }
@@ -564,6 +664,7 @@ class ChatStore {
       if (f is File) freed += _deleteQuietly(f);
     }
     _log.i('已清空媒体缓存（释放 $freed 字节）');
+    _mediaCache?.reconcile();
     return freed;
   }
 
@@ -940,6 +1041,9 @@ class ChatStore {
       _appendMessage(message);
       _trim(message.chatId);
     }
+    // 收到的消息顺手把媒体拉下来。放在插入之后：先让文字上屏，
+    // 图片晚几百毫秒出现是完全可接受的，反过来（等图再上屏）就不行。
+    _prefetchMedia(message);
     return true;
   }
 
@@ -1112,6 +1216,12 @@ class ChatStore {
       _log.w('${file.path} 有 $skipped 行无法解析，已跳过');
     }
     _sortMessages(chatId);
+    // 打开会话时把还没落盘的媒体补上。用户从聊天列表点进来的那一刻，
+    // 屏幕上大概率有一堆直链已经过期的老图——这里补下载，配合
+    // `ChatStoreChangeKind.media` 事件，图片会一张张自己出现。
+    for (final m in list) {
+      _prefetchMedia(m);
+    }
   }
 
   void _appendMessage(ChatMessage message) {

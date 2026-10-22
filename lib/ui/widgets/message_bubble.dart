@@ -18,6 +18,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
+import '../../client_api/segment.dart';
 import '../theme/telegram_theme.dart';
 import 'message_content.dart';
 
@@ -39,6 +40,13 @@ class MessageBubble extends StatelessWidget {
   /// 已撤回消息的「查看」入口（揭示原文）。为 null 表示不提供。
   final VoidCallback? onReveal;
 
+  /// 把"某段媒体的本地路径"解析出来的钩子。
+  ///
+  /// 由上层（`home_page.dart`）从 [ChatStore.mediaPathOf] 接进来。做成回调
+  /// 而不是让气泡自己去取 store：气泡是纯展示组件，它不该知道 Riverpod 的
+  /// 存在，测试里也就能直接传一个假的解析器。
+  final String? Function(Segment segment)? localMedia;
+
   const MessageBubble({
     super.key,
     required this.message,
@@ -46,6 +54,7 @@ class MessageBubble extends StatelessWidget {
     this.showSenderName = true,
     this.highlighted = false,
     this.onReveal,
+    this.localMedia,
   });
 
   @override
@@ -156,7 +165,11 @@ class MessageBubble extends StatelessWidget {
                     // 正文交给 MessageContent：文本/表情/@ 行内排，图片单独成块。
                     // 揭示后的撤回消息也走这里——反撤回要能看到**原样**的内容，
                     // 包括图片；"已撤回 · 内容已保留"那行注释负责说明它是被撤回的。
-                    MessageContent(message: message, isOut: isOut),
+                    MessageContent(
+                      message: message,
+                      isOut: isOut,
+                      localMedia: localMedia,
+                    ),
                     if (message.deleted)
                       Text(
                         '已撤回 · 内容已保留',

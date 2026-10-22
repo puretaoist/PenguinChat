@@ -279,6 +279,51 @@ void main() {
       expect(find.byIcon(Icons.image_outlined), findsOneWidget);
     });
 
+    testWidgets('图片段：本地已落盘时优先用本地文件，不走网络', (tester) async {
+      // 造一个真的 PNG 文件——Image.file 在测试环境里能正常解码。
+      final dir = Directory.systemTemp.createTempSync('bubble_media_');
+      final file = File('${dir.path}/local.png');
+      file.writeAsBytesSync(_tinyPng);
+      addTearDown(() => dir.deleteSync(recursive: true));
+
+      final seg = ImageSegment('x.jpg',
+          url: 'https://c2cpicdw.qpic.cn/offpic_new/0/abc/0',
+          width: 100,
+          height: 100);
+      final msg = _msg('img_local', '[图片]', time: day2, segments: <Segment>[seg]);
+
+      await tester.pumpWidget(_wrap(MessageBubble(
+        message: msg,
+        localMedia: (s) => s == seg ? file.path : null,
+      )));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Image), findsOneWidget);
+      final img = tester.widget<Image>(find.byType(Image));
+      expect(img.image, isA<FileImage>(),
+          reason: '本地有文件就该用 FileImage，直链会过期而本地不会');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('图片段：本地路径指向的文件已被清掉 → 退回直链/占位，不抛异常',
+        (tester) async {
+      final seg = const ImageSegment('gone.jpg',
+          url: 'https://c2cpicdw.qpic.cn/offpic_new/0/abc/0',
+          width: 100,
+          height: 100);
+      final msg = _msg('img_gone', '[图片]', time: day2, segments: <Segment>[seg]);
+
+      await tester.pumpWidget(_wrap(MessageBubble(
+        message: msg,
+        // 缓存清理后索引自愈有延迟，路径可能还在但文件已删
+        localMedia: (s) => '/definitely/not/here/gone.jpg',
+      )));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull, reason: '文件不存在必须被吃掉，不能让 Image.file 抛');
+      expect(find.byIcon(Icons.image_outlined), findsOneWidget);
+    });
+
     testWidgets('闪照：显示"闪照 · 点击查看"，不直接出图', (tester) async {
       final msg = _msg('flash1', '[闪照]', time: day2, segments: <Segment>[
         const ImageSegment('f.jpg', flash: true, summary: '[闪照]'),
@@ -856,3 +901,13 @@ void main() {
     });
   });
 }
+
+/// 1×1 透明 PNG：足够让 [Image.file] 真的解码成功。
+const List<int> _tinyPng = <int>[
+  0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+  0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+  0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+  0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];

@@ -1345,6 +1345,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                         _showMessageActions(m, chat.id),
                                     child: MessageBubble(
                                       message: m,
+                                      localMedia: store?.mediaPathOf,
                                       onRetry:
                                           m.isFailed ? () => _retry(m.id) : null,
                                       showSenderName: item.showSenderName,
