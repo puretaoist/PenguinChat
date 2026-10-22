@@ -316,6 +316,41 @@ Future<void> main() async {
     }
 
     // ---------------------------------------------------------------
+    print('\n[限流] 硬锁必须能从记录重建（2026-10-22 真机事故）');
+    {
+      // 事故现场：两个工具各写一份记录，合并后有 fails=5 但 lockUntil=null。
+      // 原来的 load() 只认磁盘上的 lockUntil，于是连败到硬锁线仍放行。
+      final f = File('${tmp.path}/lock_rebuild.json');
+      final t0 = DateTime(2026, 10, 22, 12, 22, 20);
+      await f.writeAsString(jsonEncode(<String, Object?>{
+        'records': <Object?>[
+          for (var i = 1; i <= 5; i++)
+            <String, Object?>{
+              'at': t0.subtract(Duration(minutes: 10 - i)).toIso8601String(),
+              'ok': false,
+              'rc': 'type=1',
+            },
+        ],
+        'fails': 5,
+        'lockUntil': null,
+        'lastFailureAt': t0.toIso8601String(),
+      }));
+      final l = LoginAttemptLimiter(
+          persistFile: f, maxInWindow: 99, hardLockAfter: 5);
+      await l.load();
+      check('连败 5 次', l.consecutiveFailures == 5, '实际 ${l.consecutiveFailures}');
+      check('lockUntil 缺失时也能重建硬锁',
+          !l.status(t0.add(const Duration(hours: 1))).allowed,
+          l.status(t0.add(const Duration(hours: 1))).describe());
+      check('硬锁时长是 24 小时（23 小时内仍锁）',
+          !l.status(t0.add(const Duration(hours: 23))).allowed,
+          l.status(t0.add(const Duration(hours: 23))).describe());
+      check('24 小时后解锁',
+          l.status(t0.add(const Duration(hours: 25))).allowed,
+          l.status(t0.add(const Duration(hours: 25))).describe());
+    }
+
+    // ---------------------------------------------------------------
     print('\n[闸门] 默认离线');
     {
       final gate = SafetyGate(persistFile: File('${tmp.path}/gate.json'));
@@ -514,6 +549,21 @@ Future<void> main() async {
       check('账号受限建议含官方申诉', advice2.contains('官方'), advice2);
 
       check('风险要点 >= 4 条', kRiskPoints.length >= 4);
+
+      // ── 限流文件路径必须唯一 ────────────────────────────────────────
+      //
+      // 2026-10-22 真机事故：live_smoke 写 <Temp>/qqclient-attempts.json，
+      // 而 interactive 写 <Temp>/qqclient-logs/qqclient-attempts.json。
+      // 两个文件各记一半历史（fails=4 与 fails=2），交错跑时谁都没到
+      // 5 次的硬锁线 —— 闸门被"换个工具继续试"绕过了。
+      final logsDirA = Directory('${tmp.path}${Platform.pathSeparator}a-logs');
+      final logsDirB = Directory('${tmp.path}${Platform.pathSeparator}b-logs');
+      final loA = LoginAttemptLimiter.defaultFileFor(logsDirA);
+      final loB = LoginAttemptLimiter.defaultFileFor(logsDirB);
+      check('defaultFileFor 落到日志目录的父目录',
+          loA.path == '${tmp.path}${Platform.pathSeparator}qqclient-attempts.json',
+          loA.path);
+      check('不同日志目录映射到同一个限流文件', loA.path == loB.path, loA.path);
       check('声明版本非空', kConsentVersion.isNotEmpty);
     }
   } finally {

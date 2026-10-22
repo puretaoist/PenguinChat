@@ -517,9 +517,10 @@ Future<void> _run(Map<String, String> args) async {
   }
 
   // ---- 限流 ----
+  // 路径由日志文件反推（`logDir` 在 main 里，_run 拿不到）：
+  // defaultFileFor(logDir) == logDir 的父目录，_runLogFile.parent 就是 logDir。
   final limiter = LoginAttemptLimiter(
-    persistFile: File('${Directory.systemTemp.path}${Platform.pathSeparator}'
-        'qqclient-logs${Platform.pathSeparator}qqclient-attempts.json'),
+    persistFile: LoginAttemptLimiter.defaultFileFor(_runLogFile!.parent),
   );
   await limiter.load();
   final status = limiter.status();

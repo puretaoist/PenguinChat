@@ -142,6 +142,20 @@ class LoginAttemptLimiter {
   /// 拿它计时就会把尝试自己挡在冷却里。
   DateTime? _lastFailureAt;
 
+  /// 限流状态的**唯一**规范落盘位置：`<日志目录的父目录>/qqclient-attempts.json`。
+  ///
+  /// 为什么必须是唯一位置：这道闸门保护的是「同一账号短时间内多次尝试」这个
+  /// 服务端信号。如果每个工具各写一份，那"换个工具继续试"就等于清零——
+  /// 闸门形同虚设，而这恰好是最容易被风控捕捉的行为。
+  ///
+  /// 2026-10-22 真机事故：`tool/qq8_live_smoke.dart` 写
+  /// `<Temp>/qqclient-attempts.json`，而 `tool/qq8_interactive.dart` 写成
+  /// `<Temp>/qqclient-logs/qqclient-attempts.json`。两个文件各自记着一半历史
+  /// （一份 fails=4、一份 fails=2），交错跑时谁都没到 5 次的硬锁线。
+  static File defaultFileFor(Directory logDir) => File(
+        '${logDir.parent.path}${Platform.pathSeparator}qqclient-attempts.json',
+      );
+
   LoginAttemptLimiter({
     this.window = const Duration(minutes: 10),
     this.maxInWindow = 3,
@@ -189,6 +203,16 @@ class LoginAttemptLimiter {
             _lastFailureAt = _lastRealFailureAt() ?? _lastFailureAt;
           }
         }
+      }
+      // 硬锁必须能「从记录重建」。
+      //
+      // 2026-10-22 真机事故：两个工具各写一份记录（已修），合并后
+      // `fails = 5` 但 `lockUntil = null`，[status] 只看 `_hardLockUntil`，
+      // 于是连败已到硬锁线却照样放行。凡是"状态由累计值派生"的地方，
+      // 加载时都要把派生出来的锁定条件补上，否则磁盘上没有那一行就等于没有锁。
+      if (_consecutiveFailures >= hardLockAfter && _hardLockUntil == null) {
+        final base = _lastFailureAt ?? _records.last.at;
+        _hardLockUntil = base.add(hardLockDuration);
       }
     } on FormatException {
       // 记录损坏就当没有，不阻塞启动

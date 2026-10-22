@@ -997,8 +997,7 @@ Future<void> main(List<String> argv) async {
   }
 
   // 限流器（持久化到日志目录旁边）
-  final limiterFile =
-      File('${logDir.parent.path}${Platform.pathSeparator}qqclient-attempts.json');
+  final limiterFile = LoginAttemptLimiter.defaultFileFor(logDir);
   final limiter = LoginAttemptLimiter(persistFile: limiterFile);
   await limiter.load();
   final status = limiter.status();
@@ -1442,8 +1441,7 @@ Future<void> _phoneLoginStep1({
   // 第 1 段也要看限流器：**检查状态**（锁着就不发），但**不消耗**尝试次数——
   // 这一步只是"检查手机号 + 发短信"，不是一次登录尝试（真正算尝试的是第 2 段）。
   // 少了这道检查等于给"锁定期内照样连服务器"留后门，与扫码那条同一个纪律。
-  final limiterFile =
-      File('${logDir.parent.path}${Platform.pathSeparator}qqclient-attempts.json');
+  final limiterFile = LoginAttemptLimiter.defaultFileFor(logDir);
   final step1Limiter = LoginAttemptLimiter(persistFile: limiterFile);
   await step1Limiter.load();
   final step1Status = step1Limiter.status();
@@ -1537,8 +1535,7 @@ Future<void> _phoneLoginStep2({
     return;
   }
 
-  final limiterFile =
-      File('${logDir.parent.path}${Platform.pathSeparator}qqclient-attempts.json');
+  final limiterFile = LoginAttemptLimiter.defaultFileFor(logDir);
   final limiter = LoginAttemptLimiter(persistFile: limiterFile);
   await limiter.load();
   final status = limiter.status();
