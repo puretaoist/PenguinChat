@@ -62,6 +62,7 @@ import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pow.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_protocol_det.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_qimei.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_recv.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
@@ -275,6 +276,40 @@ Future<void> _run(Map<String, String> args) async {
     out('  QIMEI: 未提供（0x545 整条不发 = 官方降级行为）');
   }
 
+  // ---- ProtocolDet（0x525 内嵌 0x536 的历史登录出口缓存）----
+  //
+  // 官方成功样本 `qq8211/wtlogin_20260930.txt:375` 内层是 **65 字节**
+  // （`01 03` + 3×21B）；我们缺省发 `01 00`（"零条历史出口"），等于自称
+  // 全新环境。见 `docs/PITFALLS.md` C17。
+  //
+  // 用法：`--pd2=<path>`，指向从真机 /data/data/<pkg>/files/pd2.dat 拉下来的
+  // 原始文件（磁盘形态是**裸条目、无 2 字节头**）。
+  Uint8List? protocolDet;
+  final pd2Path = args['pd2'];
+  if (pd2Path != null && pd2Path.isNotEmpty) {
+    final f = File(pd2Path);
+    if (!f.existsSync()) {
+      errOut('✗ --pd2 文件不存在: $pd2Path');
+      exitCode = 2;
+      return;
+    }
+    final raw = f.readAsBytesSync();
+    final entries = Qq8ProtocolDet.decodeFile(raw);
+    if (entries.isEmpty) {
+      errOut('✗ --pd2 解不出条目（${raw.length} 字节；官方磁盘形态是无头的裸条目）');
+      exitCode = 2;
+      return;
+    }
+    protocolDet = Qq8ProtocolDet.encode(entries);
+    out('  ProtocolDet: ${entries.length} 条历史出口 → 0x536 body '
+        '${protocolDet.length} 字节');
+    for (final e in entries) {
+      out('    uin=${e.uin} ip=${e.ipText} time=${e.time} ver=${e.version}');
+    }
+  } else {
+    out('  ProtocolDet: 未提供（0x536 = 01 00，官方"零条历史出口"形态）');
+  }
+
   // ---- 滑块 TLV 形态 ----
   final formName = args['slider-form'] ?? 'websig';
   final Qq8SliderTicketForm sliderForm;
@@ -349,6 +384,7 @@ Future<void> _run(Map<String, String> args) async {
         },
         t544SubCmd: subCmd,
         t544Curr: deterministic ? 1700000000000 : null,
+        protocolDet: protocolDet,
       );
 
   final loginCtx = ctxFor(t104: Uint8List(0), subCmd: Qq8SubCmd.password);

@@ -583,8 +583,12 @@ Future<void> main(List<String> argv) async {
     out('  盐: ${sliderSalt.length} 字节（0x104）');
     if (useSlider) {
       out('  ticket: ${sliderTicket.length} 字符');
+      // 因果方向：服务端下发 0x192（URL 型滑块）→ App 走 CheckWebsigAndGetSt
+      // → `n.K = true` → 发 0x193；下发 0x104/0x105（图片）→
+      // CheckPictureAndGetSt → `n.K = false` → 发 0x02。
+      // 出处 WtloginHelper.java:2190/2191（重载 `:2195`）、`:2200/2201`（重载 `:2205`）。
       out('  首项 TLV: 0x${(sliderForm == Qq8SliderTicketForm.picture ? 0x02 : 0x193).toRadixString(16)}'
-          '（官方 n.K=${sliderForm == Qq8SliderTicketForm.picture ? 'false → CheckPictureAndGetSt' : 'true → CheckWebsigAndGetSt'}）');
+          '（${sliderForm == Qq8SliderTicketForm.picture ? '图片验证码 → CheckPictureAndGetSt → 官方 n.K=false' : '0x192 URL 滑块 → CheckWebsigAndGetSt → 官方 n.K=true'}）');
       if (sliderForm == Qq8SliderTicketForm.picture) {
         // 优先显式 --picture-sign；否则用上一条响应自动落盘的 0x105 sign。
         final signHex = args['picture-sign'] ??
