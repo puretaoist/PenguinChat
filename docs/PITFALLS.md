@@ -1183,6 +1183,70 @@ if self.d[self.p] == TC_ENDBLOCKDATA:
 
 ---
 
+### C22. SharedPreferences 里的字符串不一定是"字符串"——`ksid` 是十六进制密文（2026-10-22）
+
+**现象**：密码登录一直回 `type=1`（账号或密码错误），但同一账号、同一版本、同一台设备上
+官方客户端 2026-10-22 密码登录 `subCmd=0x9 type=0 ret=0` 直接成功。包体逐字段对齐之后
+仍然 `type=1`。
+
+**根因**：`ksid` 送多了 16 个字节。
+
+真机上 `WLOGIN_DEVICE_INFO.xml` 里存的是：
+
+```xml
+<string name="ksid">188ca8765de720b5207b0adc6c51d3d7</string>
+```
+
+看起来是 32 个字符的字符串，实际是 **32 个十六进制字符 = 16 字节**。官方读出来的路径是：
+
+```java
+// oicq/wlogin_sdk/tools/util.java:692-698
+public static byte[] get_ksid(Context context) {
+    return string_to_buf(get_sp(context, "WLOGIN_DEVICE_INFO").getString("ksid", ""));
+}
+
+// :286-294
+public static byte[] string_to_buf(String str) {
+    byte[] bArr = new byte[str.length() / 2];
+    for (int i = 0; i < str.length() / 2; i++)
+        bArr[i] = (byte)((get_char(str.charAt(i*2)) << 4) + get_char(str.charAt(i*2+1)));
+    return bArr;
+}
+```
+
+而写盘侧 `:238-248` 的 `buf_to_string` 正是它的逆运算（每字节两位 hex），`set_ksid` 只在
+SP 里**为空**时写一次 —— 所以这个值是**服务端在 `0x108` 下发、客户端落盘缓存**的，
+不是本地按 `|<imei>|<apkName>` 拼出来的。
+
+我方原先直接 `utf8.encode(ksidString)` ⇒ 送 32 字节，官方送 16 字节。SSO 头和 TLV `0x108`
+**各多 16 字节**。
+
+**修法**（提交 `e4ed76a`）：新增 `qq8KsidBytes(injected, imei, apkName)` 做 hex 解码
+（配 `_qq8HexNibble` 对应官方 `get_char`，非法字符返 0，与官方一致），服务层与三个工具
+统一走它；未注入时仍退回旧的 `|<imei>|<apkName>` 形态。
+
+**判据变化**：
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| `0x0108` body | 32 字节 | **16 字节** |
+| 登录信封 | 1468 | 1436 |
+| 服务端返回 | `type=1` 账号或密码错误 | **`type=2` 需要滑块** |
+
+`type=2` 意味着**口令已被接受**，进入了验证码流程。此前排查过的口令 MD5、`0x106` 密钥、
+`mainSigMap`、`miscBitmap`、`0x52d`、时钟、前置免密包、`0x202`、`0x154` 全部是岔路。
+
+**教训**：
+
+1. **SP 里的值类型要看读它的代码，不要看它长得像什么**。`getString()` 拿到 String 不代表
+   语义上是字符串；`string_to_buf` / `hex` / `base64` 这类名字是唯一的线索。
+2. **凡是"服务端下发 + 本地缓存"的字段，缓存格式往往经过编码**（这里 hex）。
+   照抄字符串必然长度差一倍，而长度差在包里不报错、只在服务端判错。
+3. **`type=1` 不等于口令错**。`S_PWD_WRONG` 只是一个分支，设备侧参数不对也会落到同一个
+   返回码 —— 判据应该是"同号同版本官方能过、我方不能过"。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

@@ -323,6 +323,22 @@ Future<void> _run(Map<String, String> args) async {
     out('  ProtocolDet: 未提供（0x536 = 01 00，官方"零条历史出口"形态）');
   }
 
+  // ---- reserve fields 是否带 tag 12（qimei36）----
+  final reserveQimei = args.containsKey('reserve-qimei');
+
+  // ---- ticket 来源（文件轮询 / stdin）----
+  //
+  // 官方两轮 type=2 → 提交的间隔是 17.6s（降级到短信）与 7.2s（直接成功），
+  // 都在同一条 MSF 长连接内。要做到这个量级，就不能等人在终端里手粘——
+  // `--slider-ticket-file` 让外部进程写文件、本工具 200ms 轮询，延迟毫秒级。
+  final ticketFilePath = args['slider-ticket-file'];
+  final waitSeconds = int.tryParse(args['wait'] ?? '') ?? 300;
+  if (ticketFilePath != null) {
+    out('  ticket 来源: 文件轮询 $ticketFilePath（最多 ${waitSeconds}s）');
+  } else {
+    out('  ticket 来源: stdin（最多 ${waitSeconds}s）');
+  }
+
   // ---- 滑块 TLV 形态 ----
   final formName = args['slider-form'] ?? 'websig';
   final Qq8SliderTicketForm sliderForm;
@@ -425,6 +441,13 @@ Future<void> _run(Map<String, String> args) async {
     ecdhShareKey: ecdh.shareKey,
     seqId: sessionSeq,
     sig: null,
+    // reserve fields 的 tag 12（qimei36）默认**不**写。
+    //
+    // 2026-10-22 实证：12:07 那次 `live_smoke` 真发回 type=2（口令被接受、
+    // 进入滑块），它当时的 SSO 头 reserve fields 里没有 tag 12；本工具若补上，
+    // 信封从 1436 变 1476。为了先复现"已知能拿到 type=2 的那个包"，默认关。
+    // 想试官方完整形态（含 tag 12）时用 `--reserve-qimei`。
+    qimei36: reserveQimei ? qimei : null,
   );
   final loginPkt = Qq8Sso.buildLoginPacket(
     ssoCtx,
@@ -584,9 +607,23 @@ Future<void> _run(Map<String, String> args) async {
     final gapStart = DateTime.now();
     out('');
     out('--- [2/2] 等 ticket（⚠ 连接保持中，请尽快）---');
-    out('  把滑块解掉后，把 ticket 粘到这里回车（直接回车 = 中止）：');
-    stdout.write('  ticket> ');
-    final ticket = stdin.readLineSync(encoding: utf8);
+    out('  滑块地址（复制到浏览器打开，解完会显示一串 ticket）：');
+    out('    ${r1.sliderUrl}');
+    if (ticketFilePath != null) {
+      out('  等待 ticket 文件: $ticketFilePath（每 200ms 轮询，最多 ${waitSeconds}s）');
+      out('  → 把 ticket 写进该文件即可立刻提交，无需回车');
+    } else if (stdin.hasTerminal) {
+      out('  把滑块解掉后，把 ticket 粘到这里回车（直接回车 = 中止）：');
+      stdout.write('  ticket> ');
+    } else {
+      out('  ✗ 当前 stdin 不是终端，请用 --slider-ticket-file=<path> 传 ticket。');
+      return;
+    }
+
+    final ticket = await _waitTicket(
+      filePath: ticketFilePath,
+      waitSeconds: waitSeconds,
+    );
     final gapMs = DateTime.now().difference(gapStart).inMilliseconds;
     out('  等待耗时: ${(gapMs / 1000).toStringAsFixed(1)}s'
         '（官方基准 17.6s / 7.2s）');
@@ -698,6 +735,43 @@ int? _tlvOffset(Uint8List body, int want) {
 }
 
 int _u32(Uint8List b) => (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
+
+/// 等待人工 ticket。
+///
+/// 两种来源：
+/// - [filePath] 非空：每 200ms 读一次文件，非空且与上次不同即返回。这样
+///   外部进程（脚本 / 编辑器 / 另一个终端）写入即刻触发，延迟在毫秒级，
+///   能把「密码登录 → 滑块提交」压在官方 7 秒窗口内。
+/// - `stdin` 是终端：阻塞读一行。
+Future<String?> _waitTicket({
+  String? filePath,
+  required int waitSeconds,
+}) async {
+  if (filePath == null) {
+    return stdin.readLineSync(encoding: utf8);
+  }
+  final f = File(filePath);
+  final deadline = DateTime.now().add(Duration(seconds: waitSeconds));
+  var last = '';
+  while (DateTime.now().isBefore(deadline)) {
+    try {
+      if (f.existsSync()) {
+        final s = f.readAsStringSync().trim();
+        if (s.isNotEmpty && s != last) {
+          // 防止读到写一半的内容：长度稳定两次再返回
+          last = s;
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          final s2 = f.readAsStringSync().trim();
+          if (s2 == s) return s;
+        }
+      }
+    } on Object {
+      // 文件被占用/半写，下一轮再试
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  }
+  return null;
+}
 
 Map<String, String> _parseArgs(List<String> argv) {
   final m = <String, String>{};
