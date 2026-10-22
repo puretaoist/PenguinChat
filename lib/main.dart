@@ -29,11 +29,14 @@ import 'package:path_provider/path_provider.dart';
 import 'client_api/qq8_providers.dart';
 import 'client_api/qq8_token_store.dart';
 import 'client_api/session_providers.dart';
+import 'infra/lifecycle/keep_alive.dart';
 import 'infra/log/log_file.dart';
 import 'infra/log/logger.dart';
 import 'kernel/onebot/backend_profile.dart';
 import 'kernel/safety/safety_gate.dart';
+import 'ui/lifecycle/keep_alive_scope.dart';
 import 'ui/pages/home_page.dart';
+import 'ui/platform/foreground_keep_alive.dart';
 import 'ui/theme/telegram_theme.dart';
 import 'ui/theme/theme_mode.dart';
 
@@ -70,8 +73,16 @@ Future<void> main() async {
         qq8TokenStoreProvider.overrideWithValue(
           FileQq8TokenStore(Directory('${dataDir.path}${Platform.pathSeparator}qq8')),
         ),
+        // 后台保活：只有 Android 有前台服务这个概念。
+        // 桌面端注入 Noop 而不是直接留默认值——留默认值也一样，但显式写出来
+        // 能让"这条能力只在 Android 生效"这件事在代码里可见。
+        keepAliveProvider.overrideWithValue(
+          Platform.isAndroid ? ForegroundKeepAlive() : const NoopKeepAlive(),
+        ),
       ],
-      child: const QQClientApp(),
+      // KeepAliveScope 必须在 MaterialApp 外面：它不需要 context、不参与布局，
+      // 而前台服务是进程级资源，整个应用只能有一个观察者。
+      child: const KeepAliveScope(child: QQClientApp()),
     ),
   );
 }

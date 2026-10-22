@@ -5,6 +5,18 @@
          是"没网权限"的——两条线都靠它，必须放在 main 里。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- 后台保活（见 KeepAliveService.kt）。四个权限缺一不可：
+           FOREGROUND_SERVICE                    API 28+ 起，前台服务的准入门槛
+           FOREGROUND_SERVICE_REMOTE_MESSAGING   API 34+，对应 remoteMessaging 类型
+           FOREGROUND_SERVICE_DATA_SYNC          API 34+，API 29~33 用 dataSync 类型
+           POST_NOTIFICATIONS                    API 33+，没有它服务能跑但通知不显示
+         漏掉任何一个的表现都不是崩溃，而是「服务起来后立刻被系统停掉」，
+         所以这四个必须一起在，不要"清理"掉看着重复的那两个。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
         android:label="qqclient"
         android:name="${applicationName}"
@@ -31,6 +43,27 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <!-- 后台保活服务。三个属性都有具体理由：
+               foregroundServiceType  必须与代码里 startForeground 传的类型一致，
+                                      否则系统按"类型不匹配"直接杀服务。
+                                      写两种是因为 API 29~33 没有 remoteMessaging：
+                                      34+ 用 remoteMessaging（Android 15 起 dataSync
+                                      有 6 小时/24 小时上限，聊天客户端不能接受），
+                                      29~33 退回 dataSync。
+               exported="false"       只给自己用。导出的服务别人能拉起，
+                                      是白送的攻击面。
+               stopWithTask="true"    用户从最近任务里划掉应用 = 他要关掉它。
+                                      保持连接是"我还在用"，不是"永远后台跑"。
+                                      等以后做了消息通知、真的需要划掉后继续收消息，
+                                      再把这条改成 false。 -->
+        <service
+            android:name=".KeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="true"
+            android:foregroundServiceType="dataSync|remoteMessaging" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

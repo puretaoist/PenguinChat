@@ -26,6 +26,7 @@ import 'package:riverpod/riverpod.dart';
 
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
+import '../infra/lifecycle/keep_alive.dart';
 import '../kernel/onebot/backend_profile.dart';
 import '../kernel/onebot/onebot_client.dart';
 import 'onebot_session.dart';
@@ -64,7 +65,6 @@ final dataDirProvider = Provider<Directory>(
       'dataDirProvider 未注入：请在 ProviderScope.overrides 里提供应用私有目录'),
 );
 
-/// 后端适配表。**必须**由 `main.dart` override（L4 从 asset bundle 读 JSON）。
 /// 媒体下载器（图片/语音/视频/文件落盘用）。
 ///
 /// 单独成 provider 而不是让 `ChatStore` 自己 new：测试里可以 override 成
@@ -75,6 +75,17 @@ final mediaFetcherProvider = Provider<MediaFetcher?>((ref) {
   return fetcher;
 });
 
+/// 后台保活（前台服务）。
+///
+/// 默认 [NoopKeepAlive]：桌面、纯 Dart 自测、以及任何不跑 Android 的场景
+/// 都不该因为缺一个平台通道而报错。`main.dart` 在 Android 上 override 成
+/// `ForegroundKeepAlive`。
+///
+/// 放这里而不是直接让 `KeepAliveScope` new 一个：测试里能 override 成假实现，
+/// 从而验证「什么时候该挂、什么时候不该挂」这条判据本身。
+final keepAliveProvider = Provider<KeepAlive>((ref) => const NoopKeepAlive());
+
+/// 后端适配表。**必须**由 `main.dart` override（L4 从 asset bundle 读 JSON）。
 final backendRegistryProvider = Provider<BackendProfileRegistry>(
   (ref) => throw UnimplementedError(
       'backendRegistryProvider 未注入：请在 main.dart 里从 assets/backends/ 加载'),

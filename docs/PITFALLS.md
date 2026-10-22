@@ -1363,6 +1363,92 @@ SP 里**为空**时写一次 —— 所以这个值是**服务端在 `0x108` 下
    （`pathFor` 命中时检查），而不是"启动时全量校验"——前者零成本，后者在
    几千个文件时会有可见延迟。
 
+### C25. 后台保活：前台服务的类型选错，Android 15 会六小时后强停（2026-10-22）
+
+**现象**：切到后台几分钟，连接就断，回头一句「连接已断开」。
+
+**根因**：`AndroidManifest.xml` 里只有 `INTERNET` 一条权限。应用一进后台，
+系统按后台进程回收——进程没了，Dart 隔离区没了，WebSocket 自然也没了。
+**这不是 bug，是 Android 的默认行为**，所有能收消息的 App 都必须靠前台服务绕开它。
+
+#### 1. 前台服务类型不能随便选
+
+`dataSync` 是最顺手的选择，但它从 **Android 15 起有 6 小时 / 24 小时的累计时长上限**，
+到点系统强停。聊天客户端要常驻，这个上限直接判死。
+
+正解是 `remoteMessaging`——官方定义是「在设备之间传递文本消息」，语义正是聊天，
+而且**不在时长限制名单里**。但它 API 34 才有，所以按版本分三档：
+
+| API | 类型 | 原因 |
+|---|---|---|
+| 34+ | `remoteMessaging` | 无时长限制；`dataSync` 有 6h/24h |
+| 29~33 | `dataSync` | `remoteMessaging` 还不存在；那时 `dataSync` 无限制 |
+| <29 | 不传 | 前台服务类型这个概念还没引入 |
+
+manifest 里要写成 `foregroundServiceType="dataSync|remoteMessaging"` 两种都声明，
+代码里按版本选。**两处必须一致**，不一致时系统按「类型不匹配」直接杀服务——
+而且不报错，只是服务悄悄没了。
+
+对应的四个权限缺一不可：
+
+```text
+FOREGROUND_SERVICE                    API 28+ 准入门槛
+FOREGROUND_SERVICE_REMOTE_MESSAGING   API 34+
+FOREGROUND_SERVICE_DATA_SYNC          API 34+（29~33 那条路要用）
+POST_NOTIFICATIONS                    API 33+（没有它服务能跑但通知不显示）
+```
+
+漏掉任何一个的表现都不是崩溃，而是「服务起来后立刻被系统停掉」。
+
+#### 2. `START_STICKY` 在这里是错的
+
+服务与 Flutter 引擎**同进程**，真正干活的是 Dart 里的 WebSocket。进程被杀
+= 服务被杀 = Dart 一起没了。这时 `START_STICKY` 会让系统重建服务——但那是一个
+**没有 Flutter 引擎的新进程**，结果是一条「正在保持连接」的通知挂在那儿，
+后面什么都没有。**僵尸通知比没有通知更糟**：用户以为连接还在，实际收不到任何消息。
+
+所以用 `START_NOT_STICKY`，正确的恢复路径是「用户重新打开应用」。
+
+#### 3. 不是"永远挂着"
+
+常驻通知对用户是实打实的打扰，而**前台时进程本来就不会被回收**。判据是：
+
+```text
+  前台 + 已连接 → 不挂（进程活着，挂服务只是多一条通知）
+  后台 + 已连接 → 挂（唯一需要保活的场景）
+  后台 + 未连接 → 不挂（没连接可保，白占通知栏）
+```
+
+这条判据抽成了 `KeepAlivePolicy`（`lib/infra/lifecycle/keep_alive.dart`），
+19 项自测穷举四种组合。`connecting` / `reconnecting` 也算「有连接可保」——
+重连过程中被杀就再也连不回来了。
+
+#### 4. `stopWithTask="true"`：划掉就是关掉
+
+用户从最近任务里划掉应用，意思是「我要关掉它」，不是「请继续在后台跑」。
+等以后真做了消息通知、确实需要划掉后继续收消息，再把这条改成 `false`
+（manifest 里有注释说明）。
+
+**踩到的两个真错**（编译期才暴露）：
+
+- **`FOREGROUND_SERVICE_TYPE_DATA_SYNC` 不是 `Service` 的成员**。它在
+  `android.content.pm.ServiceInfo` 里，必须写 `ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC`。
+  只写裸名字报 `Unresolved reference`。
+- **Kotlin 的块注释可以嵌套**。文档注释里写 `` `dart run tool/*_selftest.dart` ``
+  的那个 `/*` 会**再开一层块注释**，于是整个文件后半截都被吞进注释里，
+  报错却是 `Syntax error: Unclosed comment`（指向文件末尾，离真正的位置很远）。
+  改成 `tool/xxx_selftest.dart` 即可。同理不要在 Kotlin 注释里写带 `*/` 的路径。
+
+**教训**：
+
+1. **「功能缺失」有时不是没写，是差一条 manifest 声明**。这个项目五个月来
+   后台一直是空的，看起来像"没实现保活"，实际是 `INTERNET` 之外一条权限都没有。
+2. **平台能力要靠真机验证，不要靠读文档**。`foregroundServiceType` 的取值、
+   Android 15 的时长限制、`stopWithTask` 的默认值，都是"文档里一句话、真机上一条命"。
+   所以 `keep_alive_selftest` 只测判据（纯逻辑），平台侧留给真机。
+3. **跨语言边界处最容易踩"语法糖陷阱"**。`ServiceInfo.` 前缀和嵌套注释，
+   在 Dart 里都不会发生——写 Kotlin 时要重新想一遍，不要照着 Dart 的直觉写。
+
 ---
 
 ## D. 网络与环境
