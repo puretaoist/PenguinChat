@@ -34,7 +34,8 @@
 /// # 真发
 /// $env:QQ_LIVE_CONFIRM="I_UNDERSTAND_THE_RISK"
 /// dart run tool/qq8_interactive.dart --send --uin=<uin> --pwd-md5=<hex> \
-///     --identity=analysis/_ref/official-logs/identity-25091RP04C.json
+///     --identity=analysis/_ref/official-logs/identity-25091RP04C.json \
+///     --pd2=analysis/_ref/official-logs/qq8211/pd2.dat
 /// ```
 ///
 /// 真发时会：
@@ -43,6 +44,18 @@
 /// 3. 停在 stdin 等你把 ticket 粘进来（回车提交）；
 /// 4. **同一条 socket** 立刻发滑块提交包；
 /// 5. 按响应决定下一步（成功 / 短信 / 失败）。
+///
+/// ## 可选参数
+///
+/// | 参数 | 作用 |
+/// |---|---|
+/// | `--pd2=<path>` | 真机 `pd2.dat`（0x525 内嵌 0x536 的历史出口缓存）。不给则发 `01 00`（官方「零条历史出口」形态），官方成功样本是 65 字节 |
+/// | `--identity=<json>` | 真机身份夹具（androidId/mac/qimei/…） |
+/// | `--qimei=<str>` | 直接给 QIMEI（36 字符） |
+/// | `--t544=official\|oicq\|oicq-salt` | 0x544 形态，默认 official（4 字节降级体） |
+/// | `--slider-form=websig\|picture` | 滑块首项 TLV 形态：websig→0x193（0x192 URL 滑块），picture→0x02（图片验证码） |
+/// | `--pwd-md5=<hex>` / `--pwd=<明文>` | 口令 |
+/// | `--pwd-probe=<明文>` | 离线算 MD5 指纹，不联网 |
 ///
 /// 不做任何滑块自动化或绕过：解自己账号的验证属正常流程，ticket 由人给。
 library;
