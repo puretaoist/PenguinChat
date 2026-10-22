@@ -256,6 +256,24 @@ class Qq8LoginService {
   Uint8List? _sessionId;
   Uint8List? _randomKey;
 
+  /// 一次登录流程共用的 SSO 序号。
+  ///
+  /// 官方 `WtloginHelper.CheckPictureAndGetSt` 用的是
+  /// `wUserSigInfo._seqence`——与首包**同一个值**：真机日志
+  /// `analysis/_ref/official-logs/wtlogin_20260919-b.txt:2911` 首包 `Seq:6`、
+  /// `:3055` 滑块提交 `Seq:6`、`:3215` 完成 `Seq:6 ret=0`。
+  /// `oicq` 侧同样是 `sig.seq` 自增一次后在同流程内复用。
+  ///
+  /// 原实现在 [_tlvCtx] 与 [_sendLoginBody] 里各取一次
+  /// `DateTime.now().millisecondsSinceEpoch & 0x7FFF`，导致「登录包」与
+  /// 「滑块提交包」的 seq 必然不同——服务端看到的是一次登录里两个互不
+  /// 相干的会话。现状（真机 2026-10-22 18:42）：提交回 `type=16`
+  /// 「你的用户身份已失效，为保证账号安全，请你重新登录」。
+  int? _flowSeq;
+
+  /// 取（或首次分配）本次登录流程的 SSO 序号。
+  int get _seq => _flowSeq ??= DateTime.now().millisecondsSinceEpoch & 0x7FFF;
+
   // 上一条"要求验证"响应里带回来的材料
   Uint8List _t104 = Uint8List(0);
   Uint8List _t174 = Uint8List(0);
@@ -435,6 +453,7 @@ class Qq8LoginService {
             () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
         _sessionId = _randomBytes(4);
         _randomKey = _randomBytes(16);
+        _flowSeq = null;
       }
 
       final ctx = _tlvCtx(uin, passwordMd5: passwordMd5, token: token, smsLogin: smsLogin);
@@ -488,7 +507,12 @@ class Qq8LoginService {
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     try {
-      final ctx = _tlvCtx(uin, passwordMd5: null, token: null);
+      // 官方 `CheckPictureAndGetSt`（`WtloginHelper.java:2252`）把
+      // `this.mMiscBitmap` **原值**交给 `n.a(...)`，不叠 `WLOGIN_DA2`；
+      // 叠位只发生在密码首包 `GetStWithPasswd`（`:1415-1418`）。
+      // 故这条包的 0x116 发 `0x08F7FF7C`（150470524）。
+      final ctx = _tlvCtx(uin,
+          passwordMd5: null, token: null, da2BitActive: false);
       final body = Qq8LoginBody.buildSlider(ctx, ticket: ticket);
       await _sendLoginBody(uin, ctx, body);
     } on Object catch (e, st) {
@@ -592,6 +616,8 @@ class Qq8LoginService {
           () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
       _sessionId = _randomBytes(4);
       _randomKey = _randomBytes(16);
+
+      _flowSeq = null;
 
       final ctx = _tlvCtx(0, passwordMd5: null, token: null);
       await _sendLoginBody(
@@ -726,6 +752,7 @@ class Qq8LoginService {
         () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
     _sessionId = _randomBytes(4);
     _randomKey = _randomBytes(16);
+    _flowSeq = null;
     _emit(Qq8LoginSnapshot(
       stage: Qq8LoginStage.needsSmsCode,
       phone: state.hintPhone ?? state.phone,
@@ -1173,6 +1200,8 @@ class Qq8LoginService {
       _sessionId = _randomBytes(4);
       _randomKey = _randomBytes(16);
 
+      _flowSeq = null;
+
       final watch = qq8ApkWatch;
       final ctx = _tlvCtx(expectedUin, passwordMd5: null, token: null);
       final body = Qq8Qrcode.buildFetchBody(ctx, watch);
@@ -1322,7 +1351,7 @@ class Qq8LoginService {
       ecdhPublicKey: _ecdh!.publicKey,
       ecdhShareKey: _ecdh!.shareKey,
       sig: Qq8SigInfo(),
-      seqId: DateTime.now().millisecondsSinceEpoch & 0x7FFF,
+      seqId: _seq,
     );
     return Qq8Qrcode.buildPacket(
       ssoCtx,
@@ -1446,14 +1475,16 @@ class Qq8LoginService {
     required Uint8List? passwordMd5,
     required Qq8TokenData? token,
     bool smsLogin = false,
+    bool da2BitActive = true,
   }) {
     final device = _device!;
     return Qq8TlvContext(
       uin: uin,
+      da2BitActive: da2BitActive,
       apk: profile.apk,
       device: device,
       passwordMd5: passwordMd5 ?? Uint8List(16),
-      seqId: DateTime.now().millisecondsSinceEpoch & 0x7FFF,
+      seqId: _seq,
       // 官方 `util.get_ksid` -> `string_to_buf`：注入的十六进制串按两字符一字节解码
       // （真机 32 字符 -> 16 字节）。未注入才退回 `|<imei>|<apkName>`。
       ksid: qq8KsidBytes(device.ksid, device.imei, profile.apk.name),
@@ -1593,7 +1624,7 @@ class Qq8LoginService {
       ecdhPublicKey: ecdh.publicKey,
       ecdhShareKey: ecdh.shareKey,
       sig: sigInfo,
-      seqId: DateTime.now().millisecondsSinceEpoch & 0x7FFF,
+      seqId: _seq,
     );
     final cmd = token == null ? qq8LoginCmd : qq8ExchangeEmpCmd;
     // **发出什么**也要记：原先只记响应，发出去的 TLV 一直靠推断。真机上

@@ -654,6 +654,19 @@ class Qq8TlvContext {
   /// 出处：t.java:230-283（t.d() 设 X/V）+ 官方日志 wtlogin_20260919.txt:20 `guid src 17`。
   final bool guidNew;
 
+  /// TLV `0x116` 的 bitmap 是否叠加 `WLOGIN_DA2` 位。
+  ///
+  /// 官方两条路径用的**不是同一个值**：
+  /// * 密码首包 `GetStWithPasswd`（`WtloginHelper.java:1415-1418`）：
+  ///   `i6 = mMiscBitmap; if (t.ab) i6 |= 33554432;` ⇒ 叠 DA2 位；
+  /// * 滑块提交 `CheckPictureAndGetSt`（`WtloginHelper.java:2252`）：
+  ///   `new n(tVarA).a(bArr, this.mMiscBitmap, ...)` ⇒ **原值**，不叠。
+  ///
+  /// `mMiscBitmap` 本身始终是构造器初值 150470524（`SetImgType` 会给
+  /// 它 `|= 128`，但全 APK 无调用方），所以滑块提交实发 `0x08F7FF7C`
+  /// 而不是密码首包的 `0x0AF7FF7C`。
+  final bool da2BitActive;
+
   /// 当前时间（毫秒）。
   final int Function() nowMillis;
 
@@ -683,6 +696,7 @@ class Qq8TlvContext {
     this.t544Curr,
     this.protocolDet,
     this.guidNew = true,
+    this.da2BitActive = true,
     this.seqId = 0,
     this.msfSsoSeq = 0,
     this.randomBytes = _secureRandomImpl,
@@ -1029,7 +1043,9 @@ abstract final class Qq8Tlv {
         // `WtloginHelper.java:1416-1417`：`i6 = mMiscBitmap; if (t.ab) i6 |= 33554432;`
         // MSF 密码登录入口（`msf/core/auth/l.java:247`）恒开 `t.ab`，故实发
         // `0x0AF7FF7C`（184024956）而不是构造器初值 `0x08F7FF7C`（150470524）。
-        w.u32(ctx.apk.effectiveMiscBitmap);
+        w.u32(ctx.da2BitActive
+            ? ctx.apk.effectiveMiscBitmap
+            : ctx.apk.miscBitmap);
         w.u32(ctx.apk.subSigMap); // 0x10400，三代相同
         w.u8(1); // app id list 长度
         w.u32(1600000226); // app id list[0]

@@ -1451,6 +1451,61 @@ POST_NOTIFICATIONS                    API 33+（没有它服务能跑但通知�
 
 ---
 
+## C26. 一次登录是「一条会话」，不是「一串独立请求」
+
+**现象**：App 内真机跑通了完整滑块流程——`type=2` 拿到盐与验证地址、
+WebView 打开、1.24 秒内捕获 138 字符 ticket、立刻提交——服务端却回
+`type=16`「你的用户身份已失效，为保证账号安全，请你重新登录」。
+整条链路上每一步都「成功」，组合起来失败。
+
+**根因**：把一次登录当成了一串独立请求。官方不是这么做的。
+
+### 1. SSO 序号必须整条流程共用
+
+官方 `WtloginHelper.CheckPictureAndGetSt` 用的是 `wUserSigInfo._seqence`，
+而 MSF 层在分派提交请求前显式把它设回原登录流程的值
+（`msf/core/auth/l.java:262` `wUserSigInfoB._seqence = pVarA.f;`）。真机日志逐行可证：
+
+```
+wtlogin_20260919-b.txt:2911  start GetStWithPasswd:user:3499239040 ... Seq:6
+wtlogin_20260919-b.txt:3055  user:3499239040 CheckPictureAndGetSt Seq:6 ...
+wtlogin_20260919-b.txt:3215  CheckPictureAndGetSt Seq:6 ret=0
+```
+
+我们原先在 `_tlvCtx` 与 `_sendLoginBody` 里**各取一次**
+`DateTime.now().millisecondsSinceEpoch & 0x7FFF`，两个包必然用不同的 seq。
+服务端看到的是「一次登录里两个互不相干的会话」，于是把提交当成陌生请求。
+
+修法：登录流程存一个 `_flowSeq`，在流程起点（新建 sessionId/randomKey 处）
+重置为 `null`，之后所有包取同一个值。
+
+### 2. `0x116` 的 miscBitmap 两条路径不同值
+
+官方对同一个字段做了两件事，很容易只看到其中一件：
+
+| 路径 | 代码 | bitmap |
+|---|---|---|
+| 密码首包 `GetStWithPasswd` | `WtloginHelper.java:1415-1418` `i6 = mMiscBitmap; if (t.ab) i6 \|= 33554432;` | `0x0AF7FF7C` |
+| 滑块提交 `CheckPictureAndGetSt` | `WtloginHelper.java:2252` `new n(tVarA).a(bArr, this.mMiscBitmap, ...)` | `0x08F7FF7C` |
+
+叠 `WLOGIN_DA2` 只发生在密码首包；滑块提交直接把构造器初值传下去。
+我们此前统一用 `effectiveMiscBitmap`，滑块包多带了 DA2 那一位。
+
+修法：`Qq8TlvContext` 加 `da2BitActive`（默认 `true` 保持密码路径不变），
+`submitSliderTicket` 显式传 `false`。
+
+**教训**：
+
+1. **「参考实现能登录」不等于「它的组包方式就是协议」**。oicq 把 seq 放到
+   自己的 `sig` 上自增，看代码像是「每个请求一个新 seq」；真正的约束在服务端，
+   只有官方客户端的行为才是判据。
+2. **协议里有大量「一次会话内的不变量」**（seq、sessionId、ECDH 密钥、
+   盐、随机密钥、设备身份）。凡是「多步才能完成」的流程，都要先问一句：
+   这几步共享哪些材料？
+3. **失败点的位置会骗人**。`type=16` 打在提交包上，但根因在「提交包与首包不
+   同源」。排查时先确认「这两个包属于同一次会话吗」，再去比对包体字段。
+
+---
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

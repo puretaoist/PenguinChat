@@ -635,6 +635,58 @@ void testNestedIntegrity() {
 ///
 /// 真机上 `DISPLAY` 与 `INCREMENTAL` 通常相同，所以只看真机报文无法区分
 /// 「取 DISPLAY」和「取 INCREMENTAL」——必须构造二者不同的设备来判定。
+void testMiscBitmapByPath() {
+  section('7. 0x116 miscBitmap 按路径分档（官方两条路径用的不是同一个值）');
+
+  final base = buildContext();
+  Qq8TlvContext withDa2(bool on) => Qq8TlvContext(
+        uin: base.uin,
+        apk: base.apk,
+        device: base.device,
+        passwordMd5: base.passwordMd5,
+        seqId: base.seqId,
+        ksid: base.ksid,
+        t104: base.t104,
+        t174: base.t174,
+        tgt: base.tgt,
+        srmToken: base.srmToken,
+        randomBytes: base.randomBytes,
+        teaPadding: base.teaPadding,
+        nowMillis: base.nowMillis,
+        da2BitActive: on,
+      );
+
+  // 密码首包 GetStWithPasswd（WtloginHelper.java:1415-1418）：i6 |= 33554432
+  final passwordHex = toHex(Qq8Tlv.pack(withDa2(true), 0x116));
+  if (passwordHex == '0116000e000af7ff7c00010400015f5e10e2') {
+    ok('密码首包：0x116 = 0x0AF7FF7C（150470524 | WLOGIN_DA2）', passwordHex);
+  } else {
+    bad('密码首包 0x116', '期望 ...0af7ff7c... / 实际 $passwordHex');
+  }
+
+  // 滑块提交 CheckPictureAndGetSt（WtloginHelper.java:2252）：原值，不叠位
+  final sliderHex = toHex(Qq8Tlv.pack(withDa2(false), 0x116));
+  if (sliderHex == '0116000e0008f7ff7c00010400015f5e10e2') {
+    ok('滑块提交：0x116 = 0x08F7FF7C（构造器初值，不叠 DA2）', sliderHex);
+  } else {
+    bad('滑块提交 0x116', '期望 ...08f7ff7c... / 实际 $sliderHex');
+  }
+
+  // 两个值必须不同，且差值恰为 DA2 那一位
+  if (passwordHex != sliderHex) {
+    ok('两条路径的 0x116 确实不同（说明开关生效）');
+  } else {
+    bad('两条路径 0x116 相同', 'da2BitActive 开关未生效：$passwordHex');
+  }
+  if ((base.apk.effectiveMiscBitmap ^ base.apk.miscBitmap) == 33554432) {
+    ok('差值恰为 WLOGIN_DA2（33554432）',
+        '0x${base.apk.miscBitmap.toRadixString(16)} -> '
+        '0x${base.apk.effectiveMiscBitmap.toRadixString(16)}');
+  } else {
+    bad('DA2 差值', '不是 33554432');
+  }
+}
+
 void test52dInnerVersion() {
   final base = buildContext();
 
@@ -780,6 +832,7 @@ void main() {
   testNestedIntegrity();
   testT544Modes();
   test52dInnerVersion();
+  testMiscBitmapByPath();
 
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
