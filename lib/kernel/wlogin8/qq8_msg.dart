@@ -88,15 +88,24 @@ class Qq8MsgSendResult {
   final int seq;
   final int rand;
 
+  /// 服务端分配的消息序号（响应 protobuf 字段 14；0 表示服务端没给）。
+  final int serverMsgId;
+
   const Qq8MsgSendResult({
     required this.code,
     required this.message,
     required this.time,
     required this.seq,
     required this.rand,
+    this.serverMsgId = 0,
   });
 
-  bool get ok => code == 0;
+  /// 是否发送成功。
+  ///
+  /// 判据照参考实现 `friend.js:230`：`if (rsp[1] !== 0 || rsp[14] === 0)` 即失败。
+  /// 也就是**光有 `code == 0` 不够**，服务端必须同时给出字段 14（消息序号）。
+  /// 只判 `code == 0` 会把「服务端理解但没收下」的情况误判成成功。
+  bool get ok => code == 0 && serverMsgId != 0;
 }
 
 /// 发消息（`MessageSvc.PbSendMsg`, 目前只有纯文本）。
@@ -315,7 +324,7 @@ abstract final class Qq8Msg {
         8: 0,
       });
 
-  /// 解析发送响应（protobuf）：`{1: 结果码, 2: 错误文案, 3: 时间}`。
+  /// 解析发送响应（protobuf）：`{1: 结果码, 2: 错误文案, 3: 时间, 14: 消息序号}`。
   static Qq8MsgSendResult parseSendResponse(
     Uint8List payload, {
     required int seq,
@@ -328,6 +337,7 @@ abstract final class Qq8Msg {
       time: Qq8Pb.intAt(m, 3) ?? 0,
       seq: seq,
       rand: rand,
+      serverMsgId: Qq8Pb.intAt(m, 14) ?? 0,
     );
   }
 

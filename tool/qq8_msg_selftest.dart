@@ -290,9 +290,22 @@ Future<void> main() async {
   // ----------------------------------------------------------------
   section('5. 内核：响应解析与群号变换');
   {
-    final okRsp = Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000123});
+    // 成功判据照 icqq `friend.js:230`：`code == 0` **且** 服务端给出字段 14。
+    // 真机实测响应 hex = 080018ece9e5d606500060ece9e5d60670d501
+    //   → field1=0(code) field3=1792636140(time) field12=1792636140 field14=213
+    final okRsp = Qq8Pb.encode(
+        <int, Object?>{1: 0, 2: '', 3: 1700000123, 14: 213});
     final ok = Qq8Msg.parseSendResponse(okRsp, seq: 7, rand: 8);
-    check('成功码 0 与时间解出', ok.ok && ok.time == 1700000123, '${ok.time}');
+    check('成功码 0、时间与消息序号解出',
+        ok.ok && ok.time == 1700000123 && ok.serverMsgId == 213,
+        'code=${ok.code} time=${ok.time} id=${ok.serverMsgId}');
+
+    // 只有 code=0、没有字段 14 时**不算成功**——这是「服务端理解但没收下」的形态。
+    final noIdRsp = Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000123});
+    final noId = Qq8Msg.parseSendResponse(noIdRsp, seq: 7, rand: 8);
+    check('code=0 但缺字段 14 时判失败（不是成功）',
+        !noId.ok && noId.serverMsgId == 0,
+        'ok=${noId.ok} id=${noId.serverMsgId}');
 
     final failRsp = Qq8Pb.encode(<int, Object?>{1: 4, 2: '发送失败：对方拒绝', 3: 0});
     final fail = Qq8Msg.parseSendResponse(failRsp, seq: 1, rand: 2);
@@ -311,7 +324,8 @@ Future<void> main() async {
     final scripted = Qq8ScriptedTransport(<Uint8List>[
       _successFrame(1),
       _registerFrame(1),
-      _frame(2, 'MessageSvc.PbSendMsg', Qq8Pb.encode(<int, Object?>{1: 0, 3: 1700000999})),
+      _frame(2, 'MessageSvc.PbSendMsg',
+          Qq8Pb.encode(<int, Object?>{1: 0, 3: 1700000999, 14: 42})),
       _frame(3, 'MessageSvc.PbSendMsg',
           Qq8Pb.encode(<int, Object?>{1: 4, 2: '对方已把你拉黑'})),
     ]);

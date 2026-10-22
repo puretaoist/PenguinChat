@@ -39,7 +39,9 @@ import 'dart:typed_data';
 import 'package:qqclient/kernel/crypto/ecdh.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_list.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_protocol_det.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
@@ -211,15 +213,9 @@ Future<void> main(List<String> argv) async {
   final rawDir = args.containsKey('raw')
       ? (Directory(args['raw'] ?? '.')..createSync(recursive: true))
       : null;
-  var frameNo = 0;
-  void dumpFrame(String tag, Uint8List f) {
-    if (rawDir == null) return;
-    final name = 'frame-${(frameNo++).toString().padLeft(2, '0')}-$tag.hex';
-    File('${rawDir.path}/$name').writeAsStringSync(
-        f.map((b) => b.toRadixString(16).padLeft(2, '0')).join());
-    out('    原始帧已存 ${rawDir.path}/$name (${f.length}B, 前16=${f.take(16).map((b) => b.toRadixString(16).padLeft(2, '0')).join()})');
+  if (rawDir != null) {
+    out('  原始帧目录: ${rawDir.path}');
   }
-
   var failed = 0;
   try {
     await session.start();
@@ -302,8 +298,105 @@ Future<void> main(List<String> argv) async {
       failed++;
     }
 
-    // --- 6. 等推送 ---
-    out('--- 步骤 6：等 10 秒看服务端推送 ---');
+    // --- 6. 拉好友列表（业务层第一枪）---
+    //
+    // 走 UNI 包（magic=0x0B），命令 `friendlist.getFriendGroupList`，
+    // 请求体是 JCE 编码的 `GetFriendListReq`（见 [Qq8List.buildFriendListBody]）。
+    // 成功判据：JCE 解出 `result == 0` 且 `total >= 0`——**能解出结构本身就
+    // 说明业务层可用**（TLV/SSO/UNI 封装、密钥、session 全部正确）。
+    out('--- 步骤 6：拉好友列表（friendlist.getFriendGroupList）---');
+    try {
+      final flBody = Qq8List.buildFriendListBody(uin: uin, count: 150);
+      final flRsp = await session.sendUni(
+        Qq8List.cmdFriendList,
+        flBody,
+        timeout: const Duration(seconds: 15),
+      );
+      final page = Qq8List.parseFriendList(flRsp.payload);
+      out('  响应 ${flRsp.payload.length}B  result=${page.result}  total=${page.total}  '
+          '分组 ${page.classes.length}  好友 ${page.friends.length}');
+      for (final c in page.classes.take(10)) {
+        out('    分组 ${c.id}: ${c.name}');
+      }
+      for (final f in page.friends.take(10)) {
+        out('    好友 ${f.uin}  昵称="${f.nick}"  备注="${f.remark}"');
+      }
+      if (page.friends.length > 10) {
+        out('    …（共 ${page.friends.length} 个，只打印前 10）');
+      }
+      if (page.ok) {
+        out('  ✓ 步骤 6 通过：JCE 业务包完整解出（result=0）');
+      } else {
+        out('  ✗ 步骤 6 失败：result=${page.result}');
+        failed++;
+      }
+    } on Object catch (e) {
+      out('  ✗ 步骤 6 失败: $e');
+      failed++;
+    }
+
+    // --- 7. 发一条真实消息（可选，--send-to=<uin>）---
+    //
+    // 这是「能不能聊天」的唯一硬证据：请求体 `MessageSvc.PbSendMsg`，
+    // 成功判据 `rsp[1] == 0 && rsp[14] != 0`（icqq `friend.js:230`）。
+    final sendTo = int.tryParse(args['send-to'] ?? '');
+    if (sendTo != null) {
+      out('--- 步骤 7：发消息给 $sendTo（MessageSvc.PbSendMsg）---');
+      try {
+        // seq 必须与包序号一致：先预取，再把它塞进 body，最后用同一个值发。
+        final mseq = session.nextSeq();
+        final rand = _randomBytes(4);
+        final randInt =
+            (rand[0] << 24) | (rand[1] << 16) | (rand[2] << 8) | rand[3];
+        final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final sessSeed = (session.sessionId[0] << 24) |
+            (session.sessionId[1] << 16) |
+            (session.sessionId[2] << 8) |
+            session.sessionId[3];
+        final text = args['text'] ?? '协议栈自测消息，请忽略';
+        final msgBody = Qq8Msg.buildC2cTextBody(
+          uid: sendTo,
+          elems: <Uint8List>[Qq8Msg.textElem(text)],
+          seq: mseq,
+          rand: randInt,
+          syncCookieSeed: sessSeed,
+          nowSeconds: nowSec,
+          syncR5: _randomInt(),
+          syncR9: _randomInt(),
+          syncR11: _randomInt(),
+        );
+        final msgRsp = await session.sendUni(
+          Qq8Msg.sendCmd,
+          msgBody,
+          seq: mseq,
+          timeout: const Duration(seconds: 20),
+        );
+        final res = Qq8Msg.parseSendResponse(
+          msgRsp.payload,
+          seq: mseq,
+          rand: randInt,
+        );
+        out('  响应 ${msgRsp.payload.length}B  code=${res.code}  '
+            'serverMsgId=${res.serverMsgId}  time=${res.time}  '
+            'msg="${res.message}"');
+        out('  原始响应 hex = ${_hex(msgRsp.payload)}');
+        if (res.ok) {
+          out('  ✓ 步骤 7 通过：消息已被服务端收下（seq=$mseq rand=$randInt '
+              'serverMsgId=${res.serverMsgId}）');
+        } else {
+          out('  ✗ 步骤 7 失败：code=${res.code} ${res.message}');
+          failed++;
+        }
+      } on Object catch (e) {
+        out('  ✗ 步骤 7 失败: $e');
+        failed++;
+      }
+    } else {
+      out('--- 步骤 7：跳过发消息（未给 --send-to=<uin>）---');
+    }
+
+    // --- 8. 等推送 ---
+    out('--- 步骤 8：等 10 秒看服务端推送 ---');
     await Future<void>.delayed(const Duration(seconds: 10));
     if (pushes.isEmpty) {
       out('  （10 秒内无推送）');
@@ -338,4 +431,18 @@ Uint8List _randomBytes(int n) {
     b[i] = r.nextInt(256);
   }
   return b;
+}
+
+int _randomInt() {
+  final b = _randomBytes(4);
+  return (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
+}
+
+/// 字节转小写 hex（调试输出用）。
+String _hex(List<int> b) {
+  final sb = StringBuffer();
+  for (final x in b) {
+    sb.write((x & 0xff).toRadixString(16).padLeft(2, '0'));
+  }
+  return sb.toString();
 }

@@ -1075,6 +1075,58 @@ else if (err === -2) { return BUF0; }   // ← 超时也当成功，直接继续
 
 ---
 
+### C20. 发消息的成功判据不止 `code == 0`（2026-10-22）
+
+**现象**：真机上发私聊，响应只有 19 字节：
+```
+080018ece9e5d606500060ece9e5d60670d501
+```
+按 protobuf 解：字段 1 = 0（code）、字段 3 = 1792636140（time）、
+字段 12 = 1792636140、**字段 14 = 213**。我们原来的
+`Qq8MsgSendResult.ok` 只判 `code == 0`，于是「服务端理解了这个包但没收下」
+和「服务端收下了」被判成同一件事。
+
+**正确判据**（参考实现 `icqq/lib/friend.js:230`）：
+```js
+const rsp = pb.decode(payload);
+if (rsp[1] !== 0 || rsp[14] === 0) { /* failed */ }
+```
+即 **`code == 0` 且 `字段 14 != 0`** 才算成功。字段 14 是服务端分配的
+消息序号（会话内递增，同一会话连发两条会看到 213 → 214）。
+
+**落地**：`lib/kernel/wlogin8/qq8_msg.dart` 的 `Qq8MsgSendResult` 新增
+`serverMsgId`（默认 0），`parseSendResponse` 读字段 14，`ok` 改为
+`code == 0 && serverMsgId != 0`。
+
+**教训**：参考实现里「成功判据」和「错误码」常常是**两个字段的组合**。
+照抄错误码列表不够——要看它 `if` 里到底 `&&` 了几个条件。这个坑不会让
+测试变红（原来的夹具只给了 `code: 0`），只会让线上「觉得发出去了但对方
+没收到」；改成双条件后自测里那条「只给 code=0」的夹具立刻暴露，说明
+判据本身也是可以自测的。
+
+#### 业务层实证（2026-10-22，账号 2089495846）
+
+```
+步骤 1 wtlogin.exchange_emp          ✓ type=0 → 全套新票据
+步骤 2 StatSvc.register              ~ 已发出、无 ack（等价 icqq -2）
+步骤 3 Heartbeat.Alive               ✓ 134B
+步骤 4 Client.CorrectTime            ✓ 时间差 0s
+步骤 5 OidbSvc.0x480_9_IMCore        ✓ 26B
+步骤 6 friendlist.getFriendGroupList ✓ 响应 20789B，result=0 total=69
+                                       分组 3（好友/网友/家人），好友 69 条
+                                       昵称与备注都是真实数据
+步骤 7 MessageSvc.PbSendMsg          ✓ code=0 serverMsgId=214 time=1792636520
+步骤 8 等推送                        ✓ ConfigPushSvc.PushReq
+```
+
+这一步的意义不在于「发了一条消息」，而在于**它同时证明了读和写两条业务
+路径都正确**：能解出 69 条好友说明 TLV / SSO / UNI 封装、TI 变体 TEA、
+JCE 解码、session、d2key 全部正确（任一环错都解不出真实结构）；能拿到
+`serverMsgId` 说明 protobuf 写路径、`buildSyncCookie`、seq/rand 配对、
+消息元素编码也全部正确。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

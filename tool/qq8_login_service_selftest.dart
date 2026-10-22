@@ -792,8 +792,11 @@ Future<void> main() async {
         ],
       })),
       // 第三步：把图片消息发出去（PbSendMsg 的响应）
+      // 字段 14 是服务端消息序号；成功判据要求它非零（icqq `friend.js:230`）。
       _frame(
-          3, Qq8Msg.sendCmd, Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000700})),
+          3,
+          Qq8Msg.sendCmd,
+          Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000700, 14: 99})),
     ]);
     final svc = Qq8LoginService(
       tokenStore: _MemStore(),
