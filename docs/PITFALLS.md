@@ -1247,6 +1247,53 @@ SP 里**为空**时写一次 —— 所以这个值是**服务端在 `0x108` 下
 
 ---
 
+### C23. 安全状态必须只有一份，且必须能从记录重建（2026-10-22）
+
+**现象 A：闸门被"换个工具"绕过。**
+限流记录被写成了两份：
+
+```
+<Temp>/qqclient-attempts.json                     ← qq8_live_smoke.dart 写，fails=4
+<Temp>/qqclient-logs/qqclient-attempts.json       ← qq8_interactive.dart 写，fails=2
+```
+
+`hardLockAfter = 5`，两份谁也到不了 5，于是交替跑 = 无限次。当天这个账号实际
+打了 **13 次**，远超设计上的「10 分钟 3 次 / 连败 5 次硬锁」。
+闸门一直存在，只是被路径分裂悄悄绕过了。
+
+**现象 B：`lockUntil` 缺失时硬锁不生效。**
+把两份记录合并后 `fails = 5` 但 `lockUntil = null`，`status()` 只检查
+`_hardLockUntil`，于是连败已到硬锁线却照样放行。
+根因是 `lockUntil` 由 `recordFailure()` 写入，而记录可以是外部合并/迁移来的。
+
+**修法**（提交 `cf781ac`）：
+
+1. `LoginAttemptLimiter.defaultFileFor(logDir)` 作为**唯一**规范位置
+   （= 日志目录的父目录 / `qqclient-attempts.json`），四个工具全部改用它。
+2. `load()` 末尾补：
+   ```dart
+   if (_consecutiveFailures >= hardLockAfter && _hardLockUntil == null) {
+     final base = _lastFailureAt ?? _records.last.at;
+     _hardLockUntil = base.add(hardLockDuration);
+   }
+   ```
+3. 自测里加两条直接盯住本次形态的断言：
+   `defaultFileFor 落到日志目录的父目录`、
+   `不同日志目录映射到同一个限流文件`；
+   再加一组「`lockUntil` 缺失时也能重建硬锁 / 23 小时内仍锁 / 24 小时后解锁」。
+
+**教训**：
+
+1. **安全状态不能按"谁写的"分仓**。凡是用"次数/累计值"表达风险的闸门，
+   落盘位置必须全局唯一；否则任何新增入口（新工具、新脚本、新 CLI）
+   都会顺手开一条旁路，而且不会有人察觉。
+2. **派生状态要在加载时重算并落回**。磁盘上少一行字段就等于没有限制，
+   而"少一行"在迁移、合并、外部编辑时是常态。
+3. 加自测时**直接断言那次事故的形态**（两个目录 → 同一个文件），
+   比断言"函数存在"有用得多。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常
