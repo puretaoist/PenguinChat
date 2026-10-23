@@ -328,7 +328,7 @@ Future<void> main() async {
     );
 
     // 顺序必须与档案一致（滤掉之后仍是子序列）
-    final plan = Qq8LoginBody.plan(p.apk.loginTlvOrder);
+    final plan = Qq8LoginBody.plan(p.apk.loginTlvOrder, ctx: ctx);
     check(
       '${p.label}：实际顺序与 plan 一致',
       tlvs.keys.join(',') == plan.join(','),

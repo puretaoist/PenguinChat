@@ -16,6 +16,7 @@ import 'dart:typed_data';
 import 'package:qqclient/kernel/crypto/ecdh.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
 
 // ---------------------------------------------------------------------------
@@ -277,18 +278,47 @@ void testDevice() {
     })!);
     checkEq('identity 的 ksid 原样注入设备', dk.ksid,
         '188ca8765de720b5207b0adc6c51d3d7');
-    checkEq('没给 ksid 时设备.ksid 为空（退回本地派生）', d.ksid, '');
+    checkEq('没给 ksid 时设备.ksid 为空', d.ksid, '');
 
     // ksid 的字节形态：官方 `util.string_to_buf` 把 SP 里的十六进制串按
     // 两字符一字节解码（`util.java:286-294`），不是 utf8 编码。
+    //
+    // ⚠️ 2026-10-23：本函数已收窄为「只做十六进制解码」，不再返回
+    // `|imei|apkName` 的 fallback。原因是官方把 ksid 用在**两个取值规则
+    // 完全不同**的位置：
+    //   * SSO 包头那个槽 = 恒 `|<imei>|<apkName>`（oicq base-client.ts:865）
+    //   * TLV 0x108 body = SP ksid 解码，**为空则整条不发**（k.java case 264）
+    // 两处共用一个 fallback 会同时出错，故拆开。
     checkEq('ksid 十六进制串 → 16 字节（官方 string_to_buf 语义）',
-        qq8KsidBytes(dk.ksid, dk.imei, 'A8.2.11.4530f87a').length, 16);
+        qq8KsidBytes(dk.ksid).length, 16);
     checkEq('ksid 字节内容 = 逐字节十六进制解码',
-        toHex(qq8KsidBytes(dk.ksid, dk.imei, 'A8.2.11.4530f87a')),
-        '188ca8765de720b5207b0adc6c51d3d7');
-    checkEq('无注入时退回 |imei|apkName 形态',
-        utf8.decode(qq8KsidBytes('', 'IMEI', 'A8.2.11.4530f87a')),
-        '|IMEI|A8.2.11.4530f87a');
+        toHex(qq8KsidBytes(dk.ksid)), '188ca8765de720b5207b0adc6c51d3d7');
+    checkEq('无 ksid 时返回空（不再编造 |imei|apkName）',
+        qq8KsidBytes('').length, 0);
+
+    // SSO 头那个槽是**另一个值**：恒为 `|<imei>|<apkName>`，与有没有 ksid 无关。
+    // 三个参考点各测一次，防止哪天又有人把两处合并。
+    String ssoHeaderKsid(Qq8Device dev) {
+      final ctx = Qq8SsoContext(
+        device: dev,
+        apk: qq8ProfileQQ8211.apk,
+        uin: 10001, // Qq8Device 不持有 uin（它是设备而非账号），这里随意给一个非零值
+        sessionId: Uint8List.fromList(<int>[0, 0, 0, 0]),
+        randomKey: Uint8List(16),
+        ecdhPublicKey: Uint8List(65),
+        ecdhShareKey: Uint8List(16),
+      );
+      return utf8.decode(ctx.ksid);
+    }
+
+    // 注意：apk.name 是 'A8.2.11.4530'（AppSetting fullVersion 前缀那种
+    // 14 字符形态），**不是** revision 那串 'A8.2.11.4530f87a'。写测试时
+    // 从档案取，别硬编码 —— 否则档案一动测试就在撒谎（本轮踩过）。
+    final apkName = qq8ProfileQQ8211.apk.name;
+    checkEq('SSO 头 ksid = |imei|apkName（设备带 ksid 时也一样）',
+        ssoHeaderKsid(dk), '|${dk.imei}|$apkName');
+    checkEq('SSO 头 ksid = |imei|apkName（设备无 ksid 时同样）',
+        ssoHeaderKsid(d), '|${d.imei}|$apkName');
 
     // guidHex 非法时退回派生（不静默用坏值）
     final bad = Qq8DeviceIdentity.fromJson(<String, Object?>{

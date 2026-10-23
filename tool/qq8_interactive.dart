@@ -420,7 +420,7 @@ Future<void> _run(Map<String, String> args) async {
         device: device,
         passwordMd5: passwordMd5!,
         seqId: sessionSeq,
-        ksid: _ksid(device, profile),
+        ksid: _ksid(device),
         t104: t104,
         t174: Uint8List(0),
         tgt: Uint8List(0),
@@ -836,8 +836,7 @@ Qq8ClientProfile _pickProfile(String name) {
 }
 
 /// `ksid`：共用 `lib/kernel/wlogin8/qq8_sso.dart` 的 [qq8KsidBytes]。
-Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) =>
-    qq8KsidBytes(d.ksid, d.imei, p.apk.name);
+Uint8List _ksid(Qq8Device d) => qq8KsidBytes(d.ksid);
 
 Uint8List _randomBytes(int n) {
   final r = math.Random.secure();

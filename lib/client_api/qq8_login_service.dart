@@ -1505,9 +1505,11 @@ class Qq8LoginService {
       device: device,
       passwordMd5: passwordMd5 ?? Uint8List(16),
       seqId: _seq,
-      // 官方 `util.get_ksid` -> `string_to_buf`：注入的十六进制串按两字符一字节解码
-      // （真机 32 字符 -> 16 字节）。未注入才退回 `|<imei>|<apkName>`。
-      ksid: qq8KsidBytes(device.ksid, device.imei, profile.apk.name),
+      // 官方 `util.get_ksid` -> `string_to_buf`：SP 里的十六进制串按两字符
+      // 一字节解码（真机 32 字符 -> 16 字节）。**没注入就是空**——官方首次
+      // 登录 SP 无 ksid 时整条 0x108 不发（`k.java` case 264 guard），
+      // 而不是发一条编造的 `|<imei>|<apkName>`（2026-10-23 修正）。
+      ksid: qq8KsidBytes(device.ksid),
       t104: _t104,
       t174: _t174,
       tgt: token?.tgt ?? Uint8List(0),

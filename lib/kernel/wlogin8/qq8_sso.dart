@@ -187,10 +187,23 @@ class Qq8SsoContext {
   ///
   /// 真机 SP 实测值：`188ca8765de720b5207b0adc6c51d3d7`（32 字符）。
   ///
-  /// 所以我们把服务端下发的值从 identity 注入（`device.ksid`）；注入为空时
-  /// 才退回旧的本地派生形态 —— 那是首次登录、服务端还没告诉我们 ksid 时
-  /// 的近似，已知与官方不一致，仅用于保持向后兼容的 dry-run。
-  Uint8List get ksid => qq8KsidBytes(device.ksid, device.imei, apk.name);
+  /// ## ⚠️ 2026-10-23 修正：这里和 TLV 0x108 **不是**同一个值
+  ///
+  /// 此前这个 getter 与 `tlv.dart` 的 `case 0x108` 共用了
+  /// `qq8KsidBytes(device.ksid, ...)`，于是两处**同时**偏离官方：
+  ///
+  /// * **SSO 头这个槽**：官方恒为 `|<imei>|<apkName>` 的 ASCII。证据是
+  ///   oicq 2.3.1 `lib/core/base-client.ts:865`
+  ///   `const ksid = Buffer.from(|${this.device.imei}| + this.apk.name)`
+  ///   —— 唯一能登录成功的实现就是这么写的，它是从服务端行为里试出来的
+  ///   常量，**不是**从 SP 读的。
+  /// * **TLV 0x108 的 body**：官方是 SP `WLOGIN_DEVICE_INFO` 的 `ksid`
+  ///   经 `util.string_to_buf` 十六进制解码（`t.java:313`
+  ///   `t.ac = util.get_ksid(t)`），为空则**整条不发**（`k.java` case 264）。
+  ///
+  /// 两者取值规则不同，故这里不再读 `device.ksid`。
+  Uint8List get ksid =>
+      Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'));
 
   /// SSO 头里的「保留字段」（reserve fields），protobuf 编码。
   ///
@@ -484,11 +497,21 @@ extension _ChainLet on ByteWriter {
 /// `string_to_buf` 解出的 **16 字节**。真机 SP `WLOGIN_DEVICE_INFO.xml`
 /// 里的 `ksid` 就是 32 字符的十六进制串。
 ///
-/// [injected] 为空时退回 oicq 式的 `|<imei>|<apkName>` —— 那是首次登录、
-/// 服务端还没下发 ksid 时的近似，已知与官方不一致，仅用于保持 dry-run 兼容。
-Uint8List qq8KsidBytes(String injected, String imei, String apkName) {
+/// ## ⚠️ 2026-10-23 修正：单一职责化，去掉 `|<imei>|<apkName>` fallback
+///
+/// 此前是「注入为空就拼 `|<imei>|<apkName>`」，于是**两个语义不同的位置**
+/// 都拿到了这串编造值：
+///
+/// * SSO 头那个槽本来就该是 `|<imei>|<apkName>`（正确）——现在由
+///   `Qq8SsoContext.ksid` getter 直接写，不再经过本函数。
+/// * TLV 0x108 的 body 在官方是「SP ksid 解码，为空则整条不发」——我们却
+///   发了一条约 30 字节的编造值，而官方同状态下整条不发。
+///
+/// 现在本函数只做一件事：十六进制解码（官方 `util.string_to_buf`）。
+/// **空进空出**，由调用方决定「空」意味着什么。
+Uint8List qq8KsidBytes(String injected) {
   if (injected.isEmpty) {
-    return Uint8List.fromList(utf8.encode('|$imei|$apkName'));
+    return Uint8List(0);
   }
   final n = injected.length ~/ 2;
   final out = Uint8List(n);

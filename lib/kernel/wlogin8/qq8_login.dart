@@ -218,6 +218,16 @@ class Qq8LoginConditions {
 
   /// 该 TLV 在当前条件下是否应当出现在包里。
   ///
+  /// [ctx] 可选：只有 `0x108` 的 guard 需要看它（ksid 存在 ctx 里，不存在
+  /// 这里）。其余 tag 的判据都只依赖 [Qq8Conditions] 自身字段。
+  ///
+  /// ## 为什么 ksid 不放这个类（2026-10-23）
+  ///
+  /// `Qq8Conditions` 有 20+ 个构造点（各登录分支、三个工具、自测）。
+  /// 给它加一个必须逐个传的参数，漏传就静默回到"不发/发错"，而这类
+  /// 静默偏差正是本轮 type=16 的来源。放进 ctx 则是单一来源——
+  /// ctx 本来就必须传进 [Qq8LoginBody.build]，忘不了。
+  ///
   /// ## 与官方 guard 的一处**有意偏离**
   ///
   /// 官方对 `0x187`（`t.N`）/ `0x188`（`t.O`）/ `0x194`（`t.L`）/
@@ -233,7 +243,7 @@ class Qq8LoginConditions {
   ///
   /// `0x187`/`0x188` 在官方真机（有 android_id 与 mac 占位）恒有值，
   /// 与 oicq 的无条件发送一致，维持恒发；`0x194` 例外见 imsiMd5。
-  bool applies(int tag) {
+  bool applies(int tag, {Qq8TlvContext? ctx}) {
     switch (tag) {
       case 0x104:
         return _nonEmpty(t104); // 首登无缓存盐 → 官方整条跳过
@@ -270,11 +280,17 @@ class Qq8LoginConditions {
       case 0x174:
         return _nonEmpty(t174); // 短信码流程要回带的二次验证令牌
       case 0x108:
-        // 官方 `m.java`：`bArr2 != null && bArr2.length > 0` 时才发
-        // （`tlv_t108Var.get_tlv_108(bArr2)`，实参 `t.ac` = ksid =
-        // `|imei|apkName`）。我们的 ksid 由设备串拼出、恒非空，
-        // 与官方常态一致 → 恒发。
-        return true;
+        // 官方 `k.java` case 264：`bArr7 != null && bArr7.length != 0`
+        // 才 `get_tlv_108(bArr7)`；`bArr7` 追溯自 `t.ac`
+        // （`WtloginHelper.java:1515-1517` 两个分支都赋 `t.ac`），
+        // 即 SP `WLOGIN_DEVICE_INFO` 的 ksid 经 `util.string_to_buf` 解码。
+        //
+        // ⚠️ 2026-10-23 修正：此前写 `return true;`，注释称「ksid 由设备
+        // 串拼出、恒非空」——那是**错的**。拼串是 SSO 头那个槽的规则，不是
+        // TLV 0x108 的。首次登录 SP 无 ksid → 官方整条不发，我们却在发一条
+        // 编造的 `|imei|apkName`（约 30 字节），与同一包里 0x144/0x52D 上报
+        // 的真机身份自相矛盾。
+        return ctx != null && _nonEmpty(ctx.ksid);
       case 0x544:
         // 官方 `m.java`：`bArr43 != null` 才追加到末尾。而
         // `tlv_t544.get_tlv_544(...)` 在 `ByteData.getCode` 降级时返回
@@ -395,7 +411,7 @@ abstract final class Qq8LoginBody {
   }) {
     final parts = <Uint8List>[];
     for (final tag in tags) {
-      if (!cond.applies(tag)) continue;
+      if (!cond.applies(tag, ctx: ctx)) continue;
       parts.add(Qq8Tlv.pack(ctx, tag, args[tag] ?? const <Object?>[]));
     }
 
@@ -409,11 +425,17 @@ abstract final class Qq8LoginBody {
   }
 
   /// 与 [build] 同源，但返回被采用的 tag 列表（自测用）。
+  ///
+  /// ⚠️ [ctx] 必须与传给 [build] 的是**同一个对象**。2026-10-23 给
+  /// `0x108` 加「ksid 非空才发」guard 时本函数漏了这一步，导致
+  /// `build` 发了 0x108 而 `plan` 说没发 —— 三条「实际顺序与 plan 一致」
+  /// 立刻炸掉。两者只要有一处看不到同一个 ctx，自测就在替生产代码撒谎。
   static List<int> plan(
     List<int> tags, {
     Qq8LoginConditions cond = Qq8LoginConditions.firstPasswordLogin,
+    Qq8TlvContext? ctx,
   }) =>
-      tags.where(cond.applies).toList();
+      tags.where((t) => cond.applies(t, ctx: ctx)).toList();
 
   /// 从**已组好的** body 里读出子命令与实际发出的 TLV 编号（排障用）。
   ///

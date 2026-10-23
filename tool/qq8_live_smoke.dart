@@ -848,7 +848,7 @@ Future<void> main(List<String> argv) async {
     device: device,
     passwordMd5: passwordMd5 ?? Uint8List(16),
     seqId: sessionSeq,
-    ksid: _ksid(device, profile),
+    ksid: _ksid(device),
     t104: sliderSalt, // 验证分支要带上一条响应下发的盐；其余场景为空
     t174: verifyToken, // 短信流程（8/7）要回带的二次验证令牌
     tgt: useToken ? token!.tgt : Uint8List(0),
@@ -1405,7 +1405,7 @@ Future<void> _phoneLoginStep1({
       device: device,
       passwordMd5: Uint8List(16),
       seqId: 100,
-      ksid: _ksid(device, profile),
+      ksid: _ksid(device),
       t104: Uint8List(0),
       t174: Uint8List(0),
       tgt: Uint8List(0),
@@ -1763,8 +1763,7 @@ Qq8Device _buildDevice({required bool deterministic}) {
 /// 见 `lib/kernel/wlogin8/qq8_sso.dart` 里 [Qq8SsoContext.ksid] 的注释：
 /// 它不是 `|imei|apkName` 本地派生，而是服务端在响应 TLV `0x108` 里给的。
 /// 没注入时退回旧形态（dry-run 兼容）。
-Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) =>
-    qq8KsidBytes(d.ksid, d.imei, p.apk.name);
+Uint8List _ksid(Qq8Device d) => qq8KsidBytes(d.ksid);
 
 Uint8List _randomBytes(int n) {
   final r = Random.secure();

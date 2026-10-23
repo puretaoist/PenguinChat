@@ -225,11 +225,28 @@ Future<Qq8DeviceIdentity?> resolveQq8DeviceIdentity({
   }
 
   // androidId 缺失时照官方 `getRandomAndroidId` 生成 15 位数字并**立刻落盘**。
+  //
+  // ⚠️ 2026-10-23 修两个 bug：
+  //  1. **采集到也要落盘**。此前只在「采集不到且存档也没有」时才 saveSync，
+  //     于是 device.json 里永远没有 androidId——真机日志实到
+  //     `设备状态已保存: Qq8DeviceState(androidId=无, ksid=无, qimei=36字符)`。
+  //     一旦某次采集失败就退回合成派生 → guid 跟着变 → 设备信任归零。
+  //     androidId 是「这次读到的值」，不是「只在该读不到时才记的东西」。
+  //  2. **补生成时不能新建空状态**。此前写 `Qq8DeviceState(androidId: …)`
+  //     会把刚 loadSync 出来的 ksid/qimei 一起抹掉——那两个一个要成功登录
+  //     才下发、一个由灯塔签发，丢了就是设备身份又一次漂移。
   var androidId = state.androidId;
-  if ((snap.androidId == null || snap.androidId!.isEmpty) &&
-      (androidId == null || androidId.isEmpty)) {
+  final snapAid = snap.androidId;
+  if (snapAid != null && snapAid.isNotEmpty) {
+    // 系统值优先（与官方 `Settings.Secure.getString(ANDROID_ID)` 同源）。
+    if (snapAid != androidId) {
+      androidId = snapAid;
+      store.saveSync(state.copyWith(androidId: snapAid));
+      l.i('androidId 取自系统并落盘（跨进程稳定，guid 才不会漂）');
+    }
+  } else if (androidId == null || androidId.isEmpty) {
     androidId = qq8RandomAndroidId();
-    store.saveSync(Qq8DeviceState(androidId: androidId));
+    store.saveSync(state.copyWith(androidId: androidId));
     l.i('系统 ANDROID_ID 读不到，按官方风格生成 15 位随机数并持久化');
   }
 

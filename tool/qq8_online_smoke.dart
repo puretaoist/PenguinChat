@@ -54,8 +54,7 @@ void errOut(String s) => stderr.writeln(s);
 
 /// `ksid`：官方 `util.get_ksid` -> `string_to_buf`（十六进制串两字符一字节）。
 /// 共用 `lib/kernel/wlogin8/qq8_sso.dart` 的 [qq8KsidBytes]。
-Uint8List _ksid(Qq8Device d, Qq8ClientProfile p) =>
-    qq8KsidBytes(d.ksid, d.imei, p.apk.name);
+Uint8List _ksid(Qq8Device d) => qq8KsidBytes(d.ksid);
 
 Uint8List _fromHex(String? s) {
   if (s == null || s.isEmpty) return Uint8List(0);
@@ -156,7 +155,7 @@ Future<void> main(List<String> argv) async {
     device: device,
     passwordMd5: Uint8List(0),
     seqId: 1,
-    ksid: _ksid(device, profile),
+    ksid: _ksid(device),
     t104: Uint8List(0),
     t174: Uint8List(0),
     tgt: tokTgt,

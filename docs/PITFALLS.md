@@ -1603,6 +1603,79 @@ APK 拆开、用官方签名重签、再读一次，拿到的也不会是官方�
 
 ---
 
+## C28. 同名的 `ksid` 是两个字段：SSO 头恒为 `\|imei\|apkName`，TLV 0x108 是服务端下发值
+
+**现象**：真机密码登录 → `type=2`（要滑块）→ 滑块页 1.24 秒内提交（远快于历史
+7.2 秒那个成功样本）→ 仍然 `type=16`「你的用户身份已失效，为保证账号安全，请你
+重新登录。」。合成设备、ticket 新鲜度、SSO 序号共用、`0x116` 分档四处假设依次
+被排除后，矛头指向 `0x108`。
+
+**根因**：官方把 `ksid` 这个名字用在两个**取值规则完全不同**的位置，而我们把它们
+实现成了同一个 getter。
+
+| 位置 | 官方取值 | 为空时 | 出处 |
+|---|---|---|---|
+| SSO 包头那个槽（`u16(len+2)‖ksid`） | 恒 `\|<imei>\|<apkName>` | 不适用（永远非空） | oicq `lib/core/base-client.ts:865` |
+| TLV `0x108` 的 body | SP `WLOGIN_DEVICE_INFO` 的 `ksid` 经 `util.string_to_buf` 十六进制解码 | **整条不发** | `k.java` case 264 + `util.get_ksid` |
+
+我们的写法：
+
+```dart
+// 改前 —— 两处共用同一个 getter
+Uint8List get ksid => qq8KsidBytes(device.ksid, device.imei, apk.name);
+//   为空时 qq8KsidBytes 内部退回 utf8.encode('|$imei|$apkName')
+```
+
+于是同一个值被送进两个语义不同的位置，**同时错两处**：
+
+1. **TLV `0x108` 发了一条编造值**（约 30 字节的 `\|imei\|A8.2.11.4530`）。官方
+   首次登录 SP 里没有 `ksid`，`t.ac` 为空，`k.java` case 264 直接跳过 —— 官方
+   **整条不发**。我们却在同一个包里一边上报 `0x144`/`0x52D` 的真机身份，一边发
+   一条自造的 ksid，等于自称「一台已经有 ksid 的老设备，但 ksid 是假的」。
+2. **注入 `ksid` 时 SSO 头又会填错**。那个槽官方永远是 `\|imei\|apkName` 的
+   ASCII；我们会填十六进制解码后的 16 字节。偏离唯一能登录成功的实现
+   （oicq），没有任何依据。
+
+**修法**（`e4ed76a` 之后的第二轮）：
+
+* `lib/kernel/wlogin8/qq8_sso.dart` 的 `ksid` getter 不再读 `device.ksid`，直接
+  `Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'))`。
+* `qq8KsidBytes` 收窄为单一职责（只做十六进制解码），**空进空出**，不再造
+  fallback。签名从 `(injected, imei, apkName)` 变成 `(injected)`，7 个调用点同步。
+* `Qq8Conditions.applies` 增加可选参数 `ctx`，`case 0x108: return _nonEmpty(ctx.ksid);`。
+
+**为什么 ksid 不放 `Qq8Conditions` 而放 `ctx`**：`Qq8Conditions` 有 20+ 个构造点
+（各登录分支、三个工具、自测）。给它加一个必须逐个传的参数，漏传就静默回到
+「发错」。放进 `ctx` 则是单一来源 —— `ctx` 本来就必须传进
+`Qq8LoginBody.build`，忘不了。这类静默偏差正是本轮 `type=16` 的来源。
+
+**连带修掉的第二个 bug**：`plan()` 与 `build()` 必须看到同一个 `ctx`。给 `0x108`
+加 guard 后 `plan()` 漏了传，导致 `build` 发了 `0x108` 而 `plan` 说没发，三条
+「实际顺序与 plan 一致」立刻炸掉。**自测与生产代码只要有一处看不到同一份输入，
+自测就在替生产代码撒谎。**
+
+**第三个 bug（本轮一并修）**：`resolveQq8DeviceIdentity` 里 `androidId` 只在
+「采集不到且存档也没有」时才 `saveSync`，**采集到也从不回写**。真机日志实到
+`设备状态已保存: Qq8DeviceState(androidId=无, ksid=无, qimei=36字符)`。后果是
+`device.json` 里永远缺 `androidId`，某次采集失败就退回合成派生 → `guid` 跟着变 →
+设备信任归零。另外补生成时写 `Qq8DeviceState(androidId: …)` 会**抹掉**已有的
+`ksid`/`qimei`（那两个一个要成功登录才下发、一个由灯塔签发），已改为 `copyWith`。
+
+**教训**：
+
+1. **同名不等于同值**。看到两个地方都叫 `ksid` 就假定它们同源，是本轮最大的
+   思维偷懒。判断依据只能是「各自的值从哪来」，不是「名字一样」。
+2. **「为兼容 dry-run 保留的 fallback」是最危险的那类代码**。它让测试一直绿、
+   生产一直错，而且注释里往往已经写了「已知与官方不一致」—— 写了这句话就该
+   立刻拆掉，而不是留着当免责声明。
+3. **guard 依赖的输入要放在调用方忘不掉的地方**。`applies(tag)` 只看 tag 是
+   天然的诱惑，但一旦有 tag 需要看上下文，就得把上下文传进来；放在「一定会
+   被传」的参数上（`ctx`）比放在「可能被漏传」的构造里安全。
+4. **落盘的条件要写全**。「读不到才存」和「读到了也存」在稳定性上完全不同：
+   前者保证「有值」，后者保证「值不变」。设备身份要的是后者。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常
