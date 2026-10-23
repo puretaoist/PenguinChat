@@ -195,7 +195,7 @@ class Qq8Device {
         sdk: 29,
       ),
       imsi: rnd(16),
-      tgtgt: rnd(16),
+      tgtgt: _deriveTgtgt(rnd, guid),
       guid: guid,
     );
   }
@@ -256,7 +256,7 @@ class Qq8Device {
       imsi: (id.imsi == null || id.imsi!.isEmpty)
           ? Uint8List(0)
           : md5Bytes(utf8.encode(id.imsi!)),
-      tgtgt: tgtgt ?? rnd(16),
+      tgtgt: tgtgt ?? _deriveTgtgt(rnd, guid),
       guid: guid,
       ksid: id.ksid ?? '',
     );
@@ -313,6 +313,36 @@ class Qq8Device {
 
   static Uint8List _ascii(String s) =>
       Uint8List.fromList(s.codeUnits.map((c) => c & 0xFF).toList());
+
+  /// `tgtgt` 的官方派生：**`MD5(随机 16 字节 ‖ guid)`**。
+  ///
+  /// 出处：`analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/k.java:445`
+  /// ```java
+  /// async_contextVarB._tgtgt_key =
+  ///     oicq.wlogin_sdk.tools.util.get_rand_16byte(oicq.wlogin_sdk.request.t.B);
+  /// ```
+  /// 其中 `t.B` 是 guid（`t.java:285` `B = (byte[]) bArr.clone()`，bArr 来自 `t.d()`
+  /// 里算出的 guid），而 `util.get_rand_16byte(byte[] bArr)`
+  /// （`tools/util.java:165-175`）是
+  /// ```java
+  /// byte[] seed = SecureRandom.getSeed(16);
+  /// byte[] out = new byte[seed.length + bArr.length];
+  /// arraycopy(seed, 0, out, 0, seed.length);
+  /// arraycopy(bArr, 0, out, seed.length, bArr.length);
+  /// return MD5.toMD5Byte(out);
+  /// ```
+  ///
+  /// 2026-10-23 修正：此前是**纯随机 `rnd(16)`**（oicq 的传习，不看 guid）。
+  /// 这个值决定 `0x106` 里的一个槽 + 整个 `0x144` 的 TEA 密钥，而 `0x144`
+  /// 里包着 0x109/0x52D/0x124/0x128/0x16E 全部设备信息 —— 掺不掺 guid
+  /// 会让服务端看到两种不同的设备摘要。
+  static Uint8List _deriveTgtgt(
+    Uint8List Function(int n) rnd,
+    Uint8List guid,
+  ) {
+    final seed = rnd(16);
+    return md5Bytes(<int>[...seed, ...guid]);
+  }
 
   /// oicq `_genIMEI`：由 uin 派生一个格式合法的 IMEI（含 Luhn 校验位）。
   static String _syntheticImei(int uin) {

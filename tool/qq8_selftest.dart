@@ -215,6 +215,21 @@ void testDevice() {
   ]));
   checkEq('guid = MD5(IMEI + MAC)', toHex(a1.guid), toHex(expectGuid));
 
+  // tgtgt 不是纯随机：官方 = MD5(随机 16 ‖ guid)
+  //   `jadx-main/.../request/k.java:445`
+  //     `_tgtgt_key = util.get_rand_16byte(oicq.wlogin_sdk.request.t.B)`，`t.B` = guid
+  //   `tools/util.java:165-175` `get_rand_16byte(bArr)` = `MD5(SecureRandom16 ‖ bArr)`
+  // 用黄金向量 case0（随机源全 0xAB）逐字节复算自证，不手抄。
+  final vec0 = _loadDeviceVectorCase(0);
+  final vecTgtgt = toHex(md5Bytes(Uint8List.fromList(<int>[
+    ...List<int>.filled(16, 0xAB),
+    ..._hexParse(vec0['guid']! as String),
+  ])));
+  checkEq('tgtgt = MD5(随机16 ‖ guid)（官方 get_rand_16byte 语义）',
+      vec0['tgtgt'], vecTgtgt);
+  // 纯随机会与 guid 无关；掺了 guid 后不同 uin 的 tgtgt 必然不同
+  check('不同 uin：tgtgt 不同', toHex(a1.tgtgt) != toHex(b.tgtgt));
+
   // withTgtgt：只换 tgtgt，其余身份字段必须原样保留
   final t2 = Uint8List.fromList(List<int>.filled(16, 0x5a));
   final c = a1.withTgtgt(t2);
@@ -337,6 +352,20 @@ void testDevice() {
 }
 
 // ---------------------------------------------------------------------------
+
+/// 读 `vectors/device.json` 的第 [index] 个 case（由 `tool/qq8_device_vectors.dart`
+/// 生成，**不手抄**）。只取断言需要的那几项；文件缺失时直接抛，让自测红。
+Map<String, Object?> _loadDeviceVectorCase(int index) {
+  final f = File('vectors${Platform.pathSeparator}device.json');
+  final json = jsonDecode(f.readAsStringSync()) as Map<String, Object?>;
+  final cases = (json['cases']! as List<Object?>).cast<Map<String, Object?>>();
+  return cases[index];
+}
+
+List<int> _hexParse(String hex) => <int>[
+      for (var i = 0; i < hex.length; i += 2)
+        int.parse(hex.substring(i, i + 2), radix: 16),
+    ];
 
 Future<void> main() async {
   stdout.writeln('QQ 8.2.11 协议内核离线自测');

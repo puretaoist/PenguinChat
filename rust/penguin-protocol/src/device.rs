@@ -113,7 +113,7 @@ impl Device {
                 sdk: 29,
             },
             imsi: random(16),
-            tgtgt: random(16),
+            tgtgt: derive_tgtgt(random, &guid),
             guid: guid.to_vec(),
         }
     }
@@ -178,6 +178,19 @@ fn synthetic_mac(hash: &[u8; 16]) -> String {
         "00:50:{:02X}:{:02X}:{:02X}:{:02X}",
         hash[6], hash[7], hash[8], hash[9]
     )
+}
+
+/// `tgtgt` 的官方派生：`MD5(随机 16 字节 ‖ guid)`。
+///
+/// 出处 `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/k.java:445`
+/// `util.get_rand_16byte(oicq.wlogin_sdk.request.t.B)`，其中 `t.B` 是 guid，
+/// `util.get_rand_16byte`（`tools/util.java:165-175`）= `MD5(SecureRandom16 ‖ bArr)`。
+///
+/// 2026-10-23 修正：此前是纯 `random(16)`（oicq 传习）。该值既是 `0x106` 的一个槽，
+/// 又是 `0x144` 的 TEA 密钥，而 `0x144` 里包着全部设备子 TLV。
+fn derive_tgtgt(random: &mut dyn FnMut(usize) -> Vec<u8>, guid: &[u8; 16]) -> Vec<u8> {
+    let seed = random(16);
+    md5_bytes(&[seed.as_slice(), guid.as_slice()].concat()).to_vec()
 }
 
 fn android_id(uin: u32, hash: &[u8; 16]) -> String {

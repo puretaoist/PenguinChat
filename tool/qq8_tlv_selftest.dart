@@ -687,6 +687,66 @@ void testMiscBitmapByPath() {
   }
 }
 
+void test154MsfSsoSeq() {
+  section('8. 0x154 = MSF SSO SEQ（本流程编号，不是 SSO 包内 seq）');
+
+  final base = buildContext();
+  Qq8TlvContext withSeq(int seq) => Qq8TlvContext(
+        uin: base.uin,
+        apk: base.apk,
+        device: base.device,
+        passwordMd5: base.passwordMd5,
+        seqId: base.seqId,
+        ksid: base.ksid,
+        t104: base.t104,
+        t174: base.t174,
+        tgt: base.tgt,
+        srmToken: base.srmToken,
+        randomBytes: base.randomBytes,
+        teaPadding: base.teaPadding,
+        nowMillis: base.nowMillis,
+        msfSsoSeq: seq,
+      );
+
+  // 已注入时原样大写（官方 `int32_to_buf(bArr, 0, i)`）
+  final hex2838 = toHex(Qq8Tlv.pack(withSeq(2838), 0x154));
+  if (hex2838 == '0154000400000b16') {
+    ok('注入 2838 → u32 大端 00000b16', hex2838);
+  } else {
+    bad('0x154 注入值', '期望 0154000400000b16 / 实际 $hex2838');
+  }
+
+  // 与 SSO 包内 seq 无关：改 seqId 不动 0x154
+  final withSeqId = Qq8TlvContext(
+    uin: base.uin,
+    apk: base.apk,
+    device: base.device,
+    passwordMd5: base.passwordMd5,
+    seqId: base.seqId + 12345,
+    ksid: base.ksid,
+    t104: base.t104,
+    t174: base.t174,
+    tgt: base.tgt,
+    srmToken: base.srmToken,
+    randomBytes: base.randomBytes,
+    teaPadding: base.teaPadding,
+    nowMillis: base.nowMillis,
+    msfSsoSeq: 2838,
+  );
+  if (toHex(Qq8Tlv.pack(withSeqId, 0x154)) == hex2838) {
+    ok('0x154 与 SSO 包内 seqId 无关（两套独立计数）');
+  } else {
+    bad('0x154 独立性', '改了 seqId 之后 0x154 变了');
+  }
+
+  // 未注入 → 0（官方「没有 reserveData」的 else 分支）
+  if (toHex(Qq8Tlv.pack(base, 0x154)) == '0154000400000000') {
+    ok('未注入 → 0（等价官方 else 分支）');
+  } else {
+    bad('0x154 默认值', '期望 ...00000000');
+  }
+}
+
 void test52dInnerVersion() {
   final base = buildContext();
 
@@ -833,6 +893,7 @@ void main() {
   testT544Modes();
   test52dInnerVersion();
   testMiscBitmapByPath();
+  test154MsfSsoSeq();
 
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');

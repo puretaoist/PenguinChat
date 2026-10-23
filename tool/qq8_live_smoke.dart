@@ -879,6 +879,11 @@ Future<void> main(List<String> argv) async {
     // 原值，不叠 WLOGIN_DA2；只有密码首包（`:1415-1418`）才叠。
     // 滑块分支必须关掉，否则工具产出的包与 App 不一致，验证结论不可信。
     da2BitActive: !useSlider,
+    // 0x154 的官方实参是本流程的 MSF 请求序号（`WUserSigInfo._reserveData`
+    // ← `toServiceMsg.getRequestSsoSeq()`，见 `msf/core/auth/l.java:209`）。
+    // 我们没有 MSF 层，用本流程的 SSO seq 顶替：官方日志里两者都属于
+    // 「同一流程内绑定、随流程走」的编号，且官方几乎从不发 0。
+    msfSsoSeq: sessionSeq,
   );
 
   final body = useSlider

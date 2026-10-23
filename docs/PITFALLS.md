@@ -1676,6 +1676,111 @@ Uint8List get ksid => qq8KsidBytes(device.ksid, device.imei, apk.name);
 
 ---
 
+## C29. `tgtgt` 不是随机数，`0x154` 不是 SSO seq —— 两个「看起来像随机/像 seq」的字段
+
+### 现象
+
+2026-10-23 的三次真机运行里，前几轮已知差异（`0x108`、SSO seq 共用、
+`0x116` 分档、本机设备采集）全部对齐后，滑块提交仍稳定回
+`type=16`「你的用户身份已失效」。继续逐字段核对官方源码时，抓出两处
+**取值规则本身写错了**的字段。
+
+### 坑一：`tgtgt` 是 `MD5(随机 16 ‖ guid)`，不是纯随机
+
+官方 `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/k.java:445`：
+
+```java
+async_contextVarB._tgtgt_key =
+    oicq.wlogin_sdk.tools.util.get_rand_16byte(oicq.wlogin_sdk.request.t.B);
+```
+
+- `t.B` 是 **guid**（`t.java:285` `B = (byte[]) bArr.clone()`，bArr 来自 `t.d()` 里算出的 guid）。
+- `util.get_rand_16byte(byte[] bArr)`（`tools/util.java:165-175`）：
+
+```java
+byte[] seed = SecureRandom.getSeed(16);
+byte[] out = new byte[seed.length + bArr.length];
+arraycopy(seed, 0, out, 0, seed.length);
+arraycopy(bArr, 0, out, seed.length, bArr.length);
+return MD5.toMD5Byte(out);
+```
+
+⇒ **`tgtgt = MD5(SecureRandom16 ‖ guid)`**。
+
+我方此前（照 oicq 传习）是 `tgtgt: rnd(16)` 纯随机。这个值的两个身份：
+
+1. `0x106` body 里的一个槽；
+2. **整个 `0x144` 的 TEA 密钥**，而 `0x144` 里包着 `0x109`/`0x52D`/
+   `0x124`/`0x128`/`0x16E` 全部设备子 TLV。
+
+掺不掺 guid 会让服务端看到两种不同的设备摘要——即使所有明文字段都对，
+密文的「盐」也不同。
+
+修法：`lib/kernel/wlogin8/qq8_device.dart` 新增 `_deriveTgtgt(rnd, guid)`，
+`generate()` 与 `fromIdentity()` 两处都改走它；Rust 侧
+`rust/penguin-protocol/src/device.rs` 同步加 `derive_tgtgt()`。
+
+### 坑二：`0x154` 是 MSF 请求序号，不是 SSO 包内 seq
+
+官方 `tlv_t154.get_tlv_154(int i)` 的实参是 `t.i`（`t.java:80`
+`public int i = 0`），唯一赋值形态（`WtloginHelper.java:570/573`、
+`:1239/1242`、`:1468/1471`、`:2273/2276`、`:2457/2460` 五处同构）：
+
+```java
+if (wUserSigInfo._reserveData != null && _reserveData.length > 3) {
+    tVar.i = util.buf_to_int32(wUserSigInfo._reserveData, 0);
+    util.LOGI("MSF SSO SEQ:" + tVar.i, str);
+} else {
+    tVar.i = 0;
+}
+```
+
+`_reserveData` 真源：`com/tencent/mobileqq/msf/core/auth/l.java:209`
+与 `msf/core/auth/n.java:289/300`，都是
+`MsfSdkUtils.convertInt2Bytes(toServiceMsg.getRequestSsoSeq())`。
+
+官方真机日志实证（`analysis/_ref/official-logs/`）：
+
+| 日志 | `Seq`（SSO 包内） | `MSF SSO SEQ`（0x154） |
+|---|---|---|
+| `qq8211/wtlogin_20260930.txt:352-353` | 1 | 70250 |
+| `qq8211/wtlogin_20261022.txt:544-545` | 3 | 2838 |
+
+⇒ **两套独立计数，且官方几乎从不发 0**（0 只在「没有 reserveData」的
+else 分支）。
+
+我方 `Qq8TlvContext.msfSsoSeq` 字段存在但**全库无赋值点**，每次登录
+都发 `0x154 = 00000000`。
+
+修法：`lib/client_api/qq8_login_service.dart` 的 `_tlvCtx` 传
+`msfSsoSeq: _seq`（本流程 seq，经 `_flowSeq` 缓存）；两个真机工具
+`tool/qq8_live_smoke.dart` / `tool/qq8_interactive.dart` 同步传
+`sessionSeq`（单会话工具里它全程不变，正好满足官方「同流程同值」）。
+
+### 为什么这两处值得修
+
+它们是**同一类错误的两个实例**：字段名看起来表达了语义（`tgtgt` 像
+随机票据、`0x154` 像 seq），但官方给的取值规则与名字暗示的不同。这类
+错误不会让包变短、变长或结构错位，**只会让服务端算出的摘要不同**——
+表现就是「所有明文字段都对，但服务端仍拒绝」。
+
+### 教训
+
+1. **「随机值」要先确认纳不纳上下文**。同一个随机数，纯随机与
+   `MD5(随机 ‖ 某标识)` 在服务端看来是两种东西；后者把「这台设备」
+   绑进了密文。
+2. **两套编号不能混用**。SSO 包内 seq 与 MSF 请求序号是不同层的计数，
+   名字里都带 seq。判据是「谁给它赋值」——`_seqence` 与
+   `_reserveData` 是两个字段，值也不同。
+3. **「字段存在但没人赋值」是最难发现的一类 bug**。`msfSsoSeq` 有
+   字段、有默认值、有使用点，唯独没有调用方设置它。写完一个可配置
+   字段后，用 `grep` 确认「除定义与默认值外还有别的赋值点」。
+4. **交叉验证要在两边都做**。Dart 改了之后 Rust 侧镜像也要改，
+   否则 `device_derivation_matches_dart` 会在 CI 里红——这次正好靠它
+   确认了改动没有漏边。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

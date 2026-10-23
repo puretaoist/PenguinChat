@@ -1510,6 +1510,16 @@ class Qq8LoginService {
       // 登录 SP 无 ksid 时整条 0x108 不发（`k.java` case 264 guard），
       // 而不是发一条编造的 `|<imei>|<apkName>`（2026-10-23 修正）。
       ksid: qq8KsidBytes(device.ksid),
+      // 0x154 的官方实参是 `t.i`，而 `t.i` 来自 `WUserSigInfo._reserveData`，
+      // 后者由 `com/tencent/mobileqq/msf/core/auth/l.java:209` 与
+      // `n.b()/n.c()`（`msf/core/auth/n.java:289/300`）用
+      // `MsfSdkUtils.convertInt2Bytes(toServiceMsg.getRequestSsoSeq())` 填入；
+      // 而 `l.java:181/191/257/268/279/…` 又把 `_seqence` 设成同一个 `p.f`。
+      // 官方真机日志实证：`MSF SSO SEQ:2838`（10-22）与 `Seq:3` 同一次登录里并存，
+      // 二者是本流程内绑定的两个编号，但都随流程走。
+      // 我们没有 MSF 层，取本流程的 [_seq]：既非 0（官方 else 分支才是 0），
+      // 又在整条流程（密码 → 滑块提交）里保持不变，与官方语义最接近。
+      msfSsoSeq: _seq,
       t104: _t104,
       t174: _t174,
       tgt: token?.tgt ?? Uint8List(0),

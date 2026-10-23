@@ -84,6 +84,13 @@ pub const LOGIN_TLV_NATIVE_BOUND: [u16; 2] = [0x544, 0x545];
 /// `0x544` 的 8.2.11 降级 body（`ByteData.getCode` → `status = {0,0,0,0}`）。
 pub const TLV544_DEGRADED_BODY_8211: [u8; 4] = [0, 0, 0, 0];
 
+/// `WtloginHelper$SigType.WLOGIN_DA2`——`0x116` miscBitmap 的第 25 位。
+///
+/// 官方只在密码首包 `GetStWithPassport` 路径叠它（`WtloginHelper.java:1416`
+/// `i6 |= 33554432`），滑块提交传构造器初值不叠（`:2252`）。见
+/// [`TlvContext::da2_bit_active`]。
+pub const WLOGIN_DA2: u32 = 33554432;
+
 /// 出现在顺序表中、但不属于密码登录流程的 TLV。
 ///
 /// * `0x318` —— 泛型包装 `tgtQR`，二维码登录专用；
@@ -154,6 +161,17 @@ pub struct TlvContext {
     /// 直接丢弃——因此**密文本身不可复现**，做成可注入纯粹为了自测确定性。
     pub tea_padding: ByteSource,
     pub now_millis: Clock,
+    /// 是否叠加 `WLOGIN_DA2`（33554432）到 `0x116` 的 miscBitmap。
+    ///
+    /// 官方两条路径取值不同（Dart 侧 C16 / C26 同款结论）：
+    /// - 密码首包 `GetStWithPasswd`：`WtloginHelper.java:1415-1418`
+    ///   `i6 = mMiscBitmap; if (t.ab) i6 |= 33554432;` ⇒ **叠**
+    /// - 滑块提交 `CheckPictureAndGetSt`：`:2252` `new n(tVarA).a(bArr, this.mMiscBitmap, …)`
+    ///   ⇒ 传构造器初值，**不叠**
+    ///
+    /// 默认 `true`（密码路径是主路径），滑块提交前用
+    /// [`TlvContext::with_da2_bit`] 关掉。
+    pub da2_bit_active: bool,
 }
 
 impl TlvContext {
@@ -186,6 +204,7 @@ impl TlvContext {
             random_bytes: Box::new(os_random),
             tea_padding: Box::new(os_random),
             now_millis: Box::new(wall_clock_millis),
+            da2_bit_active: true,
         }
     }
 
@@ -197,6 +216,21 @@ impl TlvContext {
     pub fn with_msalt(mut self, msalt: u64) -> Self {
         self.msalt = msalt;
         self
+    }
+
+    /// 控制 `0x116` 是否叠 `WLOGIN_DA2`（见 [`TlvContext::da2_bit_active`]）。
+    pub fn with_da2_bit(mut self, on: bool) -> Self {
+        self.da2_bit_active = on;
+        self
+    }
+
+    /// `0x116` 实际写出的 miscBitmap 值。
+    pub fn effective_misc_bitmap(&self) -> u32 {
+        if self.da2_bit_active {
+            self.apk.misc_bitmap | WLOGIN_DA2
+        } else {
+            self.apk.misc_bitmap
+        }
     }
 }
 
@@ -537,7 +571,7 @@ pub fn body(ctx: &TlvContext, tag: u16, args: &[TlvArg]) -> Result<Vec<u8>, TlvE
 
         0x116 => {
             u8b(&mut w, 0);
-            u32b(&mut w, ctx.apk.misc_bitmap);
+            u32b(&mut w, ctx.effective_misc_bitmap());
             u32b(&mut w, ctx.apk.sub_sig_map); // 0x10400，三代相同
             u8b(&mut w, 1); // app id list 长度
             u32b(&mut w, 1600000226); // app id list[0]
@@ -630,7 +664,7 @@ pub fn body(ctx: &TlvContext, tag: u16, args: &[TlvArg]) -> Result<Vec<u8>, TlvE
             // 我们的 "8.2.11"/"8.9.50"/"9.3.60" 是 6 字符会少一字节（2026-09-15 修正）。
             u32b(&mut w, ctx.apk.appid);
             tlv_str(&mut w, &cut(ctx.apk.ver, 32));
-            tlv(&mut w, &cut_bytes(&ctx.apk.sign, 32));
+            tlv(&mut w, cut_bytes(&ctx.apk.sign, 32));
         }
 
         0x154 => {

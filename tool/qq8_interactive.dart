@@ -439,6 +439,9 @@ Future<void> _run(Map<String, String> args) async {
         // 原值，不叠 WLOGIN_DA2；只有密码首包（`:1415-1418`）才叠。
         // 这里按子命令自动判定，避免调用点漏传导致工具与 App 产包不一致。
         da2BitActive: subCmd != Qq8SubCmd.slider,
+        // 0x154 = 本流程 MSF 请求序号；单会话工具里 sessionSeq 全程不变，
+        // 正好满足「密码首包 → 滑块提交」两个包同值（官方同款语义）。
+        msfSsoSeq: sessionSeq,
       );
 
   final loginCtx = ctxFor(t104: Uint8List(0), subCmd: Qq8SubCmd.password);
