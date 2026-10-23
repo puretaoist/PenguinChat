@@ -88,10 +88,15 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "version" ->
-                        // 构建标识：让日志能自证"这个 APK 里到底有没有设备采集代码"。
-                        // 起因是一次真机日志里完全看不到新加的 Dart 日志行，
-                        // 只能靠翻 APK 里的 dex 才知道装的是旧包——不该再靠猜。
+                        // 构建标识（人类可读单行）。保留这个老方法名，
+                        // 因为 Dart 侧 `DeviceInfo.buildTag` 已经在用。
                         result.success(DeviceProbe.BUILD_TAG)
+
+                    "buildInfo" ->
+                        // 结构化构建信息，供日志导出抬头使用。
+                        // 与 "version" 的区别只在形态：那个是给人看的单行，
+                        // 这个是给 `LogExporter.buildReport(metadata:)` 用的键值对。
+                        result.success(buildInfo())
 
                     "snapshot" -> {
                         try {
@@ -109,6 +114,28 @@ class MainActivity : FlutterActivity() {
                 }
             }
     }
+
+    /**
+     * 构建信息。**这是排障的第一手证据**。
+     *
+     * 起因：有四次提交都没改过 `DeviceProbe.BUILD_TAG`，真机日志里那一行长得
+     * 一模一样，我无法判断装的是哪一版，只好解包 APK 翻 dex。这种事不该做第二次。
+     *
+     * 字段说明：
+     * * `app_version` —— `pubspec.yaml` 的 version（`0.1.0+1` 形态），
+     *   用户报障时最容易对上的一条；
+     * * `git_commit` —— 构建时的提交号，带 `+dirty` 表示工作区有未提交改动；
+     * * `build_time` —— 构建时刻（本地时区，精确到秒）；
+     * * `api_host` —— 编译进包里的登录服务器，排查 DNS/网络问题时必需，
+     *   否则无法区分「服务器换过」和「网络挂了」。
+     */
+    private fun buildInfo(): Map<String, String> = linkedMapOf(
+        "app_version" to BuildConfig.APP_VERSION,
+        "git_commit" to BuildConfig.GIT_COMMIT,
+        "build_time" to BuildConfig.BUILD_TIME,
+        "api_host" to BuildConfig.API_HOST,
+        "probe_version" to DeviceProbe.PROBE_VERSION,
+    )
 
     private fun ensureNotificationPermission(result: MethodChannel.Result) {
         // Android 13 以下没有这个运行时权限，直接算已授予。

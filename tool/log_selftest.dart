@@ -346,6 +346,77 @@ Future<void> main() async {
       final body = await f.readAsString();
       check('导出文件内容与报告一致（含抬头）', body.contains('QQ 客户端日志导出'));
       check('导出文件含日志行', body.contains('开始登录 uin=10001'));
+
+      // -- 6b. 版本号（2026-10-23 加）-------------------------------------
+      // 排障时第一眼要能看出「这条日志是哪一版跑出来的」。此前导出报告
+      // 只有导出时间，同一个 bug 在四个提交里都改过时人只能靠猜。
+      final withVer = LogExporter.buildReport(
+        metadata: <String, Object?>{'app': 'PenguinChat'},
+        version: '0.1.0+1',
+        now: DateTime(2026, 9, 11, 14, 30),
+        includeFileLogs: false,
+      );
+      check('报告里有版本行', withVer.contains('版本: 0.1.0+1'));
+      check(
+        '版本行在导出时间之前（第一眼能看到）',
+        withVer.indexOf('版本:') < withVer.indexOf('导出时间'),
+      );
+      check(
+        '无版本时不写空的版本行',
+        !LogExporter.buildReport(
+          metadata: const <String, Object?>{},
+          now: DateTime(2026, 9, 11, 14, 30),
+          includeFileLogs: false,
+        ).contains('版本:'),
+      );
+      check(
+        'null / unknown / 空串都不当成版本',
+        !LogExporter.buildReport(
+          metadata: const <String, Object?>{},
+          version: 'unknown',
+          now: DateTime(2026, 9, 11, 14, 30),
+          includeFileLogs: false,
+        ).contains('版本:'),
+      );
+
+      check(
+        '文件名带版本',
+        LogExporter.fileNameFor(DateTime(2026, 9, 11, 14, 30, 1),
+                version: '0.1.0+1')
+            .endsWith('qqclient-log-0.1.0_1-20260911-143001.txt'),
+        LogExporter.fileNameFor(DateTime(2026, 9, 11, 14, 30, 1),
+            version: '0.1.0+1'),
+      );
+      check(
+        '版本里的 + 换成 _（有些聊天软件会把 + 当特殊字符）',
+        !LogExporter.fileNameFor(DateTime(2026, 9, 11), version: '0.1.0+1')
+            .contains('+'),
+      );
+      check(
+        '无版本时文件名不带版本段',
+        LogExporter.fileNameFor(DateTime(2026, 9, 11, 14, 30, 1))
+            .endsWith('qqclient-log-20260911-143001.txt'),
+      );
+      check(
+        '版本里的非法字符被剔掉',
+        LogExporter.fileNameFor(DateTime(2026, 9, 11, 14, 30, 1),
+                version: '0.1.0/../etc')
+            .endsWith('qqclient-log-0.1.0..etc-20260911-143001.txt'),
+        LogExporter.fileNameFor(DateTime(2026, 9, 11, 14, 30, 1),
+            version: '0.1.0/../etc'),
+      );
+      final vf = await LogExporter.exportToDirectory(
+        outDir,
+        metadata: const <String, Object?>{},
+        version: '0.1.0+1',
+        now: DateTime(2026, 9, 11, 14, 30, 1),
+      );
+      check(
+        'exportToDirectory 透传版本到文件名',
+        vf.path.endsWith('qqclient-log-0.1.0_1-20260911-143001.txt'),
+        vf.path.split(Platform.pathSeparator).last,
+      );
+      check('exportToDirectory 透传版本到抬头', (await vf.readAsString()).contains('版本: 0.1.0+1'));
     }
   } finally {
     try {

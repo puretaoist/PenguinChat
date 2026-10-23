@@ -126,6 +126,75 @@ class DeviceSnapshot {
       'androidId=${androidId == null ? 'null' : '有'})';
 }
 
+/// 构建信息：这一版 APK 到底是「哪一次构建」。
+///
+/// ## 为什么要有这个类（2026-10-23）
+///
+/// 曾经有四次提交都没改过 `DeviceProbe.BUILD_TAG` 那个硬编码字符串，真机
+/// 日志里那一行长得一模一样，我无法判断装的是哪一版，只好解包 APK 翻 dex。
+/// **一旦自证手段本身是常量，它就等于不存在。**
+///
+/// 现在这些值由 Gradle 在构建期注入（`android/app/build.gradle.kts` 的
+/// `buildConfigField`），每个提交、每次构建都不同。
+///
+/// ## 为什么不塞进 `versionName`
+///
+/// `versionName` 变了会让「覆盖安装」和「版本比较」都失去意义——
+/// 安装包版本号应当只随发版变化，而不是每次构建都变。
+class BuildInfo {
+  /// `pubspec.yaml` 的 version，形如 `0.1.0+1`。用户报障时最容易对上的一条。
+  final String appVersion;
+
+  /// 构建时的 git 提交号（短 7 位），带 `+dirty` 表示工作区有未提交改动。
+  final String gitCommit;
+
+  /// 构建时刻（本地时区，`yyyy-MM-ddTHH:mm:ss`）。
+  final String buildTime;
+
+  /// 编译进包里的登录服务器。排查 DNS/网络问题时必需——否则无法区分
+  /// 「服务器换过」和「网络挂了」。
+  final String apiHost;
+
+  /// 设备采集逻辑自身的语义版本（与构建标识分开记，便于比对代码是否换过）。
+  final String probeVersion;
+
+  const BuildInfo({
+    required this.appVersion,
+    required this.gitCommit,
+    required this.buildTime,
+    required this.apiHost,
+    required this.probeVersion,
+  });
+
+  /// 桌面/测试环境下的占位。
+  static const BuildInfo unknown = BuildInfo(
+    appVersion: 'unknown',
+    gitCommit: 'unknown',
+    buildTime: 'unknown',
+    apiHost: 'unknown',
+    probeVersion: 'unknown',
+  );
+
+  /// 单行摘要，用于日志。
+  String get summary =>
+      'app=$appVersion git=$gitCommit built=$buildTime host=$apiHost';
+
+  /// 日志导出抬头用的键值对。
+  ///
+  /// 键名与原生侧 `buildInfo()` 返回的键名完全一致——两套命名迟早会漂移，
+  /// 而漂移的表现是「某个字段悄悄丢了」。
+  Map<String, Object?> toMetadata() => <String, Object?>{
+        'app_version': appVersion,
+        'git_commit': gitCommit,
+        'build_time': buildTime,
+        'api_host': apiHost,
+        'probe_version': probeVersion,
+      };
+
+  @override
+  String toString() => 'BuildInfo($summary)';
+}
+
 /// 平台侧的设备信息采集能力。
 ///
 /// 实现必须**不抛异常**：任何读失败都返回 null（部分字段取不到就在快照里留空）。
@@ -141,6 +210,10 @@ abstract class DeviceInfo {
   /// 否则只能解包 APK 翻 dex 判断，那种排查方式是在浪费人的时间。
   /// 默认返回 null（没有原生侧的实现自然也没有版本号）。
   Future<String?> buildTag() async => null;
+
+  /// 结构化构建信息。拿不到时返回 [BuildInfo.unknown] 而不是 null——
+  /// 日志抬头里出现 `app_version=unknown` 比整段缺失更容易看出问题。
+  Future<BuildInfo> buildInfo() async => BuildInfo.unknown;
 
   /// 释放资源（本接口无长生命周期资源，默认空实现）。
   void dispose() {}
@@ -160,6 +233,9 @@ class NoopDeviceInfo implements DeviceInfo {
   // 在这里必须重新写一遍（这一点与 `extends` 不同）。
   @override
   Future<String?> buildTag() async => null;
+
+  @override
+  Future<BuildInfo> buildInfo() async => BuildInfo.unknown;
 
   @override
   void dispose() {}

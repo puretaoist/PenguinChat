@@ -37,7 +37,8 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
-import '../../client_api/session_providers.dart' show dataDirProvider;
+import '../../client_api/session_providers.dart'
+    show dataDirProvider, deviceInfoProvider;
 import '../../infra/log/log_file.dart';
 import '../../kernel/wlogin8/qq8_profiles.dart';
 import '../theme/telegram_theme.dart';
@@ -103,17 +104,28 @@ class Qq8ConnectPage extends ConsumerWidget {
           if (p != null) ref.read(qq8ProfileProvider.notifier).state = p;
         },
         // 导出日志：生成报告 → 写临时文件 → 系统分享面板。
+        //
+        // 抬头必须带版本号与构建标识（2026-10-23 用户明确要求）。理由：排障时
+        // 最先要回答的是「这条日志是哪一版跑出来的」——此前只能靠猜，甚至干过
+        // 解包 APK 翻 dex 来确认装的是旧包。构建信息由 Gradle 在构建期注入
+        // （`BuildConfig`），经 `qq8client/device` 通道读上来。
         onExportLog: () async {
+          final build = await ref.read(deviceInfoProvider).buildInfo();
+          final now = DateTime.now();
           final report = LogExporter.buildReport(
             logDirectory: logDir,
+            now: now,
+            // 文件名也带版本：一列文件就能分辨哪条是哪版，不必逐个打开。
+            version: build.appVersion,
             metadata: <String, Object?>{
               'app': 'PenguinChat QQ 客户端',
-              'time': DateTime.now().toIso8601String(),
+              'time': now.toIso8601String(),
+              ...build.toMetadata(),
             },
           );
           final tmp =
               '${Directory.systemTemp.path}${Platform.pathSeparator}'
-              '${LogExporter.fileNameFor(DateTime.now())}';
+              '${LogExporter.fileNameFor(now, version: build.appVersion)}';
           File(tmp).writeAsStringSync(report);
           await Share.shareXFiles(
             <XFile>[XFile(tmp, mimeType: 'text/plain')],

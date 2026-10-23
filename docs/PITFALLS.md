@@ -1781,6 +1781,129 @@ else 分支）。
 
 ---
 
+## C30. 「自证」不能是常量；DNS 失败要换 IP，不是重试域名
+
+真机调试时遇到两件事，共同点是**排障工具本身失效了**，而不是产品代码错了。
+
+### 现象
+
+2026-10-23 22:48 的真机日志（`qqclient-log-20261023-224841.txt`）：
+
+```
+22:47:56.423 I/Main  设备采集: 构建=device-probe/2-local-android
+22:48:17.748 E/QQ8SVC  登录请求失败 | Qq8TransportException: 连接 msfwifi.3g.qq.com:8080 失败
+    (SocketException: Failed host lookup: 'msfwifi.3g.qq.com'
+     (OS Error: No address associated with hostname, errno = 7))
+22:48:40.032 同一错误复现一次
+```
+
+两个问题：
+
+1. **登录包一个字节都没发出去** —— 卡在 DNS 解析，不是协议问题。
+2. **`构建=device-probe/2-local-android` 这一行没有信息量** —— 它是硬编码常量，
+   从 `55ba932`（10-22 20:04）到 `116e812`（10-23 18:56）**四个提交一次没改过**。
+   结果 18:17 那次真机跑的其实是 `3fe4f43`（10-23 09:04）那一版，**不含
+   `tgtgt`/`0x154` 两处修复**（18:56 才提交），而当时我差点用它否定这两处修复。
+
+主机侧同一时刻 `nslookup msfwifi.3g.qq.com` 有结果、TCP 8080 OPEN ⇒ 服务器
+没问题，是平板所在网络（校园网）的 DNS。
+
+### 坑一：把「自证手段」写成常量，等于没有自证
+
+`DeviceProbe.BUILD_TAG` 原本是 `const val = "device-probe/2-local-android"`，
+设计意图是「日志里能看出装的是哪一版」。但常量不会随代码变。
+
+**修法**：构建时注入，不手写。
+
+`android/app/build.gradle.kts`：
+
+```kotlin
+val gitCommit: String = runCatching {
+        providers.exec {
+            workingDir = rootDir.parentFile
+            commandLine("git", "rev-parse", "--short=7", "--dirty=+dirty", "HEAD")
+        }.standardOutput.asText.get().trim()
+    }.getOrNull()?.takeIf { it.isNotEmpty() } ?: "unknown"
+
+val buildTime: String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date())
+```
+
+`buildFeatures { buildConfig = true }`（AGP 8+ 默认关，不显式打开 `buildConfigField` 不生效），
+然后 `defaultConfig` 里注入五个字段：
+
+| 字段 | 值 | 用途 |
+|---|---|---|
+| `APP_VERSION` | `flutter.versionName + "+" + flutter.versionCode` | 与 `pubspec.yaml` 对得上，用户报障时最容易核对 |
+| `GIT_COMMIT` | `git rev-parse --short=7 --dirty=+dirty HEAD` | 一眼看出装的是哪个提交 |
+| `BUILD_TIME` | 构建时刻 | 同一提交的多次构建也能区分 |
+| `API_HOST` | 可被 `-Pqq8ApiHost=` 覆盖 | 换端点不用改代码 |
+| `API_HOST_OVERRIDE` | 默认空串 | 强制指定单个端点 |
+
+**`--dirty` 是关键**：工作区有未提交改动时，只看 commit 会让人以为装的是
+干净版本，实际混了本地修改。宁可标注成 `116e812+dirty` 也别误导。
+
+**刻意不写进 `versionName`**：`versionName` 每次构建都变，会让「覆盖安装」
+「版本比较」「应用商店灰度」全部失去意义。构建标识是排障辅助，不该污染版本号。
+
+**拿不到 git 时必须退化成 `unknown` 而不是构建失败**：源码压缩包、CI 浅克隆
+且没装 git 都会命中，而构建标识不是构建前提。
+
+### 坑二：DNS 解析失败要换 IP，不是重试同一个域名
+
+`Qq8TcpTransport.connect()` 原本是「一次 `Socket.connect` 失败就直接抛」。
+而 `Failed host lookup` 是**确定性失败**——重试同一个名字必然再失败。
+
+**修法**：
+
+```dart
+List<Qq8Endpoint> get candidates {
+  final explicit = fallbacks;
+  final List<Qq8Endpoint> extra;
+  if (explicit != null) {
+    extra = explicit;
+  } else if (host == qq8DefaultHost && port == qq8DefaultPort) {
+    extra = qq8SeedEndpoints;          // 只在默认主机时挂公网兜底
+  } else {
+    extra = const <Qq8Endpoint>[];
+  }
+  return <Qq8Endpoint>[Qq8Endpoint(host, port, isPrimary: true), ...extra];
+}
+```
+
+种子表来自**实测**（用 icqq 的 `fetchServerList()` 真拉了一次
+`POST https://configsvr.msf.3g.qq.com/configsvr/serverlist.jsp?mType=getssolist`，
+返回 10 条，本机可达性筛出 4 条）：`43.137.59.88:8080`、`153.3.46.86:443`、
+`112.86.231.155:80`、`153.3.244.48:80`。
+
+三个设计决定，每个都有理由：
+
+1. **兜底端点只等主端点的三分之一**。兜底是主端点已经失败后才上场的，
+   用户此刻已经等了 10 秒；四个备胎各等 10 秒就是 50 秒白屏。
+2. **全部失败时异常消息列出每一个端点**。只报最后一个会让人以为「只有一个
+   地址挂了」，而这几个失败原因往往不同（DNS 失败 / 连接被重置 / 超时 / 端口不通）。
+3. **`fallbacks` 默认 null 时按 host 判定，非默认主机不挂公网兜底**。自测用
+   `Qq8TcpTransport(host: loopback)` 模拟「连不上」，若那时还去试公网 IP，
+   「连不上时报错」这条断言会变成「连不上时跑去连别处」——测试就成了假的。
+
+**不做 serverlist 拉取**：`configsvr.msf.3g.qq.com` 本身也要 DNS，DNS 挂了
+这条路同样不可用，写了也救不了，只会多一条永远走不到的分支。
+
+### 教训
+
+1. **排障工具本身也要能被排障**。「日志里有构建标识」这个设计对，但做成
+   常量就对；判断标准是「它会不会随我需要区分的对象变化」。手动维护的
+   自证字段，第一次忘记更新就永久失效。
+2. **DNS 失败和 TCP 失败是两类问题**。前者只能换地址，后者才值得重试同一地址。
+   把它们混在一个 catch 里，就只剩「失败」两个字可看。
+3. **不要用未验证版本的日志去否定某处修复**。这次差点用 18:17 的日志
+   （`3fe4f43`）否定 18:56 才提交的 `tgtgt`/`0x154` 修复——所以判据必须
+   先确认「日志里的版本号是否包含那处修复」，而这就回到了坑一。
+4. **兜底要留诊断口子**。新增 `onConnectAttempt` 回调 + 记录 `connectedEndpoint`，
+   日志里出现裸 IP 就说明走了兜底、当时 DNS 是坏的；否则「连上了」会把
+   网络异常悄悄掩盖过去。
+
+---
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

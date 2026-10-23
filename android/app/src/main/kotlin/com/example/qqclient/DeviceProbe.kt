@@ -41,9 +41,26 @@ object DeviceProbe {
      *
      * 唯一用途是**自证**：一次真机日志里完全看不到本文件对应的 Dart 侧日志，
      * 只能靠解包 APK 翻 dex 才确认装的是旧包。这种事不该靠猜第二次。
-     * 改本文件的采集逻辑时顺手改这个字符串。
+     *
+     * ## 为什么不再是硬编码常量（2026-10-23 修正）
+     *
+     * 曾经这里是 `const val BUILD_TAG = "device-probe/2-local-android"`。
+     * 结果此后连续 4 个提交（含 `tgtgt` / `0x154` 两处协议修复）都没改过这个
+     * 字符串，真机日志里那一行长得一模一样 —— 我无法判断装的是哪一版，
+     * 于是**又**去解包 APK 翻 dex。自证手段做成了常量，等于没有自证。
+     *
+     * 现在改成构建期注入：`git rev-parse --short=7 --dirty` + 构建时刻
+     * （见 `android/app/build.gradle.kts` 的 `buildConfigField`），
+     * 每个提交、每次构建都不同。`+dirty` 后缀表示工作区有未提交改动，
+     * 提醒「这一版不是某个干净提交」。
+     *
+     * 采集逻辑变更不再需要手工同步任何字符串。
      */
-    const val BUILD_TAG = "device-probe/2-local-android"
+    val BUILD_TAG: String =
+        "git:${BuildConfig.GIT_COMMIT} @${BuildConfig.BUILD_TIME}"
+
+    /** 只取采集逻辑自身的语义版本，与构建标识分开记，便于比对代码是否换过。 */
+    const val PROBE_VERSION = "device-probe/2-local-android"
 
 
     /** 官方读不到的占位返回值（`util.java:794-801` 的 `"no message"` 分支）。 */

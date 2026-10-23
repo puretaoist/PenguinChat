@@ -45,6 +45,34 @@ class AndroidDeviceInfo implements DeviceInfo {
     }
   }
 
+  /// 结构化构建信息（版本号 / 提交号 / 构建时刻 / 登录服务器）。
+  ///
+  /// 与 [buildTag] 走同一个 channel 的不同方法：那个返回给人看的单行，
+  /// 这个返回给 `LogExporter.buildReport(metadata:)` 用的键值对。
+  /// 任何一项缺失都退回 [BuildInfo.unknown]——日志抬头里出现 `unknown`
+  /// 比整段缺失更容易看出「这台机器没拿到构建信息」。
+  @override
+  Future<BuildInfo> buildInfo() async {
+    try {
+      final raw = await _channel.invokeMapMethod<String, String>('buildInfo');
+      if (raw == null || raw.isEmpty) return BuildInfo.unknown;
+      String or(String k) {
+        final v = raw[k];
+        return (v == null || v.isEmpty) ? 'unknown' : v;
+      }
+
+      return BuildInfo(
+        appVersion: or('app_version'),
+        gitCommit: or('git_commit'),
+        buildTime: or('build_time'),
+        apiHost: or('api_host'),
+        probeVersion: or('probe_version'),
+      );
+    } on Object {
+      return BuildInfo.unknown;
+    }
+  }
+
   @override
   Future<DeviceSnapshot?> snapshot() async {
     try {

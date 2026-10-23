@@ -1226,7 +1226,7 @@ class Qq8LoginService {
       final ctx = _tlvCtx(expectedUin, passwordMd5: null, token: null);
       final body = Qq8Qrcode.buildFetchBody(ctx, watch);
       final tran = _tran ??= transportBuilder();
-      await tran.connect();
+      await _connect(tran);
       final frame = await tran.send(
         _code2dPacket(ctx, expectedUin, watch, Qq8Qrcode.cmdFetch,
             Qq8Qrcode.headFetch, body),
@@ -1277,7 +1277,7 @@ class Qq8LoginService {
       final ctx = _tlvCtx(_expectedUin, passwordMd5: null, token: null);
       final body = Qq8Qrcode.buildQueryBody(qrsig);
       final tran = _tran ??= transportBuilder();
-      await tran.connect();
+      await _connect(tran);
       final frame = await tran.send(
         _code2dPacket(ctx, _expectedUin, watch, Qq8Qrcode.cmdQuery,
             Qq8Qrcode.headQuery, body),
@@ -1660,6 +1660,28 @@ class Qq8LoginService {
     }
   }
 
+  /// 建连，并把每一次端点尝试写进日志。
+  ///
+  /// ## 为什么需要这层包装（2026-10-23）
+  ///
+  /// 真机上出现过 `Failed host lookup: 'msfwifi.3g.qq.com'` —— 登录包一个字节
+  /// 都没发出去。而日志里只有最后一句异常，看不出「到底试过几个地址、
+  /// 每个是 DNS 失败还是连接被重置」。这两类失败的处置完全不同（前者只能
+  /// 换 IP，后者可能是被中间设备拦），没有这个记录就只能猜。
+  ///
+  /// 顺带记下**实际连上了哪个端点**：日志里出现裸 IP 就说明走了兜底，
+  /// 也就说明当时 DNS 是坏的。否则「连上了」会把网络异常掩盖过去。
+  Future<void> _connect(Qq8Transport tran) async {
+    if (tran is Qq8TcpTransport && tran.onConnectAttempt == null) {
+      tran.onConnectAttempt = (String msg) => _log.i('[连接] $msg');
+    }
+    await tran.connect();
+    if (tran is Qq8TcpTransport) {
+      final ep = tran.connectedEndpoint;
+      if (ep != null) _log.i('[连接] 已建立 ${ep.key}');
+    }
+  }
+
   /// 组三层信封 → 发送 → 拆壳 → 判读分支。
   Future<void> _sendLoginBody(
     int uin,
@@ -1671,7 +1693,7 @@ class Qq8LoginService {
     if (!_passGate()) return;
     final ecdh = _ecdh!;
     final tran = _tran ??= transportBuilder();
-    await tran.connect();
+    await _connect(tran);
 
     // token 续期时票据要贯穿三层：SSO 信封的 tgt/d2（sig）、body 的 0x143。
     final sigInfo = token == null

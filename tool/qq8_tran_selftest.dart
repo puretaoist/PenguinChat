@@ -410,6 +410,103 @@ Future<void> main() async {
     check('splitResponses 走了一遍真实半包路径', r.join(',') == '7,7,7');
   }
 
+  // -- 8. 端点候选与兜底 --------------------------------------------------
+  stdout.writeln('\n【8】端点候选与兜底（DNS 失败时的退路）');
+  {
+    // 默认主机：主端点在前，后面挂种子表。
+    final t = Qq8TcpTransport();
+    final c = t.candidates;
+    check('默认主机时主端点在第一位', c.first.isPrimary && c.first.host == qq8DefaultHost);
+    check('默认主机时挂了兜底种子', c.length == 1 + qq8SeedEndpoints.length,
+        '${c.length}');
+    check('兜底端点不是主端点', c.skip(1).every((e) => !e.isPrimary));
+    check('候选里没有重复的 host:port',
+        c.map((e) => e.key).toSet().length == c.length);
+    await t.close();
+  }
+  {
+    // 显式 fallbacks 优先于内置种子表。
+    final t = Qq8TcpTransport(
+      fallbacks: const <Qq8Endpoint>[Qq8Endpoint('10.0.0.9', 1234)],
+    );
+    final c = t.candidates;
+    check('显式 fallbacks 覆盖内置种子表',
+        c.length == 2 && c[1].host == '10.0.0.9' && c[1].port == 1234);
+    await t.close();
+  }
+  {
+    // 非默认主机（自测 / 自定义端点）绝不能自动挂公网 IP ——
+    // 否则「连不上时报错」那条断言会变成「连不上时跑去连别处」。
+    final t = Qq8TcpTransport(host: InternetAddress.loopbackIPv4.address, port: 1);
+    check('自定义主机不挂公网兜底', t.candidates.length == 1,
+        '${t.candidates.length}');
+    await t.close();
+  }
+  {
+    // 全部端点都连不上：异常消息必须把**每一个**都列出来。
+    // 只报最后一个会让人以为「只有一个地址挂了」，而这几个失败原因往往不同。
+    final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final p1 = probe.port;
+    await probe.close();
+    final probe2 = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final p2 = probe2.port;
+    await probe2.close();
+
+    final attempts = <String>[];
+    final t = Qq8TcpTransport(
+      host: InternetAddress.loopbackIPv4.address,
+      port: p1,
+      connectTimeout: const Duration(milliseconds: 600),
+      fallbacks: <Qq8Endpoint>[
+        Qq8Endpoint(InternetAddress.loopbackIPv4.address, p2),
+      ],
+    )..onConnectAttempt = attempts.add;
+
+    String msg = '';
+    try {
+      await t.connect();
+    } on Qq8TransportException catch (e) {
+      msg = e.message;
+    }
+    check('全失败时异常消息说明尝试了几个端点', msg.contains('已尝试 2 个端点'), msg);
+    check('全失败时逐条列出每个端点', msg.split('\n').where((l) => l.startsWith('  - ')).length == 2, msg);
+    check('attempt 回调记录了每一次尝试', attempts.where((a) => a.contains('尝试连接')).length == 2,
+        '$attempts');
+    check('连不上时没有 connectedEndpoint', t.connectedEndpoint == null);
+    await t.close();
+  }
+  {
+    // 兜底端点真的能接管：第一个端口死、第二个是活的 mock 服务器。
+    final srv = await MockServer.start(<Uint8List>[_bytes([0x5a])]);
+    final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final dead = probe.port;
+    await probe.close();
+
+    final attempts = <String>[];
+    final t = Qq8TcpTransport(
+      host: InternetAddress.loopbackIPv4.address,
+      port: dead,
+      connectTimeout: const Duration(milliseconds: 600),
+      fallbacks: <Qq8Endpoint>[
+        Qq8Endpoint(InternetAddress.loopbackIPv4.address, srv.port),
+      ],
+    )..onConnectAttempt = attempts.add;
+
+    var ok = false;
+    try {
+      await t.connect();
+      ok = t.connectedEndpoint?.port == srv.port;
+      check('兜底端点接管后记下了实际端点', ok, '${t.connectedEndpoint?.key}');
+      check('切到兜底时有明确日志',
+          attempts.any((a) => a.contains('已切到兜底')), '$attempts');
+      final got = await t.send(framePacket(_bytes([0x01])));
+      check('经兜底端点能正常收发', got.join(',') == '90', _hex(got));
+    } finally {
+      await t.close();
+      await srv.stop();
+    }
+  }
+
   // -- 汇总 --------------------------------------------------------------
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');

@@ -250,9 +250,46 @@ class AgeAnchor {
 /// **纯文本、自包含、可直接粘贴**——不要 JSON，因为要发给人的是能读的东西。
 abstract final class LogExporter {
   /// 导出文件的命名：`qqclient-log-20260911-142301.txt`
-  static String fileNameFor(DateTime t) =>
-      '${logFilePrefix}log-${t.year}${_p(t.month)}${_p(t.day)}'
-      '-${_p(t.hour)}${_p(t.minute)}${_p(t.second)}.txt';
+  ///
+  /// 带 [version] 时变成 `qqclient-log-0.1.0-20260911-142301.txt`。
+  ///
+  /// ## 为什么版本号要进文件名（2026-10-23）
+  ///
+  /// 用户把日志发出来时只有文件本身，抬头里的版本号要打开看才知道。
+  /// 文件名带版本号后，一列文件就能看出「这条日志是哪一版跑出来的」——
+  /// 排障时最先要回答的往往就是这个问题。
+  ///
+  /// 版本号里的 `+1`（构建号）会被替换成 `_1`：`+` 在部分聊天软件里
+  /// 会被当成特殊字符或空格，文件名用不着冒这个风险。
+  static String fileNameFor(DateTime t, {String? version}) {
+    final v = _versionForFile(version);
+    return '${logFilePrefix}log-'
+        '${v == null ? '' : '$v-'}'
+        '${t.year}${_p(t.month)}${_p(t.day)}'
+        '-${_p(t.hour)}${_p(t.minute)}${_p(t.second)}.txt';
+  }
+
+  /// 把版本号整理成可安全放进文件名的形态；空值/占位值返回 null。
+  static String? _versionForFile(String? version) {
+    if (version == null) return null;
+    final t = version.trim();
+    // `unknown` 是「没拿到」的占位，写进文件名没有信息量，反而让人以为有。
+    if (t.isEmpty || t == 'unknown') return null;
+    final safe = t.replaceAll('+', '_').replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '');
+    return safe.isEmpty ? null : safe;
+  }
+
+  /// 抬头里的版本号：只做「空/占位」过滤，**不**替换字符。
+  ///
+  /// 与 [_versionForFile] 的区别是刻意保留原始写法（`0.1.0+1` 原样显示），
+  /// 因为文件名受字符集限制而抬头不受；两处都用 [_versionForFile] 会让
+  /// 抬头里的构建号显示成 `0.1.0_1`，和 `pubspec.yaml` 对不上。
+  static String? _sanitizeVersion(String? version) {
+    if (version == null) return null;
+    final t = version.trim();
+    if (t.isEmpty || t == 'unknown') return null;
+    return t;
+  }
 
   static String _p(int v) => v.toString().padLeft(2, '0');
 
@@ -267,12 +304,20 @@ abstract final class LogExporter {
     Directory? logDirectory,
     int fileTailLines = 2000,
     DateTime? now,
+    String? version,
   }) {
     final t = now ?? DateTime.now();
     final b = StringBuffer();
 
     b.writeln('=' * 68);
     b.writeln('QQ 客户端日志导出');
+    // 版本号单独一行、位置固定在「导出时间」上面：排障时第一眼要看的就是
+    // 「这条日志是哪一版跑出来的」，埋在 metadata 里要往下找才看得到。
+    //
+    // `unknown` 一律当作没拿到（与 [_versionForFile] 口径一致）：Dart 侧
+    // `BuildInfo.unknown` 就是把它当默认值，写出来只会让人以为真有这么一版。
+    final v = _sanitizeVersion(version);
+    if (v != null) b.writeln('版本: $v');
     b.writeln('导出时间: ${t.toIso8601String()}');
     b.writeln('=' * 68);
     b.writeln('');
@@ -346,17 +391,20 @@ abstract final class LogExporter {
     LogLevel minLevel = LogLevel.trace,
     Directory? logDirectory,
     DateTime? now,
+    String? version,
   }) async {
     final t = now ?? DateTime.now();
     if (!target.existsSync()) target.createSync(recursive: true);
     final f = File(
-      '${target.path}${Platform.pathSeparator}${fileNameFor(t)}',
+      '${target.path}${Platform.pathSeparator}'
+      '${fileNameFor(t, version: version)}',
     );
     final report = buildReport(
       metadata: metadata,
       minLevel: minLevel,
       logDirectory: logDirectory,
       now: t,
+      version: version,
     );
     await f.writeAsString(report, encoding: utf8, flush: true);
     return f;

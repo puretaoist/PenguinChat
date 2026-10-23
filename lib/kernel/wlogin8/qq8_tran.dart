@@ -72,6 +72,71 @@ const int qq8DefaultPort = 8080;
 /// 单次请求的默认超时。
 const Duration qq8DefaultTimeout = Duration(seconds: 15);
 
+/// 一个可连接的端点。
+///
+/// ## 为什么需要「端点列表」而不是单个 host（2026-10-23）
+///
+/// 真机日志里出现过这个错误：
+///
+/// ```text
+/// Qq8TransportException: 连接 msfwifi.3g.qq.com:8080 失败
+///   (SocketException: Failed host lookup: 'msfwifi.3g.qq.com'
+///    (OS Error: No address associated with hostname, errno = 7))
+/// ```
+///
+/// 也就是**DNS 没能解析出名字**——登录包一个字节都没发出去。当天在电脑上
+/// `nslookup` 同一个名字、TCP 8080 都是通的，纯粹是平板所在网络（校园网
+/// 的 DNS 拦截 / Wi-Fi 刚切换）解析失败。
+///
+/// 这种情况下「重试同一个域名」没有意义：解析失败是确定性的，重试还是失败。
+/// 唯一能自救的是**直接用 IP**。下面的种子表就是为此存在。
+///
+/// ## 种子表从哪来
+///
+/// `POST https://configsvr.msf.3g.qq.com/configsvr/serverlist.jsp?mType=getssolist`
+/// 的真实返回（用 icqq 的 `fetchServerList()` 拉了一次，10 个条目）。取其中
+/// **8080/443/80 三个常用端口的 4 个**，14000 端口的那几个没用上——本协议
+/// 走 8080。
+///
+/// 这些 IP 会随腾讯调度变化、也可能被单个运营商屏蔽，所以它们**只是兜底**：
+/// 永远是「先试域名，失败再试 IP」。宁可多花几秒，也不要让「DNS 抖一下」
+/// 变成「今天用不了」。
+///
+/// 注意：走 serverlist 接口拿最新列表这条路在 DNS 挂掉时同样不可用
+/// （`configsvr.msf.3g.qq.com` 也要解析），所以没有实现它——写了也救不了
+/// 这个场景，只会增加一条永远走不到的分支。
+class Qq8Endpoint {
+  /// 主机名或点分十进制 IP。
+  final String host;
+  final int port;
+
+  /// 是不是「主端点」（域名）。主端点用完整的 [connectTimeout]，
+  /// 兜底 IP 用更短的超时——它们本来就是备胎，不该让用户等太久。
+  final bool isPrimary;
+
+  const Qq8Endpoint(this.host, this.port, {this.isPrimary = false});
+
+  String get key => '$host:$port';
+
+  @override
+  String toString() => key;
+}
+
+/// 主端点（域名）。
+const Qq8Endpoint qq8PrimaryEndpoint =
+    Qq8Endpoint(qq8DefaultHost, qq8DefaultPort, isPrimary: true);
+
+/// 兜底端点（真实 IP，来自官方 serverlist）。
+///
+/// 顺序按 serverlist 返回的先后：前两个通常最稳（icqq 的注释也这么写，
+/// 见 `icqq/lib/core/network.js` 的「通常来说只有前两个 ip 比较稳定」）。
+const List<Qq8Endpoint> qq8SeedEndpoints = <Qq8Endpoint>[
+  Qq8Endpoint('43.137.59.88', 8080),
+  Qq8Endpoint('153.3.46.86', 443),
+  Qq8Endpoint('112.86.231.155', 80),
+  Qq8Endpoint('153.3.244.48', 80),
+];
+
 /// 传输层错误。
 class Qq8TransportException implements Exception {
   final String message;
@@ -197,11 +262,29 @@ class Qq8TcpTransport implements Qq8Transport {
   final String host;
   final int port;
 
-  /// 建连超时。
+  /// 建连超时。**主端点**用它；兜底 IP 用它的三分之一（见 [connect]）。
   final Duration connectTimeout;
 
   /// 默认的单请求超时。
   final Duration timeout;
+
+  /// 主端点失败后依次尝试的备用端点。
+  ///
+  /// 传 null 表示「按 [host]/[port] 自动决定」：只有指向默认登录服务器时
+  /// 才启用 [qq8SeedEndpoints]，其余情况（自测的 loopback、抓包代理、
+  /// 自定义主机）一律不启用。
+  ///
+  /// **这个默认值不是随手写的**：自测用 `Qq8TcpTransport(host: 127.0.0.1)`
+  /// 模拟「连不上」，如果那时还去试公网 IP，测试就会真的发起网络请求，
+  /// 既慢又不稳定——"连不上时报错"这条断言会变成"连不上时跑去连别处"。
+  final List<Qq8Endpoint>? fallbacks;
+
+  /// 可选的建连诊断回调（每次尝试一个端点前调用一次）。
+  ///
+  /// 用来回答「到底试过哪些地址」——DNS 失败时日志里只有最后一句异常，
+  /// 看不出中间试了几个兜底。回调类型刻意用 String 而不是异常对象：
+  /// 调用方是日志，它不需要异常的栈。
+  void Function(String message)? onConnectAttempt;
 
   Socket? _socket;
   final Qq8FrameDecoder _decoder = Qq8FrameDecoder();
@@ -212,12 +295,36 @@ class Qq8TcpTransport implements Qq8Transport {
   /// 流式消费回调（设置后 [send] 的配对逻辑不再生效）。
   void Function(Uint8List frame)? _onFrame;
 
+  /// 本次连接实际连上的端点；未连接时为 null。
+  ///
+  /// 排障价值：日志里出现 `:443` 或裸 IP 就说明**走了兜底**，
+  /// 也就说明当时 DNS 出了问题。否则「连上了」这件事会掩盖掉网络异常。
+  Qq8Endpoint? connectedEndpoint;
+
   Qq8TcpTransport({
     this.host = qq8DefaultHost,
     this.port = qq8DefaultPort,
     this.connectTimeout = const Duration(seconds: 10),
     this.timeout = qq8DefaultTimeout,
+    this.fallbacks,
   });
+
+  /// 本次连接要依次尝试的端点列表（第一个是主端点）。
+  List<Qq8Endpoint> get candidates {
+    final explicit = fallbacks;
+    final List<Qq8Endpoint> extra;
+    if (explicit != null) {
+      extra = explicit;
+    } else if (host == qq8DefaultHost && port == qq8DefaultPort) {
+      extra = qq8SeedEndpoints;
+    } else {
+      extra = const <Qq8Endpoint>[];
+    }
+    return <Qq8Endpoint>[
+      Qq8Endpoint(host, port, isPrimary: true),
+      ...extra.where((e) => e.host != host || e.port != port),
+    ];
+  }
 
   @override
   bool get isConnected => _socket != null;
@@ -225,11 +332,44 @@ class Qq8TcpTransport implements Qq8Transport {
   @override
   Future<void> connect() async {
     if (_socket != null) return;
-    try {
-      _socket = await Socket.connect(host, port, timeout: connectTimeout);
-    } on Object catch (e) {
-      throw Qq8TransportException('连接 $host:$port 失败', e);
+
+    final list = candidates;
+    final errors = <String>[];
+
+    for (var i = 0; i < list.length; i++) {
+      final ep = list[i];
+      // 主端点等满 connectTimeout；兜底端点只等三分之一。
+      // 理由：兜底是「主端点已经失败过一次」之后才上场的，用户此刻已经
+      // 等了 10 秒。再让每个备胎各等 10 秒，四个备胎就是 50 秒白屏。
+      final timeoutFor = ep.isPrimary
+          ? connectTimeout
+          : Duration(
+              milliseconds: (connectTimeout.inMilliseconds / 3).round(),
+            );
+      onConnectAttempt?.call('尝试连接 ${ep.key}（超时 ${timeoutFor.inSeconds}s）'
+          '${i == 0 ? '' : '，第 $i 个兜底'}');
+      try {
+        _socket = await Socket.connect(ep.host, ep.port, timeout: timeoutFor);
+        connectedEndpoint = ep;
+        if (i > 0) {
+          onConnectAttempt?.call('主端点失败，已切到兜底 ${ep.key} 连上');
+        }
+        break;
+      } on Object catch (e) {
+        errors.add('${ep.key}: $e');
+        onConnectAttempt?.call('${ep.key} 失败: $e');
+      }
     }
+
+    if (_socket == null) {
+      // 把所有尝试都塞进异常消息：只报最后一个会让人以为「只有一个地址挂了」，
+      // 而这四种失败往往原因不同（DNS 失败 / 连接被重置 / 超时 / 端口不通）。
+      throw Qq8TransportException(
+        '连接失败（已尝试 ${list.length} 个端点）\n'
+        '${errors.map((e) => '  - $e').join('\n')}',
+      );
+    }
+
     _socket!.setOption(SocketOption.tcpNoDelay, true);
     _decoder.reset();
 
@@ -322,6 +462,7 @@ class Qq8TcpTransport implements Qq8Transport {
   Future<void> close() async {
     final s = _socket;
     _socket = null;
+    connectedEndpoint = null;
     _failPending(Qq8TransportException('传输层已关闭'));
     _decoder.reset();
     if (s != null) {
