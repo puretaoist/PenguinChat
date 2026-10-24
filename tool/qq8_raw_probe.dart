@@ -197,6 +197,16 @@ Future<void> main(List<String> argv) async {
       4: inner,
       6: 'android ${profile.apk.ver}',
     });
+  } else if (cmd == 'MessageSvc.PbGetGroupMsg') {
+    // endSeq=0：icqq buildGroupMsgBody 同布局；官方 tlv 语义里 endSeq=0
+    // 由服务端补成「最新」。若 returnEndSeq 是真值，就找到了第 4 个引导源。
+    final gid = int.parse(args['group'] ?? '0');
+    uniBody = Qq8Pb.encode(<int, Object?>{
+      1: gid,
+      2: 1,
+      3: 0,
+      6: 0,
+    });
   } else if (cmd == 'OidbSvc.0x480_9_IMCore') {
     final buf = Uint8List(9);
     ByteData.sublistView(buf)

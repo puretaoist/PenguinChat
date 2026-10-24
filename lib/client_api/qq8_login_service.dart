@@ -1189,6 +1189,21 @@ class Qq8LoginService {
     } on Object catch (err) {
       _log.d('群 seq 重校准失败（保持现状）：$err');
     }
+    // TODO(remove) 临时诊断：endSeq=0 时服务端是否回真实最新 seq？
+    // 三条引导源全灭（C33），这是第 4 条候选。
+    for (final gid in codes.take(2)) {
+      try {
+        final r2 = await session.sendUni(
+          Qq8History.cmdGetGroupMsg,
+          Qq8Pb.encode(<int, Object?>{1: gid, 2: 1, 3: 0, 6: 0}),
+        );
+        final p2 = Qq8History.parseGroupMsg(r2.payload);
+        _log.w('诊断群 $gid endSeq=0：result=${p2.result} '
+            'returnEndSeq=${p2.returnEndSeq} 条数=${p2.messages.length}');
+      } on Object catch (e) {
+        _log.d('诊断群 $gid 抛 $e');
+      }
+    }
   }
 
   /// 回看某群的 [from, to] seq 区间（游标跳变时补拉）。
