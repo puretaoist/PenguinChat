@@ -250,6 +250,12 @@ class Qq8LoginService {
 
   /// 心跳间隔（默认 4.5 分钟，oicq 的量级）。
   final Duration heartbeatInterval;
+  /// 收消息兜底轮询间隔（推送不可靠时的补拉频率）。
+  final Duration pullInterval;
+  /// 上线后延迟多久做第一次补拉（0 = 不做）。测试里调大避免抢帧。
+  final Duration startupPullDelay;
+  /// 上线后是否对每个群发一次探测把最新 seq 记下来（群消息轮询的前提）
+  final bool primeGroupSeqs;
 
   /// 网络层超时（连接/单请求）。
   final Duration timeout;
@@ -281,6 +287,8 @@ class Qq8LoginService {
 
   /// 增量拉消息的游标（`PbGetMsgResp.sync_cookie`，服务端靠它算增量）。
   Uint8List? _syncCookie;
+  /// 每个群已知的最末 seq（`PbGetGroupMsg.return_end_seq`），群消息轮询用。
+  final Map<int, int> _groupLastSeq = {};
 
   // 一次登录流程内固定的材料（与参考实现一致：同一客户端实例复用同一套）
   Qq8Device? _device;
@@ -369,6 +377,9 @@ class Qq8LoginService {
     this.ecdhBuilder,
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
+    this.pullInterval = const Duration(seconds: 20),
+    this.startupPullDelay = const Duration(seconds: 2),
+    this.primeGroupSeqs = true,
     this.timeout = const Duration(seconds: 15),
   })  : profile = profile ?? qq8DefaultProfile,
         tokenStore = tokenStore ?? _MemoryTokenStore(),
@@ -1039,6 +1050,8 @@ class Qq8LoginService {
       timeout: timeout,
     );
     final page = Qq8History.parseGroupMsg(frame.payload);
+    final end = page.returnEndSeq;
+    if (end != null && end > 0) _groupLastSeq[groupCode] = end;
     _log.i('群历史 gid=$groupCode seq=$beginSeq-$endSeq result=${page.result} '
         '条数=${page.messages.length}');
     return page;
@@ -1104,7 +1117,58 @@ class Qq8LoginService {
     final page = Qq8List.parseGroupList(frame.payload);
     _log.i('群列表：${page.groups.length}/${page.total} 个群'
         '（result=${page.result}）');
+    // 给群消息轮询铺底：每个群探一次最新 seq（不 emit，历史由用户
+    // 打开会话时再拉）。没有这个底，轮询不知道从哪个 seq 开始。
+    if (page.groups.isNotEmpty) {
+      if (primeGroupSeqs) unawaited(primeGroups([for (final g in page.groups) g.gid]));
+    }
     return page;
+  }
+
+  /// 探一遍群的最新 seq（`endSeq=0` = 服务端补成最新）。
+  ///
+  /// 只记 seq 不发消息事件——启动时把每个群最近的消息都 emit 一遍
+  /// 没有意义，历史在用户打开会话时按需拉。
+  Future<void> primeGroups(List<int> groupCodes) async {
+    for (final gid in groupCodes) {
+      if (_groupLastSeq.containsKey(gid)) continue;
+      try {
+        await fetchGroupHistory(groupCode: gid, beginSeq: 0, endSeq: 0);
+      } on Object catch (e) {
+        _log.d('群 $gid seq 探测失败', error: e);
+      }
+    }
+  }
+
+  /// 群消息轮询：对每个已知 seq 的群拉 `last+1 .. last+20`。
+  ///
+  /// 8.2.11 代际群消息**没有拉式同步**（`PbGetMsg` 的会话块只有私聊，
+  /// icqq 同款——群消息只走 `OnlinePush.PbPushGroupMsg` 推送），
+  /// 推送不来时唯一可靠的路就是按 seq 区间轮询。
+  Future<void> _pollGroups(String reason) async {
+    for (final e in _groupLastSeq.entries.toList()) {
+      if (_snapshot.stage != Qq8LoginStage.online) return;
+      final gid = e.key, last = e.value;
+      try {
+        final page = await fetchGroupHistory(
+          groupCode: gid,
+          beginSeq: last + 1,
+          endSeq: last + 20,
+        );
+        if (page.messages.isEmpty) continue;
+        _log.i('$reason（群）：gid=$gid 新消息 ${page.messages.length} 条');
+        for (final m in page.messages) {
+          if (_events.isClosed) return;
+          _events.add(Qq8MessagePush(
+            Qq8PushCmd.pushGroup,
+            message: m,
+            needsAck: false,
+          ));
+        }
+      } on Object catch (err) {
+        _log.d('$reason（群 $gid）失败', error: err);
+      }
+    }
   }
 
   // ------------------------------------------------------------------
@@ -2081,7 +2145,7 @@ class Qq8LoginService {
     // 主动 PbGetMsg 一把，把上线前攒的离线消息先收进来。
     // 延迟 2 秒再补拉：上线瞬间好友/群列表请求正在飞，
     // 立刻再打一个 PbGetMsg 会让「按序吃应答」的测试夹具错位。
-    Future.delayed(const Duration(seconds: 2), () {
+    Future.delayed(startupPullDelay, () {
       // 2 秒里可能已经断线/重登——只在这个 session 还在线时拉
       if (_session == session && _snapshot.stage == Qq8LoginStage.online) {
         unawaited(_pullNewMessages(reason: '上线补拉'));
@@ -2091,7 +2155,7 @@ class Qq8LoginService {
     // 间隔取心跳的 1/3，错开心跳的节奏。
     _pullTimer?.cancel();
     _pullTimer = Timer.periodic(
-      heartbeatInterval ~/ 3,
+      pullInterval,
       (_) => unawaited(_pullNewMessages(reason: '轮询')),
     );
   }
@@ -2114,6 +2178,9 @@ class Qq8LoginService {
     } on Object catch (e) {
       // 拉取失败不致命：轮询下一轮 / 下次通知还会再试
       _log.d('$reason失败', error: e);
+    } finally {
+      // 群消息走独立通道（见 _pollGroups 注释）
+      unawaited(_pollGroups(reason));
     }
   }
 

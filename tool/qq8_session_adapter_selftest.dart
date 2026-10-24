@@ -296,6 +296,9 @@ Future<void> main() async {
     ecdhBuilder: () => _fixedEcdh,
     transportBuilder: () => scripted,
     timeout: const Duration(seconds: 5),
+      // 群探测与上线补拉都会抢脚本帧：测试里都关掉，行为回到纯手动路径
+      startupPullDelay: const Duration(hours: 1),
+      primeGroupSeqs: false,
   );
   final adapter = Qq8SessionAdapter(service: svc, uin: _me);
 
