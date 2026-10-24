@@ -1456,6 +1456,19 @@ class Qq8LoginService {
         if (notifyType != null) unawaited(_pullAfterNotify(notifyType));
       case Qq8UnknownPush(:final cmd, :final note):
         _log.d('未处理的推送 cmd=$cmd${note == null ? '' : '（$note）'}');
+        // 官方对 StatSvc.QueryHB 的处理就是"重新注册推送"
+        // （jadx-main msf/core/push/g.java:601-607，RegPushReason.serverPush）。
+        // 服务端发 QueryHB 意思是"你还在吗，需要继续收推送吗"——
+        // 不理它就会被降到只收配置推送（真机 11:41/12:12：QueryHB
+        // 之后一条消息推送都没有）。这里照官方语义重注册 + 顺手拉一把。
+        if (cmd == 'StatSvc.QueryHB' && _session != null &&
+            _snapshot.stage == Qq8LoginStage.online) {
+          _log.i('QueryHB → 重新注册推送（官方语义）并补拉');
+          unawaited(_session!.register().then((_) {}).catchError((Object e) {
+            _log.d('QueryHB 触发的重注册失败', error: e);
+          }));
+          unawaited(_pullNewMessages(reason: 'QueryHB 补拉'));
+        }
     }
     // 回执：多端同步 / 讨论组的推送要告诉服务端"收到了"，否则会被反复重推。
     // 参考实现只在处理成功后回，这里也一样（解析失败上面就 return 了）。
