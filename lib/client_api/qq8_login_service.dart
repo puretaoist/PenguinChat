@@ -53,6 +53,7 @@ import '../kernel/wlogin8/qq8_config.dart';
 import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_login.dart';
 import '../kernel/wlogin8/qq8_history.dart';
+import '../kernel/wlogin8/qq8_pb.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
@@ -1136,12 +1137,21 @@ class Qq8LoginService {
       if (_groupLastSeq.containsKey(gid)) continue;
       try {
         // (0,0) 区间会被服务端拒（真机 result=103/108），必须先问真实 seq
+        // OIDB 命令要再包一层 `{1: cmd, 2: sub, 3: 0, 4: body, 6: "android <ver>"}`
+        // （oicq client.ts:584 sendOidb / icqq base-client.js:1125 同款）。
+        // 第一版直接把内层 body 发出去，服务端回了个空壳。
         final rsp = await session.sendUni(
           Qq8History.cmdGroupInfo,
-          Qq8History.buildGroupLastSeqBody(
-            subAppId: profile.apk.subid,
-            groupCode: gid,
-          ),
+          Qq8Pb.encode(<int, Object?>{
+            1: 0x88d,
+            2: 0,
+            3: 0,
+            4: Qq8History.buildGroupLastSeqBody(
+              subAppId: profile.apk.subid,
+              groupCode: gid,
+            ),
+            6: 'android ${profile.apk.ver}',
+          }),
         );
         final seq = Qq8History.parseGroupLastSeq(rsp.payload);
         if (seq != null && seq > 0) {
