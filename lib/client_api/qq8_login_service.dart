@@ -291,6 +291,8 @@ class Qq8LoginService {
   Uint8List? _syncCookie;
   /// 每个群已知的最末 seq（`PbGetGroupMsg.return_end_seq`），群消息轮询用。
   final Map<int, int> _groupLastSeq = {};
+  /// seq 探测两路都拿不到的群（本轮会话内不再重试，避免请求风暴）。
+  final Set<int> _primeFailed = {};
 
   // 一次登录流程内固定的材料（与参考实现一致：同一客户端实例复用同一套）
   Qq8Device? _device;
@@ -1139,7 +1141,52 @@ class Qq8LoginService {
   Future<void> primeGroups(List<int> groupCodes) async {
     final session = _session;
     if (session == null) return;
-    for (final gid in groupCodes) {
+    // 只对还没铺底的群发探测；已铺底（哪怕没拿到 seq）不重发——
+    // 真机教训：群列表每 12~23 秒刷一次，重发会变成请求风暴，
+    // 私聊轮询也被挤在后面（用户感知"私聊变慢"）。
+    final pending = [
+      for (final gid in groupCodes)
+        if (!_groupLastSeq.containsKey(gid) && !_primeFailed.contains(gid)) gid,
+    ];
+    if (pending.isEmpty) return;
+    // 批量引导一次：官方 `PbMessageSvc.PbUnReadMsgSeq` 本来就是批量的——
+    // 之前放在 per-gid 循环里，每群都全量重发一遍 = 7 群 49 请求，纯浪费。
+    // 出处：jadx8950 msg_svc$PbUnReadMsgSeqReq/Resp 的 __fieldMap__、
+    // MessageHandler.java:5246-5287（response handler）。
+    //   PbUnReadMsgSeqReq.__fieldMap__ = [10,18,26,34,42]
+    //   ⇒ group_unread_info 是字段 3；响应同布局：字段 3 =
+    //     PbPullGroupMsgSeqResp{1:result, 2:errmsg, 3:[GroupInfoResp]}
+    //     GroupInfoResp{1:group_code, 2:member_seq, 3:group_seq}。
+    try {
+      final rsp2 = await session.sendUni(
+        'PbMessageSvc.PbUnReadMsgSeq',
+        Qq8Pb.encode(<int, Object?>{
+          3: Qq8Pb.encode(<int, Object?>{
+            1: <Object?>[
+              for (final g in pending) Qq8Pb.encode(<int, Object?>{1: g, 2: 0}),
+            ],
+          }),
+        }),
+      );
+      final m2 = Qq8Pb.decode(rsp2.payload);
+      final inner = (Qq8Pb.bytesAt(m2, 3) ?? Uint8List(0));
+      final m3 = Qq8Pb.decode(inner);
+      final result = Qq8Pb.intAt(m3, 1) ?? -1;
+      final infos = (m3[3] ?? const <Object>[]).cast<Object>();
+      _log.d('unreadseq result=$result 条目=${infos.length}');
+      for (final raw in infos) {
+        final info = Qq8Pb.decode(Uint8List.fromList(raw as List<int>));
+        final code = Qq8Pb.intAt(info, 1) ?? 0;
+        final seq = Qq8Pb.intAt(info, 3) ?? 0;
+        if (code > 0 && seq > 0) {
+          _groupLastSeq[code] = seq;
+          _log.i('群 $code 最新 seq=$seq（PbUnReadMsgSeq）');
+        }
+      }
+    } on Object catch (err) {
+      _log.d('unreadseq 抛 $err');
+    }
+    for (final gid in pending) {
       if (_groupLastSeq.containsKey(gid)) continue;
       try {
         // (0,0) 区间会被服务端拒（真机 result=103/108），必须先问真实 seq
@@ -1160,55 +1207,12 @@ class Qq8LoginService {
           }),
         );
         var seq = Qq8History.parseGroupLastSeq(rsp.payload);
-        if ((seq == null || seq <= 0)) {
-          // 0x88d_0 在 8.2.11 上拿不到（真机两轮：内层 [4][1][3][22] 为空）。
-          // 退路：PbGetGroupMsg 的 (0,0) 虽回 result=103/108，
-          // 但响应字段 5（returnEndSeq）在真机上仍带真实值——足够当游标。
-          try {
-            // 官方 8.2.11 的原生引导：PbMessageSvc.PbUnReadMsgSeq
-            // （MessageHandler.java:4222 c()），批量带回每个群的 last_seq。
-            // PbUnReadMsgSeqReq.__fieldMap__ = [10,18,26,34,42]
-            // ⇒ group_unread_info 是字段 3（1=c2c、2=binduin、3=group、
-            //   4=discuss、5=thirdqq）。响应同布局：字段 3 =
-            //   PbPullGroupMsgSeqResp{1:result, 2:errmsg, 3:[GroupInfoResp]}
-            //   GroupInfoResp{1:group_code, 2:member_seq, 3:group_seq}。
-            //   出处：jadx8950 msg_svc$PbUnReadMsgSeqReq/Resp 的 __fieldMap__、
-            //   MessageHandler.java:5246-5287（response handler）。
-            final rsp2 = await session.sendUni(
-              'PbMessageSvc.PbUnReadMsgSeq',
-              Qq8Pb.encode(<int, Object?>{
-                3: Qq8Pb.encode(<int, Object?>{
-                  1: <Object?>[
-                    for (final g in groupCodes)
-                      Qq8Pb.encode(<int, Object?>{1: g, 2: 0}),
-                  ],
-                }),
-              }),
-            );
-            final m2 = Qq8Pb.decode(rsp2.payload);
-            final inner = (Qq8Pb.bytesAt(m2, 3) ?? Uint8List(0));
-            final m3 = Qq8Pb.decode(inner);
-            final result = Qq8Pb.intAt(m3, 1) ?? -1;
-            final infos = (m3[3] ?? const <Object>[]).cast<Object>();
-            _log.d('unreadseq result=$result 条目=${infos.length}');
-            for (final raw in infos) {
-              final info = Qq8Pb.decode(Uint8List.fromList(raw as List<int>));
-              final code = Qq8Pb.intAt(info, 1) ?? 0;
-              final seq = Qq8Pb.intAt(info, 3) ?? 0;
-              if (code > 0 && seq > 0) {
-                _groupLastSeq[code] = seq;
-                _log.i('群 $code 最新 seq=$seq（PbUnReadMsgSeq）');
-              }
-            }
-          } on Object catch (err) {
-            _log.d('unreadseq 抛 $err');
-          }
-        }
         if (seq != null && seq > 0) {
           _groupLastSeq[gid] = seq;
           _log.d('群 $gid 最新 seq=$seq');
         } else {
-          _log.w('群 $gid 没拿到最新 seq（两条路都空）');
+          _primeFailed.add(gid);
+          _log.w('群 $gid 没拿到最新 seq（两路都空，本轮会话不再重试）');
         }
       } on Object catch (e) {
         _log.d('群 $gid seq 探测失败', error: e);
