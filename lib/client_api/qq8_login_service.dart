@@ -274,6 +274,8 @@ class Qq8LoginService {
   Duration reconnectBaseDelay = const Duration(seconds: 2);
 
   bool _reconnecting = false;
+  /// 收消息兜底轮询（PushNotify 不可靠时的补拉）。
+  Timer? _pullTimer;
   Qq8Session? _session;
   Qq8SigBundle? _sig;
 
@@ -1411,6 +1413,8 @@ class Qq8LoginService {
 
   /// 结束会话（停心跳、关连接）。之后要再用就重新登录。
   Future<void> close() async {
+    _pullTimer?.cancel();
+    _pullTimer = null;
     await _pushSub?.cancel();
     _pushSub = null;
     await _session?.close();
@@ -2057,6 +2061,47 @@ class Qq8LoginService {
     session.startHeartbeat(interval: heartbeatInterval);
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.online, uin: uin));
     _log.i('已上线 uin=$uin');
+
+    // 上线先拉一次漏掉的消息：PushNotify 推送在真机上并不可靠
+    // （2026-10-24 11:41 真机：上线后服务端只推了 StatSvc.QueryHB，
+    //  一条 MessageSvc.PushNotify 都没来），所以不能只等推送——
+    // 主动 PbGetMsg 一把，把上线前攒的离线消息先收进来。
+    // 延迟 2 秒再补拉：上线瞬间好友/群列表请求正在飞，
+    // 立刻再打一个 PbGetMsg 会让「按序吃应答」的测试夹具错位。
+    Future.delayed(const Duration(seconds: 2), () {
+      // 2 秒里可能已经断线/重登——只在这个 session 还在线时拉
+      if (_session == session && _snapshot.stage == Qq8LoginStage.online) {
+        unawaited(_pullNewMessages(reason: '上线补拉'));
+      }
+    });
+    // 兜底轮询：推送不来时靠拉（真机 11:41 一条 PushNotify 都没收到）。
+    // 间隔取心跳的 1/3，错开心跳的节奏。
+    _pullTimer?.cancel();
+    _pullTimer = Timer.periodic(
+      heartbeatInterval ~/ 3,
+      (_) => unawaited(_pullNewMessages(reason: '轮询')),
+    );
+  }
+
+  /// 主动拉新消息并走推送同一条流水线（建会话/未读/去重全复用）。
+  Future<void> _pullNewMessages({required String reason}) async {
+    if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
+    try {
+      final page = await pullMessages();
+      if (page.messages.isEmpty) return;
+      _log.i('$reason：${page.messages.length} 条新消息');
+      for (final m in page.messages) {
+        if (_events.isClosed) return;
+        _events.add(Qq8MessagePush(
+          Qq8PushCmd.notify,
+          message: m,
+          needsAck: false,
+        ));
+      }
+    } on Object catch (e) {
+      // 拉取失败不致命：轮询下一轮 / 下次通知还会再试
+      _log.d('$reason失败', error: e);
+    }
   }
 
   /// 断线自动恢复：重连 + 用已存票据续期重上线（不用密码）。
