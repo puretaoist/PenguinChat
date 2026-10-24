@@ -57,6 +57,7 @@ import '../kernel/wlogin8/qq8_pb.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
+import '../kernel/wlogin8/qq8_jce.dart';
 import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_pow.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
@@ -311,6 +312,11 @@ class Qq8LoginService {
   /// 相干的会话。现状（真机 2026-10-22 18:42）：提交回 `type=16`
   /// 「你的用户身份已失效，为保证账号安全，请你重新登录」。
   int? _flowSeq;
+
+  /// ConfigPushSvc.PushReq（config_type=2）带下来的 bigdata 会话
+  /// （群推送可能走这条通道；icqq 存盘并在需要时读回）。
+  Uint8List? _bigdataSigSession;
+  Uint8List? _bigdataSessionKey;
 
   /// 取（或首次分配）本次登录流程的 SSO 序号。
   int get _seq => _flowSeq ??= DateTime.now().millisecondsSinceEpoch & 0x7FFF;
@@ -1159,10 +1165,44 @@ class Qq8LoginService {
           // 退路：PbGetGroupMsg 的 (0,0) 虽回 result=103/108，
           // 但响应字段 5（returnEndSeq）在真机上仍带真实值——足够当游标。
           try {
-            final page = await fetchGroupHistory(
-                groupCode: gid, beginSeq: 0, endSeq: 0);
-            seq = page.returnEndSeq;
-          } on Object catch (_) {}
+            // 官方 8.2.11 的原生引导：PbMessageSvc.PbUnReadMsgSeq
+            // （MessageHandler.java:4222 c()），批量带回每个群的 last_seq。
+            // PbUnReadMsgSeqReq.__fieldMap__ = [10,18,26,34,42]
+            // ⇒ group_unread_info 是字段 3（1=c2c、2=binduin、3=group、
+            //   4=discuss、5=thirdqq）。响应同布局：字段 3 =
+            //   PbPullGroupMsgSeqResp{1:result, 2:errmsg, 3:[GroupInfoResp]}
+            //   GroupInfoResp{1:group_code, 2:member_seq, 3:group_seq}。
+            //   出处：jadx8950 msg_svc$PbUnReadMsgSeqReq/Resp 的 __fieldMap__、
+            //   MessageHandler.java:5246-5287（response handler）。
+            final rsp2 = await session.sendUni(
+              'PbMessageSvc.PbUnReadMsgSeq',
+              Qq8Pb.encode(<int, Object?>{
+                3: Qq8Pb.encode(<int, Object?>{
+                  1: <Object?>[
+                    for (final g in groupCodes)
+                      Qq8Pb.encode(<int, Object?>{1: g, 2: 0}),
+                  ],
+                }),
+              }),
+            );
+            final m2 = Qq8Pb.decode(rsp2.payload);
+            final inner = (Qq8Pb.bytesAt(m2, 3) ?? Uint8List(0));
+            final m3 = Qq8Pb.decode(inner);
+            final result = Qq8Pb.intAt(m3, 1) ?? -1;
+            final infos = (m3[3] ?? const <Object>[]).cast<Object>();
+            _log.d('unreadseq result=$result 条目=${infos.length}');
+            for (final raw in infos) {
+              final info = Qq8Pb.decode(Uint8List.fromList(raw as List<int>));
+              final code = Qq8Pb.intAt(info, 1) ?? 0;
+              final seq = Qq8Pb.intAt(info, 3) ?? 0;
+              if (code > 0 && seq > 0) {
+                _groupLastSeq[code] = seq;
+                _log.i('群 $code 最新 seq=$seq（PbUnReadMsgSeq）');
+              }
+            }
+          } on Object catch (err) {
+            _log.d('unreadseq 抛 $err');
+          }
         }
         if (seq != null && seq > 0) {
           _groupLastSeq[gid] = seq;
@@ -1568,6 +1608,65 @@ class Qq8LoginService {
             _log.d('QueryHB 触发的重注册失败', error: e);
           }));
           unawaited(_pullNewMessages(reason: 'QueryHB 补拉'));
+        }
+        // ConfigPushSvc.PushReq：icqq（base-client.js:1263-1324）的语义是
+        // 「收到必须回 PushResp」，不回的话服务端不把推送全量打开
+        // （真机 14:2x：私聊能拉到、群消息内容被扣——与只差「回执」的
+        // 假设吻合）。响应体 = JCE wrapper：
+        //   servant  QQService.ConfigPushSvc.MainServant
+        //   method   PushResp
+        //   struct   [config_type(嵌套[1]), seq(嵌套[3])]
+        // 完整处理：解析 PushReq → 存 bigdata 会话 → 回带原值的 PushResp。
+        if (cmd == 'ConfigPushSvc.PushReq' && _session != null) {
+          try {
+            var payload = r.payload;
+            if (payload.isNotEmpty && payload[0] == 0) {
+              payload = Uint8List.sublistView(payload, 4);
+            }
+            final nested = Qq8Jce.decodeWrapper(payload);
+            final configType = nested[1];
+            final bigdata = nested[2];
+            final pushSeq = nested[3];
+            if (configType == 2 && bigdata is List<int> && bigdata.isNotEmpty) {
+              // icqq 两步解：`jce.decode(nested[2])[5][5]` 是 pb 的
+              // `{1281: {1: sig_session, 2: session_key, 3: [...]}}`
+              //（直接 pb.decode 会撞 wiretype 1，真机 15:13 实证）。
+              final j = Qq8Jce.decode(Uint8List.fromList(bigdata));
+              final l5 = j[5];
+              if (l5 is List) {
+                final inner5 = (l5 as List<Object?>)[4];
+                if (inner5 is List<int> && inner5.isNotEmpty) {
+                  final mi = Qq8Pb.decode(Uint8List.fromList(inner5));
+                  final inner = Qq8Pb.bytesAt(mi, 1281);
+                  if (inner != null) {
+                    final m = Qq8Pb.decode(inner);
+                    _bigdataSigSession = Qq8Pb.bytesAt(m, 1);
+                    _bigdataSessionKey = Qq8Pb.bytesAt(m, 2);
+                    _log.i('bigdata 会话已存（sig_session=${_bigdataSigSession!.length}B key=${_bigdataSessionKey!.length}B）');
+                  }
+                }
+              }
+            }
+            final body = Qq8Jce.encodeWrapper(
+              service: 'QQService.ConfigPushSvc.MainServant',
+              method: 'PushResp',
+              attributes: <String, Uint8List>{
+                // 官方 c.java:606 是 uniPacket.put("PushResp", gVar)——
+                // 属性键就是 "PushResp"（icqq 用 "MainServant"，两种都试，
+                // 先照官方）。回执带推送的 seq（c.java:613 setRequestSsoSeq）。
+                'PushResp':
+                    Qq8Jce.encodeStruct(<int, Object?>{0: configType, 2: pushSeq}),
+              },
+            );
+            // 这类回执本就没有应答（服务端不等回包），超时按预期忽略。
+            unawaited(_session!
+                .sendUni('ConfigPushSvc.PushResp', body, seq: r.seq)
+                .then((_) => _log.i('ConfigPushSvc.PushReq 已回执（type=$configType）'))
+                .catchError((Object e) =>
+                    _log.d('ConfigPushSvc.PushResp 失败', error: e)));
+          } on Object catch (e) {
+            _log.d('ConfigPush 处理失败', error: e);
+          }
         }
     }
     // 回执：多端同步 / 讨论组的推送要告诉服务端"收到了"，否则会被反复重推。
