@@ -1130,10 +1130,26 @@ class Qq8LoginService {
   /// 只记 seq 不发消息事件——启动时把每个群最近的消息都 emit 一遍
   /// 没有意义，历史在用户打开会话时按需拉。
   Future<void> primeGroups(List<int> groupCodes) async {
+    final session = _session;
+    if (session == null) return;
     for (final gid in groupCodes) {
       if (_groupLastSeq.containsKey(gid)) continue;
       try {
-        await fetchGroupHistory(groupCode: gid, beginSeq: 0, endSeq: 0);
+        // (0,0) 区间会被服务端拒（真机 result=103/108），必须先问真实 seq
+        final rsp = await session.sendUni(
+          Qq8History.cmdGroupInfo,
+          Qq8History.buildGroupLastSeqBody(
+            subAppId: profile.apk.subid,
+            groupCode: gid,
+          ),
+        );
+        final seq = Qq8History.parseGroupLastSeq(rsp.payload);
+        if (seq != null && seq > 0) {
+          _groupLastSeq[gid] = seq;
+          _log.d('群 $gid 最新 seq=$seq');
+        } else {
+          _log.w('群 $gid 没拿到最新 seq（响应结构异常？）');
+        }
       } on Object catch (e) {
         _log.d('群 $gid seq 探测失败', error: e);
       }

@@ -173,6 +173,37 @@ abstract final class Qq8History {
         4: readCnt,
       });
 
+  /// `OidbSvc.0x88d_0`：问服务端"这个群最新一条消息的 seq 是多少"。
+  ///
+  /// 群消息轮询的前提。官方客户端有本地 DB 存着 seq，我们没有——
+  /// 直接发 (0,0) 区间的 `PbGetGroupMsg` 会被拒（真机 2026-10-24：
+  /// 7 个群全部 result=103/108 条数=0），必须先拿真实 seq。
+  /// icqq `group.js:550 _getLastSeq()` 同款：body =
+  /// `{1: subAppId, 2: {1: groupCode, 2: {22: 0}}}`，
+  /// 响应取 `[4][1][3][22]`。
+  static const String cmdGroupInfo = 'OidbSvc.0x88d_0';
+
+  static Uint8List buildGroupLastSeqBody({
+    required int subAppId,
+    required int groupCode,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        1: subAppId,
+        2: Qq8Pb.encode(<int, Object?>{
+          1: groupCode,
+          2: Qq8Pb.encode(<int, Object?>{22: 0}),
+        }),
+      });
+
+  /// 返回群最新 seq；取不到（结构变了/权限没了）返回 null。
+  static int? parseGroupLastSeq(Uint8List oidbPayload) {
+    Object? v = Qq8Pb.decode(oidbPayload)[4];
+    if (v is Uint8List) v = Qq8Pb.decode(v)[1];
+    if (v is Uint8List) v = Qq8Pb.decode(v)[3];
+    if (v is Uint8List) v = Qq8Pb.decode(v)[22];
+    return v is int ? v : null;
+  }
+
   /// 群历史请求体（按 seq 区间取；`endSeq=0` 由服务端补成"最新"）。
   static Uint8List buildGroupMsgBody({
     required int groupCode,
