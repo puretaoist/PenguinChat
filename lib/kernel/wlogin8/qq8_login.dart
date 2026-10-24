@@ -876,6 +876,20 @@ class Qq8LoginResponse {
     return RegExp(r'^\d{11}$').hasMatch(s) ? s : null;
   }
 
+  /// 重新下发短信后的配额提示 `0x17b`。
+  ///
+  /// 官方 `tlv_t17b.java`：`_cmd = 379`，`verify()` 要求 `_body_len >= 4`，
+  /// body 是 `u16 剩余可发次数 ‖ u16 时限（秒）`——`get_available_msg_cnt()`
+  /// 读 `buf_to_int16(_buf, _head_len)`、`get_time_limit()` 读 `_head_len + 2`。
+  ///
+  /// 它的存在本身就是判据：**"重新下发"的应答只有 `0x104` + `0x17b`，
+  /// 不含 `0x174`/`0x178`**，因为二次验证令牌仍然有效、手机号也没变。
+  ({int count, int seconds})? get smsResendQuota {
+    final b = tlvs[0x17B];
+    if (b == null || b.length < 4) return null;
+    return (count: (b[0] << 8) | b[1], seconds: (b[2] << 8) | b[3]);
+  }
+
   /// 设备锁提示语 `0x204`（仅 204 且有该 TLV 时有值）。
   ///
   /// 按 UTF-8 解码（参考实现是 Node 的 `Buffer.toString()`，默认 utf8）。

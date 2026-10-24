@@ -299,6 +299,12 @@ class Qq8LoginService {
   Uint8List? _t547;
   String? _sliderUrl;
 
+  /// 密码线短信验证的目标手机号（`0x178`）。
+  ///
+  /// 单独缓存的原因：「重新下发」的应答**不带 `0x178`**（号码没变），
+  /// 不留一份就会让界面从「已发往 138****」退化成「绑定手机」。
+  String? _verifyPhone;
+
   /// 二维码流程的中间态
   int _expectedUin = 0;
   Uint8List? _qrsig;
@@ -474,6 +480,13 @@ class Qq8LoginService {
         _sessionId = _randomBytes(4);
         _randomKey = _randomBytes(16);
         _flowSeq = null;
+        // 新流程从零开始：上一条流程留下的盐/令牌不能带进来。
+        // （密码→滑块→短信是同一条流程，只有这一层是流程起点；
+        //  `smsLogin: true` 那次续跑要沿用刚拿到的盐与 mpasswd，故不在上面重置。）
+        _t104 = Uint8List(0);
+        _t174 = Uint8List(0);
+        _t547 = null;
+        _verifyPhone = null;
       }
 
       final ctx = _tlvCtx(uin, passwordMd5: passwordMd5, token: token, smsLogin: smsLogin);
@@ -1844,6 +1857,7 @@ class Qq8LoginService {
       _t174 = Uint8List(0);
       _t547 = null;
       _sliderUrl = null;
+      _verifyPhone = null;
       _smsPhone = null;
       _smsRandom = null;
       _smsMsalt = 0;
@@ -1876,10 +1890,26 @@ class Qq8LoginService {
 
     // 短信码验证
     if (r.needsSmsVerify) {
-      _t104 = r.tlvs[0x104] ?? Uint8List(0);
-      _t174 = r.verifyToken ?? Uint8List(0);
-      final autoSent = r.tlvs[0x204] == null && _t174.isEmpty;
+      // ⚠️ 2026-10-24 修正：这里原来是
+      //   `_t104 = r.tlvs[0x104] ?? Uint8List(0); _t174 = r.verifyToken ?? …;`
+      // 即**无条件下发空值覆盖**。而"重新下发短信"的应答长这样：
+      //   `type=160  TLV=0x104, 0x17b`
+      // 没有 `0x174`/`0x178`——不是缺字段，而是**令牌仍然有效、手机号没变**。
+      // 参考实现（icqq `base-client.js:1810-1822`）的判据是
+      //   `if (!t[0x204] && !t[0x174]) return "已向密保手机发送短信验证码"`
+      //   `if (t[0x174] && t[0x178]) this.sig.t174 = t[0x174]`
+      // 令牌只在"新给了"时才更新，从不被清空。照抄旧写法时，点一次"重新下发"
+      // 就会把好令牌换成空、随后报"缺少盐或令牌"、状态机跳 failed，
+      // 用户再也进不回输入框（真机现象：验证码能收到，但界面卡死）。
+      final salt = r.tlvs[0x104];
+      if (salt != null && salt.isNotEmpty) _t104 = salt;
+      final token = r.verifyToken;
+      if (token != null && token.isNotEmpty) _t174 = token;
+      final phone = r.verifyPhone;
+      if (phone != null) _verifyPhone = phone;
+
       if (_t104.isEmpty || _t174.isEmpty) {
+        // 只有"从来没拿到过令牌"才是真失败（首包就不给，说明链路不对）。
         _emit(Qq8LoginSnapshot(
           stage: Qq8LoginStage.failed,
           uin: uin,
@@ -1887,11 +1917,19 @@ class Qq8LoginService {
         ));
         return;
       }
+
+      // 本次是否属于"重新下发"：没有 0x204（设备锁文案）也没有新令牌。
+      final resent = (r.tlvs[0x204] == null) && (token == null || token.isEmpty);
+      final quota = r.smsResendQuota;
+      if (quota != null) {
+        _log.i('短信已重新下发：${quota.count} 次 / ${quota.seconds}s 内可再发');
+      }
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.needsSmsCode,
         uin: uin,
-        phone: r.verifyPhone,
-        smsAutoSent: autoSent,
+        // 重新下发不带 0x178，用上一条记住的号码，避免界面突然显示"绑定手机"。
+        phone: phone ?? _verifyPhone,
+        smsAutoSent: resent,
       ));
       return;
     }

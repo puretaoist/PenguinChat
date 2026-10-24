@@ -457,6 +457,57 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
+  section('2b. 重新下发短信：应答不带 0x174 时必须保留旧令牌');
+  //
+  // 真机 2026-10-24 08:11 的现象：滑块通过后拿到 type=160（0x104/0x174/0x178），
+  // 用户点「重新下发」，应答是 `type=160 TLV=0x104,0x17b`——**没有 0x174**。
+  // 旧代码无条件下发 `_t174 = r.verifyToken ?? Uint8List(0)`，把好令牌覆盖成空，
+  // 随后走「缺少盐或令牌」→ failed，界面再也回不到输入框。
+  // 判据：重新下发之后**仍停在 needsSmsCode**，且手机号还在。
+  {
+    final store = _MemStore();
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      // 1) 首次要求短信：令牌 + 手机号
+      _frame(1, 'wtlogin.login', _payload(160, <int, List<int>>{
+        0x104: List<int>.filled(20, 0x42),
+        0x174: _hex('aabbccdd'),
+        0x178: <int>[0x31, 0x0b, ...'13800000000'.codeUnits],
+      })),
+      // 2) 重新下发的应答：只有新盐 + 配额提示（0x17b = u16 次数 ‖ u16 秒）
+      _frame(2, 'wtlogin.login', _payload(160, <int, List<int>>{
+        0x104: List<int>.filled(20, 0x43),
+        0x17B: _hex('0003003c'),
+      })),
+      // 3) 提交验证码 → 成功
+      _successFrame(3),
+      _registerFrame(1),
+    ]);
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithPassword(uin: 10001, password: 'hunter2');
+    check('首次停在 needsSmsCode', svc.snapshot.stage == Qq8LoginStage.needsSmsCode,
+        svc.snapshot.stage.name);
+
+    await svc.requestSmsCode();
+    check('重新下发后仍停在 needsSmsCode（不是 failed）',
+        svc.snapshot.stage == Qq8LoginStage.needsSmsCode,
+        svc.snapshot.stage.name);
+    check('重新下发标记为"已自动下发"', svc.snapshot.smsAutoSent);
+    check('重新下发后手机号仍保留（应答不带 0x178）',
+        svc.snapshot.phone == '13800000000', '${svc.snapshot.phone}');
+
+    await svc.submitSmsCode('654321');
+    check('重新下发后仍能继续提交验证码并上线',
+        svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
   section('3. 设备锁（204）→ 解锁 → 上线');
   {
     final store = _MemStore();
