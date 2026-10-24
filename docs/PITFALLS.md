@@ -2033,6 +2033,26 @@ register 无 ack 可能意味着服务端把我们按"受限客户端"对待：�
 **追记（同日晚）**：第 4 个来源（`endSeq=0`）实测 `result=101`。四个引导源全灭 + `PbGetGroupMsg` 任意区间 103/104 + `PushResp` 无应答 + register 无 ack + 官方在线与否不影响 ⇒ 8.2.11 会话上群内容被服务端**整体扣留**，缺口在会话权限层（register 确认）。诊断探针暂留代码（`TODO(remove)`，每 10 轮 2 请求），供日后档案/会话变化时复测。
 
 
+## C34. `SSO.HelloPush` 是推送通道握手，不回送就永远收不到消息推送
+
+**发现路径**：C33 收线后回头数真机日志里的「未处理的推送」，发现有 12 次 `SSO.HelloPush` 被我们当「命令字未注册」丢掉，而 `StatSvc.QueryHB` 高达 330 次。
+
+**官方语义**（`com/tencent/mobileqq/msf/core/push/g.java:2343-2363`）：
+```java
+ToServiceMsg toServiceMsg = new ToServiceMsg("", uin, "SSO.HelloPush");
+toServiceMsg.putWupBuffer(fromServiceMsg.getWupBuffer());   // 收到的字节原样
+toServiceMsg.setRequestSsoSeq(fromServiceMsg.getRequestSsoSeq());  // seq 原样
+this.c.sendSsoMsg(toServiceMsg);                            // 回到服务端
+```
+即「**把收到的 payload 原样回送，seq 用对方给的**」，serviceCmd 仍是 `SSO.HelloPush`。
+
+**为什么这是群消息的根因候选**：HelloPush 是服务端探测「推送通道是否活着」的握手。不回送 ⇒ 服务端判定通道不可用 ⇒ 只推**不要求握手**的配置类消息（我们确实收到了 `ConfigPushSvc.PushReq`/`PushDomain`），而 `OnlinePush.PbPushGroupMsg` 一条都不来。这同时解释了 `QueryHB` 反复出现（服务端在反复试探）和 `register` 无 ack。
+
+**实现**（`lib/client_api/qq8_login_service.dart` 的 `_onPush`）：`Qq8UnknownPush` 分支判 `cmd == 'SSO.HelloPush'` 且已在线，就用 `session.sendUni('SSO.HelloPush', r.payload, seq: r.seq)` 原样回送。
+
+**判据教训**：日志里「未处理的推送」这类**看似无害的 debug 行**要定期按频次排序看——12 次 HelloPush 淹没在 330 次 QueryHB 里，看单条永远发现不了。
+
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

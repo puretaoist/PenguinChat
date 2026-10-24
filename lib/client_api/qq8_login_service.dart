@@ -1685,6 +1685,26 @@ class Qq8LoginService {
         if (notifyType != null) unawaited(_pullAfterNotify(notifyType));
       case Qq8UnknownPush(:final cmd, :final note):
         _log.d('未处理的推送 cmd=$cmd${note == null ? '' : '（$note）'}');
+        // SSO.HelloPush = 推送通道握手。官方 msf/core/push/g.java:2343-2363
+        // 的做法是「把收到的 wupBuffer 原样回送」（putWupBuffer + sendSsoMsg，
+        // serviceCmd 仍是 SSO.HelloPush、seq 原样带回）。没回送 = 服务端认为
+        // 推送通道不可用，于是只推配置类（不需要握手的）消息，
+        // 真机 2026-10-24 全天 12 次 HelloPush 全被我们当"未注册"丢掉，
+        // 这就是群消息/实时推送一直收不到的根因候选。
+        if (cmd == 'SSO.HelloPush' && _session != null &&
+            _snapshot.stage == Qq8LoginStage.online) {
+          _log.i('SSO.HelloPush → 回送握手（官方语义：原样回声）');
+          unawaited(
+            _session!
+                // seq 原样带回（官方 setRequestSsoSeq(fromServiceMsg.getRequestSsoSeq())）
+                .sendUni('SSO.HelloPush', Uint8List.fromList(r.payload),
+                    seq: r.seq, timeout: const Duration(seconds: 5))
+                .then((resp) => _log.d('HelloPush 回送已发出，服务端回 ${resp.payload.length}B'))
+                .catchError((Object e) {
+                  _log.d('HelloPush 回送失败', error: e);
+                }),
+          );
+        }
         // 官方对 StatSvc.QueryHB 的处理就是"重新注册推送"
         // （jadx-main msf/core/push/g.java:601-607，RegPushReason.serverPush）。
         // 服务端发 QueryHB 意思是"你还在吗，需要继续收推送吗"——
