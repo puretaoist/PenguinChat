@@ -147,14 +147,19 @@ Future<void> main(List<String> argv) async {
   out('登录 type=${parsed.type} t119=${parsed.t119?.length} TLV=${parsed.tlvs.keys.toList()}');
   if (parsed.t119 == null) {
     final t146 = parsed.tlvs[0x146];
-    if (t146 != null && t146.length > 6) {
-      // 0x146 = u16 ? ‖ u16 titleLen ‖ title ‖ u16 msgLen ‖ msg
-      final tl = (t146[2] << 8) | t146[3];
-      final title = utf8.decode(t146.sublist(4, 4 + tl), allowMalformed: true);
-      final ml = (t146[4 + tl] << 8) | t146[5 + tl];
-      final msg = utf8.decode(t146.sublist(6 + tl, 6 + tl + ml),
-          allowMalformed: true);
-      out('  0x146: title=$title msg=$msg');
+    try {
+      if (t146 != null && t146.length > 6) {
+        // 0x146 = u16 ? ‖ u16 titleLen ‖ title ‖ u16 msgLen ‖ msg
+        // （exchange_emp 的 0x146 布局与 wtlogin.login 不同，解析失败只 dump hex）
+        final tl = (t146[2] << 8) | t146[3];
+        final title = utf8.decode(t146.sublist(4, 4 + tl), allowMalformed: true);
+        final ml = (t146[4 + tl] << 8) | t146[5 + tl];
+        final msg = utf8.decode(t146.sublist(6 + tl, 6 + tl + ml),
+            allowMalformed: true);
+        out('  0x146: title=$title msg=$msg');
+      }
+    } on Object {
+      out('  0x146 布局不是预期形态，hex=${t146 == null ? '(无)' : Uint8List.fromList(t146).length}B');
     }
     out('✗ 无 t119，退出');
     await tran.close();
@@ -172,7 +177,27 @@ Future<void> main(List<String> argv) async {
 
   // ---- 第二步：发目标 UNI 包 ----
   final Uint8List uniBody;
-  if (cmd == 'OidbSvc.0x480_9_IMCore') {
+  if (cmd == 'OidbSvc.0x88d_0') {
+    // icqq group.js:551 _getLastSeq 的原样布局：
+    //   {1: apk.subid, 2: {1: gid, 2: {22: 0}}}
+    // 再包 OIDB 外壳 {1: cmd, 2: sub, 3: 0, 4: body, 6: "android <ver>"}。
+    // 响应按 icqq 读法是 [4][1][3][22] = 群最新 seq。
+    final gid = int.parse(args['group'] ?? '0');
+    final inner = Qq8Pb.encode(<int, Object?>{
+      1: profile.apk.subid,
+      2: Qq8Pb.encode(<int, Object?>{
+        1: gid,
+        2: Qq8Pb.encode(<int, Object?>{22: 0}),
+      }),
+    });
+    uniBody = Qq8Pb.encode(<int, Object?>{
+      1: 'OidbSvc.0x88d_0',
+      2: 0,
+      3: 0,
+      4: inner,
+      6: 'android ${profile.apk.ver}',
+    });
+  } else if (cmd == 'OidbSvc.0x480_9_IMCore') {
     final buf = Uint8List(9);
     ByteData.sublistView(buf)
       ..setUint32(0, uin)

@@ -1138,6 +1138,76 @@ class Qq8LoginService {
   ///
   /// 只记 seq 不发消息事件——启动时把每个群最近的消息都 emit 一遍
   /// 没有意义，历史在用户打开会话时按需拉。
+  /// 重新问一次 `PbUnReadMsgSeq`，把游标校准到服务端真值。
+  /// 探测失败（抛/全空）就保持现状——不影响本轮私聊拉取。
+  Future<void> _resyncGroupSeqs() async {
+    final session = _session;
+    if (session == null) return;
+    final codes = [
+      for (final e in _groupLastSeq.entries)
+        if (!_primeFailed.contains(e.key)) e.key,
+    ];
+    if (codes.isEmpty) return;
+    try {
+      final rsp = await session.sendUni(
+        'PbMessageSvc.PbUnReadMsgSeq',
+        Qq8Pb.encode(<int, Object?>{
+          3: Qq8Pb.encode(<int, Object?>{
+            1: <Object?>[
+              for (final g in codes) Qq8Pb.encode(<int, Object?>{1: g, 2: 0}),
+            ],
+          }),
+        }),
+      );
+      final m = Qq8Pb.decode(rsp.payload);
+      final inner = (Qq8Pb.bytesAt(m, 3) ?? Uint8List(0));
+      final m3 = Qq8Pb.decode(inner);
+      final result = Qq8Pb.intAt(m3, 1) ?? -1;
+      final infos = (m3[3] ?? const <Object>[]).cast<Object>();
+      var updated = 0;
+      for (final raw in infos) {
+        final info = Qq8Pb.decode(Uint8List.fromList(raw as List<int>));
+        final code = Qq8Pb.intAt(info, 1) ?? 0;
+        final seq = Qq8Pb.intAt(info, 3) ?? 0;
+        final known = _groupLastSeq[code] ?? 0;
+        if (code > 0 && seq != known) {
+          // 服务端真值可能**低于**盲推进的光标——(0,0)/103/104 的
+          // returnEndSeq 把光标越推越远（真机 17:47 实证：盲 10214 vs 真 9934）。
+          // 无论方向都以真值为准；真值更高才回看（真值更低说明之前
+          // 拉到的窗口本来就空，无需补）。
+          _log.w('群 $code 游标重校准：$known → $seq');
+          if (seq > known) {
+            unawaited(_catchUpGroup(code, from: known + 1, to: seq));
+          }
+          _groupLastSeq[code] = seq;
+          updated++;
+        }
+      }
+      if (updated > 0) {
+        _log.i('群 seq 重校准：$updated 个群有跳变（result=$result）');
+      }
+    } on Object catch (err) {
+      _log.d('群 seq 重校准失败（保持现状）：$err');
+    }
+  }
+
+  /// 回看某群的 [from, to] seq 区间（游标跳变时补拉）。
+  Future<void> _catchUpGroup(int groupCode,
+      {required int from, required int to}) async {
+    try {
+      // 区间超过 20 条就只拉最后 20 条（PbGetGroupMsg 单次上限）。
+      final begin = (to - from + 1 > 20) ? to - 19 : from;
+      final page = await fetchGroupHistory(
+        groupCode: groupCode,
+        beginSeq: begin,
+        endSeq: to,
+      );
+      _log.i('群 $groupCode 回看 $begin-$to：result=${page.result} 条数=${page.messages.length}');
+    } on Object catch (err) {
+      _log.d('群 $groupCode 回看失败：$err');
+    }
+  }
+
   Future<void> primeGroups(List<int> groupCodes) async {
     final session = _session;
     if (session == null) return;
@@ -2299,9 +2369,21 @@ class Qq8LoginService {
     );
   }
 
+  /// 轮询周期计数：每 [_groupResyncEvery] 次重新问一次 UnReadMsgSeq。
+  int _pullCycles = 0;
+  static const int _groupResyncEvery = 10;
+
   /// 主动拉新消息并走推送同一条流水线（建会话/未读/去重全复用）。
   Future<void> _pullNewMessages({required String reason}) async {
     if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
+    // 每 10 个周期重新问一次真实群 seq：盲推进的光标会跳过"后来才放行"的
+    // 消息（服务端先扣后放，或窗口恰好错过），这里用 1 个请求把游标拉回真值。
+    // 仅在有群且上次引导拿到了结果时做（_primeFailed 的群不重复问）。
+    if ((++_pullCycles % _groupResyncEvery) == 0 &&
+        _groupLastSeq.isNotEmpty &&
+        _primeFailed.length < _groupLastSeq.length) {
+      await _resyncGroupSeqs();
+    }
     try {
       final page = await pullMessages();
       if (page.messages.isEmpty) return;
