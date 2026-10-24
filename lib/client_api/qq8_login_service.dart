@@ -1153,12 +1153,22 @@ class Qq8LoginService {
             6: 'android ${profile.apk.ver}',
           }),
         );
-        final seq = Qq8History.parseGroupLastSeq(rsp.payload);
+        var seq = Qq8History.parseGroupLastSeq(rsp.payload);
+        if ((seq == null || seq <= 0)) {
+          // 0x88d_0 在 8.2.11 上拿不到（真机两轮：内层 [4][1][3][22] 为空）。
+          // 退路：PbGetGroupMsg 的 (0,0) 虽回 result=103/108，
+          // 但响应字段 5（returnEndSeq）在真机上仍带真实值——足够当游标。
+          try {
+            final page = await fetchGroupHistory(
+                groupCode: gid, beginSeq: 0, endSeq: 0);
+            seq = page.returnEndSeq;
+          } on Object catch (_) {}
+        }
         if (seq != null && seq > 0) {
           _groupLastSeq[gid] = seq;
           _log.d('群 $gid 最新 seq=$seq');
         } else {
-          _log.w('群 $gid 没拿到最新 seq（响应结构异常？）');
+          _log.w('群 $gid 没拿到最新 seq（两条路都空）');
         }
       } on Object catch (e) {
         _log.d('群 $gid seq 探测失败', error: e);
