@@ -535,6 +535,52 @@ Future<void> main() async {
       timeout: const Duration(milliseconds: 300),
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
+  // ----------------------------------------------------------------
+  section('2e. 断线自动恢复：只用票据续期，不用密码');
+  //
+  // 官方断线后自动重建连接并用已有票据续登。这里验证两件事：
+  // ① 手动调 reconnect() 能用票据重新上线；
+  // ② 恢复过程发的包里没有密码登录包（subCmd=9 的明文无从看，但脚本
+  //    帧序保证走的是 token 路径——token 登录只占 1 帧响应）。
+  {
+    final store = _MemStore();
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      _frame(1, 'wtlogin.login', _payload(160, <int, List<int>>{
+        0x104: List<int>.filled(20, 0x42),
+        0x174: _hex('aabbccdd'),
+        0x178: <int>[0x31, 0x0b, ...'13800138000'.codeUnits],
+      })),
+      _successFrame(2),
+      // 3) 首次上线的 register 应答
+      _registerFrame(2),
+      // 4) 断线恢复：token 续期成功 + 再次 register 成功。
+      //    token 路径的设备 tgtgt = MD5(d2key)，0x119 要用派生密钥加密
+      //    （d2key 来自帧 2 的 0x305 = 0xa3×16）。
+      _successFrame(4, key: md5Bytes(_hex('a3' * 16))),
+      _registerFrame(4),
+    ]);
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      timeout: const Duration(milliseconds: 300),
+      heartbeatInterval: const Duration(hours: 1), // 测试里不让心跳干扰
+    )..reconnectBaseDelay = const Duration(milliseconds: 10);
+    await svc.loginWithPassword(uin: 10001, password: 'hunter2');
+    await svc.submitSmsCode('654321');
+    check('前置：已上线', svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+    check('前置：票据已存', store.data != null && store.data!.usable);
+
+    await svc.reconnect(uin: 10001);
+    check('票据续期后重新上线', svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+    check('恢复后总共发出 5 个登录层包（密码/短信/首注册/续期/再注册）',
+        scripted.sent.length == 5, '${scripted.sent.length}');
+    await svc.close();
+  }
+
     await svc.submitSmsCode('654321');
     check('register 无应答仍算上线（icqq -2 语义）',
         svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);

@@ -263,6 +263,17 @@ class Qq8LoginService {
   StreamSubscription<Qq8SsoResponse>? _pushSub;
 
   Qq8Transport? _tran;
+
+  /// 断线自动恢复的尝试次数与退避基数（每次翻倍：2s / 4s / 6s…）。
+  ///
+  /// 可变字段是给自测用的：测试把它们缩到毫秒级，不用真等几秒。
+  /// 恢复只用票据续期（`loginWithToken`），**绝不用密码**——自动流程里
+  /// 把口令再发一遍，等于向服务端呈现"无限重试爆破"的信号。
+  int reconnectAttempts = 3;
+
+  Duration reconnectBaseDelay = const Duration(seconds: 2);
+
+  bool _reconnecting = false;
   Qq8Session? _session;
   Qq8SigBundle? _sig;
 
@@ -2011,8 +2022,9 @@ class Qq8LoginService {
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.disconnected,
         uin: uin,
-        error: '连接已断开（心跳连续失败），可重新登录或重连',
+        error: '连接已断开（心跳连续失败），正在尝试自动恢复',
       ));
+      unawaited(reconnect(uin: uin));
     };
     _session = session;
     _pushSub?.cancel();
@@ -2045,6 +2057,51 @@ class Qq8LoginService {
     session.startHeartbeat(interval: heartbeatInterval);
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.online, uin: uin));
     _log.i('已上线 uin=$uin');
+  }
+
+  /// 断线自动恢复：重连 + 用已存票据续期重上线（不用密码）。
+  ///
+  /// 官方对照（wtlogin 日志）：连接断了会自动重建并用已有票据续登，
+  /// 全程不惊动用户。这里同样只用票据；没有可用票据就停在 disconnected
+  /// 等用户手动重登——**不要**在自动路径里退化成密码登录。
+  ///
+  /// 也公开给 UI 的「重连」按钮用（断线提示里写的就是"可重新登录或重连"）。
+  /// [reconnectAttempts] 次退避重试全失败后停在 disconnected。
+  Future<void> reconnect({required int uin}) async {
+    if (_reconnecting) return;
+    _reconnecting = true;
+    try {
+      for (var attempt = 1; attempt <= reconnectAttempts; attempt++) {
+        if (_states.isClosed) return; // close() 之后不再抢跑
+        await Future<void>.delayed(reconnectBaseDelay * attempt);
+        if (_states.isClosed) return;
+        final token = await tokenStore.load(uin);
+        if (token == null || !token.usable) {
+          _log.w('断线恢复：没有可用票据，停在断线状态等手动重登');
+          return;
+        }
+        _log.i('断线恢复：第 $attempt/$reconnectAttempts 次（票据续期）');
+        try {
+          await loginWithToken(uin: uin);
+        } on Object catch (e) {
+          _log.w('断线恢复第 $attempt 次抛异常', error: e);
+          continue;
+        }
+        if (_snapshot.stage == Qq8LoginStage.online) {
+          _log.i('断线恢复成功（第 $attempt 次）');
+          return;
+        }
+        _log.w('断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试');
+      }
+      _log.w('断线恢复 $reconnectAttempts 次均失败，停在断线状态等手动重登');
+      _emit(Qq8LoginSnapshot(
+        stage: Qq8LoginStage.disconnected,
+        uin: uin,
+        error: '自动重连失败（已尝试 $reconnectAttempts 次），请手动重新登录',
+      ));
+    } finally {
+      _reconnecting = false;
+    }
   }
 
   void _fail(String what, Object e, StackTrace st) {
