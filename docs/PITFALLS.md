@@ -1977,6 +1977,40 @@ if (type === 160 || type === 162 || type === 239) {
 4. **状态机不能有"跳不回去"的分支**。失败文案本身没问题，问题是判据错了导致
    用户失去继续的入口——这类 bug 在日志里只表现为"一条 type=160 之后再无动静"。
 
+## C32. 有些服务端行为"就是没有应答"——register 无 ack 是边界，不是 bug
+
+**现象**：`StatSvc.register`（SvcReqRegister，登录层 type=1 信封）真机 5 次发出，全部 10 秒超时无 ack；
+但随后的 `Heartbeat.Alive`、`Client.CorrectTime`、`OidbSvc.0x480_9_IMCore` 全部正常应答，
+且服务端主动推 `ConfigPushSvc.PushReq` ⇒ 会话实际是"上线"的，只是 register 这个命令字本身不回包（或回包我们收不到）。
+
+**取证过程**（2026-10-24，逐项排除到只剩一条）：
+1. 请求体与 icqq 逐字段核对：39 个字段的 tag 全部对上官方 `SvcReqRegister.writeTo`
+   （tag 0=uin、4=iStatus、11=iOSVersion、16=guid、19/20=model、21=OSVer、23=iLargeSeq、
+   33=0x769 body、38=ExtOnlineStatus、39=BatteryStatus）。icqq 数组第 N 项 = 官方 tag N。
+2. icqq 与官方的差异只有两处，且 icqq 能正常注册 ⇒ 都不是门槛：
+   - tag 23 `iLargeSeq`：官方发持久化值（`aVar.k.iLargeSeq`），icqq/我们发 0；
+   - tag 33：官方发 `MsfPullConfigUtil.pullConfigRequest(false)`，icqq 用 `pb.encode({1:46,…,2:283})` 顶替。
+3. UNI 外壳实验（register 走 `0x0B` 业务外壳）也被排除：回包只有 echo（ret=167），
+   与 ack 语义无关，已回退。
+4. icqq 自己也是 `FN_SEND(pkt, 6)` 超时后按三态判据把 `-2`（超时）当作成功继续。
+
+**结论**：把 register 无 ack 当作"服务端不回这个命令字"处理，而不是当作失败。
+icqq 的三态判据（`1` 收到且 rsp[9] 真 / `-1` 收到但假 / `-2` 超时继续）就是为这个准备的。
+
+**连带影响（未证实但高度怀疑）**：群消息内容 `PbGetGroupMsg` 对所有群、所有合法 seq 区间
+恒回 `result=103/104`、条数 0（群 seq 在涨 ⇒ 消息在发生）；私聊 `PbGetMsg` 正常。
+官方收群推送的唯一前置是 register 成功 + 心跳保活（`msf/core/push/e.java:52-160`），
+register 无 ack 可能意味着服务端把我们按"受限客户端"对待：私聊给、群不给。
+切 8.9.50 档对照被票据代际绑定挡住（8.2.11 票据在 8.9.50 档 `exchange_emp` 回 `type=15`），
+需要先用对应档案登录才能做这个 A/B。
+
+**教训**：
+1. **参考实现的"超时也算成功"不是偷懒，是实测出来的边界**。把超时当失败会把整个
+   上线链路判死；把超时当成功但不去追"服务端为什么不该沉默"，又会留下隐性行为差异。
+   正确做法是：先按参考实现处理，再把差异记录在案并设计对照实验。
+2. **对照实验要先算成本**：切档案对照需要新票据，票据又绑定档案 ⇒ 实验前置是一次完整
+   登录，不是一次请求。设计实验前先盘"实验的前置是什么"。
+
 ---
 
 ## D. 网络与环境
