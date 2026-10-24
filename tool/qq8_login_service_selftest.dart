@@ -27,6 +27,7 @@ import 'package:qqclient/kernel/wlogin8/qq8_history.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_image.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_list.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_push.dart';
@@ -1121,6 +1122,50 @@ Future<void> main() async {
     check('闸门全开：正常登录并上线',
         svc3.snapshot.stage == Qq8LoginStage.online, svc3.snapshot.stage.name);
     await svc3.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('2d. A1 长期凭据持久化（只存不用，发包行为不变）');
+  {
+    final a1Bytes = _hex('aa' * 152); // 官方日志 A1:152 字节
+    final bundle = Qq8SigBundle(
+      all: const <int, Uint8List>{},
+      tgt: _hex('1122334455667788'),
+      d2: _hex('a2' * 64),
+      d2key: _hex('a3' * 16),
+      t106: a1Bytes,
+    );
+    final data = Qq8TokenData.fromSigBundle(10001, bundle);
+    check('fromSigBundle 把 0x119 的 0x106 存成 a1',
+        _plainHexOf(data.a1) == _plainHexOf(a1Bytes), data.a1.length.toString());
+
+    final json = data.toJson();
+    check('toJson 带 a1 键', json['a1'] == _plainHexOf(a1Bytes));
+    check('fromJson 往返一致',
+        _plainHexOf(Qq8TokenData.fromJson(json).a1) == _plainHexOf(a1Bytes));
+
+    // 旧文件（保存于加 a1 之前）没有这个键：必须读成空、不抛异常
+    final legacy = <String, Object?>{
+      'uin': 10001,
+      'saved_at': '2026-10-23',
+      'tgt': '1122334455667788',
+      'd2': 'a2' * 64,
+      'd2key': 'a3' * 16,
+      'sig_key': 'a4' * 48,
+      'ticket_key': 'a5' * 16,
+      'srm_token': 'a6' * 56,
+    };
+    final loaded = Qq8TokenData.fromJson(legacy);
+    check('旧票据文件（无 a1 键）读成空', loaded.a1.isEmpty);
+    check('旧票据文件其余字段完好', loaded.usable && loaded.d2.length == 64);
+
+    // 缺 0x106 的 bundle（比如 exchange_emp 响应）→ a1 为空而不是崩
+    final noA1 = Qq8TokenData.fromSigBundle(10001, Qq8SigBundle(
+      all: const <int, Uint8List>{},
+      d2: _hex('a2' * 64),
+      d2key: _hex('a3' * 16),
+    ));
+    check('bundle 无 0x106 时 a1 为空', noA1.a1.isEmpty);
   }
 
   stdout.writeln('\n${'=' * 62}');

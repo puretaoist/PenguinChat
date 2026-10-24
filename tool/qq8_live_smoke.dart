@@ -1258,9 +1258,13 @@ Future<void> main(List<String> argv) async {
             sigKey: sig.sigKey ?? Uint8List(0),
             ticketKey: sig.ticketKey ?? Uint8List(0),
             srmToken: sig.srmToken ?? Uint8List(0),
+            a1: sig.t106 ?? Uint8List(0),
           ).save(File(savePath));
           out('  票据已保存: $savePath');
           out('  （明文会话凭据：别进 git，用完即删）');
+          if ((sig.t106?.length ?? 0) > 0) {
+            out('  A1（长期凭据，0x119 内 0x106）已一并保存: ${sig.t106!.length} 字节');
+          }
         }
       } on Object catch (e) {
         out('    ✗ 0x119 解析失败: $e');
@@ -1859,6 +1863,9 @@ class _TokenFile {
   final Uint8List ticketKey;
   final Uint8List srmToken;
 
+  /// 长期凭据 A1（响应 0x119 内的 TLV 0x106）。旧文件缺这个键 → 空。
+  final Uint8List a1;
+
   const _TokenFile({
     required this.uin,
     required this.savedAt,
@@ -1868,6 +1875,7 @@ class _TokenFile {
     required this.sigKey,
     required this.ticketKey,
     required this.srmToken,
+    required this.a1,
   });
 
   static _TokenFile load(File f) {
@@ -1897,6 +1905,7 @@ class _TokenFile {
       sigKey: hexField('sig_key'),
       ticketKey: hexField('ticket_key'),
       srmToken: hexField('srm_token'),
+      a1: hexField('a1'),
     );
   }
 
@@ -1911,6 +1920,7 @@ class _TokenFile {
       'sig_key': _plainHex(sigKey),
       'ticket_key': _plainHex(ticketKey),
       'srm_token': _plainHex(srmToken),
+      'a1': _plainHex(a1),
     }));
   }
 }

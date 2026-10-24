@@ -53,7 +53,19 @@ class Qq8TokenData {
   final Uint8List ticketKey;
   final Uint8List srmToken;
 
-  const Qq8TokenData({
+  /// 长期凭据 A1（响应 0x119 里的 TLV `0x106`）。
+  ///
+  /// 官方每次成功登录后 `A1 version` 自增并把 A1 存进 `tk_file`；icqq 的
+  /// `decodeT119` 也是 `sig.a1 = t[0x106]` 并随 token 文件落盘。不存它，
+  /// 每次登录在服务端眼里都像一台从没成功过的裸设备。
+  ///
+  /// 2026-10-24 起持久化。**刻意不改变任何发包行为**：官方把 A1 当
+  /// `tlv_t106` 的密钥喂回快速重登（`WtloginHelper.java:699` 的
+  /// GetA1ByAccount 路径），那是独立的、有风险的协议变化；这里只先存下来。
+  /// 旧票据文件没有 `a1` 键 → 读成空（向后兼容，不报错）。
+  final Uint8List a1;
+
+  Qq8TokenData({
     required this.uin,
     required this.savedAt,
     required this.tgt,
@@ -62,7 +74,8 @@ class Qq8TokenData {
     required this.sigKey,
     required this.ticketKey,
     required this.srmToken,
-  });
+    Uint8List? a1,
+  }) : a1 = a1 ?? Uint8List(0);
 
   bool get usable => d2.isNotEmpty && d2key.isNotEmpty;
 
@@ -75,6 +88,7 @@ class Qq8TokenData {
         sigKey: b.sigKey ?? Uint8List(0),
         ticketKey: b.ticketKey ?? Uint8List(0),
         srmToken: b.srmToken ?? Uint8List(0),
+        a1: b.t106 ?? Uint8List(0),
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -86,6 +100,7 @@ class Qq8TokenData {
         'sig_key': _plainHex(sigKey),
         'ticket_key': _plainHex(ticketKey),
         'srm_token': _plainHex(srmToken),
+        'a1': _plainHex(a1),
       };
 
   static Qq8TokenData fromJson(Map<String, dynamic> j) {
@@ -106,6 +121,7 @@ class Qq8TokenData {
       sigKey: hexField('sig_key'),
       ticketKey: hexField('ticket_key'),
       srmToken: hexField('srm_token'),
+      a1: hexField('a1'),
     );
   }
 }
