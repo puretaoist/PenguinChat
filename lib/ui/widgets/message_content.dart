@@ -403,8 +403,9 @@ class _ImageBlock extends StatelessWidget {
   void _openLarge(BuildContext context) {
     final localLarge = _localPath();
     final ar = seg.aspectRatio ?? 1.0;
-    final maxH = math.min(MediaQuery.of(context).size.height * 0.7, 640.0);
-    final maxW = math.min(MediaQuery.of(context).size.width * 0.9, 900.0);
+    // sizeOf：键盘动画帧（viewInsets）不触发重建
+    final maxH = math.min(MediaQuery.sizeOf(context).height * 0.7, 640.0);
+    final maxW = math.min(MediaQuery.sizeOf(context).width * 0.9, 900.0);
     final h = maxH;
     final w = (h * ar).clamp(120.0, maxW);
 

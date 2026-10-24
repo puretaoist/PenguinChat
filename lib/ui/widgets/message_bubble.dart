@@ -64,7 +64,8 @@ class MessageBubble extends StatelessWidget {
     // （widget 测试在 800px 宽的窗口下抓到过）。
     return LayoutBuilder(
       builder: (context, constraints) {
-        final mediaLimit = MediaQuery.of(context).size.width * 0.78;
+        // sizeOf：键盘动画帧（viewInsets）不触发重建
+        final mediaLimit = MediaQuery.sizeOf(context).width * 0.78;
         // 还要扣掉同一行里的兄弟：外层 Padding 的 8x2，以及高亮竖条（3 宽 + 4 外边距）。
         // 不扣的话 Row 会溢出——widget 测试在 800px 宽的窗口下抓到了这 16px。
         final chrome = 16.0 + (highlighted ? 7.0 : 0.0);

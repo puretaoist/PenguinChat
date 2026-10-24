@@ -421,7 +421,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       unawaited(_ensureOpened(_resolvedChatId!));
     }
 
-    final wide = MediaQuery.of(context).size.width >= 720;
+    // 用 sizeOf 而不是 of：of 订阅整个 MediaQuery（含 viewInsets），
+    // 键盘每一帧动画都会把整个主页（列表+消息+头像）重建一遍——
+    // 这就是「键盘呼出变卡」的来源。sizeOf 只在窗口尺寸真变时重建。
+    final wide = MediaQuery.sizeOf(context).width >= 720;
     if (wide) {
       return Scaffold(
         backgroundColor: TelegramColors.bgApp,
