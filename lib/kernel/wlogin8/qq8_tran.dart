@@ -406,6 +406,20 @@ class Qq8TcpTransport implements Qq8Transport {
     );
   }
 
+  /// 写队列：把 add+flush 串成一条链。
+  ///
+  /// `Socket.flush()` 在上一次 flush 未完成时会同步抛
+  /// `StateError: StreamSink is bound to a stream`——会话层上线后
+  /// 心跳 / 拉列表 / 拉历史并发写，必然撞上（真机 2026-10-24 11:29 复现）。
+  Future<void> _writeQueue = Future<void>.value();
+
+  Future<T> _serialized<T>(Future<T> Function() op) {
+    final prev = _writeQueue;
+    final done = Completer<void>();
+    _writeQueue = done.future;
+    return prev.then((_) => op()).whenComplete(done.complete);
+  }
+
   void _failPending(Object error) {
     final p = _pending;
     _pending = null;
@@ -420,8 +434,11 @@ class Qq8TcpTransport implements Qq8Transport {
     if (_socket == null) await connect();
     try {
       // 与 send 同一约定：包自带 u32 长度头，原样写出。
-      _socket!.add(packet);
-      await _socket!.flush();
+      // 走写队列：并发 flush 会抛 StreamSink is bound（见 _serialized 注释）。
+      await _serialized(() async {
+        _socket!.add(packet);
+        await _socket!.flush();
+      });
     } on Object catch (e) {
       throw Qq8TransportException('发送失败', e);
     }
@@ -440,8 +457,11 @@ class Qq8TcpTransport implements Qq8Transport {
     try {
       // 原样写出：包自己带的 u32 长度头就是分帧头（对应 oicq `net.write(pkt)`）。
       // 千万不能再 `framePacket()` —— 多一层会让服务端静默丢弃（见文件头）。
-      _socket!.add(payload);
-      await _socket!.flush();
+      // 走写队列：并发 flush 会抛 StreamSink is bound（见 _serialized 注释）。
+      await _serialized(() async {
+        _socket!.add(payload);
+        await _socket!.flush();
+      });
     } on Object catch (e) {
       _pending = null;
       throw Qq8TransportException('发送失败', e);

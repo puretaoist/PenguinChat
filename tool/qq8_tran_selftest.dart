@@ -507,6 +507,30 @@ Future<void> main() async {
     }
   }
 
+
+  // 【9】并发 write 不再抛 StreamSink is bound（回归 2026-10-24 真机）
+  {
+    final srv = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    srv.listen((s) => s.listen((_) {}));
+    final t = Qq8TcpTransport(host: '127.0.0.1', port: srv.port);
+    await t.connect();
+    try {
+      final errors = <Object>[];
+      await Future.wait(List.generate(20, (i) async {
+        try {
+          await t.write(framePacket(_bytes([i & 0xff])));
+        } on Object catch (e) {
+          errors.add(e);
+        }
+      }));
+      check('20 个并发 write 全部成功（无 StreamSink 冲突）',
+          errors.isEmpty, '${errors.length} 个失败: ${errors.take(2).join(' | ')}');
+    } finally {
+      await t.close();
+      await srv.close();
+    }
+  }
+
   // -- 汇总 --------------------------------------------------------------
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');
