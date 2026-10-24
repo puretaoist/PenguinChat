@@ -437,6 +437,50 @@ class Qq8ApkInfo {
   /// 客户端标识名，参与 `ksid` 派生（SSO 包头用，TLV 不用）。
   final String name;
 
+  /// SSO 头 `ksid` 串里 `apkName` 那一段的**实际取值**（`null` = 用 [name]）。
+  ///
+  /// ## 为什么不能直接用 [name]（2026-10-24 官方抓包定案）
+  ///
+  /// 官方 8.2.11 真机 `wtlogin.exchange_emp` 请求（`official-register.pcap`
+  /// 的 `43918_8080.bin` @328）里，ksid 串是 **33 个字符**：
+  /// ```
+  /// ||A8.2.11.0153f87a8.2.11.0153f87a
+  /// └┬┘└──────┬──────┘└──────┬──────┘
+  ///  │   A8.2.11.0153f87a  8.2.11.0153f87a
+  ///  └ imei 为空
+  /// ```
+  /// 也就是说 8.2.11 把「`A`+版本+`.`+revision」和「版本+`.`+revision」
+  /// **连着写了两遍**。我们原来只有前半段（`A8.2.11.4530`，14 字符），
+  /// 既短了 19 字节，`4530` 也不是 revision（应为 `0153f87a`）。
+  ///
+  /// 这个重复在 dex 里找不到拼装点（`AppSetting` 只提供
+  /// `f2556e = "V 8.2.11.4530"` 与 `revision = "0153f87a"` 两个独立常量），
+  /// 但抓包字节是确定的，故按字节复刻。
+  final String? ksidName;
+
+  /// SSO 头里是否发 protobuf 形态的 reserve 字段，默认 `true`。
+  ///
+  /// ## 2026-10-24 官方抓包定案：8.2.11 这一代**根本不发**
+  ///
+  /// 抓包里官方那条 TCP 流（`official-register.pcap` 的
+  /// `43918_8080.bin`，含 `wtlogin.exchange_emp`、`GrayUinPro.Check`、
+  /// `PhSigLcId.Check` 与 3 条 `Heartbeat.Alive` 共 7 个可解帧）
+  /// **每一个**的 reserve 都是 `00 00 00 04` —— 即 `withLength(空)`，
+  /// 载荷 0 字节。不是「带哪些 tag」的问题，是整段为空。
+  ///
+  /// ⚠️ 我上一轮误判成「官方带 29 字节、只是没有 tag 12」，因为把抓包里
+  /// 另一条流（`44080_8080.bin`，ksid 是 `||A8.2.11.4530`）当成了官方——
+  /// 那其实是**我们自己的 App** 在同一台设备上跑出来的包。识别依据：
+  /// `A8.2.11.4530` 正是本项目的 [name]，官方用的是
+  /// `A8.2.11.0153f87a8.2.11.0153f87a`。
+  final bool useReserveFields;
+
+  /// reserve 字段里是否带 `tag 12`（qimei36），默认 `true`（照 icqq）。
+  ///
+  /// 仅在 [useReserveFields] 为真时有意义。icqq 0.6.10 的
+  /// `buildReserveFields` 恒带它（它的目标是 8.9.63+）。
+  final bool reserveIncludesQimei36;
+
   final int appid;
   final int subid;
 
@@ -503,6 +547,9 @@ class Qq8ApkInfo {
     required this.sign,
     this.uinDeviceToken = true,
     this.name = '',
+    this.ksidName,
+    this.useReserveFields = true,
+    this.reserveIncludesQimei36 = true,
     this.subSigMap = 66560,
     this.ssoVer = 7,
     this.loginTlvOrder = qq8OfficialLoginTlvOrder,
@@ -523,6 +570,9 @@ class Qq8ApkInfo {
         buildtime: buildtime,
         sign: sign,
         name: name,
+        ksidName: ksidName,
+        useReserveFields: useReserveFields,
+        reserveIncludesQimei36: reserveIncludesQimei36,
         subSigMap: subSigMap,
         ssoVer: ssoVer,
         loginTlvOrder: loginTlvOrder,
@@ -957,7 +1007,18 @@ abstract final class Qq8Tlv {
         w.raw(ctx.ksid);
 
       case 0x109:
-        w.raw(md5Bytes(utf8.encode(d.imei)));
+        // 官方 `k.java:156`（case 324 = 0x144）：
+        //   get_tlv_144(new tlv_t109().get_tlv_109(oicq.wlogin_sdk.request.t.O), ...)
+        // `t.java:296-299`：
+        //   O = util.get_android_id(t);
+        //   if (O != null && O.length > 0) { O = MD5.toMD5Byte(O); }
+        // ⇒ **0x109 是 MD5(android_id)，不是 MD5(imei)**。
+        //
+        // ⚠️ 2026-10-24 修正：此前写的是 MD5(imei)。Android 10+ 读不到
+        // IMEI（官方 t.java 全库无 getIMEI），我们的 imei 是 `_syntheticImei()`
+        // 造的假串 ⇒ 0x144 里这个槽一直是「一台不存在的机器的 IMEI 摘要」。
+        // 官方抓包对照：`0x144` 内嵌 5 项，首项即 0x109 = MD5(androidId)。
+        w.raw(md5Bytes(utf8.encode(d.androidId)));
 
       case 0x10A:
         w.raw(ctx.tgt);

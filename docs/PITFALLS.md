@@ -2053,6 +2053,36 @@ this.c.sendSsoMsg(toServiceMsg);                            // 回到服务端
 **判据教训**：日志里「未处理的推送」这类**看似无害的 debug 行**要定期按频次排序看——12 次 HelloPush 淹没在 330 次 QueryHB 里，看单条永远发现不了。
 
 
+## C35. 抓包对照的第一步是「确认这条流是谁发的」，第二步才是比对
+
+**背景**：为搞清楚 `StatSvc.register` 为何无 ack，用 `tcpdump` 抓了官方 QQ 8.2.11 的流量（设备自带 `/system/bin/tcpdump`，KernelSU root）。抓到两条客户端→服务端流：`43918_8080.bin`（93KB）与 `44080_8080.bin`（8KB）。
+
+**踩的坑**：先把 `44080` 的头部当成官方形态（reserve 29 字节 protobuf、ksid 串 `||A8.2.11.4530`），据此得出「官方 reserve 带 9 个 tag、只是没带 qimei36」的错误结论，并写了代码。后来完整走查 `43918` 才发现两套完全不同的配置，而 `A8.2.11.4530` **正是本项目的 `apk.name`** —— 那条流是我们自己的 App 发的（当时官方与自研客户端同机同时段在线）。
+
+**判据**：**ksid 串里的 `apkName` 是客户端身份的指纹**。同设备同时段抓到的两条流，用这个字段一眼就能分清归属。比对前先做这一步，成本一分钟。
+
+**官方 8.2.11 的真实形态**（`43918_8080.bin` @328，7 个可解帧逐字节同构）：
+```
+u32 headlen ‖ i32 seq ‖ u32 subAppId ‖ u32 subAppId ‖ 12B 常量
+‖ withLen(tgt 72B) ‖ withLen(cmd) ‖ withLen(session)
+‖ withLen(imei 槽)        ← 16B ASCII ANDROID_ID，不是 IMEI
+‖ withLen(ksidRaw 16B)    ← 裸 hex，此前整槽漏掉
+‖ u16(len+2) + ksid 串    ← "||A8.2.11.0153f87a8.2.11.0153f87a"（33）
+‖ withLen(reserve)        ← 0 字节：8.2.11 整段不发
+‖ withLen(payload)
+```
+
+**四个连带纠正**：
+1. **少了 `withLength(ksidRaw)` 整槽**：从该槽起后续字段整体前移 20 字节，服务端按官方布局解析时长度字段全错位。注意 `withLength(空)` 正好是 `00 00 00 04`，与 oicq 2.3.1 的 `.writeU32(4)` 逐字节相同 —— 所以旧代码那个 `u32(4)` **就是空 ksidRaw 槽**，应当替换而非新增。
+2. **`apk.name` 不是 ksid 用的名字**：官方是 `A8.2.11.0153f87a8.2.11.0153f87a`（「A+版本+.+revision」与「版本+.+revision」连着写两遍），而 `A8.2.11.4530` 只是 AppSetting `fullVersion` 前缀。新增 `Qq8ApkInfo.ksidName` 单列。
+3. **reserve 8.2.11 整段为空**，那是 9.x 才有的 protobuf 段。新增 `useReserveFields` 按代际门控。
+4. **imei 槽官方填 ANDROID_ID**：同一包的 ksid 串却是 `||`（imei 空）⇒ 两个位置不同源，槽里放设备标识即可。
+
+**另一条独立教训**：`u16` 长度字段的语义要按字节验证。我的走查器曾把 ksid 的 `u16(35)` 当成「不含自身」而多跳 2 字节，导致 reserve 读成 `262144`；实际 `35 = 33+2` 已含自身。
+
+**通用原则**：**「参考实现这么写」≠「这就是协议」，但「我抓到的这条流」也≠「官方的流」**。字节级对照的可靠性建立在「确认对象身份」之上，否则会把自己的实现当权威拿去纠正自己。
+
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

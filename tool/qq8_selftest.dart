@@ -326,13 +326,21 @@ void testDevice() {
       return utf8.decode(ctx.ksid);
     }
 
-    // 注意：apk.name 是 'A8.2.11.4530'（AppSetting fullVersion 前缀那种
-    // 14 字符形态），**不是** revision 那串 'A8.2.11.4530f87a'。写测试时
-    // 从档案取，别硬编码 —— 否则档案一动测试就在撒谎（本轮踩过）。
-    final apkName = qq8ProfileQQ8211.apk.name;
-    checkEq('SSO 头 ksid = |imei|apkName（设备带 ksid 时也一样）',
+    // 注意：ksid 串里用的**不是** apk.name（'A8.2.11.4530'，AppSetting
+    // fullVersion 前缀那种 14 字符形态），而是官方真机抓包实测的
+    // `A8.2.11.0153f87a8.2.11.0153f87a` ——「A+版本+.+revision」与
+    // 「版本+.+revision」连着写两遍，共 33 字符。档案里用
+    // `Qq8ApkInfo.ksidName` 单列（`null` 才退回 `name`）。
+    //
+    // 出处：analysis/_ref/official-logs/streams/43918_8080.bin @172
+    // （官方 8.2.11 真机，`u16=35 = 33+2`）。
+    // 写测试时从档案取，别硬编码 —— 否则档案一动测试就在撒谎（本轮踩过）。
+    final apkName = qq8ProfileQQ8211.apk.ksidName ?? qq8ProfileQQ8211.apk.name;
+    checkEq('8.2.11 档案的 ksidName 是 33 字符的官方实测形态',
+        qq8ProfileQQ8211.apk.ksidName, 'A8.2.11.0153f87a8.2.11.0153f87a');
+    checkEq('SSO 头 ksid = |imei|ksidName（设备带 ksid 时也一样）',
         ssoHeaderKsid(dk), '|${dk.imei}|$apkName');
-    checkEq('SSO 头 ksid = |imei|apkName（设备无 ksid 时同样）',
+    checkEq('SSO 头 ksid = |imei|ksidName（设备无 ksid 时同样）',
         ssoHeaderKsid(d), '|${d.imei}|$apkName');
 
     // guidHex 非法时退回派生（不静默用坏值）

@@ -194,6 +194,17 @@ final Qq8ClientProfile qq8ProfileQQ8211 = Qq8ClientProfile(
     loginTlvOrder: qq8OfficialLoginTlvOrder,
     tlv544DegradedBody: const <int>[0, 0, 0, 0],
     tlv553DegradedBody: null,
+    // 官方抓包定案（2026-10-24，`official-register.pcap` 的
+    // `43918_8080.bin`，7 个可解帧逐字节同构）：
+    // * SSO 头 ksid 串 = 33 字符 `||A8.2.11.0153f87a8.2.11.0153f87a`，
+    //   即「A+版本+.+revision」与「版本+.+revision」连着写两遍；
+    // * reserve 整段为空（`00 00 00 04`，载荷 0 字节）——8.2.11 这一代
+    //   不发 protobuf reserve，那是 9.x 的做法。
+    // 注：抓包里另一条流 `44080_8080.bin` 的 ksid 是 `||A8.2.11.4530`、
+    // reserve 29 字节，那是**本 App 自己**发的包，不是官方。
+    ksidName: 'A8.2.11.0153f87a8.2.11.0153f87a',
+    useReserveFields: false,
+    reserveIncludesQimei36: false,
   ),
 );
 

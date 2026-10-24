@@ -202,8 +202,65 @@ class Qq8SsoContext {
   ///   `t.ac = util.get_ksid(t)`），为空则**整条不发**（`k.java` case 264）。
   ///
   /// 两者取值规则不同，故这里不再读 `device.ksid`。
-  Uint8List get ksid =>
-      Uint8List.fromList(utf8.encode('|${device.imei}|${apk.name}'));
+  ///
+  /// `apkName` 优先取 [Qq8ApkInfo.ksidName]（官方 8.2.11 是 33 字符的
+  /// `A8.2.11.0153f87a8.2.11.0153f87a`，不是 `name` 那个 `A8.2.11.4530`）。
+  Uint8List get ksid => Uint8List.fromList(
+        utf8.encode('|${device.imei}|${apk.ksidName ?? apk.name}'),
+      );
+
+  /// SSO 头里 imei 槽的**实际内容**。
+  ///
+  /// ## 2026-10-24 官方抓包定案（决定性）
+  ///
+  /// 官方 `wtlogin.exchange_emp` 请求（`official-register.pcap` 的
+  /// `43918_8080.bin` @328）该槽是 **16 字节 ASCII `25cf6881290b58f7`** ——
+  /// 也就是官方 QQ 自己的 `ANDROID_ID`，**不是** IMEI。
+  ///
+  /// 但同一个包的 ksid 串却是 `||A8.2.11...`（两个竖线 = imei 为空）。
+  /// 说明这两个位置取值不同源：槽里放设备标识，串里放 IMEI。
+  ///
+  /// 这与「`util.java` 里根本没有 `getIMEI`/`getDeviceId`」一致：
+  /// 官方在 Android 10+ 拿不到 IMEI，这个槽从来就不是真 IMEI。
+  /// oicq 把它叫 `device.imei` 并塞随机 hex，同样能登录（服务端只要非空）。
+  ///
+  /// 退化顺序：真 IMEI（有就给）→ `ANDROID_ID`（官方实测形态）→ 空。
+  Uint8List get imeiSlot {
+    if (device.imei.isNotEmpty) {
+      return Uint8List.fromList(utf8.encode(device.imei));
+    }
+    if (device.androidId.isNotEmpty) {
+      return Uint8List.fromList(utf8.encode(device.androidId));
+    }
+    return Uint8List(0);
+  }
+
+  /// SSO 头里 **ksid 原始字节槽**（`withLength` 包着的 16 字节裸 hex）。
+  ///
+  /// ## 2026-10-24 官方抓包定案：这个槽我们整条漏了
+  ///
+  /// 官方 `@328` 的头部逐槽走查（偏移已核对到字节）：
+  /// ```
+  /// 28  withLength(76)   tgt 72B
+  /// 104 withLength(24)   cmd "wtlogin.exchange_emp"
+  /// 128 withLength(4)    session 0B
+  /// 132 withLength(20)   imei 槽 → "25cf6881290b58f7"（16 ASCII）
+  /// 152 withLength(20)   ★ ksidRaw → 16 字节裸 hex 188ca876…d3d7
+  /// 172 u16(35) + "||A8.2.11.0153f87a8.2.11.0153f87a"
+  /// 207 withLength(4)    reserve 0B
+  /// 211 withLength(1008) payload 1004B
+  /// ```
+  /// 同抓包的另一条请求 `GrayUinPro.Check`（@2607）头部**逐字节同构**，
+  /// 说明这是所有 0x0A 请求的固定形态，不是某个命令的特例。
+  ///
+  /// 我们此前只写 `u16(len+2)+字符串`，**整个 `withLength(ksidRaw)` 槽不存在**
+  /// ⇒ 从该槽起后续所有字段整体前移 20 字节，服务端按官方布局解析时
+  /// 长度字段全部错位。
+  ///
+  /// 取值 = SP `WLOGIN_DEVICE_INFO` 的 `ksid` 经十六进制解码（与服务端
+  /// 下发的 TLV `0x108` 同源，见 [qq8KsidBytes]）。没有 ksid 时返回空，
+  /// 此时**不写该槽**（官方恒有值，无对照样本，故保持旧形态可比）。
+  Uint8List get ksidRaw => qq8KsidBytes(device.ksid);
 
   /// SSO 头里的「保留字段」（reserve fields），protobuf 编码。
   ///
@@ -227,10 +284,14 @@ class Qq8SsoContext {
   Uint8List get reserveFields {
     final override = reserveFieldsOverride;
     if (override != null) return override;
+    // 8.2.11 这一代**整段不发**（下面 `apk.useReserveFields` 控制）。
+    if (!apk.useReserveFields) return Uint8List(0);
     final q = qimei36;
     return Qq8Pb.encode(<int, Object?>{
       9: 1,
-      12: q == null || q.isEmpty ? null : q,
+      // tag 12（qimei36）按档案门控：9.3.60/TIM 那一代才带，
+      // 8.2.11 的 reserve 本身就是空的（见 useReserveFields 的注释）。
+      12: (!apk.reserveIncludesQimei36 || q == null || q.isEmpty) ? null : q,
       14: 0,
       16: uin,
       18: 0,
@@ -330,8 +391,10 @@ abstract final class Qq8Sso {
           ..let((w) => _withLength(w, ctx.sig.tgt))
           ..let((w) => _withLength(w, utf8.encode(cmd)))
           ..let((w) => _withLength(w, ctx.sessionId))
-          ..let((w) => _withLength(w, utf8.encode(ctx.device.imei)))
-          ..u32(4)
+          ..let((w) => _withLength(w, ctx.imeiSlot))
+          // ksid 原始字节槽。没有 ksid 时写 withLength(空) = `00 00 00 04`，
+          // 与 oicq 2.3.1 的 `.writeU32(4)` 逐字节相同（那正是空载荷形态）。
+          ..let((w) => _withLength(w, ctx.ksidRaw))
           ..u16(ksid.length + 2)
           ..raw(ksid)
           ..let((w) => _writeReserveFields(w, ctx)))
