@@ -1,4 +1,4 @@
-/// Telegram 风格组件：圆形头像（首字母）
+/// Telegram 风格组件：圆形头像（真头像直链，退回首字母色块）
 library;
 
 import 'package:flutter/material.dart';
@@ -25,15 +25,24 @@ class TelegramAvatar extends StatelessWidget {
   final String name;
   final double size;
 
-  const TelegramAvatar({super.key, required this.name, this.size = TelegramMetrics.avatarSize});
+  /// 头像直链（可空）。拉得到就显示真头像；失败/为空退回首字母色块——
+  /// 头像 CDN 在弱网下经常超时，绝不能让整行列表陪着白屏。
+  final String? url;
+
+  const TelegramAvatar({
+    super.key,
+    required this.name,
+    this.size = TelegramMetrics.avatarSize,
+    this.url,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final color = _colorFromName(name);
-    return Container(
+    final letter = Container(
       width: size,
       height: size,
-      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      decoration:
+          BoxDecoration(color: _colorFromName(name), shape: BoxShape.circle),
       alignment: Alignment.center,
       child: Text(
         name.isEmpty ? '?' : name.characters.first,
@@ -42,6 +51,18 @@ class TelegramAvatar extends StatelessWidget {
           fontSize: size * 0.42,
           fontWeight: FontWeight.w600,
         ),
+      ),
+    );
+    if (url == null || url!.isEmpty) return letter;
+    return ClipOval(
+      child: Image.network(
+        url!,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        // CDN 慢是常态：加载中显示首字母色块而不是空白
+        frameBuilder: (ctx, child, frame, _) => frame == null ? letter : child,
+        errorBuilder: (_, _, _) => letter,
       ),
     );
   }

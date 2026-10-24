@@ -108,6 +108,12 @@ class Chat {
   /// 还没读过（或历史数据没有这个字段）——那就**不画**分隔线，别瞎猜位置。
   final String? lastReadId;
 
+  /// 头像直链（可空）。
+  ///
+  /// QQ 的头像 CDN 按 uin/gid 直接可取（`qlogo.cn`），无需鉴权；
+  /// 为空时 UI 退回首字母色块。OneBot 线暂不填。
+  final String? avatarUrl;
+
   /// 优先级，1（最高）~ 5（最低）。
   ///
   /// 对齐参考实现 Icalingua++ 的 `setRoomPriority(roomId, 1|2|3|4|5)`——
@@ -128,6 +134,7 @@ class Chat {
     this.pinned = false,
     this.muted = false,
     this.archived = false,
+    this.avatarUrl,
     this.draft = '',
     this.manualUnread = false,
     this.lastReadId,
@@ -173,6 +180,7 @@ class Chat {
     bool? manualUnread,
     String? lastReadId,
     int? priority,
+    String? avatarUrl,
   }) =>
       Chat(
         id: id ?? this.id,
@@ -191,6 +199,7 @@ class Chat {
         manualUnread: manualUnread ?? this.manualUnread,
         lastReadId: lastReadId ?? this.lastReadId,
         priority: priority ?? this.priority,
+        avatarUrl: avatarUrl ?? this.avatarUrl,
       );
 
   /// 清掉列表摘要（消息被删光时用）。
@@ -213,6 +222,7 @@ class Chat {
         priority: priority,
         unreadCount: unreadCount,
         online: online,
+        avatarUrl: avatarUrl,
       );
 
   @override

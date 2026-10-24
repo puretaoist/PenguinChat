@@ -160,6 +160,7 @@ class Qq8SessionAdapter implements Session {
           title: f.displayName,
           type: ChatType.private,
           rawId: f.uin,
+          avatarUrl: _avatarUrl(ChatType.private, f.uin),
         ),
       for (final g in groups.groups)
         Chat(
@@ -167,6 +168,7 @@ class Qq8SessionAdapter implements Session {
           title: g.name,
           type: ChatType.group,
           rawId: g.gid,
+          avatarUrl: _avatarUrl(ChatType.group, g.gid),
           memberCount: g.memberCount,
           ownerUin: g.ownerUin,
         ),
@@ -465,6 +467,14 @@ class Qq8SessionAdapter implements Session {
   void _onPushError(Object e, StackTrace st) {
     _emit(SessionFailure(e, st));
   }
+
+  /// QQ 头像直链：qlogo CDN 按 uin/gid 取，无需鉴权。
+  ///
+  /// 群头像走 `gh` 路径（群相册头像），私聊走老的 `g?b=qq&nk=` 路径——
+  /// 两个都是官方客户端在用的公开端点，拉不到时 UI 退回首字母色块。
+  static String _avatarUrl(ChatType type, int id) => type == ChatType.group
+      ? 'https://p.qlogo.cn/gh/$id/$id/100'
+      : 'https://q1.qlogo.cn/g?b=qq&nk=$id&s=100';
 
   ChatMessage _toChatMessage(Qq8IncomingMessage m) {
     final self = service.snapshot.uin ?? 0;

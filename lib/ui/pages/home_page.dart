@@ -575,7 +575,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   return ListTile(
                     key: ValueKey('archived-${chat.id}'),
                     dense: true,
-                    leading: TelegramAvatar(name: chat.title, size: 34),
+                    leading: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 34),
                     title: Text(
                       chat.title,
                       maxLines: 1,
@@ -995,6 +995,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               children: [
                 TelegramAvatar(
                   name: chat.title,
+                  url: chat.avatarUrl,
                   size: TelegramMetrics.avatarSize,
                 ),
                 if (chat.online)
@@ -1334,6 +1335,13 @@ class _HomePageState extends ConsumerState<HomePage> {
                                             ),
                                             child: TelegramAvatar(
                                               name: m.senderName,
+                                              // 群聊里 senderId 就是说话人的
+                                              // uin；非数字（OneBot 旧数据）
+                                              // 时退回首字母。
+                                              url: int.tryParse(m.senderId) ==
+                                                      null
+                                                  ? null
+                                                  : 'https://q1.qlogo.cn/g?b=qq&nk=${m.senderId}&s=100',
                                               size: TelegramMetrics
                                                   .bubbleAvatarSize,
                                             ),
@@ -1487,7 +1495,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           GestureDetector(
             key: const ValueKey('open-members'),
             onTap: chat.isGroup ? () => _openMembers(chat) : null,
-            child: TelegramAvatar(name: chat.title, size: 40),
+            child: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 40),
           ),
           const SizedBox(width: 10),
           Expanded(
