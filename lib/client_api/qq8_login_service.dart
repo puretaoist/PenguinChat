@@ -2212,6 +2212,12 @@ enum _SmsStep {
 
 /// 内存版票据存储（默认；进程退出即丢）。
 class _MemoryTokenStore implements Qq8TokenStore {
+  @override
+  Future<List<int>> listUins() async => _byUin.keys.toList()..sort();
+
+  @override
+  Future<DateTime?> lastModified(int uin) async => null;
+
   final Map<int, Qq8TokenData> _byUin = <int, Qq8TokenData>{};
 
   @override

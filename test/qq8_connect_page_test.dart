@@ -38,6 +38,12 @@ List<Override> _overrides() => <Override>[
 
 class _NullStore implements Qq8TokenStore {
   @override
+  Future<List<int>> listUins() async => const <int>[];
+
+  @override
+  Future<DateTime?> lastModified(int uin) async => null;
+
+  @override
   Future<Qq8TokenData?> load(int uin) async => null;
   @override
   Future<void> save(Qq8TokenData data) async {}

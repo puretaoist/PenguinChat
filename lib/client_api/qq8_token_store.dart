@@ -40,6 +40,16 @@ abstract class Qq8TokenStore {
   Future<Qq8TokenData?> load(int uin);
   Future<void> save(Qq8TokenData data);
   Future<void> clear(int uin);
+
+  /// 目录下已保存票据的账号（升序）。启动自动登录用它挑最近用过的号；
+  /// 没有票据可列时返回空列表——**不抛异常**（目录不存在也当空）。
+  ///
+  /// 文件型实现都重写它；内存/测试实现用默认空表即可。
+  Future<List<int>> listUins() async => const <int>[];
+
+  /// 票据文件的最后修改时间（自动登录挑"最近用过的号"用）。
+  /// 没有文件 / 不支持时返回 null，绝不抛异常。
+  Future<DateTime?> lastModified(int uin) async => null;
 }
 
 /// 一份票据（与 `tool/qq8_live_smoke.dart --save-token` 的文件同构）。
@@ -158,6 +168,28 @@ class FileQq8TokenStore implements Qq8TokenStore {
     final f = _file(uin);
     if (await f.exists()) await f.delete();
   }
+
+  static final _plainName = RegExp(r'^qq8-token-(\d+)\.json$');
+
+  @override
+  Future<DateTime?> lastModified(int uin) async {
+    final f = _file(uin);
+    if (!await f.exists()) return null;
+    return f.lastModifiedSync();
+  }
+
+  @override
+  Future<List<int>> listUins() async {
+    if (!await dir.exists()) return const <int>[];
+    final uins = <int>[];
+    await for (final e in dir.list()) {
+      if (e is! File) continue;
+      final m = _plainName.firstMatch(e.uri.pathSegments.last);
+      if (m != null) uins.add(int.parse(m.group(1)!));
+    }
+    uins.sort();
+    return uins;
+  }
 }
 
 /// AES-GCM 加密的票据存储：`<dir>/qq8-token-<uin>.json.enc`。
@@ -248,6 +280,28 @@ class EncryptedFileQq8TokenStore implements Qq8TokenStore {
   Future<void> clear(int uin) async {
     final f = _file(uin);
     if (await f.exists()) await f.delete();
+  }
+
+  static final _encName = RegExp(r'^qq8-token-(\d+)\.json\.enc$');
+
+  @override
+  Future<DateTime?> lastModified(int uin) async {
+    final f = _file(uin);
+    if (!await f.exists()) return null;
+    return f.lastModifiedSync();
+  }
+
+  @override
+  Future<List<int>> listUins() async {
+    if (!await dir.exists()) return const <int>[];
+    final uins = <int>[];
+    await for (final e in dir.list()) {
+      if (e is! File) continue;
+      final m = _encName.firstMatch(e.uri.pathSegments.last);
+      if (m != null) uins.add(int.parse(m.group(1)!));
+    }
+    uins.sort();
+    return uins;
   }
 }
 

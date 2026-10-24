@@ -334,6 +334,13 @@ Uint8List _registerFrame(int seq) {
 }
 
 class _MemStore implements Qq8TokenStore {
+  @override
+  Future<List<int>> listUins() async =>
+      data == null ? const <int>[] : <int>[data!.uin];
+
+  @override
+  Future<DateTime?> lastModified(int uin) async => null;
+
   Qq8TokenData? data;
   @override
   Future<Qq8TokenData?> load(int uin) async => data;

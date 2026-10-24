@@ -101,6 +101,18 @@ class _HomePageState extends ConsumerState<HomePage> {
     super.initState();
     _scrollController.addListener(_onScroll);
     _inputController.addListener(_onInputChanged);
+    // 冷启动预热协议线：构造控制器即触发「票据自动登录」——
+    // 有保存票据时装新包/重启都不用再走密码→滑块→短信那一套。
+    // 只读一次（构造是幂等的，Riverpod 会复用同一个实例）。
+    // 测试环境没有 override 协议线的 DI 时这里会抛——捕获吞掉，测试照常。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        ref.read(qq8ConnectControllerProvider.notifier);
+      } on Object {
+        // 协议线 DI 未注入（单测/纯 OneBot 场景）：预热失败不影响任何功能
+      }
+    });
   }
 
   @override

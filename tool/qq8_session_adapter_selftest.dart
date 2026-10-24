@@ -975,6 +975,13 @@ Future<void> main() async {
 }
 
 class _MemStore implements Qq8TokenStore {
+  @override
+  Future<List<int>> listUins() async =>
+      data == null ? const <int>[] : <int>[data!.uin];
+
+  @override
+  Future<DateTime?> lastModified(int uin) async => null;
+
   Qq8TokenData? data;
 
   @override

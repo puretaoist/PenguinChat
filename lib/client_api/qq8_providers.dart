@@ -520,6 +520,34 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   }) : super(Qq8ConnectStatus.idle) {
     _sub = service.states.listen(_onSnapshot);
     _onSnapshot(service.snapshot);
+    unawaited(autoLoginIfSaved());
+  }
+
+  /// 启动自动登录：票据目录里有号就挑「文件最新修改的那个」用票据续期上线。
+  ///
+  /// - 装新包 / 杀进程重开后不再走一遍密码→滑块→短信；
+  /// - 只在 idle（用户还没手动发起登录）时尝试，不打断正在进行的流程；
+  /// - 票据失效（服务端拒）会正常落到 failed/needsXxx 状态，用户重新登录即可。
+  Future<void> autoLoginIfSaved() async {
+    // ⚠️ Qq8ConnectStatus 没重写 ==（引用比较），必须比 stage 而不是比实例
+    if (state.stage != Qq8LoginStage.idle || _busy) return;
+    try {
+      final uins = await service.tokenStore.listUins();
+      if (uins.isEmpty) return;
+      var best = uins.last;
+      var bestTime = DateTime(1970);
+      for (final u in uins) {
+        final t = await service.tokenStore.lastModified(u);
+        if (t != null && t.isAfter(bestTime)) {
+          bestTime = t;
+          best = u;
+        }
+      }
+      log?.call('i', '启动自动登录：用保存的票据登录 $best');
+      await loginWithToken(best);
+    } on Object catch (e) {
+      log?.call('w', '启动自动登录失败（忽略，等手动登录）', e);
+    }
   }
 
   /// 被桥接的登录服务（需要更细的控制时可直接用它）。
