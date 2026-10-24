@@ -300,8 +300,11 @@ void main() {
 
       expect(find.byType(Image), findsOneWidget);
       final img = tester.widget<Image>(find.byType(Image));
-      expect(img.image, isA<FileImage>(),
-          reason: '本地有文件就该用 FileImage，直链会过期而本地不会');
+      // cacheWidth 让 Image.file 内部包成 ResizeImage（按显示尺寸解码），
+      // 但 provider 仍是 FileImage——直链会过期而本地不会，这条不能变。
+      expect(img.image, isA<ResizeImage>(),
+          reason: '本地有文件就该用 FileImage（可带 cacheWidth），不走网络');
+      expect((img.image as ResizeImage).imageProvider, isA<FileImage>());
       expect(tester.takeException(), isNull);
     });
 

@@ -465,6 +465,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               child: visible.isEmpty && archived.isEmpty
                   ? _buildSidebarEmpty(store)
                   : ListView.builder(
+                      addAutomaticKeepAlives: false,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       // 第一行是"已归档"入口（没有归档会话时不占位置）
@@ -1285,6 +1286,13 @@ class _HomePageState extends ConsumerState<HomePage> {
                       : ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.symmetric(vertical: 12),
+                          // 行组件无状态：自动 keepalive 只在浪费（TG 的
+                          // RecyclerListView 也只对真正带状态的行保活）。
+                          addAutomaticKeepAlives: false,
+                          // 离屏 400px 预解码窗口：图片进屏前解码已在进行，
+                          // 等价于 RecyclerView 的 prefetch。
+                          // ignore: deprecated_member_use
+                          cacheExtent: 400,
                           itemCount: items.length,
                           itemBuilder: (_, i) {
                             final item = items[i];

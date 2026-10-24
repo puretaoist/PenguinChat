@@ -331,23 +331,35 @@ class _ImageBlock extends StatelessWidget {
       return Image.file(
         File(local),
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => _networkOrPlaceholder(),
+        // 按显示尺寸解码（TG ImageLoader 的 downsampling 等价物）：
+        // 相机原图 4000px 解码到 240px 档，内存与解码耗时都是数量级差别。
+        cacheWidth: _decodeWidth(context, _maxWidth),
+        errorBuilder: (_, _, _) => _networkOrPlaceholder(context),
       );
     }
-    return _networkOrPlaceholder();
+    return _networkOrPlaceholder(context);
   }
 
-  Widget _networkOrPlaceholder() {
+  Widget _networkOrPlaceholder(BuildContext context) {
     final src = seg.url;
     if (src == null || src.isEmpty) return _placeholder(_hint());
     return Image.network(
       src,
       fit: BoxFit.cover,
+      cacheWidth: _decodeWidth(context, _maxWidth),
       // 加载中与失败都必须有东西显示：CDN 拒绝是常态，不能留白。
       loadingBuilder: (_, child, progress) =>
           progress == null ? child : _placeholder('加载中…'),
       errorBuilder: (_, _, _) => _placeholder(_hint()),
     );
+  }
+
+  /// 解码目标宽（物理像素）。取整到 256 的倍数可以复用 ImageCache 的键，
+  /// 否则每个略不同的屏宽都会各解码一份。
+  static int _decodeWidth(BuildContext context, double logical) {
+    final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 2.0;
+    final px = (logical * dpr) ~/ 256 * 256;
+    return px < 256 ? 256 : px;
   }
 
   String _hint() {
@@ -449,6 +461,8 @@ class _ImageBlock extends StatelessWidget {
                     : localLarge != null
                         ? Image.file(
                             File(localLarge),
+                            cacheWidth: _decodeWidth(
+                                context, MediaQuery.sizeOf(context).width),
                             fit: BoxFit.contain,
                             errorBuilder: (_, _, _) => Container(
                               color: Colors.black87,
@@ -462,6 +476,8 @@ class _ImageBlock extends StatelessWidget {
                           )
                         : Image.network(
                         seg.url!,
+                        cacheWidth: _decodeWidth(
+                            context, MediaQuery.sizeOf(context).width),
                         fit: BoxFit.contain,
                         loadingBuilder: (_, child, p) =>
                             p == null ? child : const _Spinner(),
