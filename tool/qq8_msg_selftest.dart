@@ -307,6 +307,18 @@ Future<void> main() async {
         !noId.ok && noId.serverMsgId == 0,
         'ok=${noId.ok} id=${noId.serverMsgId}');
 
+    // 群聊判据不同（icqq `group.js:333` 只查 rsp[1]）：
+    // 真机 2026-10-24 09:30 群发 code=0 无字段 14，被私聊判据误判成失败、
+    // 消息挂"待重试"。
+    final grpRsp = Qq8Pb.encode(<int, Object?>{1: 0, 2: ''});
+    final grp = Qq8Msg.parseSendResponse(grpRsp, seq: 0, rand: 9, groupSend: true);
+    check('群聊 code=0 无字段 14 判成功（消息序号走推送回显）',
+        grp.ok && grp.serverMsgId == 0,
+        'ok=${grp.ok} id=${grp.serverMsgId}');
+    final grpFail = Qq8Pb.encode(<int, Object?>{1: 5, 2: 'err'});
+    check('群聊 code!=0 仍判失败',
+        !Qq8Msg.parseSendResponse(grpFail, seq: 0, rand: 9, groupSend: true).ok);
+
     final failRsp = Qq8Pb.encode(<int, Object?>{1: 4, 2: '发送失败：对方拒绝', 3: 0});
     final fail = Qq8Msg.parseSendResponse(failRsp, seq: 1, rand: 2);
     check('失败码与文案解出', !fail.ok && fail.code == 4 && fail.message.contains('发送失败'),

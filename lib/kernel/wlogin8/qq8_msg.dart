@@ -91,6 +91,16 @@ class Qq8MsgSendResult {
   /// 服务端分配的消息序号（响应 protobuf 字段 14；0 表示服务端没给）。
   final int serverMsgId;
 
+  /// 这是一条群聊发送的应答。
+  ///
+  /// 群与私聊的**成功判据不同**：私聊按参考实现 `friend.js:230`
+  /// `if (rsp[1] !== 0 || rsp[14] === 0)` 要求字段 14；而群的 `group.js:333`
+  /// 只查 `rsp[1] !== 0`——群的消息序号走**推送回显**拿（trapOnce），
+  /// `PbSendMsg` 的应答里没有字段 14。
+  /// 真机 2026-10-24 09:30：群发 `code=0` 被 [ok] 判成失败、消息挂"待重试"，
+  /// 就是把私聊判据套到了群上。
+  final bool groupSend;
+
   const Qq8MsgSendResult({
     required this.code,
     required this.message,
@@ -98,14 +108,16 @@ class Qq8MsgSendResult {
     required this.seq,
     required this.rand,
     this.serverMsgId = 0,
+    this.groupSend = false,
   });
 
   /// 是否发送成功。
   ///
-  /// 判据照参考实现 `friend.js:230`：`if (rsp[1] !== 0 || rsp[14] === 0)` 即失败。
-  /// 也就是**光有 `code == 0` 不够**，服务端必须同时给出字段 14（消息序号）。
-  /// 只判 `code == 0` 会把「服务端理解但没收下」的情况误判成成功。
-  bool get ok => code == 0 && serverMsgId != 0;
+  /// 私聊判据照参考实现 `friend.js:230`：`if (rsp[1] !== 0 || rsp[14] === 0)`
+  /// 即失败——**光有 `code == 0` 不够**，服务端必须同时给出字段 14（消息序号），
+  /// 只判 `code == 0` 会把「服务端理解但没收下」误判成成功。
+  /// 群聊判据照 `group.js:333`：只查 `code == 0`（字段 14 不在应答里）。
+  bool get ok => code == 0 && (groupSend || serverMsgId != 0);
 }
 
 /// 发消息（`MessageSvc.PbSendMsg`, 目前只有纯文本）。
@@ -325,10 +337,12 @@ abstract final class Qq8Msg {
       });
 
   /// 解析发送响应（protobuf）：`{1: 结果码, 2: 错误文案, 3: 时间, 14: 消息序号}`。
+  /// [groupSend] 为 true 时按群聊判据（不要求字段 14，见 [Qq8MsgSendResult.groupSend]）。
   static Qq8MsgSendResult parseSendResponse(
     Uint8List payload, {
     required int seq,
     required int rand,
+    bool groupSend = false,
   }) {
     final m = Qq8Pb.decode(payload);
     return Qq8MsgSendResult(
@@ -338,6 +352,7 @@ abstract final class Qq8Msg {
       seq: seq,
       rand: rand,
       serverMsgId: Qq8Pb.intAt(m, 14) ?? 0,
+      groupSend: groupSend,
     );
   }
 

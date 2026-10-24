@@ -848,7 +848,8 @@ class Qq8LoginService {
       rand32: rand32,
     );
     final rsp = await s.sendUni(Qq8Msg.sendCmd, body, timeout: timeout);
-    final r = Qq8Msg.parseSendResponse(rsp.payload, seq: 0, rand: rand32);
+    // 群聊判据：只看 code（字段 14 不在群应答里，消息序号走推送回显）。
+    final r = Qq8Msg.parseSendResponse(rsp.payload, seq: 0, rand: rand32, groupSend: true);
     _log.i('群聊发送 gid=$gid code=${r.code} ${r.ok ? 'ok' : r.message}');
     return r;
   }
