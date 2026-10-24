@@ -508,6 +508,42 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
+  section('2c. 上线注册无应答：登录成功不能被误报成「提交短信验证码失败」');
+  //
+  // 真机 2026-10-24 09:09 的现象：subCmd=7 拿到 type=0 + 0x119（票据已下发、
+  // 已落盘），随后 StatSvc.register 等了 10s 无 ack，异常一路冒到
+  // submitSmsCode 的 catch，被标成「提交短信验证码失败」——归因错了。
+  // icqq 的三态判据里 -2（超时）照样继续上线。
+  // 判据：register 拿不到应答时，最终 stage 仍是 online，且 error 为空。
+  {
+    final store = _MemStore();
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      _frame(1, 'wtlogin.login', _payload(160, <int, List<int>>{
+        0x104: List<int>.filled(20, 0x42),
+        0x174: _hex('aabbccdd'),
+        0x178: <int>[0x31, 0x0b, ...'13800000000'.codeUnits],
+      })),
+      // 2) 提交验证码 → 成功；之后**不再给任何帧**（register 无应答）
+      _successFrame(2),
+    ]);
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      timeout: const Duration(milliseconds: 300),
+    );
+    await svc.loginWithPassword(uin: 10001, password: 'hunter2');
+    await svc.submitSmsCode('654321');
+    check('register 无应答仍算上线（icqq -2 语义）',
+        svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+    check('不是「提交短信验证码失败」',
+        !(svc.snapshot.error ?? '').contains('短信'), svc.snapshot.error);
+    check('票据已存（登录确实成功了）', store.data != null);
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
   section('3. 设备锁（204）→ 解锁 → 上线');
   {
     final store = _MemStore();

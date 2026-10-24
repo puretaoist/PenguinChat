@@ -1864,7 +1864,13 @@ class Qq8LoginService {
       _smsMpasswd = null;
       _smsMsgCnt = null;
       _smsTimeLimit = null;
-      await _goOnline(uin, bundle);
+      // 登录已成功（type=0 票据已落盘）。从这里开始再出错也绝不能归因成
+      // 「提交短信验证码失败」——那会把成功登录误报成失败。
+      try {
+        await _goOnline(uin, bundle);
+      } catch (e, st) {
+        _fail('登录已通过，但上线流程失败', e, st);
+      }
       return;
     }
 
@@ -2015,7 +2021,18 @@ class Qq8LoginService {
     );
     await session.start();
 
-    final ok = await session.register();
+    // register 超时不算失败：icqq `_register` 的三态判据（1 / -1 / -2）里
+    // `-2`（等响应超时）照样继续走上线流程——服务端本就可能不回 ack，
+    // 真机日志里 register 发出后到达的是 ConfigPushSvc 推送而不是应答。
+    // 真机 2026-10-24 09:09：登录 type=0 票据已下发，却因 register 10s
+    // 超时把整条流程标成「提交短信验证码失败」——归因错了，登录是成功的。
+    bool ok;
+    try {
+      ok = await session.register();
+    } catch (e) {
+      _log.w('上线注册无应答（等价 icqq -2），继续上线', error: e);
+      ok = true;
+    }
     if (!ok) {
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.failed,
