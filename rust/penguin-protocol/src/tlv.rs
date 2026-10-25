@@ -172,6 +172,11 @@ pub struct TlvContext {
     /// 默认 `true`（密码路径是主路径），滑块提交前用
     /// [`TlvContext::with_da2_bit`] 关掉。
     pub da2_bit_active: bool,
+    /// `0x128` 的 guid 来源旗：`true` =「现算 guid」（首登语义，U=1/Z=0x11000000），
+    /// `false` =「文件复用」（U=0/Z=0x01000000）。与 Dart 侧
+    /// `Qq8TlvContext.guidNew` 一一对应（出处：t.java:230-283 +
+    /// 官方真机日志 `guid src 17`；2026-10-24 824f525 对齐官方抓包）。
+    pub guid_new: bool,
 }
 
 impl TlvContext {
@@ -205,6 +210,9 @@ impl TlvContext {
             tea_padding: Box::new(os_random),
             now_millis: Box::new(wall_clock_millis),
             da2_bit_active: true,
+            // 与 Dart 侧 `Qq8TlvContext.guidNew` 默认一致：身份注入（无设备
+            // guid 文件）即「现算」语义。
+            guid_new: true,
         }
     }
 
@@ -513,7 +521,10 @@ pub fn body(ctx: &TlvContext, tag: u16, args: &[TlvArg]) -> Result<Vec<u8>, TlvE
         }
 
         0x109 => {
-            w.extend_from_slice(&md5_bytes(d.imei.as_bytes()));
+            // 官方抓包语义（824f525 对齐）：0x109 = MD5(android_id)，不是 MD5(imei)。
+        // 出处：t.java:296-299（android_id 进 0x109）；oicq 旧语义（MD5(imei)）保留在
+        // vectors/tlv.json teaRefs.t144.oicqPlain 供跨实现比对。
+        w.extend_from_slice(&md5_bytes(d.android_id.as_bytes()));
         }
 
         0x10A => {
@@ -615,10 +626,13 @@ pub fn body(ctx: &TlvContext, tag: u16, args: &[TlvArg]) -> Result<Vec<u8>, TlvE
 
         0x128 => {
             u16b(&mut w, 0);
-            u8b(&mut w, 0); // guid new
+            // 官方抓包语义（824f525 对齐，对应 Dart Qq8TlvContext.guidNew）：
+            // U = guidNew?1:0；flag Z = guidNew?0x11000000:0x01000000。
+            // 出处：t.java:230-283 + 官方真机日志 guid src 17（首登现算 guid）。
+            u8b(&mut w, if ctx.guid_new { 1 } else { 0 }); // guid new
             u8b(&mut w, 1); // guid available
             u8b(&mut w, 0); // guid changed
-            u32b(&mut w, 16777216); // guid flag
+            u32b(&mut w, if ctx.guid_new { 0x11000000 } else { 0x01000000 }); // guid flag
             tlv_str(&mut w, &cut(&d.model, 32));
             tlv(&mut w, cut_bytes(&d.guid, 16));
             tlv_str(&mut w, &cut(&d.brand, 16));

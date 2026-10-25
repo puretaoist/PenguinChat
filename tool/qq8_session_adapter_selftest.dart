@@ -295,6 +295,8 @@ Future<void> main() async {
     deviceBuilder: _fixtureDevice,
     ecdhBuilder: () => _fixedEcdh,
     transportBuilder: () => scripted,
+    // 2026-10-25 CI：600406b 起上线后 unawaited 发两个 JCE 检查，抢脚本帧。
+    reportOnlineChecks: false,
     reportOnlineStatus: false,
     timeout: const Duration(seconds: 5),
       // 群探测与上线补拉都会抢脚本帧：测试里都关掉，行为回到纯手动路径
@@ -934,6 +936,9 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted2,
+      // 2026-10-25 CI：600406b 起上线后 unawaited 发两个 JCE 检查，抢脚本帧——
+      // 这里的脚本正好 4 帧（登录/register/好友/群），一条都不能被吃掉。
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );

@@ -472,6 +472,9 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      // 2026-10-25 CI：600406b 起上线后 unawaited 发两个 JCE 检查，
+      // 抢脚本帧让后续 seq 错位——脚本夹具必须关（同 qq8_login_service_selftest）。
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -519,6 +522,9 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      // 2026-10-25 CI：600406b 起上线后 unawaited 发两个 JCE 检查，
+      // 抢脚本帧让后续 seq 错位——脚本夹具必须关（同 qq8_login_service_selftest）。
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );

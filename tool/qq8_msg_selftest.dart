@@ -363,6 +363,10 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      // 2026-10-25 CI：cb55e52 起默认 reportOnlineChecks=true 会在上线后
+      // unawaited 发 PhSigLcId.Check + GrayUinPro.Check，抢走脚本帧，
+      // PbSendMsg 拿到的是 check 的响应——顺序敏感的脚本夹具必须全关。
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );

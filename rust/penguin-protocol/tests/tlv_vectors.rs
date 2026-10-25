@@ -70,7 +70,14 @@ struct TeaRef {
     #[serde(rename = "officialKey")]
     official_key: Option<String>,
     key: Option<String>,
-    plain: String,
+    /// t106 单明文（两语义一致）；t144 起拆为下面两个字段（824f525 向量同步）。
+    plain: Option<String>,
+    /// t144：oicq 语义明文 = 参考密文 `vec.hex` 的解密结果。
+    #[serde(rename = "oicqPlain")]
+    oicq_plain: Option<String>,
+    /// t144：官方语义明文 = 我方实现按官方语义打包后应解出的明文。
+    #[serde(rename = "officialPlain")]
+    official_plain: Option<String>,
 }
 
 fn load() -> TlvFile {
@@ -243,7 +250,7 @@ fn tlv106_official_key_and_plaintext() {
 
     let packed = pack(&ctx, 0x106, &[]).unwrap();
     let plain = qq_tea_decrypt(&packed[4..], &official).unwrap();
-    assert_eq!(hex::encode(&plain), refs.plain, "0x106 明文不符");
+    assert_eq!(hex::encode(&plain), refs.plain.as_deref().expect("t106 plain 缺失"), "0x106 明文不符");
 }
 
 /// `0x144`：密钥两实现一致且填充固定 ⇒ 密文可逐字节比；再解明文交叉验证。
@@ -261,15 +268,22 @@ fn tlv144_ciphertext_and_plaintext() {
 
     let vec = v.vectors.iter().find(|x| x.tag == 0x144).unwrap();
     let packed = pack(&ctx, 0x144, &[]).unwrap();
-    assert_eq!(hex::encode(&packed), vec.hex, "0x144 密文不匹配");
 
+    // 824f525 起向量双语义：vec.hex 是 oicq 语义参考密文，我方实现已是官方语义，
+    // 两者密文必然不同 → 逐字节比对改为「各自解密后的明文交叉验证」。
+    let official_plain = refs.official_plain.as_deref().expect("t144 officialPlain 缺失");
     let plain = qq_tea_decrypt(&packed[4..], &ctx.device.tgtgt).unwrap();
-    assert_eq!(hex::encode(&plain), refs.plain, "0x144 明文不符");
+    assert_eq!(hex::encode(&plain), official_plain, "0x144 官方语义明文不符");
 
-    // 用本实现解参考实现的密文
+    // 用本实现解参考实现（oicq 语义）的密文 → 应得 oicqPlain
+    let oicq_plain = refs.oicq_plain.as_deref().expect("t144 oicqPlain 缺失");
     let ref_body = hex::decode(&vec.hex).unwrap()[4..].to_vec();
     let dec = qq_tea_decrypt(&ref_body, &ctx.device.tgtgt).unwrap();
-    assert_eq!(hex::encode(&dec), refs.plain, "解参考密文 0x144 明文不符");
+    assert_eq!(hex::encode(&dec), oicq_plain, "解参考密文 0x144 应得 oicq 语义明文");
+
+    // 双语义差异只应在 0x109 payload（16B）与 0x128 U/Z（2B）共 18 字节，
+    // 密文差 3 处即 officialReplacements=2 的记录；不再逐字节复现旧密文（oicq 打包路径已删）。
+    assert_ne!(hex::encode(&packed), vec.hex, "官方语义密文不应与 oicq 参考密文相同");
 }
 
 /// `[tag][len][body]` 帧结构自洽 + 未知编号报错。
