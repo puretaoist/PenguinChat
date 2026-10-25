@@ -1003,7 +1003,13 @@ class _HomePageState extends ConsumerState<HomePage> {
         constraints: const BoxConstraints(
           minHeight: TelegramMetrics.chatRowHeight,
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        // 几何抄 TG `Cells/DialogCell.java:170-171`：avatarStart = 11、
+        // messagePaddingStart = 72（= 11 + 52 + 9）；垂直方向 70 - 52 = 18，
+        // 上下各 9，正好填满 chatRowHeight。
+        padding: const EdgeInsets.symmetric(
+          horizontal: TelegramMetrics.chatRowPadding,
+          vertical: 9,
+        ),
         child: Row(
           children: [
             Stack(
@@ -1032,7 +1038,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
               ],
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: TelegramMetrics.chatAvatarGap),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

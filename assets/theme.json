@@ -51,16 +51,16 @@
     "sidebar_width": 320,
     "header_height": 56,
     "input_height": 48,
-    "chat_row_height": 72,
-    "avatar_size": 54,
+    "chat_row_height": 70,
+    "avatar_size": 52,
     "bubble_avatar_size": 34,
     "bubble_radius": 16,
     "bubble_tail_radius": 6,
     "input_radius": 20,
     "date_chip_radius": 12,
     "font_date_chip": 12,
-    "font_body": 14.5,
-    "font_timestamp": 11,
-    "font_title": 15
+    "font_body": 16,
+    "font_timestamp": 12,
+    "font_title": 17
   }
 }

@@ -149,14 +149,37 @@ class TelegramColors {
 }
 
 /// 尺寸规格（对齐现行 Telegram 客户端）
+///
+/// ## 数值出处（以官方 Android 源码为准，不凭感觉取整）
+///
+/// 2026-10-25 逐项抄自 `penguis/telegram-src/TelegramAndroid`：
+///
+/// | 项 | TG 出处 | 值 |
+/// |---|---|---|
+/// | 会话行高 | `Cells/DialogCell.java:172` `heightDefault = 70` | 70 |
+/// | 头像直径 | `DialogCell.java:2465` `dp(52)`（带限时动态时 56）| 52 |
+/// | 会话名 | `DialogCell.java:1252` `dialogs_namePaint = dp(17)` | 17 |
+/// | 会话摘要 | `DialogCell.java:1254` `dialogs_messagePaint = dp(16)` | 16 |
+/// | 会话时间 | `ActionBar/Theme.java:7897` `dialogs_timePaint = dp(12)` | 12 |
+/// | 气泡正文 | `Theme.java:8035` `chat_msgTextPaint = dp(SharedConfig.fontSize)`，默认 16 | 16 |
+/// | 气泡时间 | `Theme.java:8408` `chat_timePaint = dp(12)` | 12 |
+///
+/// 平板/折叠屏上 TG 会把正文字号抬到 18（`SharedConfig.java:613`
+/// `isTablet() && !isFold() ? 18 : 16`），这里**不做设备分支**：本项目目标设备是
+/// 手机，多一套分支只会让截图和测试期望对不上。
 class TelegramMetrics {
   static const sidebarWidth = 320.0;
   static const headerHeight = 56.0;
   static const inputHeight = 48.0;
 
   /// 会话行高度（现行版列表行更高、头像更大）。
-  static const chatRowHeight = 72.0;
-  static const avatarSize = 54.0;
+  static const chatRowHeight = 70.0;
+  static const avatarSize = 52.0;
+  /// 会话列表：头像左内边距（TG `Cells/DialogCell.java:170` `avatarStart = 11`）。
+  static const chatRowPadding = 11.0;
+  /// 会话列表：头像右边缘到文字区的间距（TG `DialogCell.java:171`
+  /// `messagePaddingStart = 72`，72 - 11 - 52 = 9）。
+  static const chatAvatarGap = 9.0;
 
   /// 群聊里收到的消息旁的小头像。
   static const bubbleAvatarSize = 34.0;
@@ -172,9 +195,9 @@ class TelegramMetrics {
   static const dateChipRadius = 12.0;
   static const fontDateChip = 12.0;
 
-  static const fontBody = 14.5;
-  static const fontTimestamp = 11.0;
-  static const fontTitle = 15.0;
+  static const fontBody = 16.0;
+  static const fontTimestamp = 12.0;
+  static const fontTitle = 17.0;
 }
 
 ThemeData buildTelegramTheme({bool dark = true}) {

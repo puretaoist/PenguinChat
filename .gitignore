@@ -81,3 +81,4 @@ ui2.txt
 # 第三方 IDE 生成的计划文档（不属于本仓库内容）
 /.trae/
 device-logcat.txt
+test/failures/
