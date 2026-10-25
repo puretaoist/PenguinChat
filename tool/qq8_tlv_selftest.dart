@@ -434,6 +434,40 @@ void testTeaTlvs() {
     );
   }
 
+  // 官方语义与 oicq 语义的差别必须**可枚举**，否则「一致」没有意义。
+  //
+  // 参考实现只在内嵌两处不同：`0x109`（oicq=MD5(imei)、官方=MD5(androidId)，16B）
+  // 与 `0x128`（guid 旗标 U/Z，2B）。合起来恰好 18 字节。
+  // 用「差异字节全部落在两个已知区间 + 数量精确」做判据，而不是数连续段——
+  // 连续段数会随差异区间内部出现偶然相同的字节而变，不稳定。
+  {
+    final off = hex(_teaRef144Plain);
+    final oicq = hex(_teaRef144PlainOicq);
+    if (off.length != oicq.length) {
+      bad('两份参考明文长度应相同', '${off.length} vs ${oicq.length}');
+    } else {
+      // 子项布局：0x144 body = u16(count) ‖ [0x109 TLV][0x52D TLV][0x124 TLV][0x128 TLV][0x16E TLV]
+      // 0x109 的 MD5 body 位于 [6,22)；0x128 的 U/Z 位于 [250,254)。
+      const allowed = <int>[6, 22, 250, 254];
+      var diffCount = 0;
+      final strays = <int>[];
+      for (var i = 0; i < off.length; i++) {
+        if (off[i] == oicq[i]) continue;
+        diffCount++;
+        final in109 = i >= allowed[0] && i < allowed[1];
+        final in128 = i >= allowed[2] && i < allowed[3];
+        if (!in109 && !in128) strays.add(i);
+      }
+      if (strays.isEmpty) {
+        ok('参考明文（官方 vs oicq）的差异只在内嵌 0x109 / 0x128',
+            '$diffCount 字节差异，全部落在 [6,22) 与 [250,254)');
+      } else {
+        bad('参考明文（官方 vs oicq）的差异只在内嵌 0x109 / 0x128',
+            '越界偏移：${strays.join(",")}（共 $diffCount 字节差异）');
+      }
+    }
+  }
+
   // --- 交叉：用我们的 TEA 解参考实现的密文 ---
   //
   // 只做 0x144（密钥是 device.tgtgt，与 oicq 一致）。

@@ -254,12 +254,39 @@ class Qq8Session {
     return Qq8Register.parseResponse(r.payload);
   }
 
+  /// 在线状态上报（`StatSvc.SetStatusFromClient`，**UNI 外壳 0x0B**）。
+  ///
+  /// 与 [register] 是两个独立请求：register 用登录外壳（0x0A）注册连接，
+  /// 这个用 UNI 外壳（0x0B）告诉服务端"我现在是在线状态"。
+  ///
+  /// 官方（[icqq] `lib/internal/listeners.js:93`）在登录成功回调里**立刻**发一次，
+  /// 之后 `lib/client.js:225-229` 每 11 次心跳再发一次。
+  ///
+  /// 失败不抛：状态上报失败不该把在线状态打掉（register 已成功、心跳仍在），
+  /// 只记 [onError] 让调用方知道。
+  Future<bool> setOnlineStatus({
+    int status = Qq8OnlineStatus.online,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final body = Qq8Register.buildSetStatusBody(
+      uin: uin,
+      device: device,
+      status: status,
+    );
+    try {
+      final r = await sendUni(Qq8Register.cmdSetStatus, body, timeout: timeout);
+      return Qq8Register.parseResponse(r.payload);
+    } on Object catch (e) {
+      onError?.call(e);
+      return false;
+    }
+  }
+
   /// `Heartbeat.Alive`：登录层 type=0、空 body。
   ///
   /// 出处：oicq js `lib/wtlogin/wt.js` 的 `heartbeat()`。
   Future<Qq8SsoResponse> heartbeatAlive() =>
       sendLoginLayer('Heartbeat.Alive', Uint8List(0), type: Qq8LoginType.heartbeat);
-
   /// `Client.CorrectTime`：登录层 type=0、body = 4 个零字节；
   /// 响应的前 4 字节是服务端时间（i32），据此更新 [timeDiffSeconds]。
   ///
@@ -312,6 +339,9 @@ class Qq8Session {
   }
 
   /// 单次心跳（循环里调用；测试与手动触发也用它）。
+  ///
+  /// 心跳主体成功后，每 [_statusReportEvery] 次额外发一次在线状态上报
+  /// （参考实现 `icqq/lib/client.js:225-229` 的 `n > 10` 计数，即第 11 次触发）。
   Future<bool> heartbeatOnce() async {
     try {
       await correctTime();
@@ -321,11 +351,13 @@ class Qq8Session {
     try {
       await heartbeatAlive();
       await uniHeartbeat();
+      await _maybeReportStatus();
       return true;
     } on Object {
       // 一次失败重试一次（参考实现同款）
       try {
         await uniHeartbeat();
+        await _maybeReportStatus();
         return true;
       } on Object {
         _online = false;
@@ -333,6 +365,24 @@ class Qq8Session {
         onOffline?.call();
         return false;
       }
+    }
+  }
+
+  /// 心跳计数器与重发间隔（11 = 参考实现的 `n > 10`）。
+  int _heartbeatCount = 0;
+  static const int _statusReportEvery = 11;
+
+  /// 每 11 次心跳补报一次在线状态。
+  ///
+  /// 服务端似乎会遗忘客户端状态（心跳只证明"连接活着"，不证明"我在线"），
+  /// 官方因此周期性重报。失败静默——它只是维护性请求，不该影响心跳结论。
+  Future<void> _maybeReportStatus() async {
+    if (++_heartbeatCount < _statusReportEvery) return;
+    _heartbeatCount = 0;
+    try {
+      await setOnlineStatus();
+    } on Object {
+      // setOnlineStatus 内部已吞异常，这里只是双保险
     }
   }
 

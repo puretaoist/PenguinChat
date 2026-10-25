@@ -48,10 +48,31 @@ import 'qq8_device.dart';
 import 'qq8_jce.dart';
 import 'qq8_pb.dart';
 
+/// 在线状态值（参考实现 `icqq` 的 `OnlineStatus` 枚举）。
+///
+/// 只有 [online] 被真实使用；其余值保留，将来做「离开/勿扰」时不用再查表。
+abstract final class Qq8OnlineStatus {
+  static const int offline = 0;
+  static const int online = 11;
+  static const int absent = 31;
+}
+
 /// 上线注册请求的组装与响应判读。
 abstract final class Qq8Register {
   /// 登录层信封的命令字。
   static const String cmd = 'StatSvc.register';
+
+  /// 在线状态上报的命令字（**UNI 外壳 0x0B**，不是登录外壳 0x0A）。
+  ///
+  /// 与 [cmd] 是两件事，官方都发：
+  /// - `StatSvc.register`（0x0A）：注册这条连接，判据 `rsp[9]`；
+  /// - `StatSvc.SetStatusFromClient`（0x0B）：上报"我现在是在线状态"。
+  ///
+  /// 出处：[icqq] `lib/internal/internal.js:22-39`（`setStatus`），
+  /// 调用点 `lib/internal/listeners.js:93`（登录成功回调里立刻发一次）与
+  /// `lib/client.js:225-229`（心跳里 `n++; if (n > 10) { n = 0; setOnlineStatus(); }`，
+  /// 即**每 11 次心跳重发一次**）。
+  static const String cmdSetStatus = 'StatSvc.SetStatusFromClient';
 
   /// 组装请求体：JCE 包装（PushService / SvcReqRegister）。
   ///
@@ -129,5 +150,79 @@ abstract final class Qq8Register {
     final rsp = Qq8Jce.decodeWrapper(payload);
     final v = rsp[9];
     return v != null && v != 0;
+  }
+
+  /// 组装在线状态上报的请求体（**UNI 外壳，命令字见 [cmdSetStatus]**）。
+  ///
+  /// 结构与 [buildBody] 同源（都是 `SvcReqRegister` 那 40 个槽位），
+  /// 但**有 9 处取值不同**——照抄 register 的字段表会得到一个服务端
+  /// 不认识的状态包，所以这里逐槽对齐参考实现 `internal.js:22-39`：
+  ///
+  /// | 槽 | register(在线) | SetStatusFromClient | 说明 |
+  /// |---|---|---|---|
+  /// | 10 | 0 | **248** | 状态上报专用常量 |
+  /// | 12 | 1 | **0** | register 的"是否首次"标志 |
+  /// | 23 | 0 | **473** | |
+  /// | 30/31 | brand | **""** | 状态包不带厂商 |
+  /// | 33 | pb blob | **null** | 状态包不带 pb |
+  /// | 34 | 0 | **1** | |
+  /// | 38/39 | 1000 / 98 | **0 / 0** | 心跳参数只在 register 里 |
+  ///
+  /// [status] 用 [Qq8OnlineStatus]；只有在线（11）是实测走过的路径。
+  static Uint8List buildSetStatusBody({
+    required int uin,
+    required Qq8Device device,
+    int status = Qq8OnlineStatus.online,
+  }) {
+    final fields = <int, Object?>{
+      0: uin,
+      1: 7,
+      2: 0,
+      3: '',
+      4: status,
+      5: 0,
+      6: 0,
+      7: 0,
+      8: 0,
+      9: 0,
+      10: 248,
+      11: device.version.sdk,
+      12: 0,
+      13: '',
+      14: 0,
+      // 15: null
+      16: device.guid,
+      17: 2052,
+      18: 0,
+      19: device.model,
+      20: device.model,
+      21: device.version.release,
+      22: 1,
+      23: 473,
+      24: 0,
+      // 25: null
+      26: 0,
+      27: 0,
+      28: '',
+      29: 0,
+      30: '',
+      31: '',
+      32: '',
+      // 33: null（状态包没有 pb blob）
+      34: 1,
+      // 35: null
+      36: 0,
+      // 37: null
+      38: 0,
+      39: 0,
+    };
+
+    return Qq8Jce.encodeWrapper(
+      service: 'PushService',
+      method: 'SvcReqRegister',
+      attributes: <String, Uint8List>{
+        'SvcReqRegister': Qq8Jce.encodeStruct(fields),
+      },
+    );
   }
 }

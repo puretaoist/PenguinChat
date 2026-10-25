@@ -181,6 +181,7 @@ Future<void> main() async {
     ),
     _frame(seq: 103, cmd: 'Heartbeat.Alive'),
     _frame(seq: 104, cmd: 'OidbSvc.0x480_9_IMCore', payload: hex('0a00')),
+    _frame(seq: 105, cmd: 'StatSvc.SetStatusFromClient', payload: _registerResp(1)),
   ]);
 
   final session = Qq8Session(
@@ -235,6 +236,25 @@ Future<void> main() async {
   })();
   checkEq('UNI 心跳 body = pb {1:1152,2:9,4:…}',
       toHex(parts.body), toHex(expectBody));
+
+  section('4b. 在线状态上报（SetStatusFromClient，0x0B 外壳）');
+  final statusOk = await session.setOnlineStatus();
+  checkEq('setOnlineStatus() = true', statusOk, true);
+  checkEq('收包仍无解析错误', errors.length, 0);
+  final sentStatus = transport.sent[4];
+  checkEq('走 UNI 外壳（偏移 4 起是 0x0B）', toHex(sentStatus.sublist(4, 8)),
+      '0000000b');
+  final statusParts = _uniParts(sentStatus);
+  checkEq('命令字 = StatSvc.SetStatusFromClient', statusParts.cmd,
+      'StatSvc.SetStatusFromClient');
+  // 与 register 的 body 必须不同（否则就是把状态包写成了注册包）。
+  // 不能拿 _uniParts 解 register：那个 helper 按 0x0B 布局写死，遇 0x0A 会算错。
+  // 直接从状态包 body 里读 JCE 槽位做判据更稳。
+  final statusFields = Qq8Jce.decodeWrapper(statusParts.body);
+  checkEq('状态包 tag10 = 248（register 是 0）', statusFields[10], 248);
+  checkEq('状态包 tag33 缺失（register 带 pb blob）',
+      statusFields.containsKey(33), false);
+  checkEq('状态包 tag38 = 0（register 是 1000）', statusFields[38], 0);
 
   section('5. 主动推送路由');
   final pushFuture = session.pushes.first;

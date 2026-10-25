@@ -363,6 +363,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
 

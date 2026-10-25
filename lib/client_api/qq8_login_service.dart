@@ -251,6 +251,16 @@ class Qq8LoginService {
   final SafetyGate? gate;
 
   /// 心跳间隔（默认 4.5 分钟，oicq 的量级）。
+  /// 上线后是否补发一次在线状态上报（`StatSvc.SetStatusFromClient`）。
+  ///
+  /// 官方（icqq `internal/listeners.js:93`）登录成功回调第一件事就是它，
+  /// 之后每 11 次心跳补发（`client.js:225-229`，由会话层自动做）。
+  ///
+  /// 留成开关不是为了关掉产品行为，而是**测试需要**：脚本化传输按"一个请求
+  /// 消耗一个预设响应"推进，多出来的一个包会让后面所有帧错位一格，
+  /// 断言就变成在验错位后的东西。需要断言的用例显式打开它。
+  final bool reportOnlineStatus;
+
   final Duration heartbeatInterval;
   /// 收消息兜底轮询间隔（推送不可靠时的补拉频率）。
   final Duration pullInterval;
@@ -389,6 +399,7 @@ class Qq8LoginService {
     this.pullInterval = const Duration(seconds: 20),
     this.startupPullDelay = const Duration(seconds: 2),
     this.primeGroupSeqs = true,
+    this.reportOnlineStatus = true,
     this.timeout = const Duration(seconds: 15),
   })  : profile = profile ?? qq8DefaultProfile,
         tokenStore = tokenStore ?? _MemoryTokenStore(),
@@ -2380,6 +2391,21 @@ class Qq8LoginService {
       return;
     }
     session.startHeartbeat(interval: heartbeatInterval);
+
+    // 上线后立刻上报一次在线状态（`StatSvc.SetStatusFromClient`，0x0B 外壳）。
+    // 与上面的 register 是两个独立请求：register 注册连接，这个声明"我在线"。
+    // 官方 icqq 在登录成功回调里第一件事就是它（`internal/listeners.js:93`），
+    // 之后每 11 次心跳补报一次（`client.js:225-229`）。
+    // 失败不阻断上线：register 已过、心跳已起，状态上报是维护性请求。
+    if (reportOnlineStatus) {
+      try {
+        final statusOk = await session.setOnlineStatus();
+        _log.i('在线状态上报: ${statusOk ? '已确认' : '未确认（不影响上线）'}');
+      } on Object catch (e) {
+        _log.w('在线状态上报失败（不影响上线）', error: e);
+      }
+    }
+
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.online, uin: uin));
     _log.i('已上线 uin=$uin');
 

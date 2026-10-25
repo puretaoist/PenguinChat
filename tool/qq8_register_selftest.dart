@@ -165,6 +165,58 @@ void testResponse() {
   checkEq('rsp[9]=0 → 失败', Qq8Register.parseResponse(failBody), false);
 }
 
+void testSetStatus() {
+  section('4. 在线状态上报（StatSvc.SetStatusFromClient）');
+
+  final device = _device();
+  final body = Qq8Register.buildSetStatusBody(
+    uin: 10001,
+    device: device,
+  );
+
+  final wrapper = Qq8Jce.decode(body);
+  checkEq('service = PushService', wrapper[5], 'PushService');
+  checkEq('method 仍是 SvcReqRegister', wrapper[6], 'SvcReqRegister');
+
+  final f = Qq8Jce.decodeWrapper(body);
+  checkEq('tag0 = uin', f[0], 10001);
+  checkEq('tag1 = 7（与 register 相同）', f[1], 7);
+  checkEq('tag4 = 11（在线）', f[4], Qq8OnlineStatus.online);
+  checkEq('tag10 = 248（状态上报专用，register 是 0）', f[10], 248);
+  checkEq('tag12 = 0（register 是 1）', f[12], 0);
+  checkEq('tag23 = 473（register 是 0）', f[23], 473);
+  // 分开断言：两个空串拼起来只剩分隔符，写成 '//' 会得到一条永远失败的假断言
+  checkEq('tag30 = 空串（register 是 brand）', f[30], '');
+  checkEq('tag31 = 空串（register 是 brand）', f[31], '');
+  checkEq('tag33 缺失（状态包不带 pb blob）', f.containsKey(33), false);
+  checkEq('tag34 = 1（register 是 0）', f[34], 1);
+  checkEq('tag38 = 0（register 是 1000）', f[38], 0);
+  checkEq('tag39 = 0（register 是 98）', f[39], 0);
+  checkEq('null 槽位（15/25/35/37）仍被跳过',
+      '${f.containsKey(15)}${f.containsKey(25)}${f.containsKey(35)}${f.containsKey(37)}',
+      'falsefalsefalsefalse');
+  checkEq('实发槽位数 35（40 - 5 个 null，比 register 少 pb blob）', f.length, 35);
+
+  // 与 register 的差异必须**只有**预期那几槽——防止将来照抄字段表把两边做成一样
+  final reg = Qq8Jce.decodeWrapper(
+      Qq8Register.buildBody(uin: 10001, device: device, nowMillis: _ts));
+  final diff = <int>[];
+  for (final k in <int>{...reg.keys, ...f.keys}) {
+    final a = reg.containsKey(k) ? reg[k].toString() : '<无>';
+    final b = f.containsKey(k) ? f[k].toString() : '<无>';
+    if (a != b) diff.add(k);
+  }
+  diff.sort();
+  checkEq('与 register 的差异槽位 = [10, 12, 23, 30, 31, 33, 34, 38, 39]',
+      diff.join(','), '10,12,23,30,31,33,34,38,39');
+
+  // 状态值可换（将来做「离开/勿扰」时不用改结构）
+  final absent = Qq8Jce.decodeWrapper(
+      Qq8Register.buildSetStatusBody(
+          uin: 10001, device: device, status: Qq8OnlineStatus.absent));
+  checkEq('status=31 → tag4 = 31', absent[4], 31);
+}
+
 void main() {
   stdout.writeln('上线注册（StatSvc.register）离线自测');
   stdout.writeln('=' * 62);
@@ -172,6 +224,7 @@ void main() {
   testPbBlob();
   testBody();
   testResponse();
+  testSetStatus();
 
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');

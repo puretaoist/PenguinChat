@@ -295,6 +295,7 @@ Future<void> main() async {
     deviceBuilder: _fixtureDevice,
     ecdhBuilder: () => _fixedEcdh,
     transportBuilder: () => scripted,
+    reportOnlineStatus: false,
     timeout: const Duration(seconds: 5),
       // 群探测与上线补拉都会抢脚本帧：测试里都关掉，行为回到纯手动路径
       startupPullDelay: const Duration(hours: 1),
@@ -933,6 +934,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted2,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     final controller =

@@ -404,6 +404,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     final seen = <Qq8LoginStage>[];
@@ -449,6 +450,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
@@ -495,6 +497,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
@@ -539,6 +542,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(milliseconds: 300),
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
@@ -571,6 +575,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(milliseconds: 300),
       heartbeatInterval: const Duration(hours: 1), // 测试里不让心跳干扰
     )..reconnectBaseDelay = const Duration(milliseconds: 10);
@@ -614,6 +619,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
@@ -660,6 +666,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
 
@@ -710,6 +717,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
@@ -752,6 +760,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     // 直接用 token 路径上线：先塞一份可用票据
@@ -944,6 +953,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
     (svc.tokenStore as _MemStore).data = Qq8TokenData(
@@ -1074,6 +1084,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       heartbeatInterval: const Duration(milliseconds: 30),
       timeout: const Duration(milliseconds: 150),
     );
@@ -1123,6 +1134,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineStatus: false,
       gate: offlineGate,
     );
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
