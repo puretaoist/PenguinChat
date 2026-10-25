@@ -872,6 +872,84 @@ Map<String, dynamic> _persistedMessage(String id, String text) => {
     };
 
 // ---------------------------------------------------------------------------
+// 7b. 历史脏数据迁移：`unknown(field=9)` 在读取时被清掉
+// ---------------------------------------------------------------------------
+
+Future<void> testMigrateUnknownField9() async {
+  section('7b. 历史脏数据：unknown(field=9) 读取时清掉');
+
+  final dir = newTempDir('migrate9');
+  final chatDir = Directory('${dir.path}/chats')..createSync(recursive: true);
+
+  // 模拟 2026-10-25 之前落盘的记录：每条消息都多一段 unknown(field=9)。
+  // 这是真机抓到的形态（群 486045673 的 126 条里 118 条带它）。
+  Map<String, dynamic> dirty(String id, String text) => {
+        ..._persistedMessage(id, text),
+        'segments': [
+          {
+            'type': 'unknown',
+            'data': {'elem': 'unknown(9)', 'field': 9}
+          },
+          {'type': 'text', 'data': {'text': text}},
+        ],
+      };
+
+  File('${chatDir.path}/group_12345.jsonl').writeAsStringSync(
+    '${jsonEncode(dirty('600', '第一条'))}\n'
+    '${jsonEncode(dirty('601', '第二条'))}\n'
+    // 真正未知的字段必须保留：只清 field==9，不能把「未知元素」也一并吞掉，
+    // 否则将来 QQ 加了新的消息类型我们会静默丢内容。
+    '${jsonEncode({
+          ..._persistedMessage('602', ''),
+          'segments': [
+            {
+              'type': 'unknown',
+              'data': {'elem': 'unknown(40)', 'field': 40}
+            },
+            {'type': 'text', 'data': {'text': '第三条'}},
+          ],
+        })}\n',
+  );
+
+  final session = FakeSession();
+  final store = ChatStore(session: session, dataDir: dir);
+  await store.bootstrap();
+  await store.openChat('group_12345');
+
+  final loaded = store.messagesOf('group_12345');
+  checkEq('三条消息都读出来了', loaded.length, 3);
+
+  final unknown9 = loaded
+      .expand((m) => m.segments)
+      .whereType<UnknownSegment>()
+      .where((s) => s.data['field'] == 9)
+      .length;
+  checkEq('unknown(field=9) 已被清掉', unknown9, 0);
+
+  checkEq('第一条只剩文本段', loaded.first.segments.length, 1);
+  check(
+    '第一条的文本仍在',
+    loaded.first.segments.first is TextSegment &&
+        (loaded.first.segments.first as TextSegment).text == '第一条',
+  );
+
+  final unknown40 = loaded
+      .expand((m) => m.segments)
+      .whereType<UnknownSegment>()
+      .where((s) => s.data['field'] == 40)
+      .length;
+  checkEq('真正未知的字段（40）仍然保留', unknown40, 1);
+
+  // 迁移只在读取路径做，文件保持原样：脏数据不许在启动时被回写，
+  // 否则中途被杀就是半个文件。
+  final onDisk = File('${chatDir.path}/group_12345.jsonl').readAsStringSync();
+  check('磁盘文件未被回写（迁移只在读取时做）', onDisk.contains('unknown(9)'));
+
+  await store.dispose();
+  await session.dispose();
+}
+
+// ---------------------------------------------------------------------------
 // 8. 体积：淘汰最旧的，但不丢用户输入、不淘汰置顶会话
 // ---------------------------------------------------------------------------
 
@@ -1130,6 +1208,7 @@ Future<void> main() async {
     await testSendFailure();
     await testPaging();
     await testCorruptFiles();
+    await testMigrateUnknownField9();
     await testRetention();
     await testSorting();
     await testForward();

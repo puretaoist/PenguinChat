@@ -51,9 +51,9 @@ Uint8List _groupImage({
     23: 600,
     25: 12345,
     20: 1000,
-    if (p7 != null) 7: p7,
-    if (p16 != null) 16: p16,
-    if (p15 != null) 15: p15,
+    7: ?p7,
+    16: ?p16,
+    15: ?p15,
     if (p34Path != null) 34: Qq8Pb.encode(<int, Object?>{30: p34Path}),
   });
   return Qq8Pb.encode(<int, Object?>{8: customFace});
@@ -67,7 +67,7 @@ Uint8List _privateImage({required String md5Hex, String? p15, String? su}) {
     5: 1000,
     8: 600,
     9: 800,
-    if (p15 != null) 15: p15,
+    15: ?p15,
     if (su != null) 29: Qq8Pb.encode(<int, Object?>{30: su}),
   });
   return Qq8Pb.encode(<int, Object?>{4: notOnline});

@@ -1350,7 +1350,7 @@ class ChatStore {
       outgoing: j['out'] == true,
       senderId: (j['senderId'] as String?) ?? '',
       senderName: (j['senderName'] as String?) ?? '',
-      segments: Segment.parseList(j['segments']),
+      segments: _migrateSegments(Segment.parseList(j['segments'])),
       replyToId: j['replyTo'] as String?,
       replyPreview: j['replyPreview'] as String?,
       deleted: j['deleted'] == true,
@@ -1364,6 +1364,34 @@ class ChatStore {
         orElse: () => MessageSendState.sent,
       ),
     );
+  }
+
+  /// 读取时迁移历史段列表。
+  ///
+  /// 只做一件事：丢掉「`unknown(field=9)`」这种占位段。
+  ///
+  /// QQ 的 `im_msg_body$Elem` 字段 9 是 `elem_flags2`——群名片/等级/靓号之类
+  /// 的旁路元数据，**每条消息都带**，不可显示。2026-10-25 之前解析器漏把它
+  /// 列进结构字段，于是每条消息都被追加一段 `[不支持显示的消息]`，并随
+  /// `chat_*.jsonl` 落盘。解析器已修（`qq8_elem.dart` 的 `_structuralFields`），
+  /// 但**已经写进磁盘的历史消息不会自己变干净**——不清的话，用户翻历史仍会
+  /// 看到满屏多余文案，看起来像没修。
+  ///
+  /// 刻意只在读取路径过滤、不回写文件：回写要在启动时重写每个 `chat_*.jsonl`，
+  /// 一旦中途被杀就是半个文件；而过滤是纯函数、零 IO、幂等，代价只有一次
+  /// `List` 拷贝。文件里的脏数据会随 `maxMessagesPerChat` 淘汰自然消失。
+  static List<Segment> _migrateSegments(List<Segment> segments) {
+    if (segments.isEmpty) return segments;
+    var changed = false;
+    final kept = <Segment>[];
+    for (final s in segments) {
+      if (s is UnknownSegment && s.data['field'] == 9) {
+        changed = true;
+        continue;
+      }
+      kept.add(s);
+    }
+    return changed ? kept : segments;
   }
 
   Map<String, dynamic> _chatToJson(Chat c) => {
