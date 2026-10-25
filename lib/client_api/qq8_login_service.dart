@@ -62,6 +62,7 @@ import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_pow.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
 import '../kernel/wlogin8/qq8_protocol_det.dart';
+import '../kernel/wlogin8/qq8_online_check.dart';
 import '../kernel/wlogin8/qq8_qrcode.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
 import '../kernel/wlogin8/qq8_session.dart';
@@ -259,6 +260,12 @@ class Qq8LoginService {
   /// 留成开关不是为了关掉产品行为，而是**测试需要**：脚本化传输按"一个请求
   /// 消耗一个预设响应"推进，多出来的一个包会让后面所有帧错位一格，
   /// 断言就变成在验错位后的东西。需要断言的用例显式打开它。
+  /// 登录后是否发官方那两个 JCE 检查（[Qq8OnlineCheck]）。
+  ///
+  /// 默认发。脚本化自测要传 `false`：假传输按固定脚本回包，多两个包
+  /// 会让后面每一帧的 seq 错位一格（与 [reportOnlineStatus] 同一个道理）。
+  final bool reportOnlineChecks;
+
   final bool reportOnlineStatus;
 
   final Duration heartbeatInterval;
@@ -435,6 +442,7 @@ class Qq8LoginService {
     this.backgroundPullInterval = const Duration(seconds: 60),
     this.startupPullDelay = const Duration(seconds: 2),
     this.primeGroupSeqs = true,
+    this.reportOnlineChecks = true,
     this.reportOnlineStatus = true,
     this.timeout = const Duration(seconds: 15),
   })  : profile = profile ?? qq8DefaultProfile,
@@ -2465,6 +2473,10 @@ class Qq8LoginService {
     // 都不读它的返回值，所以先放行上线，register 在后台跑完即可。
     // 只有「拿到应答且 rsp[9] 为假」（明确被拒）才把状态改回 failed。
     unawaited(_registerInBackground(session, uin));
+    // 官方登录后立刻发这两个 JCE 检查（见 [Qq8OnlineCheck] 的注释）。
+    // 我们从不发它们时，服务端只推配置类推送——`OnlinePush.*` /
+    // `MessageSvc.PushNotify` 一条都不来（真机全量日志 0 命中）。
+    if (reportOnlineChecks) unawaited(_runOnlineChecks(session, uin));
     session.startHeartbeat(interval: heartbeatInterval);
 
     // 上线后立刻上报一次在线状态（`StatSvc.SetStatusFromClient`，0x0B 外壳）。
@@ -2567,6 +2579,49 @@ class Qq8LoginService {
     ));
   }
 
+  /// 发官方登录后那两个 JCE 检查：`PhSigLcId.Check` 与 `GrayUinPro.Check`。
+  ///
+  /// 请求体是抓包回放（见 [Qq8OnlineCheck]：那两条是官方登录后唯一以
+  /// `flag=2`（全零密钥）发出的请求，所以抓包里能直接解出明文）。
+  ///
+  /// 为什么值得发：我们从不发它们时，真机全量日志里服务端只推
+  /// `StatSvc.QueryHB` / `ConfigPushSvc.*`，`OnlinePush.PbPushGroupMsg` 与
+  /// `MessageSvc.PushNotify` 一条都不来——但推送通道本身是通的（ConfigPush
+  /// 收得到）。官方先过这两关才收消息推送，所以这是「主动拉」之外唯一的
+  /// 可能让服务端开始推的入口。
+  ///
+  /// 用 [Qq8LoginType.login]（= 2）发：与官方包同形（全零密钥加密 SSO 层）。
+  /// 任何一条失败都只记日志——它们不是上线的前置条件，不该拖垮登录。
+  Future<void> _runOnlineChecks(Qq8Session session, int uin) async {
+    const checks = <String>[
+      Qq8OnlineCheck.cmdPhSigLcId,
+      Qq8OnlineCheck.cmdGrayUinPro,
+    ];
+    for (final cmd in checks) {
+      if (!identical(_session, session)) return; // 期间断线/重登，别再发
+      final body = cmd == Qq8OnlineCheck.cmdPhSigLcId
+          ? Qq8OnlineCheck.phSigLcIdPayload(uin)
+          : Qq8OnlineCheck.grayUinProPayload(uin);
+      try {
+        final r = await session.sendLoginLayer(
+          cmd,
+          body,
+          type: Qq8LoginType.login,
+          timeout: const Duration(seconds: 8),
+        );
+        final head = r.payload.length <= 24
+            ? r.payload
+            : Uint8List.sublistView(r.payload, 0, 24);
+        _log.i(
+          '在线检查 $cmd 应答 len=${r.payload.length} '
+          'head=${head.map((e) => e.toRadixString(16).padLeft(2, '0')).join()}',
+        );
+      } on Object catch (e) {
+        _log.w('在线检查 $cmd 失败（不影响上线）', error: e);
+      }
+    }
+  }
+
   /// 主动拉新消息并走推送同一条流水线（建会话/未读/去重全复用）。
   Future<void> _pullNewMessages({required String reason}) async {
     if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
@@ -2577,7 +2632,15 @@ class Qq8LoginService {
     if (_pulling) return;
     _pulling = true;
     try {
-      await _pullNewMessagesInner(reason: reason);
+      // **必须有超时兜底**：`_pullNewMessagesInner` 里会 await 多次网络往返，
+      // 而 `_pulling` 是「在跑」的闩。真机 2026-10-25 14:59:56 复现过：重新
+      // 登录后那次上线补拉卡在传输层（同一时段 register/在线检查也都在超时），
+      // 之后每 8 秒的轮询全被这个闩静默挡掉——日志里连一行都没有，看起来像
+      // 「轮询定时器死了」。加超时保证闩一定会被 `finally` 放开。
+      await _pullNewMessagesInner(reason: reason)
+          .timeout(const Duration(seconds: 30));
+    } on Object catch (e) {
+      _log.w('拉新消息失败（reason=$reason）', error: e);
     } finally {
       _pulling = false;
     }

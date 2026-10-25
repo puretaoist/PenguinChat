@@ -404,6 +404,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -450,6 +451,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -497,6 +499,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -542,6 +545,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(milliseconds: 300),
     );
@@ -575,6 +579,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(milliseconds: 300),
       heartbeatInterval: const Duration(hours: 1), // 测试里不让心跳干扰
@@ -619,6 +624,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -666,6 +672,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -717,6 +724,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -760,6 +768,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -960,6 +969,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
@@ -1091,6 +1101,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       heartbeatInterval: const Duration(milliseconds: 30),
       timeout: const Duration(milliseconds: 150),
@@ -1141,6 +1152,7 @@ Future<void> main() async {
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
+      reportOnlineChecks: false,
       reportOnlineStatus: false,
       gate: offlineGate,
     );
