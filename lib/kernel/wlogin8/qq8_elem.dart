@@ -689,10 +689,17 @@ class Qq8ElemScan {
       width = Qq8Pb.intAt(i, 22);
       height = Qq8Pb.intAt(i, 23);
       fid = Qq8Pb.textAt(i, 7);
-      final suffix = Qq8Pb.textAt(i, 16);
-      url = suffix != null
-          ? 'https://gchat.qpic.cn$suffix'
-          : (md5 != null
+      // 直链片段按 `parseImgElem`（icqq parser.js:441-490）的优先级取：
+      //   34.30（嵌套子消息里的完整路径）> 16 > 15 > md5 兜底。
+      // **每个片段都必须以 `/` 开头**才算路径 —— 真机踩过：字段 16 里有时
+      // 只有 query（`&rkey=…&spec=0`），照旧拼域名会得到
+      // `https://gchat.qpic.cn&rkey=…`，域名后直接接 `&`，连 DNS 都过不去。
+      final n34 = _sub(i, 34);
+      final p34 = n34 == null ? null : Qq8Pb.textAt(n34, 30);
+      url = _pathUrl('https://gchat.qpic.cn', p34) ??
+          _pathUrl('https://gchat.qpic.cn', Qq8Pb.textAt(i, 16)) ??
+          _pathUrl('https://c2cpicdw.qpic.cn', Qq8Pb.textAt(i, 15)) ??
+          (md5 != null
               ? 'https://gchat.qpic.cn/gchatpic_new/0/0-0-'
                   '${md5.toUpperCase()}/0'
               : null);
@@ -707,14 +714,14 @@ class Qq8ElemScan {
       fid = Qq8Pb.textAt(i, 10) ?? Qq8Pb.textAt(i, 3);
       final nested = _sub(i, 29);
       final su = nested == null ? null : Qq8Pb.textAt(nested, 30);
-      final suffix = Qq8Pb.textAt(i, 15);
-      url = su != null
-          ? 'https://c2cpicdw.qpic.cn$su&spec=0&rf=naio'
-          : suffix != null
-              ? 'https://c2cpicdw.qpic.cn$suffix'
-              : (fid != null
-                  ? 'https://c2cpicdw.qpic.cn/offpic_new/0/$fid/0'
-                  : null);
+      // 私聊的 29.30 是路径但**不带 qkey**，必须自己补 `&spec=0&rf=naio`
+      // （参考实现同款）；15 号可能是完整路径也可能只是 query，一律走校验。
+      final fromSu = _pathUrl('https://c2cpicdw.qpic.cn', su);
+      url = (fromSu == null ? null : '$fromSu&spec=0&rf=naio') ??
+          _pathUrl('https://c2cpicdw.qpic.cn', Qq8Pb.textAt(i, 15)) ??
+          (fid != null && fid.isNotEmpty
+              ? 'https://c2cpicdw.qpic.cn/offpic_new/0/$fid/0'
+              : null);
       // 29 号子消息里的 1 号字段就是"动画表情"标记（参考实现同款）
       asFace = nested != null && Qq8Pb.intAt(nested, 1) == 1;
     }
@@ -804,6 +811,18 @@ Map<int, List<Object>>? _sub(Map<int, List<Object>> m, int tag) {
 bool _flag1(Map<int, List<Object>> m, int tag) {
   final sub = _sub(m, tag);
   return sub != null && Qq8Pb.intAt(sub, 1) == 1;
+}
+
+/// 把服务端给的路径片段拼成直链；**不是以 `/` 开头的片段直接丢弃**。
+///
+/// 这是真机踩出来的：群图的 16 号字段有时只放 query（`&rkey=…&spec=0`），
+/// 盲拼会得到 `https://gchat.qpic.cn&rkey=…` —— 主机名变成
+/// `gchat.qpic.cn&rkey=…`，DNS 解析失败（curl 报 000）。官方与参考实现都
+/// 只在片段像路径时才用，否则往下一个来源退。
+String? _pathUrl(String origin, String? fragment) {
+  if (fragment == null || fragment.isEmpty) return null;
+  if (!fragment.startsWith('/')) return null;
+  return '$origin$fragment';
 }
 
 // ---------------------------------------------------------------------------

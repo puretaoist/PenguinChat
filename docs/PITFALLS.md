@@ -2106,6 +2106,67 @@ u32 headlen ‖ i32 seq ‖ u32 subAppId ‖ u32 subAppId ‖ 12B 常量
 
 
 
+## C37. 图片直链的「路径片段」不一定是路径——不校验 `/` 就拼出 `gchat.qpic.cn&rkey=`
+
+**现象**：群图片全部显示占位框。缓存目录里已有的 8 张图能正常显示（说明下载与落盘没问题），新图一律不出来。
+
+**根因一（拼错）**：`lib/kernel/wlogin8/qq8_elem.dart` 的群图片分支原来是
+
+```dart
+final suffix = Qq8Pb.textAt(i, 16);
+url = suffix != null ? 'https://gchat.qpic.cn$suffix' : /* md5 兜底 */;
+```
+
+**没校验片段是否以 `/` 开头**。真机上这个 16 号字段有时只放 query（`&rkey=CAMSOL…&spec=0`），于是拼出
+
+```
+https://gchat.qpic.cn&rkey=CAMSOL…&spec=0
+```
+
+主机名整个被污染成 `gchat.qpic.cn&rkey=…` —— DNS 都解析不出来，curl 直接 `000`。这类坏 URL 在群 486045673 的 20 个图片段里占 3 个。
+
+参考实现 `icqq/lib/message/parser.js:441-490` 的规则是有优先级的，且**每一档都直接拼在 origin 后面**：
+
+```js
+let path = proto[dm ? 29 : 34]?.[30];
+if (this.imgprefix[md5] && path) url = origin + path + '&spec=0';
+else if (path) url = `https://c2cpicdw.qpic.cn${path}&spec=0`;
+else if (proto[16]) url = `https://gchat.qpic.cn${proto[16]}`;
+else if (proto[15]) url = `https://c2cpicdw.qpic.cn${proto[15]}`;
+else url = `https://gchat.qpic.cn/gchatpic_new/0/0-0-${md5.toUpperCase()}/0`;
+```
+
+**修法**：所有拼 URL 的地方都过一个 helper，片段不以 `/` 开头就当成「这档没有」，落到下一档：
+
+```dart
+String? _pathUrl(String origin, String? fragment) {
+  if (fragment == null || fragment.isEmpty) return null;
+  if (!fragment.startsWith('/')) return null;
+  return '$origin$fragment';
+}
+```
+
+**根因二（只试一个地址）**：`MediaCache._download` 里 `fetch` 返回 null 就直接放弃，没有候选、没有重试。而 QQ 的直链是有时效的：
+
+- `/download?appid=1407&fileid=…&rkey=…` 过期后返回 `400 {"retcode":-5503007,"retmsg":"download url has expired"}`，**换 host 也没用**（`gchat.qpic.cn` / `c2cpicdw.qpic.cn` / `multimedia.nt.qq.com.cn` 同一条 400）。
+- `gchatpic_new/<uin>/<uin>-<n>-<MD5>/0` 这类按 md5 拼的地址**不看 rkey**，实测约 20% 还能 200（其余 404，是真失效）。
+- 所以 md5 兜底是值得实现的一档，但只能当**备选**，不能当首选 —— 首选仍然是消息里带的直链。
+
+**修法**：`MediaRef` 从「单个 url」改成「候选列表」`candidates`，`MediaCache.ensure` 依次尝试，第一个成功就落盘。
+
+**对照 Telegram 的设计**（`telegram-src/TelegramAndroid/…/FileRefController.java:2324-2349`）：TG 把「地址过期」当成**信号而不是失败** —— `isFileRefError` 识别 `FILE_REFERENCE_EXPIRED` / `FILE_REFERENCE_<n>_EXPIRED` / `COVER_EXPIRED`，然后凭 `chat_id + msg_id` 重新向服务端换一份 reference 再重试；`file_reference` 与会话绑定、不能长期缓存。
+
+**差别在协议层**：TG 有「凭消息 id 重新取地址」的接口，QQ 没有公开的等价物 —— QQ 的 `rkey` 是一次性凭证，过期后只能靠 md5 直链碰运气。所以我们的做法只能是「收到就尽快下 + 失败不重试同一个地址、走候选」。
+
+**判据教训**：
+1. **「字段名里有 path 的意思」不等于「值一定是 path」。** 同一个字段在不同发送端/不同图片类型下可能只带 query。凡是要拼进 URL 的片段，都必须校验它以什么开头。
+2. **下载失败要区分「地址坏了」和「地址过期了」**：前者应该立刻丢弃（重试只会再失败一次），后者应该换候选。混在一起就会把「明明有 md5 兜底可用」的图也判死。
+3. **UI 的 `errorBuilder` 是一次性的**：图片加载失败落占位后，只有数据层主动通知才能换回真图。我们靠 `ChatStoreChangeKind.media` 事件 + `messagesProvider` 订阅解决了这一点 —— 否则「后台下载成功了但界面还是占位框」，看起来像下载没成功。
+
+**方法论**：这次不是靠读自己的代码发现的，而是把 `chat_*.jsonl` 里存的 URL 全导出来、逐个 `curl` —— 一看 `000` 就知道是 URL 非法而不是网络问题。**当「保存时能下、现在不能下」时，先把存下来的地址原样打出来试探一次。**
+
+
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

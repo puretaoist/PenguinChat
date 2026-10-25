@@ -535,11 +535,12 @@ class ChatStore {
     if (cache == null || ref == null) return null;
     final hit = cache.pathFor(ref.key);
     if (hit != null) return hit;
-    if (ref.url.isEmpty) return null;
+    if (ref.candidates.isEmpty) return null;
     final path = await cache.ensure(
       key: ref.key,
       category: ref.category,
       url: ref.url,
+      altUrls: ref.altUrls,
     );
     if (path != null && !_disposed) {
       _emit(ChatStoreChangeKind.media);
@@ -556,10 +557,15 @@ class ChatStore {
     if (cache == null || mediaFetcher == null || _disposed) return;
     for (final seg in message.segments) {
       final ref = mediaRefOf(seg);
-      if (ref == null || ref.url.isEmpty) continue;
+      if (ref == null || ref.candidates.isEmpty) continue;
       if (cache.pathFor(ref.key) != null) continue;
       unawaited(cache
-          .ensure(key: ref.key, category: ref.category, url: ref.url)
+          .ensure(
+            key: ref.key,
+            category: ref.category,
+            url: ref.url,
+            altUrls: ref.altUrls,
+          )
           .then((path) {
         if (path != null && !_disposed) {
           _emit(ChatStoreChangeKind.media, message.chatId);

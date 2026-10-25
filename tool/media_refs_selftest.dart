@@ -136,6 +136,68 @@ void main() {
   }
 
   // ---------------------------------------------------------------
+  print('\n[候选地址] 直链失效后还有没有第二选择');
+  {
+    // QQ 图片的 file 前 32 位就是 md5 —— 据此拼 md5 兜底直链。
+    const md5 = '3a2091fc7e3b9cce2e001827817784e8';
+    final img = ImageSegment(
+      '${md5}79147-864-1920.jpg',
+      url: 'https://gchat.qpic.cn/download?appid=1407&fileid=x&rkey=AAA',
+    );
+    final ref = mediaRefOf(img);
+    check('有备选地址', (ref?.altUrls.length ?? 0) == 1, '${ref?.altUrls}');
+    check(
+      '备选是按 MD5 大写拼的 gchatpic_new',
+      ref?.altUrls.first ==
+          'https://gchat.qpic.cn/gchatpic_new/0/0-0-${md5.toUpperCase()}/0',
+      ref?.altUrls.first,
+    );
+    check('首选仍是消息里带的直链',
+        ref?.candidates.first == img.url, ref?.candidates.first);
+    check('候选里含两项', ref?.candidates.length == 2, '${ref?.candidates}');
+
+    // 首选与备选恰好相同时不能重复下载同一个地址。
+    final dup = ImageSegment(
+      '${md5}1-1-1.jpg',
+      url: 'https://gchat.qpic.cn/gchatpic_new/0/0-0-${md5.toUpperCase()}/0',
+    );
+    check('首选与备选相同时去重', mediaRefOf(dup)?.candidates.length == 1,
+        '${mediaRefOf(dup)?.candidates}');
+
+    // 不是 QQ 命名（OneBot 给的别的名字）就不该瞎拼 md5 直链。
+    check('非 QQ 文件名不生成备选',
+        mediaRefOf(const ImageSegment('abc.image'))?.altUrls.isEmpty ?? false);
+    check(
+        '语音段没有备选',
+        mediaRefOf(const RecordSegment('x.amr', url: 'http://a/b'))
+                ?.altUrls
+                .isEmpty ??
+            false);
+  }
+
+  // ---------------------------------------------------------------
+  print('\n[坏地址] 历史消息里存着拼接错误的主机名');
+  {
+    // 真机踩过的形态：域名后面直接接 query，主机名被污染成
+    // `gchat.qpic.cn&rkey=...`，DNS 根本解析不出来。
+    const broken = 'https://gchat.qpic.cn&rkey=CAMSOLgthq&spec=0';
+    check('坏地址被判为不可用', !usableMediaUrl(broken));
+    check('正常地址可用',
+        usableMediaUrl('https://gchat.qpic.cn/download?appid=1407'));
+    check('空地址不算坏', usableMediaUrl('') && usableMediaUrl(null));
+    check('本地路径可用', usableMediaUrl('/data/user/0/x/y.jpg'));
+
+    // 坏地址要被丢掉，让候选链走到 md5 兜底。
+    const md5b = 'faf02a8883f8ac80bc4538f6ef9e90ec';
+    final legacy = ImageSegment('${md5b}1-1-1.jpg', url: broken);
+    final ref = mediaRefOf(legacy);
+    check('坏地址不进候选', !(ref?.candidates.contains(broken) ?? true),
+        '${ref?.candidates}');
+    check('坏地址时仍能靠 md5 兜底下', (ref?.candidates.length ?? 0) == 1,
+        '${ref?.candidates}');
+  }
+
+  // ---------------------------------------------------------------
   print('\n[非媒体段]');
   {
     check('文本段不缓存', mediaRefOf(const TextSegment('hi')) == null);

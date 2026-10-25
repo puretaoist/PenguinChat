@@ -125,10 +125,18 @@ class MediaCache {
   ///
   /// 命中直接返回；未命中则用 [url] 下载后落盘。同一个 key 的并发请求会合并
   /// 成一个下载（否则列表快速滚动时会重复拉同一张图）。
+  /// 确保 [key] 对应的字节在本地，返回本地路径。
+  ///
+  /// 命中直接返回；未命中则用 [url] 下载后落盘。同一个 key 的并发请求会合并
+  /// 成一个下载（否则列表快速滚动时会重复拉同一张图）。
+  ///
+  /// [altUrls] 是备选地址：腾讯的 `rkey` 直链几小时后必然失效，而按 md5
+  /// 取的兜底直链有时还活着。按顺序试，第一个成功的就算数。
   Future<String?> ensure({
     required String key,
     required String category,
     required String url,
+    List<String> altUrls = const <String>[],
   }) {
     if (_disposed) return Future<String?>.value();
     final hit = pathFor(key);
@@ -136,21 +144,33 @@ class MediaCache {
     final running = _inflight[key];
     if (running != null) return running;
 
-    final task = _download(key, category, url).whenComplete(() {
+    final task = _download(key, category, url, altUrls).whenComplete(() {
       _inflight.remove(key);
     });
     _inflight[key] = task;
     return task;
   }
 
-  Future<String?> _download(String key, String category, String url) async {
+  Future<String?> _download(
+    String key,
+    String category,
+    String url, [
+    List<String> altUrls = const <String>[],
+  ]) async {
     final f = fetcher;
     if (f == null) return null;
     await _acquire();
     try {
-      final bytes = await f.fetch(url, maxBytes: maxBytes);
-      if (bytes == null || bytes.isEmpty || _disposed) return null;
-      return await _store(key, category, url, bytes);
+      for (final candidate in <String>[url, ...altUrls]) {
+        if (candidate.isEmpty) continue;
+        if (_disposed) return null;
+        final bytes = await f.fetch(candidate, maxBytes: maxBytes);
+        if (bytes == null || bytes.isEmpty) continue;
+        // 扩展名按**成功拿到字节的那个地址**推断（兜底地址没有后缀时
+        // 会退到内容嗅探，见 _extOf）。
+        return await _store(key, category, candidate, bytes);
+      }
+      return null;
     } finally {
       _release();
     }

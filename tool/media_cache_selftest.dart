@@ -251,6 +251,69 @@ Future<void> main() async {
     }
 
     // ---------------------------------------------------------------
+    print('\n[MediaCache] 备选地址（直链过期后的第二选择）');
+    {
+      final altRoot = Directory('${tmp.path}/media_alt/photos');
+      final altCache = MediaCache(
+        root: Directory('${tmp.path}/media_alt'),
+        indexFile: File('${tmp.path}/media_alt_index.json'),
+        fetcher: _CountingFetcher(HttpMediaFetcher()),
+      );
+      await altCache.load();
+
+      // 首选 404、备选活的 —— 真机上「rkey 过期但 md5 直链还在」就是这个形状。
+      final p = await altCache.ensure(
+        key: 'k-alt',
+        category: 'photos',
+        url: '$base/404',
+        altUrls: <String>['$base/img/a.jpg'],
+      );
+      check('首选失败时用备选地址成功', p != null && File(p).existsSync(), p);
+      check('备选成功也写进索引', altCache.pathFor('k-alt') == p);
+
+      // 首选与备选都失败。
+      final none = await altCache.ensure(
+        key: 'k-none',
+        category: 'photos',
+        url: '$base/404',
+        altUrls: <String>['$base/404?x=1'],
+      );
+      check('全部候选失败返回 null', none == null);
+      check('全部失败不留索引条目', altCache.pathFor('k-none') == null);
+
+      // 首选成功时不该去碰备选（省一次请求）。
+      final counting2 = _CountingFetcher(HttpMediaFetcher());
+      final alt2 = MediaCache(
+        root: Directory('${tmp.path}/media_alt2'),
+        indexFile: File('${tmp.path}/media_alt2_index.json'),
+        fetcher: counting2,
+      );
+      await alt2.load();
+      await alt2.ensure(
+        key: 'k-first',
+        category: 'photos',
+        url: '$base/img/c.jpg',
+        altUrls: <String>['$base/img/a.jpg'],
+      );
+      check('首选成功只发 1 次请求', counting2.calls == 1, '${counting2.calls}');
+
+      // 命中缓存后备选根本不该被读。
+      final before = counting2.calls;
+      await alt2.ensure(
+        key: 'k-first',
+        category: 'photos',
+        url: '$base/404',
+        altUrls: <String>['$base/404'],
+      );
+      check('命中缓存不碰任何候选', counting2.calls == before,
+          '${counting2.calls} vs $before');
+
+      altCache.dispose();
+      alt2.dispose();
+      if (altRoot.existsSync()) altRoot.deleteSync(recursive: true);
+    }
+
+    // ---------------------------------------------------------------
     print('\n[MediaCache] 清理');
     {
       check('进入清理前：索引里有 200 字节（2 个文件）', cache.bytes == 200,

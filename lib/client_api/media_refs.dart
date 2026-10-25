@@ -38,14 +38,38 @@ class MediaRef {
   /// 下载地址（http/https/file/裸路径）。
   final String url;
 
+  /// 备选地址，按优先级排列，**不含** [url]。
+  ///
+  /// 腾讯的 `rkey` 直链几小时后必失效（服务端回
+  /// `{"retcode":-5503007,"retmsg":"download url has expired"}`），但同一张图
+  /// 往往还有「按 md5 取」的活地址。多备几个能让一部分老图起死回生，
+  /// 而不是永远停在占位框。
+  final List<String> altUrls;
+
   const MediaRef({
     required this.key,
     required this.category,
     required this.url,
+    this.altUrls = const <String>[],
   });
 
+  /// 全部候选（首选在前），已去重、已剔除空串。
+  List<String> get candidates =>
+      _dedupe(<String>[if (url.isNotEmpty) url, ...altUrls]);
+
   @override
-  String toString() => 'MediaRef($category, $key -> $url)';
+  String toString() => 'MediaRef($category, $key -> $url'
+      '${altUrls.isEmpty ? '' : ' +${altUrls.length}'})';
+}
+
+List<String> _dedupe(List<String> xs) {
+  final seen = <String>{};
+  final out = <String>[];
+  for (final x in xs) {
+    if (x.isEmpty) continue;
+    if (seen.add(x)) out.add(x);
+  }
+  return out;
 }
 
 /// 该段是否带媒体（需要落盘）。
@@ -81,7 +105,31 @@ MediaRef? mediaRefOf(Segment seg) {
     key: '$kind:$keyPart',
     category: category,
     url: address,
+    altUrls: _altUrlsOf(seg),
   );
+}
+
+/// 备选下载地址。
+///
+/// 目前只有一种可用规律：**QQ 图片的 `file` 前 32 位就是 md5**，据此可以拼
+/// 出「按 md5 取图」的兜底直链（`gchatpic_new/0/0-0-<MD5>/0`）。实测这种
+/// 兜底对一部分图有效（约 20%），失败的返回 404 —— 所以它只作备选，
+/// 首选永远是消息里带的那个直链。
+List<String> _altUrlsOf(Segment seg) {
+  if (seg is! ImageSegment) return const <String>[];
+  final md5 = _md5OfFile(seg.file);
+  if (md5 == null) return const <String>[];
+  final upper = md5.toUpperCase();
+  return <String>['https://gchat.qpic.cn/gchatpic_new/0/0-0-$upper/0'];
+}
+
+final _md5Prefix = RegExp(r'^[0-9a-fA-F]{32}');
+
+/// 从 QQ 图片文件名里抠出 md5（`{md5}{size}-{w}-{h}.{ext}`）；不是这种
+/// 形态（OneBot 给的是别的名字/路径）就返回 null。
+String? _md5OfFile(String file) {
+  final m = _md5Prefix.firstMatch(file);
+  return m?.group(0)?.toLowerCase();
 }
 
 String? _kindOf(Segment seg) => switch (seg) {
@@ -110,15 +158,42 @@ String _fileOf(Segment seg) => switch (seg) {
       _ => '',
     };
 
-String _urlOf(Segment seg) => switch (seg) {
-      ImageSegment(:final url) => url ?? '',
-      RecordSegment(:final url) => url ?? '',
-      VideoSegment(:final url) => url ?? '',
-      // FileSegment 没有 url 字段：OneBot 的文件要么给本地路径，要么得走
-      // 后端 API 下载，当前没有实现，所以这里返回空。
-      FileSegment() => '',
-      _ => '',
-    };
+String _urlOf(Segment seg) {
+  String? raw;
+  switch (seg) {
+    case ImageSegment(:final url):
+      raw = url;
+    case RecordSegment(:final url):
+      raw = url;
+    case VideoSegment(:final url):
+      raw = url;
+    // FileSegment 没有 url 字段：OneBot 的文件要么给本地路径，要么得走
+    // 后端 API 下载，当前没有实现，所以这里返回空。
+    default:
+      return '';
+  }
+  return usableMediaUrl(raw) ? (raw ?? '') : '';
+}
+
+/// 这个地址值不值得拿去下载。
+///
+/// 历史消息里存着已修复前的坏 URL（`https://gchat.qpic.cn&rkey=…`，主机名被
+/// 拼成了 `gchat.qpic.cn&rkey=…`）。直接用它只会白跑一次 DNS 失败，
+/// 不如当场判掉、让候选链走到 md5 兜底。
+///
+/// 判据刻意宽松：只要求 `http(s)://主机[/…]`，且**主机里不能有 `&`、`?`**
+/// ——这两个字符出现在主机段就说明是把 query 拼上去了。
+bool usableMediaUrl(String? url) {
+  if (url == null || url.isEmpty) return true; // 空不是"坏"，是"没有"
+  final uri = Uri.tryParse(url);
+  if (uri == null) return false;
+  if (uri.scheme != 'http' && uri.scheme != 'https') {
+    // file:// 与裸路径都交给 fetcher 自己判断。
+    return !url.startsWith('http');
+  }
+  final host = uri.host;
+  return host.isNotEmpty && !host.contains('&') && !host.contains('?');
+}
 
 /// 是不是"路径"而不是"文件名"。
 ///
