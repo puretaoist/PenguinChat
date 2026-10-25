@@ -275,6 +275,18 @@ class Qq8LoginService {
   /// 只会对**有游标**的群发请求。想更激进可下调，但要记住这属于主动轮询，
   /// 频率越高越像第三方工具。
   final Duration pullInterval;
+  /// 应用在后台时的轮询间隔。
+  ///
+  /// 官方客户端**根本不做定时轮询**：`MessageHandler` 里 `MessageSvc.PbGetMsg`
+  /// 的触发点是 `MessageSvc.PushNotify`（服务端推一个很小的通知包），收到才
+  /// 去拉；群消息更常直接走 `OnlinePush.PbPushGroupMsg`。也就是说官方的新鲜
+  /// 度来自推送，`onRunningForeground` 那条链路里没有消息拉取。
+  ///
+  /// 我们收不到任何 `OnlinePush.*` / `PushNotify`（真机日志 0 命中），只能靠
+  /// 轮询兜底。但轮询的意义只在「用户看得见屏幕」时成立——在后台以 8 s
+  /// 频率打 8 个包，既不带来任何可见收益（我们还没有消息通知），又白白
+  /// 提高被判定为第三方工具的风险。所以前台 8 s、后台 60 s。
+  final Duration backgroundPullInterval;
   /// 上线后延迟多久做第一次补拉（0 = 不做）。测试里调大避免抢帧。
   final Duration startupPullDelay;
   /// 上线后是否对每个群发一次探测把最新 seq 记下来（群消息轮询的前提）
@@ -420,6 +432,7 @@ class Qq8LoginService {
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
     this.pullInterval = const Duration(seconds: 8),
+    this.backgroundPullInterval = const Duration(seconds: 60),
     this.startupPullDelay = const Duration(seconds: 2),
     this.primeGroupSeqs = true,
     this.reportOnlineStatus = true,
@@ -2485,10 +2498,42 @@ class Qq8LoginService {
     });
     // 兜底轮询：推送不来时靠拉（真机 11:41 一条 PushNotify 都没收到）。
     // 间隔取心跳的 1/3，错开心跳的节奏。
+    _restartPullTimer();
+  }
+
+  /// 当前生效的轮询间隔（前台/后台不同）。
+  Duration get _activePullInterval =>
+      _foreground ? pullInterval : backgroundPullInterval;
+
+  /// 应用是否在前台（决定轮询频率与是否立即补拉）。
+  bool _foreground = true;
+
+  /// 前台/后台切换。
+  ///
+  /// 从后台回到前台时**立刻拉一次**：这段时间的消息一条都没拿，等下一个
+  /// 60 s 定时器太慢，而用户此刻正盯着界面。反向（进后台）只降频，不补拉。
+  ///
+  /// 由 L4 的 [以 `KeepAliveScope` 为准的] 生命周期观察者调用——本文件是纯
+  /// Dart（L3），不能 import Flutter，所以这里只收一个 bool。
+  void setAppForeground(bool foreground) {
+    if (_foreground == foreground) return;
+    _foreground = foreground;
+    if (foreground) {
+      if (_snapshot.stage == Qq8LoginStage.online) {
+        unawaited(_pullNewMessages(reason: '前台恢复'));
+      }
+    }
+    if (_pullTimer != null) _restartPullTimer();
+  }
+
+  /// 按当前前后台状态重设定时器。
+  void _restartPullTimer() {
     _pullTimer?.cancel();
     _pullTimer = Timer.periodic(
-      pullInterval,
-      (_) => unawaited(_pullNewMessages(reason: '轮询')),
+      _activePullInterval,
+      (_) => unawaited(_pullNewMessages(
+            reason: _foreground ? '轮询' : '后台轮询',
+          )),
     );
   }
 

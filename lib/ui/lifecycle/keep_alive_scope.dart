@@ -22,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../client_api/session.dart';
 import '../../client_api/session_providers.dart';
+import '../../client_api/qq8_providers.dart';
 import '../../infra/lifecycle/keep_alive.dart';
 import '../../infra/log/logger.dart';
 
@@ -59,6 +60,7 @@ class _KeepAliveScopeState extends ConsumerState<KeepAliveScope>
     _background = _isBackground(WidgetsBinding.instance.lifecycleState);
     // 冷启动时可能已经有会话（热重启 / 从后台被系统重建），先同步一次。
     _attach(ref.read(sessionProvider));
+    _syncForeground();
   }
 
   @override
@@ -73,7 +75,17 @@ class _KeepAliveScopeState extends ConsumerState<KeepAliveScope>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _background = _isBackground(state);
+    _syncForeground();
     _sync();
+  }
+
+  /// 把前后台状态告诉协议层，决定消息轮询的频率。
+  ///
+  /// 官方客户端不做定时轮询（`MessageSvc.PbGetMsg` 由 `MessageSvc.PushNotify`
+  /// 触发），我们收不到推送才需要兜底轮询；而后台高频率轮询既无可见收益
+  /// （还没有消息通知）又提高风控风险，所以后台降到 60 s，回前台立刻补拉。
+  void _syncForeground() {
+    ref.read(qq8LoginServiceProvider).setAppForeground(!_background);
   }
 
   @override
