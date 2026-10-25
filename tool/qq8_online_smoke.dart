@@ -39,6 +39,7 @@ import 'dart:typed_data';
 import 'package:qqclient/kernel/crypto/ecdh.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_history.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_list.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
@@ -393,6 +394,52 @@ Future<void> main(List<String> argv) async {
       }
     } else {
       out('--- 步骤 7：跳过发消息（未给 --send-to=<uin>）---');
+    }
+
+    // --- 7.5. 群历史（可选，--group=GID:FROM:TO）---
+    //
+    // 这是「群消息到底能不能拉」的判据。真机长期拿到 result=103/104 且
+    // 条数=0，但每次请求的都是「上一条已知消息之后」的区间——那里本来
+    // 就没有新消息。用 `--group=<群号>:<起>:<止>` 指定一个**确认有消息**
+    // 的区间，才能区分「组包错」和「没新消息」。
+    final groupSpec = args['group'];
+    if (groupSpec != null) {
+      out('--- 步骤 7.5：群历史（MessageSvc.PbGetGroupMsg）$groupSpec ---');
+      try {
+        final parts = groupSpec.split(':');
+        final gid = int.parse(parts[0]);
+        final from = parts.length > 1 ? int.parse(parts[1]) : 1;
+        final to = parts.length > 2 ? int.parse(parts[2]) : from + 19;
+        final body = Qq8History.buildGroupMsgBody(
+          groupCode: gid,
+          beginSeq: from,
+          endSeq: to,
+        );
+        out('  请求 gid=$gid begin=$from end=$to  body=${body.length}B');
+        final r = await session.sendUni(
+          Qq8History.cmdGetGroupMsg,
+          body,
+          timeout: const Duration(seconds: 15),
+        );
+        final page = Qq8History.parseGroupMsg(r.payload);
+        out('  响应 ${r.payload.length}B  result=${page.result}  '
+            'returnBegin=${page.returnBeginSeq}  returnEnd=${page.returnEndSeq}  '
+            '条数=${page.messages.length}  errmsg=${page.errmsg ?? ''}');
+        for (final m in page.messages.take(5)) {
+          out('    seq=${m.seq} 发送者=${m.fromUin} 文本=${m.text}');
+        }
+        if (page.messages.isNotEmpty) {
+          out('  ✓ 步骤 7.5 通过：群里能拉到真实消息');
+        } else {
+          out('  ✗ 步骤 7.5 失败：result=${page.result} 条数=0');
+          failed++;
+        }
+      } on Object catch (e) {
+        out('  ✗ 步骤 7.5 失败: $e');
+        failed++;
+      }
+    } else {
+      out('--- 步骤 7.5：跳过群历史（未给 --group=GID:FROM:TO）---');
     }
 
     // --- 8. 等推送 ---

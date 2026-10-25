@@ -834,6 +834,12 @@ Future<void> main() async {
         '条数=${grp.messages.length}');
     check('三次请求都发出去了（累计 5 个包：登录/注册 + 3）',
         scripted.sent.length == 5, '${scripted.sent.length}');
+    // C36 回归：群游标必须按**实际收到的消息 seq**（999）推进，
+    // 不能用响应里回显的 `returnEndSeq`（1000）——回显值会把游标越推越远，
+    // 真机就出现过「游标 10114、服务端真值 9934」而永远拉到空区间。
+    check('群游标推进到实际消息 seq 999（不是回显的 returnEndSeq 1000）',
+        svc.debugGroupCursor(987654321) == 999,
+        '${svc.debugGroupCursor(987654321)}');
 
     // 好友列表（pageSize=1 逼出真分页）与群列表
     scripted.scriptedResponses.addAll(<Uint8List>[
@@ -856,7 +862,8 @@ Future<void> main() async {
             gl.groups.single.memberCount == 233,
         '${gl.groups.length} 个');
     check('累计 8 个包（登录/注册 + 3 拉取 + 3 列表）',
-        scripted.sent.length == 8, '${scripted.sent.length}');
+        scripted.sent.length == 8,
+        '${scripted.sent.length}');
 
     scripted.emit(_frame(101, 'MessageSvc.PushForceOffline', _kickPayload()));
     await Future<void>.delayed(const Duration(milliseconds: 50));

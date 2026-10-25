@@ -299,8 +299,20 @@ class Qq8LoginService {
 
   /// 增量拉消息的游标（`PbGetMsgResp.sync_cookie`，服务端靠它算增量）。
   Uint8List? _syncCookie;
-  /// 每个群已知的最末 seq（`PbGetGroupMsg.return_end_seq`），群消息轮询用。
+  /// 每个群「已收到的最大消息 seq」。
+  ///
+  /// 初始值来自 `PbUnReadMsgSeq`（那是**水位**，见 `_groupSynced`），之后
+  /// 只由 `_advanceGroupCursor` 按实际收到的消息推进。
   final Map<int, int> _groupLastSeq = {};
+  /// 已经把「水位之前一窗」补过的群。
+  ///
+  /// [PbUnReadMsgSeq] 给的 `group_seq` 是**最新消息序号（水位）**，不是
+  /// 「已消费到哪」。若直接把它当游标只往前拉 `+1..+20`，请求区间永远落在
+  /// 最新之后 ⇒ 空。首次同步必须往**回**拉一窗（C36）。
+  final Set<int> _groupSynced = {};
+
+  /// 供自测读取某群的当前游标（`null` = 还没铺底）。只读，无副作用。
+  int? debugGroupCursor(int groupCode) => _groupLastSeq[groupCode];
   /// seq 探测两路都拿不到的群（本轮会话内不再重试，避免请求风暴）。
   final Set<int> _primeFailed = {};
 
@@ -1070,8 +1082,11 @@ class Qq8LoginService {
       timeout: timeout,
     );
     final page = Qq8History.parseGroupMsg(frame.payload);
-    final end = page.returnEndSeq;
-    if (end != null && end > 0) _groupLastSeq[groupCode] = end;
+    // 游标只按**实际拿到的消息 seq** 推进，绝不用 `returnEndSeq`。
+    // 后者只是把我们请求的 endSeq 原样回显（C33 实证）：真机 2026-10-25
+    // 曾被它推到 10114，而服务端真实最新只有 9934，之后所有轮询都在请求
+    // 「最新之后」的空区间，于是「群消息一条都没有」。
+    _advanceGroupCursor(groupCode, page);
     _log.i('群历史 gid=$groupCode seq=$beginSeq-$endSeq result=${page.result} '
         '条数=${page.messages.length}');
     return page;
@@ -1229,6 +1244,7 @@ class Qq8LoginService {
         endSeq: to,
       );
       _log.i('群 $groupCode 回看 $begin-$to：result=${page.result} 条数=${page.messages.length}');
+      _emitGroupPage(groupCode, page);
     } on Object catch (err) {
       _log.d('群 $groupCode 回看失败：$err');
     }
@@ -1316,31 +1332,68 @@ class Qq8LoginService {
     }
   }
 
-  /// 群消息轮询：对每个已知 seq 的群拉 `last+1 .. last+20`。
+  /// 把群游标推进到本页**实际收到的最大 seq**。
+  ///
+  /// 只认「真的收到了什么」，不认响应里的 `returnEndSeq`——那只是把请求的
+  /// endSeq 原样回显（C33 实证），拿它推进会让游标越推越远（C36）。
+  void _advanceGroupCursor(int groupCode, Qq8HistoryPage page) {
+    if (page.messages.isEmpty) return;
+    final maxSeq = page.messages
+        .map((m) => m.seq)
+        .fold<int>(0, (a, b) => b > a ? b : a);
+    if (maxSeq > (_groupLastSeq[groupCode] ?? 0)) {
+      _groupLastSeq[groupCode] = maxSeq;
+    }
+  }
+
+  /// 把一页群消息派发成推送事件（走与真推送同一条流水线：建会话/未读/去重）。
+  void _emitGroupPage(int groupCode, Qq8HistoryPage page) {
+    if (page.messages.isEmpty) return;
+    for (final m in page.messages) {
+      if (_events.isClosed) return;
+      _events.add(Qq8MessagePush(
+        Qq8PushCmd.pushGroup,
+        message: m,
+        needsAck: false,
+      ));
+    }
+  }
+
+  /// 群消息轮询。
   ///
   /// 8.2.11 代际群消息**没有拉式同步**（`PbGetMsg` 的会话块只有私聊，
   /// icqq 同款——群消息只走 `OnlinePush.PbPushGroupMsg` 推送），
   /// 推送不来时唯一可靠的路就是按 seq 区间轮询。
+  ///
+  /// 每个群分两阶段（C36）：
+  /// - **首次**：`_groupLastSeq` 里是服务端给的**水位**，往**回**拉一窗
+  ///   `[水位-19, 水位]`，这窗才是「用户没看过的最近消息」。
+  /// - **之后**：按游标往前 `[游标+1, 游标+20]`。
   Future<void> _pollGroups(String reason) async {
     for (final e in _groupLastSeq.entries.toList()) {
       if (_snapshot.stage != Qq8LoginStage.online) return;
       final gid = e.key, last = e.value;
+      final firstSync = !_groupSynced.contains(gid);
+      final begin = firstSync ? (last - 19 < 1 ? 1 : last - 19) : last + 1;
+      final end = firstSync ? last : last + 20;
       try {
+        if (firstSync) {
+          if (last <= 20) {
+            // 水位太小，往回一窗没有意义（群里还没几条消息）。
+            _groupSynced.add(gid);
+            continue;
+          }
+          _groupSynced.add(gid);
+        }
         final page = await fetchGroupHistory(
           groupCode: gid,
-          beginSeq: last + 1,
-          endSeq: last + 20,
+          beginSeq: begin,
+          endSeq: end,
         );
         if (page.messages.isEmpty) continue;
-        _log.i('$reason（群）：gid=$gid 新消息 ${page.messages.length} 条');
-        for (final m in page.messages) {
-          if (_events.isClosed) return;
-          _events.add(Qq8MessagePush(
-            Qq8PushCmd.pushGroup,
-            message: m,
-            needsAck: false,
-          ));
-        }
+        _log.i('$reason（群）：gid=$gid 新消息 ${page.messages.length} 条'
+            '${firstSync ? '（首次同步回看 $begin-$end）' : ''}');
+        _emitGroupPage(gid, page);
       } on Object catch (err) {
         _log.d('$reason（群 $gid）失败', error: err);
       }
@@ -2212,6 +2265,12 @@ class Qq8LoginService {
       _smsMpasswd = null;
       _smsMsgCnt = null;
       _smsTimeLimit = null;
+      // 换号/重登时群状态必须归零：`_groupSynced` 残留会让新会话跳过
+      // 「首次往回看一窗」，`_groupLastSeq` 残留则可能带着别的账号的 seq。
+      _groupLastSeq.clear();
+      _groupSynced.clear();
+      _primeFailed.clear();
+      _syncCookie = null;
       // 登录已成功（type=0 票据已落盘）。从这里开始再出错也绝不能归因成
       // 「提交短信验证码失败」——那会把成功登录误报成失败。
       try {
