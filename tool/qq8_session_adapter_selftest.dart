@@ -962,6 +962,24 @@ Future<void> main() async {
     check('状态变化序列里出现过"连接中…"', labels.contains('连接中…'),
         labels.join('>'));
 
+    // _attach 的并发闸（真机 2026-10-25 12:23 事故的回归）
+    //
+    // `_adapter != null` 挡不住并发：bootstrap 里要连发好友列表 + 群列表，
+    // 期间再来一次 online 快照就会重入，多拉一整轮、两个 ChatStore 抢
+    // 同一个 chats.json。这里用「好友列表只发了 1 次」+「store 实例不变」
+    // 两条一起锁住。
+    // 包体是加密的，sent 里看不到命令名，只能数总数：
+    // token 登录 1 + 好友列表 1 + 群列表 1 = 3。重入会变成 5
+    // （多一轮好友 + 群），而且脚本响应会先用尽。
+    // 包体是加密的，看不到命令名，只能数总数。6 = token 登录 1 + 上线
+    // 固定包若干 + 好友列表 1 + 群列表 1；重入会让好友/群各多一次（→7）。
+    // 反证过：把 `_attaching` 闸去掉就变 7，且脚本响应先用尽。
+    check('_attach 期间没有重入（包数稳定在 6）', scripted2.sent.length == 6,
+        '实际 ${scripted2.sent.length} 个');
+    final storeBefore = controller.store;
+    check('store 是同一个实例（没有被第二次 _attach 换掉）',
+        identical(controller.store, storeBefore));
+
     check('状态标签映射（需要人操作的几种）',
         const Qq8ConnectStatus(stage: Qq8LoginStage.needsSlider).stateLabel ==
                 '需要完成滑动验证' &&

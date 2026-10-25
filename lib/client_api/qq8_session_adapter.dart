@@ -306,13 +306,15 @@ class Qq8SessionAdapter implements Session {
     if (!r.ok) {
       throw SessionException('发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
     }
-    return Qq8Msg.groupMessageId(
-      gid: key.id!,
-      senderUin: self,
-      seq: r.seq,
-      rand: r.rand,
-      time: r.time,
-    );
+    // 群发**不能**编 ID：群消息的 seq 是服务端分配的（`PbSendMsg` 应答里
+    // 没有字段 14，只有 code），而消息 ID 是 `(gid, sender, seq, rand, time)`
+    // 的打包。以前这里拿 `r.seq`（恒为 0，因为 `parseSendResponse` 传的就是
+    // seq:0）编了个 ID ⇒ 与后来推送/拉回来的真实消息 ID 不同 ⇒ 去重失效，
+    // 自己发的消息显示两次（真机 2026-10-25 用户报告）。
+    //
+    // 返回 null 让 ChatStore 保留 `local:` ID：等到 echo（推送或拉回）到达时，
+    // `_findEchoCandidate` 靠「同会话 + 同文本 + 仍未配对」把本地条目换成真 ID。
+    return null;
   }
 
   /// 把引用回复段翻成内核的 [Qq8ReplyInfo]（没有引用段就返回 null）。

@@ -263,6 +263,17 @@ class Qq8LoginService {
 
   final Duration heartbeatInterval;
   /// 收消息兜底轮询间隔（推送不可靠时的补拉频率）。
+  ///
+  /// 服务端对我们**完全不推消息**（真机 2026-10-25：只有 `StatSvc.QueryHB` 与
+  /// `ConfigPushSvc.*`，一条 `MessageSvc.PushNotify` / `OnlinePush.*` 都没有），
+  /// 所以收消息只能靠这个轮询——**它就是延迟上限**。原先 20 s 意味着最坏
+  /// 等 20 秒才看到新消息，用户体感"不实时"。
+  ///
+  /// 取 8 s 是折中：一次轮询只打 2 个包（`MessageSvc.PbGetMsg` + 每个群
+  /// 一条 `PbGetGroupMsg`，7 个群共 8 个），频率从 3 次/分升到 7.5 次/分，
+  /// 仍远低于心跳（270 s）之外官方客户端自身的拉取强度，且 `_pollGroups`
+  /// 只会对**有游标**的群发请求。想更激进可下调，但要记住这属于主动轮询，
+  /// 频率越高越像第三方工具。
   final Duration pullInterval;
   /// 上线后延迟多久做第一次补拉（0 = 不做）。测试里调大避免抢帧。
   final Duration startupPullDelay;
@@ -408,7 +419,7 @@ class Qq8LoginService {
     this.ecdhBuilder,
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
-    this.pullInterval = const Duration(seconds: 20),
+    this.pullInterval = const Duration(seconds: 8),
     this.startupPullDelay = const Duration(seconds: 2),
     this.primeGroupSeqs = true,
     this.reportOnlineStatus = true,
@@ -2434,21 +2445,13 @@ class Qq8LoginService {
     // 真机日志里 register 发出后到达的是 ConfigPushSvc 推送而不是应答。
     // 真机 2026-10-24 09:09：登录 type=0 票据已下发，却因 register 10s
     // 超时把整条流程标成「提交短信验证码失败」——归因错了，登录是成功的。
-    bool ok;
-    try {
-      ok = await session.register();
-    } catch (e) {
-      _log.w('上线注册无应答（等价 icqq -2），继续上线', error: e);
-      ok = true;
-    }
-    if (!ok) {
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.failed,
-        uin: uin,
-        error: '登录已通过，但上线注册被拒（票据或设备信息不符）',
-      ));
-      return;
-    }
+    //
+    // **不等它**：真机 2026-10-25 10:59 / 11:47 两次实测，登录应答 0.35 s
+    // 就回来了，但「已上线」要等 10.2 s——全耗在 register 的 10 s 超时上
+    // （服务端从不回 ack）。而 register 之后的心跳、校时、拉好友/群列表
+    // 都不读它的返回值，所以先放行上线，register 在后台跑完即可。
+    // 只有「拿到应答且 rsp[9] 为假」（明确被拒）才把状态改回 failed。
+    unawaited(_registerInBackground(session, uin));
     session.startHeartbeat(interval: heartbeatInterval);
 
     // 上线后立刻上报一次在线状态（`StatSvc.SetStatusFromClient`，0x0B 外壳）。
@@ -2493,8 +2496,51 @@ class Qq8LoginService {
   int _pullCycles = 0;
   static const int _groupResyncEvery = 10;
 
+  /// 后台发 `StatSvc.register`，不挡上线。
+  ///
+  /// 三态判据同 icqq `_register`：`true` = 收到且 `rsp[9]` 真；`false` = 收到
+  /// 但 `rsp[9]` 假（明确被拒）；抛异常（超时）= 等价 `-2`，继续当成功。
+  /// 只有明确被拒才回退状态——那时会话确实不可用，藏起来只会让用户
+  /// 以为在线却什么都收不到。
+  Future<void> _registerInBackground(Qq8Session session, int uin) async {
+    bool ok;
+    try {
+      ok = await session.register();
+    } on Object catch (e) {
+      _log.w('上线注册无应答（等价 icqq -2），继续上线', error: e);
+      return;
+    }
+    if (ok) return;
+    // 期间可能已经断线/重登，别把新会话的状态踩掉
+    if (!identical(_session, session) || _snapshot.stage != Qq8LoginStage.online) {
+      return;
+    }
+    _emit(Qq8LoginSnapshot(
+      stage: Qq8LoginStage.failed,
+      uin: uin,
+      error: '登录已通过，但上线注册被拒（票据或设备信息不符）',
+    ));
+  }
+
   /// 主动拉新消息并走推送同一条流水线（建会话/未读/去重全复用）。
   Future<void> _pullNewMessages({required String reason}) async {
+    if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
+    // 防重入：定时器、上线补拉、QueryHB 触发的补拉可能撞在一起。
+    // 真机 2026-10-25 11:52:29 日志里同一秒出现两组完全相同的群历史请求
+    // （`拉新消息` 与 7 个 `群历史` 各打了两遍），就是并发进来的——
+    // 除了浪费包，两组 `_pollGroups` 还会互相推进/回退群游标。
+    if (_pulling) return;
+    _pulling = true;
+    try {
+      await _pullNewMessagesInner(reason: reason);
+    } finally {
+      _pulling = false;
+    }
+  }
+
+  bool _pulling = false;
+
+  Future<void> _pullNewMessagesInner({required String reason}) async {
     if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
     // 每 10 个周期重新问一次真实群 seq：盲推进的光标会跳过"后来才放行"的
     // 消息（服务端先扣后放，或窗口恰好错过），这里用 1 个请求把游标拉回真值。

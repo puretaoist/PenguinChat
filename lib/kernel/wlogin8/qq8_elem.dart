@@ -486,7 +486,13 @@ class Qq8ElemScan {
   /// 只做结构、没有内容的元素字段号：
   /// `16 = extra_info  21 = anon_group_msg  37 = general_flags（保留元素）`。
   /// （45 引用在上面单独处理了，它虽然也不进正文，但有内容要带给 UI。）
-  static const Set<int> _structuralFields = <int>{16, 21, 37};
+  ///
+  /// `9 = elem_flags2` 同样是**每条消息都带**的元数据容器（官方
+  /// `im_msg_body$Elem` 的 `ElemFlags2`，装的是群名片/等级/靓号之类的旁路
+  /// 信息，不是可显示内容）。漏掉它会让每条消息都多一句「不支持显示的消息」
+  /// ——真机 2026-10-25 实测：群 486045673 的 126 条消息里 118 条带这个段，
+  /// 全部来自字段 9，用户看到的现象就是「气泡正常但都带一句不支持」。
+  static const Set<int> _structuralFields = <int>{9, 16, 21, 37};
 
   /// 语音：**不在 `elems` 里**，是 `RichText.ptt`（字段 4）。
   ///

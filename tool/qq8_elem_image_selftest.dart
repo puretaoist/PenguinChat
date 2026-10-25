@@ -13,6 +13,7 @@
 /// 跑：`dart run tool/qq8_elem_image_selftest.dart`
 library;
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:qqclient/kernel/wlogin8/qq8_elem.dart';
@@ -24,10 +25,10 @@ int _fail = 0;
 void check(String name, bool ok, [String detail = '']) {
   if (ok) {
     _pass++;
-    print('  [OK] $name');
+    stdout.writeln('  [OK] $name');
   } else {
     _fail++;
-    print('  [FAIL] $name${detail.isEmpty ? '' : ' — $detail'}');
+    stdout.writeln('  [FAIL] $name${detail.isEmpty ? '' : ' — $detail'}');
   }
 }
 
@@ -73,10 +74,10 @@ Uint8List _privateImage({required String md5Hex, String? p15, String? su}) {
 }
 
 void main() {
-  print('=== 图片直链拼接 ===');
+  stdout.writeln('=== 图片直链拼接 ===');
 
   // ---- 群图 ----
-  print('\n-- 群图（CustomFace）');
+  stdout.writeln('\n-- 群图（CustomFace）');
   const md5BytesHex = '000102030405060708090a0b0c0d0e0f';
 
   // 16 号是正常路径 → 用它
@@ -121,7 +122,7 @@ void main() {
       'https://gchat.qpic.cn/gchatpic_new/0/0-0-${md5BytesHex.toUpperCase()}/0');
 
   // ---- 私聊图 ----
-  print('\n-- 私聊图（NotOnlineImage）');
+  stdout.writeln('\n-- 私聊图（NotOnlineImage）');
   const md5Hex = 'aabbccddeeff00112233445566778899';
 
   img = _imageOf(_privateImage(md5Hex: md5Hex, su: '/download?appid=1407'));
@@ -140,7 +141,7 @@ void main() {
   checkEq('全都没有时 URL 为 null（由 UI 显示占位）', img.url, null);
   checkEq('但 md5 仍然拿到，能拼文件名', img.md5, md5Hex);
 
-  print('\n=== 结果: $_pass 通过, $_fail 失败 ===');
+  stdout.writeln('\n=== 结果: $_pass 通过, $_fail 失败 ===');
   if (_fail > 0) throw StateError('$_fail 项失败');
 }
 

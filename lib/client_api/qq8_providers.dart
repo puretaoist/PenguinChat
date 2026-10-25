@@ -664,8 +664,31 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   }
 
   /// 上线后：套适配器 + 建数据层（幂等）。
+  ///
+  /// ⚠️ 只看 `_adapter != null` **挡不住并发**：`await store.bootstrap()` 里面会
+  /// 走 `refreshChats() → listChats() → 好友列表 + 群列表`，这几步都是异步的。
+  /// 期间只要 `_onSnapshot` 再被调一次（心跳、QueryHB、任何 `_emit` 都会发状态流），
+  /// `_adapter` 还是 null，就会再进一次 `_attach()`。
+  ///
+  /// 真机 2026-10-25 12:23:06 日志里「好友列表：7/7 人」「群列表：7/7 个群」
+  /// 各打两遍、`协议线已上线` 也两遍，就是两个 `_attach` 并发跑出来的：
+  /// 多出一整轮好友/群/unreadseq 请求，两个 ChatStore 还会抢同一个
+  /// `chats.json` 与 `media_index.json`。
+  ///
+  /// 所以用 [_attaching] 把「正在建」也挡住，而不是只看「建好了没」。
   Future<void> _attach() async {
-    if (!mounted || _adapter != null) return;
+    if (!mounted || _adapter != null || _attaching) return;
+    _attaching = true;
+    try {
+      await _attachInner();
+    } finally {
+      _attaching = false;
+    }
+  }
+
+  bool _attaching = false;
+
+  Future<void> _attachInner() async {
     final adapter = Qq8SessionAdapter(
       service: service,
       uin: _snap.uin,
