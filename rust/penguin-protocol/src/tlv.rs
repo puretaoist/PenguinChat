@@ -522,9 +522,9 @@ pub fn body(ctx: &TlvContext, tag: u16, args: &[TlvArg]) -> Result<Vec<u8>, TlvE
 
         0x109 => {
             // 官方抓包语义（824f525 对齐）：0x109 = MD5(android_id)，不是 MD5(imei)。
-        // 出处：t.java:296-299（android_id 进 0x109）；oicq 旧语义（MD5(imei)）保留在
-        // vectors/tlv.json teaRefs.t144.oicqPlain 供跨实现比对。
-        w.extend_from_slice(&md5_bytes(d.android_id.as_bytes()));
+            // 出处：t.java:296-299（android_id 进 0x109）；oicq 旧语义（MD5(imei)）保留在
+            // vectors/tlv.json teaRefs.t144.oicqPlain 供跨实现比对。
+            w.extend_from_slice(&md5_bytes(d.android_id.as_bytes()));
         }
 
         0x10A => {
