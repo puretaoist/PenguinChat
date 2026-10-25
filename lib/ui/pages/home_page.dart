@@ -36,12 +36,14 @@ import '../widgets/forward_picker.dart';
 import '../widgets/group_members_panel.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
+import '../widgets/chat_input_bar.dart';
+import '../widgets/chat_list_panel.dart';
 import '../widgets/message_list_builder.dart';
-import '../widgets/storage_dialog.dart';
 import '../widgets/telegram_avatar.dart';
 import 'connect_page.dart';
 import 'qq8_connect_page.dart';
 import 'search_page.dart';
+import 'settings_page.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -364,6 +366,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     _scrollToBottom();
   }
 
+  /// 取消"正在回复"（输入栏 ✕ 的回调；状态在宿主，视图只上报）。
+  void _cancelReply() {
+    setState(() => _replyTarget = null);
+  }
+
   void _retry(String messageId) {
     final store = ref.read(chatStoreProvider);
     final chatId = _resolvedChatId;
@@ -394,6 +401,12 @@ class _HomePageState extends ConsumerState<HomePage> {
         MaterialPageRoute<void>(builder: (_) => const Qq8ConnectPage()));
   }
 
+  /// 设置页：把散在顶栏/空态的二级入口收进一个页面（TG 同构）。
+  void _openSettings() {
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+  }
+
   // ---------------------------------------------------------------
   //  构建
   // ---------------------------------------------------------------
@@ -421,6 +434,22 @@ class _HomePageState extends ConsumerState<HomePage> {
       unawaited(_ensureOpened(_resolvedChatId!));
     }
 
+    // 侧栏抽成哑视图（ChatListPanel）：build 里组装一次，宽窄两态共用。
+    final sidebar = ChatListPanel(
+      chats: chats,
+      store: store,
+      selectedChatId: _resolvedChatId,
+      onOpenChat: _openChat,
+      onLongPressChat: _showChatActions,
+      onRefresh: _refreshChats,
+      onOpenSearch: _openSearch,
+      onToggleTheme: _toggleTheme,
+      onOpenSettings: _openSettings,
+      onOpenArchive: _openArchiveSheet,
+      onOpenConnect: _openConnectPage,
+      onOpenQq8Login: _openQq8Login,
+    );
+
     // 用 sizeOf 而不是 of：of 订阅整个 MediaQuery（含 viewInsets），
     // 键盘每一帧动画都会把整个主页（列表+消息+头像）重建一遍——
     // 这就是「键盘呼出变卡」的来源。sizeOf 只在窗口尺寸真变时重建。
@@ -432,7 +461,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           children: [
             SizedBox(
               width: TelegramMetrics.sidebarWidth,
-              child: _buildSidebar(chats, store),
+              child: sidebar,
             ),
             Container(width: 1, color: TelegramColors.divider),
             Expanded(child: _buildChatPane(chats, store)),
@@ -444,7 +473,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     return Scaffold(
       backgroundColor: TelegramColors.bgApp,
       body: _showChatList
-          ? _buildSidebar(chats, store)
+          ? sidebar
           : _buildChatPane(
               chats,
               store,
@@ -461,90 +490,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (selected != null && chats.any((c) => c.id == selected)) return selected;
     final visible = chats.where((c) => !c.archived);
     return (visible.isEmpty ? chats : visible).first.id;
-  }
-
-  Widget _buildSidebar(List<Chat> chats, ChatStore? store) {
-    // 归档会话不进主列表（TG/Nagram 的 Archived chats：只从顶部入口进）
-    final visible = chats.where((c) => !c.archived).toList(growable: false);
-    final archived = chats.where((c) => c.archived).toList(growable: false);
-    return Container(
-      color: TelegramColors.bgSidebar,
-      child: Column(
-        children: [
-          _buildSearchBar(store),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _refreshChats,
-              color: TelegramColors.accent,
-              backgroundColor: TelegramColors.bgHover,
-              child: visible.isEmpty && archived.isEmpty
-                  ? _buildSidebarEmpty(store)
-                  : ListView.builder(
-                      addAutomaticKeepAlives: false,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      // 第一行是"已归档"入口（没有归档会话时不占位置）
-                      itemCount: visible.length + (archived.isEmpty ? 0 : 1),
-                      itemBuilder: (_, i) {
-                        if (archived.isNotEmpty && i == 0) {
-                          return _archivedRow(archived, store);
-                        }
-                        return _chatTile(
-                          visible[i - (archived.isEmpty ? 0 : 1)],
-                          store,
-                        );
-                      },
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 归档入口：一行"已归档 (N)"，点开看归档里的会话。
-  Widget _archivedRow(List<Chat> archived, ChatStore? store) {
-    return InkWell(
-      key: const ValueKey('archived-row'),
-      onTap: () => _openArchiveSheet(archived, store),
-      child: Container(
-        height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        child: Row(
-          children: [
-            Icon(
-              Icons.archive_outlined,
-              size: 20,
-              color: TelegramColors.textSecondary,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '已归档',
-                style: TextStyle(
-                  color: TelegramColors.textPrimary,
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            Text(
-              '${archived.length}',
-              style: TextStyle(
-                color: TelegramColors.textSecondary,
-                fontSize: 13,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(
-              Icons.chevron_right,
-              size: 20,
-              color: TelegramColors.textMuted,
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   /// 归档列表：复用会话行，长按可以"取消归档"。
@@ -627,169 +572,11 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  /// 列表为空时也要能下拉刷新，所以用可滚动容器包一层。
-  Widget _buildSidebarEmpty(ChatStore? store) {
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
-          child: Column(
-            children: [
-              Icon(
-                store == null ? Icons.link_off : Icons.inbox_outlined,
-                color: TelegramColors.textMuted,
-                size: 36,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                store == null ? '未连接后端' : '暂无会话',
-                style: TextStyle(
-                  color: TelegramColors.textSecondary,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                store == null
-                    ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
-                    : '下拉可刷新会话列表',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: TelegramColors.textMuted,
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
-              if (store == null) ...[
-                const SizedBox(height: 14),
-                TextButton(
-                  onPressed: _openConnectPage,
-                  child: Text(
-                    '去连接设置',
-                    style: TextStyle(color: TelegramColors.accent),
-                  ),
-                ),
-                // 协议线（自实现 QQ 协议）的主入口：与 OneBot 线并存，一条直达。
-                const SizedBox(height: 4),
-                TextButton.icon(
-                  onPressed: _openQq8Login,
-                  icon: const Icon(Icons.key, size: 16),
-                  label: const Text('QQ 账号登录（自实现协议）'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: TelegramColors.accent,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSearchBar(ChatStore? store) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
-      child: Row(
-        children: [
-          Expanded(
-            // 点一下进搜索页（之前这里只是个壳，点了没反应）
-            child: InkWell(
-              key: const ValueKey('open-search'),
-              borderRadius: BorderRadius.circular(TelegramMetrics.inputRadius),
-              onTap: _openSearch,
-              child: Container(
-                height: 38,
-                decoration: BoxDecoration(
-                  color: TelegramColors.bgHover,
-                  borderRadius: BorderRadius.circular(
-                    TelegramMetrics.inputRadius,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const SizedBox(width: 14),
-                    Icon(
-                      Icons.search,
-                      size: 18,
-                      color: TelegramColors.textSecondary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '搜索会话与消息',
-                      style: TextStyle(
-                        color: TelegramColors.textSecondary,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          IconButton(
-            key: const ValueKey('toggle-theme'),
-            onPressed: _toggleTheme,
-            icon: Icon(
-              TelegramColors.current == TelegramPalette.dark
-                  ? Icons.light_mode
-                  : Icons.dark_mode,
-              size: 20,
-              color: TelegramColors.textSecondary,
-            ),
-            tooltip: '切换亮色 / 暗色',
-          ),
-          IconButton(
-            key: const ValueKey('open-storage'),
-            onPressed: () => _openStorageDialog(store),
-            icon: Icon(
-              Icons.sd_storage,
-              size: 20,
-              color: TelegramColors.textSecondary,
-            ),
-            tooltip: '存储与缓存',
-          ),
-          IconButton(
-            onPressed: _openConnectPage,
-            icon: Icon(
-              Icons.settings,
-              size: 20,
-              color: TelegramColors.textSecondary,
-            ),
-            tooltip: '连接设置',
-          ),
-        ],
-      ),
-    );
-  }
-
   /// 亮 ↔ 暗。根组件（main.dart）会跟着换成另一套调色板与 ThemeData，
   /// 本页因为 watch 了同一个 provider 也整页重画；选择落盘在
   /// `<dataDir>/ui_settings.json`，下次启动照旧。
   void _toggleTheme() {
     unawaited(ref.read(themeModeProvider.notifier).toggle());
-  }
-
-  /// 打开"存储与缓存"（TG 的 数据与存储 → 存储用量）。
-  Future<void> _openStorageDialog(ChatStore? store) async {
-    if (store == null) return;
-    final stats = await store.storageStats();
-    if (!mounted) return;
-    await StorageDialog.show(
-      context,
-      stats: stats,
-      limitsNote:
-          '媒体缓存上限 ${StorageStats.formatBytes(store.maxCacheBytes)}'
-          ' · 保留 ${store.keepMediaFor == null ? '永久' : '${store.keepMediaFor!.inDays} 天'}',
-      onClearCache: () async {
-        // 先清空、再按预算清一次（store 内部会记日志）
-        await store.clearMediaCache();
-        await store.pruneMediaCache();
-      },
-      onClearHistory: () => store.clearAllHistory(),
-    );
   }
 
   /// 长按消息：复制 / 查看原文 / 撤回（只放真能用的动作）。
@@ -983,172 +770,6 @@ class _HomePageState extends ConsumerState<HomePage> {
         final page = await svc.fetchGroupMembers(gid);
         return page.members;
       },
-    );
-  }
-
-  Widget _chatTile(Chat chat, ChatStore? store) {
-    final selected = chat.id == _resolvedChatId;
-    // 选中行在亮色下是蓝色底（#3390EC），文字必须跟着翻白——
-    // 否则就是黑字压蓝底。暗色的选中底是深紫，白字同样成立。
-    final titleColor = selected ? Colors.white : TelegramColors.textPrimary;
-    final subColor = selected
-        ? Colors.white.withValues(alpha: 0.85)
-        : TelegramColors.textSecondary;
-    return InkWell(
-      key: ValueKey('chat-row-${chat.id}'),
-      onTap: () => _openChat(chat),
-      onLongPress: () => _showChatActions(chat, store),
-      child: Container(
-        color: selected ? TelegramColors.bgSelected : Colors.transparent,
-        constraints: const BoxConstraints(
-          minHeight: TelegramMetrics.chatRowHeight,
-        ),
-        // 几何抄 TG `Cells/DialogCell.java:170-171`：avatarStart = 11、
-        // messagePaddingStart = 72（= 11 + 52 + 9）；垂直方向 70 - 52 = 18，
-        // 上下各 9，正好填满 chatRowHeight。
-        padding: const EdgeInsets.symmetric(
-          horizontal: TelegramMetrics.chatRowPadding,
-          vertical: 9,
-        ),
-        child: Row(
-          children: [
-            Stack(
-              children: [
-                TelegramAvatar(
-                  name: chat.title,
-                  url: chat.avatarUrl,
-                  size: TelegramMetrics.avatarSize,
-                ),
-                if (chat.online)
-                  Positioned(
-                    right: 1,
-                    bottom: 1,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: TelegramColors.online,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: TelegramColors.bgSidebar,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(width: TelegramMetrics.chatAvatarGap),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      if (chat.pinned) ...[
-                        Icon(
-                          Icons.push_pin,
-                          size: 13,
-                          color: selected
-                              ? Colors.white.withValues(alpha: 0.85)
-                              : TelegramColors.textMuted,
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                      Expanded(
-                        child: Text(
-                          chat.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: titleColor,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  // 有草稿就显示草稿（TG/Nagram 的 `Draft:` 前缀），
-                  // 不然用户会以为刚才打的字丢了
-                  if (chat.draft.isNotEmpty)
-                    Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '草稿: ',
-                            style: TextStyle(
-                              color: selected ? Colors.white : TelegramColors.danger,
-                              fontSize: 13,
-                            ),
-                          ),
-                          TextSpan(
-                            text: chat.draft.replaceAll('\n', ' '),
-                            style: TextStyle(color: subColor, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  else
-                    Text(
-                      chat.lastMessage,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: subColor,
-                        fontSize: 13,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  chat.lastTime == null ? '' : formatTime(chat.lastTime!),
-                  style: TextStyle(
-                    color: subColor,
-                    fontSize: TelegramMetrics.fontTimestamp,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                if (chat.unreadCount > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      // 选中行整行就是强调色，徽章再刷同色等于看不见——
-                      // 翻成白底 + 强调色字（TG 选中会话的未读徽章就是这样）。
-                      color: selected
-                          ? Colors.white
-                          : chat.muted
-                              ? TelegramColors.textMuted
-                              : TelegramColors.badge,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${chat.unreadCount}',
-                      style: TextStyle(
-                        color: selected
-                            ? TelegramColors.bgSelected
-                            : Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 
@@ -1415,7 +1036,15 @@ class _HomePageState extends ConsumerState<HomePage> {
             ],
           ),
         ),
-        _buildInputBar(store != null),
+        ChatInputBar(
+          enabled: store != null,
+          controller: _inputController,
+          replyTarget: _replyTarget,
+          onSend: _send,
+          onAttachImage: () => unawaited(_sendImageFromPath()),
+          onOpenFaces: _openFacePicker,
+          onCancelReply: _cancelReply,
+        ),
       ],
     );
   }
@@ -1478,7 +1107,14 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           ),
         ),
-        _buildInputBar(false),
+        ChatInputBar(
+          enabled: false,
+          controller: _inputController,
+          onSend: _send,
+          onAttachImage: () => unawaited(_sendImageFromPath()),
+          onOpenFaces: _openFacePicker,
+          onCancelReply: _cancelReply,
+        ),
       ],
     );
   }
@@ -1549,169 +1185,17 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           ),
           IconButton(
-            onPressed: _openConnectPage,
+            onPressed: _openSettings,
             icon: Icon(
               Icons.settings,
               color: TelegramColors.textSecondary,
               size: 22,
             ),
-            tooltip: '连接设置',
+            tooltip: '设置',
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInputBar(bool enabled) {
-    return Container(
-      color: TelegramColors.bgInput,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_replyTarget != null) _replyStrip(_replyTarget!),
-            Row(
-              children: [
-                // 📎 发本地图片：上传链路（探图 → PicUp → highway）在适配器里，
-                // 这里只问路径
-                IconButton(
-                  key: const ValueKey('attach-file'),
-                  onPressed: () => unawaited(_sendImageFromPath()),
-                  icon: Icon(
-                    Icons.attach_file,
-                    color: TelegramColors.textSecondary,
-                    size: 22,
-                  ),
-                  tooltip: '发送图片',
-                ),
-                const SizedBox(width: 4),
-                // 表情面板：不依赖连接状态（没连线也能先打字/选表情），
-                // 点一下把 `/名字` 插到光标处，发送时协议层翻成表情元素。
-                IconButton(
-                  key: const ValueKey('open-faces'),
-                  onPressed: _openFacePicker,
-                  icon: Icon(
-                    Icons.emoji_emotions_outlined,
-                    color: TelegramColors.textSecondary,
-                    size: 22,
-                  ),
-                  tooltip: 'QQ 表情',
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: TelegramColors.bgHover,
-                      borderRadius: BorderRadius.circular(
-                        TelegramMetrics.inputRadius,
-                      ),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    child: TextField(
-                      controller: _inputController,
-                      enabled: enabled,
-                      onSubmitted: (_) => _send(),
-                      style: TextStyle(
-                        color: TelegramColors.textPrimary,
-                        fontSize: 14,
-                      ),
-                      decoration: InputDecoration(
-                        // 提示里带一句 `/微笑`：QQ 表情是打字发的（官方客户端同款约定），
-                        // 不写出来没人知道——表情面板留到后面做。
-                        hintText: enabled ? '输入消息…（如 /微笑）' : '未连接',
-                        hintStyle: TextStyle(
-                          color: TelegramColors.textSecondary,
-                        ),
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 12,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: enabled ? _send : null,
-                  child: Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: enabled
-                          ? TelegramColors.accent
-                          : TelegramColors.bgHover,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.send,
-                      color: enabled ? Colors.white : TelegramColors.textMuted,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 输入框上方的"正在回复"条（点 ✕ 取消）。
-  Widget _replyStrip(ChatMessage target) => Container(
-    key: const ValueKey('reply-strip'),
-    margin: const EdgeInsets.only(bottom: 6),
-    padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-    decoration: BoxDecoration(
-      color: TelegramColors.bgHover,
-      borderRadius: BorderRadius.circular(10),
-      border: Border(left: BorderSide(color: TelegramColors.accent, width: 3)),
-    ),
-    child: Row(
-      children: [
-        Icon(Icons.reply, size: 16, color: TelegramColors.accent),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '回复 ${target.senderName.isEmpty ? target.senderId : target.senderName}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: TelegramColors.accent,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                target.text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: TelegramColors.textSecondary,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          key: const ValueKey('reply-cancel'),
-          onPressed: () => setState(() => _replyTarget = null),
-          icon: Icon(
-            Icons.close,
-            size: 18,
-            color: TelegramColors.textSecondary,
-          ),
-          tooltip: '取消回复',
-        ),
-      ],
-    ),
-  );
 }
