@@ -486,7 +486,18 @@ class Qq8SessionAdapter implements Session {
 
   ChatMessage _toChatMessage(Qq8IncomingMessage m) {
     final self = service.snapshot.uin ?? 0;
-    final isGroup = m.kind == Qq8IncomingKind.group;
+    // 判"是不是群消息"不能只看 kind：群临时会话（群成员私聊 / 群内临时消息）
+    // 的内核 kind 仍是 c2c，但 msg_head 里带着 group_code。
+    // 真机 2026-10-26 现场：这类消息按 c2c 取 chatId 会得到群号，
+    // 于是会话库多出一条 `private_<群号>` 的占位条目，
+    // 侧栏显示成一个只有数字的"人"，点进去还和真群对不上（m01106）。
+    final isGroup =
+        m.kind == Qq8IncomingKind.group || m.groupCode != null;
+    // 群号取 groupCode 优先：c2c 型的临时会话 `chatId()` 返回的是**对方 uin**，
+    // 拿它当群号会拼出 `group_<别人uin>` 这种假会话。
+    final rawId = (isGroup && (m.groupCode ?? 0) > 0)
+        ? m.groupCode!
+        : m.chatId(self);
     final outgoing = m.isSelf(self);
     final senderName = m.fromNick ??
         _nickCache[m.fromUin] ??
@@ -510,7 +521,7 @@ class Qq8SessionAdapter implements Session {
       senderId: '${m.fromUin}',
       chatId: Chat.keyOf(
         isGroup ? ChatType.group : ChatType.private,
-        m.chatId(self),
+        rawId,
       ),
       replyPreview:
           reply != null && reply.preview.isNotEmpty ? reply.preview : null,

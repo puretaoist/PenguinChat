@@ -291,7 +291,37 @@ Future<void> main() async {
     checkEq('同 seq 的"响应"被当推送（证明没登记 pending）', stray.seq, 106);
   }
 
-    section('6. 心跳失败的降级');
+  section('5c. 服务端 retcode：-10008 重发一次，其余原样上报');
+  {
+    // 真机 2026-10-26 21:46 服务端连着回 -10008，我们当时当解析失败丢帧，
+    // 请求全部等到超时。官方 `msf/core/ag.java:1782-1793` 是 `reSendMsg` 重发一次。
+    transport.scriptedResponses.addAll(<Uint8List>[
+      _frame(seq: 107, cmd: 'OidbSvc.0x480_9_IMCore', retcode: qq8RetcodeResend),
+      _frame(seq: 107, cmd: 'OidbSvc.0x480_9_IMCore', payload: hex('0a00')),
+      _frame(seq: 108, cmd: 'MessageSvc.PbGetGroupMsg', retcode: -10003),
+    ]);
+    final sentBefore = transport.sent.length;
+    final errBefore = errors.length;
+    final resendResp =
+        await session.sendUni('OidbSvc.0x480_9_IMCore', Uint8List(0), seq: 107);
+    checkEq('重发一次后拿到正常响应', resendResp.retcode, 0);
+    checkEq('同一请求发了两遍', transport.sent.length - sentBefore, 2);
+    checkEq('重发过程上报了一条异常', errors.length - errBefore, 1);
+    final resendErr = errors.isEmpty ? null : errors.last;
+    checkEq('上报的是 Qq8ServerRetcodeException',
+        resendErr is Qq8ServerRetcodeException, true);
+    checkEq('该异常标记为已重发（resent=true）',
+        resendErr is Qq8ServerRetcodeException && resendErr.resent, true);
+    var thrown = '';
+    try {
+      await session.sendUni('MessageSvc.PbGetGroupMsg', Uint8List(0), seq: 108);
+      thrown = '没有抛出';
+    } on Qq8ServerRetcodeException catch (e) {
+      thrown = 'retcode=${e.retcode} resent=${e.resent}';
+    }
+    checkEq('-10003 不重发、直接抛出并带上 retcode', thrown, 'retcode=-10003 resent=false');
+  }
+  section('6. 心跳失败的降级');
   // 脚本已用尽 → 下一次 uniHeartbeat 会抛错；再调一次仍失败 → onOffline
   var offline = false;
   session.onOffline = () => offline = true;

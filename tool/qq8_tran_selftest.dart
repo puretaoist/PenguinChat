@@ -531,6 +531,69 @@ Future<void> main() async {
     }
   }
 
+  // 【10】socket 引用失效后必须真的重连（回归 2026-10-26 21:47 真机）
+  {
+    // 现场：服务端 abort → onError/onDone 只让 _pending 失败，_socket 留着；
+    // 之后 connect() 的 `if (_socket != null) return` 永远短路，
+    // write() 往死 socket 里写 → 「读取失败 (SocketException: ... abort)」，重连空转到日志停笔。
+    final conns = <Socket>[];
+    var accepted = 0;
+    final srv = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    srv.listen((s) {
+      accepted++;
+      conns.add(s);
+      s.listen((_) {}, onError: (_) {}, onDone: () => s.destroy());
+      if (accepted == 1) {
+        // 第一条连接：收到包就打断，模拟服务端 abort。
+        s.destroy();
+      }
+    });
+    final t = Qq8TcpTransport(host: InternetAddress.loopbackIPv4.address, port: srv.port);
+    try {
+      await t.connect();
+      check('连上后 isConnected 为真', t.isConnected);
+      // 写一次，触发服务端 destroy。
+      try {
+        await t.write(framePacket(_bytes([0x01])));
+      } on Object {
+        // 首写可能已经撞上 RST，允许失败；关键看状态有没有被清。
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      check('对端断开后 isConnected 变假（socket 引用已清）', !t.isConnected);
+      check('对端断开后 connectedEndpoint 也清空', t.connectedEndpoint == null);
+      // 关键断言：下一次 write 必须真的重连（而不是往死 socket 写）。
+      await t.write(framePacket(_bytes([0x02])));
+      check('断线后 write 自动重连成功（不再是「已建立」假象）', accepted == 2,
+          '实际建立 $accepted 条连接');
+      check('重连后 isConnected 恢复', t.isConnected);
+    } finally {
+      await t.close();
+      for (final c in conns) {
+        c.destroy();
+      }
+      await srv.close();
+    }
+  }
+  {
+    // close() 之后不能「看起来还连着」：write 必须先重连或明确报错。
+    final srv = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    srv.listen((s) => s.listen((_) {}, onError: (_) {}, onDone: () => s.destroy()));
+    final t = Qq8TcpTransport(host: InternetAddress.loopbackIPv4.address, port: srv.port);
+    await t.connect();
+    // 先关掉服务端：这样下面的重连必然失败，能区分「真去重连了」和「假装还连着」。
+    await srv.close();
+    await t.close();
+    check('close() 后 isConnected 为假', !t.isConnected);
+    check('close() 后 connectedEndpoint 为 null', t.connectedEndpoint == null);
+    var msg = '';
+    try {
+      await t.write(framePacket(_bytes([0x03])));
+    } on Qq8TransportException catch (e) {
+      msg = e.message;
+    }
+    check('close() 后写会尝试重连并在失败时报错', msg.contains('连接失败'), msg);
+    await t.close();
+  }
   // -- 汇总 --------------------------------------------------------------
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');

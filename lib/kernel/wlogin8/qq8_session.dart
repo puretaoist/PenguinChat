@@ -35,6 +35,45 @@ import 'qq8_register.dart';
 import 'qq8_sso.dart';
 import 'qq8_tran.dart';
 
+/// 服务端要求重发该请求（官方 `msf/core/ag.java:1782-1793`：
+/// `if (businessFailCode == -10008) { D.reSendMsg(toServiceMsgC); return; }`）。
+///
+/// 出处是反编译官方 9.3.60 的 MSF 层，不是猜的：真机 2026-10-26 21:46
+/// 服务端连着回这个码，官方客户端会自动重发一次，我们之前是直接丢帧。
+const int qq8RetcodeResend = -10008;
+
+/// 服务端用 SSO 返回码拒绝了一个请求（不是网络故障）。
+///
+/// 与 [Qq8TransportException] 分开是必须的：传输异常意味着"这条连接可能坏了"，
+/// 而这个异常意味着"连接好着，服务端说这条请求不行"——上层的处理完全不同
+/// （前者要重连，后者要么重试要么跳过）。
+class Qq8ServerRetcodeException implements Exception {
+  /// SSO 头里的 retcode（负数，如 -10003 / -10008）。
+  final int retcode;
+
+  /// 被拒的请求 seq。
+  final int seq;
+
+  /// 被拒的命令字（retcode != 0 时服务端不回 cmd，通常为空串）。
+  final String cmd;
+
+  /// 是否已经自动重发过一次（诊断用）。
+  final bool resent;
+
+  const Qq8ServerRetcodeException({
+    required this.retcode,
+    required this.seq,
+    this.cmd = '',
+    this.resent = false,
+  });
+
+  @override
+  String toString() =>
+      'Qq8ServerRetcodeException: 服务端返回 retcode=$retcode'
+      '（seq=$seq${cmd.isEmpty ? '' : '，cmd=$cmd'}'
+      '${resent ? '，已自动重发一次' : ''}）';
+}
+
 /// 长连接会话：路由（seq 配对/推送）、注册与心跳。
 class Qq8Session {
   final Qq8Transport transport;
@@ -168,6 +207,37 @@ class Qq8Session {
       );
 
   Future<Qq8SsoResponse> _send(
+    int seq,
+    Uint8List packet,
+    Duration timeout,
+  ) async {
+    var resends = 0;
+    while (true) {
+      final r = await _awaitResponse(seq, packet, timeout);
+      if (r.retcode == 0) return r;
+      // -10008 = 服务端要求重发（官方 `msf/core/ag.java:1782-1793` 的
+      // `D.reSendMsg(toServiceMsgC)` 会自动重发一次）。真机 2026-10-26 21:46
+      // 连着回了 -10008，我们每条都当超时丢掉，请求全部石沉大海。
+      if (r.retcode == qq8RetcodeResend && resends < 1) {
+        resends++;
+        onError?.call(Qq8ServerRetcodeException(
+          retcode: r.retcode,
+          seq: seq,
+          cmd: r.cmd,
+          resent: true,
+        ));
+        continue;
+      }
+      throw Qq8ServerRetcodeException(
+        retcode: r.retcode,
+        seq: seq,
+        cmd: r.cmd,
+      );
+    }
+  }
+
+  /// 发一次包、等一次应答（[retcode] 非 0 也照常返回，由 [_send] 判读）。
+  Future<Qq8SsoResponse> _awaitResponse(
     int seq,
     Uint8List packet,
     Duration timeout,

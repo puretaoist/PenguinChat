@@ -247,7 +247,20 @@ Qq8SsoResponse _unwrapUni(Uint8List frame, {Uint8List? d2key}) {
     print('[recv] SSO 头 headlen=$headlen seq=$seq retcode=$retcode 前$n=$hex');
   }
   if (retcode != 0) {
-    throw Qq8LoginException('SSO 返回码非 0：retcode=$retcode（seq=$seq）');
+    // **不在这里抛**：这一帧是配对到某个请求的合法应答，只是服务端拒绝了它。
+    // 在这里抛等于把整帧丢掉——会话层的 `_pending` 永远等不到人，
+    // 请求侧只能熬到超时，上层完全看不到服务端说了什么。
+    // 真机 2026-10-26 21:46 现场：服务端连着回 -10003 / -10008，
+    // 我们每一帧都当"解析失败"丢弃，于是 15 个请求各自超时 → 心跳连败 → 断线。
+    //
+    // 官方语义（`msf/core/ag.java:1782-1793`）：-10008 是"要求重发"，
+    // 官方 `D.reSendMsg(toServiceMsgC)` 自动重发一次；参考实现 icqq
+    // `base-client.ts:650-653` 虽然也抛，但它先 `emit("internal.error.token")`
+    // 把信号交给了上层，我们的等价动作是保留 retcode 让会话层处理。
+    //
+    // 注意：retcode != 0 时 SSO 头里 retcode 后面跟的是 withLen(retmsg)，
+    // 与成功路径的字段顺序不同，**不能**再往下按成功布局解析 cmd/payload。
+    return (seq: seq, retcode: retcode, cmd: '', payload: Uint8List(0));
   }
 
   var offset = u32At(12) + 12;

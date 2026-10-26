@@ -21,6 +21,7 @@ import 'package:qqclient/infra/coder.dart';
 import 'package:qqclient/kernel/crypto/tea.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_recv.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_session.dart' show qq8RetcodeResend;
 
 int _pass = 0;
 int _fail = 0;
@@ -204,14 +205,21 @@ void testShellFlags() {
   }
   checkEq('magic 非 0x0A/0x0B 抛错', threw, true);
 
-  // retcode 非 0
-  threw = false;
-  try {
-    qq8UnwrapRecv(_ssoFrame(shellFlag: 0, payload: payload, retcode: 7));
-  } on Qq8LoginException {
-    threw = true;
-  }
-  checkEq('retcode 非 0 抛错', threw, true);
+  // retcode 非 0：**不抛**，把 retcode 交回调用方。
+  // 2026-10-26 21:46 真机：服务端连着回 -10003 / -10008，旧实现见非 0 就抛，
+  // 整帧被当成"解析失败"丢掉，等待方只能超时——服务端说的话一个字都没传上来。
+  // 现在的契约：retcode != 0 的帧照常返回，payload 为空、cmd 为空串，
+  // 由会话层判读（-10008 自动重发一次，其余抛 Qq8ServerRetcodeException）。
+  final badRet = qq8UnwrapRecv(_ssoFrame(shellFlag: 0, payload: payload, retcode: 7));
+  checkEq('retcode 非 0 不抛，retcode 原样带回', badRet.retcode, 7);
+  checkEq('retcode 非 0 时 payload 为空', badRet.payload.length, 0);
+  checkEq('retcode 非 0 时 cmd 为空串', badRet.cmd, '');
+  // 非 0 的 retcode 后面跟的是 withLen(retmsg)，字段顺序与成功路径不同，
+  // 所以更极端的负数（-10008，真机上出现过的重发码）也要能安全读出来。
+  final resendRet =
+      qq8UnwrapRecv(_ssoFrame(shellFlag: 0, payload: payload, retcode: -10008));
+  checkEq('-10008 也能带回', resendRet.retcode, -10008);
+  checkEq('-10008 命中重发常量', resendRet.retcode, qq8RetcodeResend);
 
   // 非空 d2：当前显式拒绝（无样本不猜）
   threw = false;

@@ -2232,6 +2232,69 @@ Dart（`lib/kernel/wlogin8/qq8_register.dart`）与 Rust（`rust/penguin-protoco
    拿它去自己的 `_pending` 里找配对，本来就该先怀疑配对模型错了。
 3. 这类「假失败」最伤的地方是**淹没真故障**：日志里天天有超时，真出问题时没人会再点开看。
 
+## C40. 拆壳层别替服务端「做主」——`retcode != 0` 要交上去，不要当场 throw
+
+**现象**：真机 2026-10-26 21:46:20 起，`收包解析失败 | Qq8LoginException: SSO 返回码非 0：retcode=-10003（seq=350）`，
+紧接着一连串 `retcode=-10008（seq=351..361）`；每条后面都跟着 `后台轮询（群 xxx）失败 | 等待响应超时（seq=35x，15s）`。
+看上去是「服务端在拒绝我们」，实际是**我们自己把服务端的答复扔了**，然后每个请求傻等到超时。
+
+**根因**：`lib/kernel/wlogin8/qq8_recv.dart` 的 `_parseSsoHead` 里，`if (retcode != 0) throw Qq8LoginException(...)`。
+抛出去以后 `qq8_session.dart:140-142` 的 `_onFrame` 只做 `onError?.call(e); return;` —— **整帧丢弃**，
+那个 seq 的 `_pending` 永远等不到完成，只能靠 timeout 兜底。
+
+**官方语义**：`retcode = -10008` 不是「拒绝」，是「请重发」。`analysis/_decompiled/jadx-main/sources/com/tencent/mobileqq/msf/core/ag.java:1782-1793`：
+```java
+else if (fromServiceMsg.getBusinessFailCode() == -10008) {
+    ... D.reSendMsg(toServiceMsgC); return;   // 官方自动重发一次
+}
+```
+参考实现 `analysis/_ref/oicq-src/lib/core/base-client.ts:646-653` 的 `parseSso` 也是抛，但它**先 `emit("internal.error.token")`**——
+错误至少到了上层。我们连这个出口都没有，于是成了纯静默。
+
+**修法（已落地）**：
+1. `_parseSsoHead` 对 `retcode != 0` 不再抛，**原样返回** `(seq, retcode, cmd: '', payload: 空)`。
+   注意：retcode 非 0 时 SSO 头后面跟的是 `withLen(retmsg)`，字段序与成功路径不同，不能再按成功布局解 cmd/payload——所以 cmd 必须给空串。
+2. `qq8_session.dart` 新增 `const int qq8RetcodeResend = -10008;` 与 `Qq8ServerRetcodeException`（带 retcode/seq/cmd/resent）。
+   `_send` 改成循环：`retcode == 0` 直接返回；`== -10008` 且没重发过 → 上报一条 `resent: true` 的异常并**重发一次**；其余 retcode → 抛出该异常。
+3. 登录/二维码三条路径（`_sendLoginBody` / `fetchQrcode` / `pollQrcode`）在 `qq8UnwrapRecv` 之后各自检查 `sso.retcode != 0` 并抛带 cmd 的异常。
+
+**判据教训**：
+1. **拆壳层只负责拆壳**。它知道「这条帧的 retcode 是几」，不知道「这个 retcode 对业务意味着什么」——
+   把语义判断塞进解析层，等于让最底层替最上层做决定，而且是用「抛异常」这种方式隐式做。
+2. **抛异常的代价是丢掉同帧的其余信息**。这里丢的是 seq——而 seq 正是上层唯一能把「这次失败」和「哪个请求」对上的线索。
+   丢了它，失败就退化成超时，超时又和网络故障同形，最后日志里全是「超时」，没人看得出真实原因。
+3. 参考实现同样 throw 不代表这种写法对；要看它 throw **之前**做了什么（oicq 有 `emit`，我们没有），差别就在那一行。
+4. 自测怎么覆盖：`Qq8ScriptedTransport` 脚本里塞两帧同 seq（先 `-10008`、再正常），断言「请求发了两遍、`retcode=0`、`errors` 多一条 `resent=true`」；
+   再塞一帧 `-10003`，断言「不重发、直接抛、`retcode` 原样带出」。见 `tool/qq8_session_selftest.dart` 的 5c 段。
+
+## C41. 引用不清 = 幂等短路：`onError` 不置 `_socket = null`，重连会永久空转
+
+**现象**：真机 2026-10-26 21:47:52 心跳连败断线 → `断线恢复：第 1/3 次（票据续期）` → 日志打出 `[连接] 已建立 msfwifi.3g.qq.com:8080` →
+**紧接着** `登录请求失败 | Qq8TransportException: 读取失败 (SocketException: Software caused connection abort (OS Error: ..., errno = 103), address = msfwifi.3g.qq.com, port = 33026)`。
+明明刚说「已建立」，下一步就 abort；三次恢复全一样，之后进程再无一行日志、`/proc/<pid>/net/tcp` 里一个 ESTAB 都没有。
+
+**根因**：`lib/kernel/wlogin8/qq8_tran.dart` 的 `Qq8TcpTransport.connect()` 开头是 `if (_socket != null) return;`（幂等），
+但 `onError` 回调里**只 `_failPending(...)`，没有把 `_socket` 置空**（只有 `onDone` 置）。
+于是 socket 出错一次后，`_socket` 仍指向那个已经死掉的 Socket：
+`connect()` 看见非 null 直接 return（不再真连），`send()`/`write()` 往死 socket 里写 ⇒ abort。
+日志里那句「已建立」也不是新连接——`_connect()` 打的是 `transport.connectedEndpoint`，而这个字段在 `connect()` 短路时**保留着上一次的值**。
+
+**修法（已落地）**：
+1. `onError` 里 `_socket = null; connectedEndpoint = null;` 再 `_failPending`；`onDone` 也补 `connectedEndpoint = null`。
+2. `write()` / `send()` 一律先把 socket 抓成局部变量 `final socket = _socket;`，为空直接抛「发送失败（连接已断开）」；
+   catch 里 `if (identical(_socket, socket)) { _socket = null; connectedEndpoint = null; }` —— 只清自己那次用的那个 socket，避免误伤并发新建的连接。
+3. 上层 `lib/client_api/qq8_login_service.dart` 新增 `_teardownConnection()`（停轮询 Timer、取消推送订阅、关 session、关 transport、两个字段置 null，不动 `_states`/`_events`），
+   `close()` 与 `reconnect()` 都先走它；`reconnect` 在 `attempt > 1` 时再拆一次，**每轮重连都用全新连接**。
+   （此前 `_tran ??= transportBuilder()` 会跨重连复用同一个 transport，`_pending`/`_decoder` 的脏状态一起带过来。）
+
+**判据教训**：
+1. **「幂等」和「缓存」是一线之隔**。`if (x != null) return;` 在正常路径上省一次连接，在故障路径上就是「再也不连了」。
+   凡是「已存在就复用」的判断，必须同时保证**所有失效路径都会把引用清掉**——漏一条就等于留一个永久黑洞。
+2. **状态字段不能只在一个出口维护**。`_socket` 有 onError / onDone / close 三个失效出口，只清两个，第三个出口就是 bug 的藏身处。
+   排查这类问题的快捷方式：列出这个字段的**全部来源与去处**，逐个问「这条路上它会被清吗」。
+3. **日志要能区分「真的连上了」和「看起来连上了」**。`connectedEndpoint` 在短路路径上不更新，
+   于是打出了一句骗人的「已建立」——凡是日志里出现的状态，都应该是**本次动作真的产生了**的状态，而不是「字段当前非空」。
+4. 复现成本高的坑，用「反证式断言」固定下来：自测里直接 `transport.close()` 后调 `send()`，断言抛「发送失败（连接已断开）」而不是静默成功。
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

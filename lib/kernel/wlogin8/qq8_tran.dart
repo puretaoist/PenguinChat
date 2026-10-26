@@ -397,9 +397,19 @@ class Qq8TcpTransport implements Qq8Transport {
           p.complete(f);
         }
       },
-      onError: (Object e) => _failPending(Qq8TransportException('读取失败', e)),
+      // 读错误必须把 _socket 一起丢掉。
+      // 真机 2026-10-26 21:47:57 现场：服务端 abort 后走到这里，只让 _pending 失败、
+      // 留着那条已经断掉的 socket。于是下一次 write/send 的 `if (_socket == null)`
+      // 判断为假，直接往死 socket 里写，connect() 也因为同样的判断永远不重连——
+      // 重连循环于是空转到日志停止。onDone 早就把 _socket 置空了，这里必须一致。
+      onError: (Object e) {
+        _socket = null;
+        connectedEndpoint = null;
+        _failPending(Qq8TransportException('读取失败', e));
+      },
       onDone: () {
         _socket = null;
+        connectedEndpoint = null;
         _failPending(Qq8TransportException('连接被对端关闭'));
       },
       cancelOnError: true,
@@ -432,14 +442,26 @@ class Qq8TcpTransport implements Qq8Transport {
   @override
   Future<void> write(Uint8List packet) async {
     if (_socket == null) await connect();
+    // 抓局部变量：排队期间连接可能被 close/onError 置空，
+    // 此时 `_socket!.add` 会抛空指针，把「连接断了」伪装成「发送失败」。
+    final socket = _socket;
+    if (socket == null) {
+      throw Qq8TransportException('发送失败（连接已断开）');
+    }
     try {
       // 与 send 同一约定：包自带 u32 长度头，原样写出。
       // 走写队列：并发 flush 会抛 StreamSink is bound（见 _serialized 注释）。
       await _serialized(() async {
-        _socket!.add(packet);
-        await _socket!.flush();
+        socket.add(packet);
+        await socket.flush();
       });
     } on Object catch (e) {
+      // 写失败等价于连接不可用：把引用丢掉，下一次调用才会真的重连。
+      // （留着它会让 connect() 的 `if (_socket != null) return` 永远短路。）
+      if (identical(_socket, socket)) {
+        _socket = null;
+        connectedEndpoint = null;
+      }
       throw Qq8TransportException('发送失败', e);
     }
   }
@@ -454,16 +476,26 @@ class Qq8TcpTransport implements Qq8Transport {
     final completer = Completer<Uint8List>();
     _pending = completer;
 
+    final socket = _socket;
+    if (socket == null) {
+      _pending = null;
+      throw Qq8TransportException('发送失败（连接已断开）');
+    }
     try {
       // 原样写出：包自己带的 u32 长度头就是分帧头（对应 oicq `net.write(pkt)`）。
       // 千万不能再 `framePacket()` —— 多一层会让服务端静默丢弃（见文件头）。
       // 走写队列：并发 flush 会抛 StreamSink is bound（见 _serialized 注释）。
       await _serialized(() async {
-        _socket!.add(payload);
-        await _socket!.flush();
+        socket.add(payload);
+        await socket.flush();
       });
     } on Object catch (e) {
       _pending = null;
+      // 同 write()：写失败说明这条 socket 不能再用，必须让引用归零。
+      if (identical(_socket, socket)) {
+        _socket = null;
+        connectedEndpoint = null;
+      }
       throw Qq8TransportException('发送失败', e);
     }
 

@@ -561,6 +561,81 @@ Future<void> testOptimisticSend() async {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. 表情回显：本地 `/名字` 与服务端 `[表情]` 必须配成同一条
+// ---------------------------------------------------------------------------
+
+Future<void> testFaceEcho() async {
+  section('4b. 表情回显：两条链的文本形态不同也要配对（真机 2026-10-26 重复气泡）');
+
+  final f = await readyStore('face_echo', chats: [fakeGroup()]);
+  final store = f.store;
+  final session = f.session;
+  await store.openChat('group_12345');
+
+  // 群聊的后端拿不到服务端 ID（PbSendMsg 应答只有 code），
+  // 所以 echo 配对是唯一的去重手段——这正是 bug 现场。
+  session.replyNull = true;
+
+  // 本地：表情面板把 `/开枪` 当文本插进输入框，plainText 就存这个原文。
+  await store.send('group_12345', const [TextSegment('/开枪')]);
+  final local = store.messagesOf('group_12345').single;
+  check('本地乐观条目文本是 /开枪', local.text == '/开枪', local.text);
+  check('本地条目还没有服务端 ID', local.id.startsWith('local:'), local.id);
+
+  // 服务端回显：内核把 Elem.face 统一写成 `[表情]`，同时带 FaceSegment。
+  session.emit(SessionMessage(ChatMessage(
+    id: 'srv-face-1',
+    text: '[表情]',
+    segments: const [FaceSegment('224')],
+    time: at(30),
+    outgoing: true,
+    chatId: 'group_12345',
+    senderId: '10001',
+    senderName: '测试号',
+  )));
+  await sleep(60);
+  checkEq('表情回显没有被重复插入',
+      store.messagesOf('group_12345').length, 1);
+  check('配对后换成服务端 ID',
+      store.messagesOf('group_12345').single.id == 'srv-face-1',
+      store.messagesOf('group_12345').single.id);
+
+  // 反向保护：普通文本不同就不能乱配（否则会"吃掉"另一条真消息）
+  session.emit(SessionMessage(ChatMessage(
+    id: 'srv-plain-1',
+    text: '完全不同的一句话',
+    segments: const [TextSegment('完全不同的一句话')],
+    time: at(31),
+    outgoing: true,
+    chatId: 'group_12345',
+    senderId: '10001',
+    senderName: '测试号',
+  )));
+  check('不同文本照常插入',
+      await waitUntil(() =>
+          store.messagesOf('group_12345').any((m) => m.id == 'srv-plain-1')));
+
+  // 回显不带表情段时不做形状配对：宁可多一条，也不能把真消息吃掉。
+  await store.send('group_12345', const [TextSegment('/微笑')]);
+  final before = store.messagesOf('group_12345').length;
+  session.emit(SessionMessage(ChatMessage(
+    id: 'srv-plain-2',
+    text: '[表情]',
+    segments: const [TextSegment('[表情]')], // 纯文本，没有 FaceSegment
+    time: at(32),
+    outgoing: true,
+    chatId: 'group_12345',
+    senderId: '10001',
+    senderName: '测试号',
+  )));
+  await sleep(60); // 事件走广播流，是异步投递的（PITFALLS A2）
+  checkEq('没有表情段的回显不参与形状配对',
+      store.messagesOf('group_12345').length, before + 1);
+
+  await store.dispose();
+}
+
+// ---------------------------------------------------------------------------
 // 5. 发送失败：保留文本 + 可重试
 // ---------------------------------------------------------------------------
 
@@ -1205,6 +1280,7 @@ Future<void> main() async {
     await testEventMerge();
     await testDedup();
     await testOptimisticSend();
+    await testFaceEcho();
     await testSendFailure();
     await testPaging();
     await testCorruptFiles();

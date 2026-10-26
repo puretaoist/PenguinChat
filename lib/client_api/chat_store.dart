@@ -971,17 +971,51 @@ class ChatStore {
     _log.i('已揭示撤回消息 $chatId/$messageId');
   }
 
+  /// 表情在两条链上的**文本形态不一致**，配对前必须归一化。
+  ///
+  /// 本地乐观条目走 [Segment.plainText]，文本段按原文存——用户在表情面板点
+  /// 一下，[FacePanel] 往输入框里插的是文本 `/开枪`（不是 FaceSegment），
+  /// 所以本地这条的 `text` 就是 `"/开枪"`。
+  /// 而服务端回显的那条由协议层解析：`qq8_elem.dart` 对 `Elem.face` 与大表情
+  /// **统一写成 `"[表情]"`**。
+  ///
+  /// 于是下面 `m.text == echo.text` 永远不成立，同一条消息留下两条气泡
+  /// （真机 2026-10-26 21:16 截图：群里并排 `/开枪` 与 `[开枪]`）。
+  /// 群聊尤其致命——群消息的 `sendMessage` 拿不到服务端 ID，配对是唯一防线。
+  ///
+  /// 折叠只在**完全匹配失败之后**作为兜底，且要求回显那条真的带表情段：
+  /// 这样不会把「两条不同的普通文本」误配到一起。
+  static final RegExp _faceLikeToken =
+      RegExp(r'\[[^\[\]]{1,8}\]|/[^\s/，。！？、,.!?~～:：;；]{1,8}');
+  static const String _facePlaceholder = '[表情]';
+
+  static String _foldFaces(String text) =>
+      text.replaceAll(_faceLikeToken, _facePlaceholder);
+
+  /// 形状级配对：把两侧的表情写法都折叠成占位符后比较。
+  static bool _sameEchoShape(ChatMessage local, ChatMessage echo) {
+    // 回显必须真的带表情，否则放宽没有依据（普通文本走上面的精确匹配）。
+    if (!echo.segments.any((s) => s is FaceSegment)) return false;
+    final foldedLocal = _foldFaces(local.text);
+    // 本地文本里没有表情词 ⇒ 不是这个场景，不猜。
+    if (foldedLocal == local.text) return false;
+    return foldedLocal == _foldFaces(echo.text);
+  }
+
   /// 找一条能与 echo 配对的本地乐观消息：同会话、同文本、还是 `local:` ID、
   /// 且没被配对过。失败的不算（它没发出去，不可能是 echo 的来源）。
   ChatMessage? _findEchoCandidate(String chatId, ChatMessage echo) {
     if (echo.text.isEmpty) return null;
+    ChatMessage? loose;
     for (final m in _messages[chatId] ?? const <ChatMessage>[]) {
       if (!m.id.startsWith('local:')) continue;
       if (_echoMatched.contains(m.id)) continue;
       if (m.sendState == MessageSendState.failed) continue;
       if (m.text == echo.text) return m;
+      // 精确匹配失败的才记下"形状像"的那条，全部扫完没有精确命中再兜底。
+      if (loose == null && _sameEchoShape(m, echo)) loose = m;
     }
-    return null;
+    return loose;
   }
 
   void _replaceLocalId(String chatId, String localId, String serverId) {

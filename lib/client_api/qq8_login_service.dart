@@ -1216,7 +1216,9 @@ class Qq8LoginService {
     if (session == null) return;
     final codes = [
       for (final e in _groupLastSeq.entries)
-        if (!_primeFailed.contains(e.key)) e.key,
+        // 103 的群水位永远不会变（服务端对本账号没有可下发内容），
+        // 每轮都问它只是白烧一个 TLV（见 [_groupDead]）。
+        if (!_primeFailed.contains(e.key) && !_groupDead.contains(e.key)) e.key,
     ];
     if (codes.isEmpty) return;
     try {
@@ -1247,8 +1249,11 @@ class Qq8LoginService {
           // 无论方向都以真值为准；真值更高才回看（真值更低说明之前
           // 拉到的窗口本来就空，无需补）。
           _log.w('群 $code 游标重校准：$known → $seq');
+          // **先把缺口补上再推游标**。之前是 `unawaited(_catchUpGroup(...))`
+          // 紧接着就写游标：补拉一旦失败（超时/空页），游标已经跳过去了，
+          // 那段消息就再也拉不回来（C36 的「永久跳过」同一类错）。
           if (seq > known) {
-            unawaited(_catchUpGroup(code, from: known + 1, to: seq));
+            await _catchUpGroup(code, from: known + 1, to: seq);
           }
           _groupLastSeq[code] = seq;
           updated++;
@@ -1262,19 +1267,48 @@ class Qq8LoginService {
     }
   }
 
-  /// 回看某群的 [from, to] seq 区间（游标跳变时补拉）。
+  /// 回看某群的 [from, to] seq 区间（游标跳变时补拉），**分页补齐，不丢中间段**。
+  ///
+  /// 旧实现只拉最后 20 条就完事：离线一小时、水位跳了 300 条时，中间 280 条
+  /// 永久消失，只剩最后 20 条能看见——用户看到的就是"消息断了一大段"。
+  /// 现在按 PbGetGroupMsg 的窗口上限（20 条）一页页往前推。
+  ///
+  /// 上限 [_catchUpMaxPages] 页（=120 条）是刻意的：真出现几百条的缺口时，
+  /// 一次性补完会把轮询拖成几十秒、还会挤掉私聊。缺口更大时保留最新的一段，
+  /// 其余靠用户打开会话时的历史翻页（`fetchHistory`）自己取。
+  static const int _catchUpPageSize = 20;
+  static const int _catchUpMaxPages = 6;
+
   Future<void> _catchUpGroup(int groupCode,
       {required int from, required int to}) async {
+    if (from < 1) from = 1;
+    if (to < from) return;
+    final total = to - from + 1;
+    var begin = from;
+    final maxSpan = _catchUpPageSize * _catchUpMaxPages;
+    if (total > maxSpan) {
+      begin = to - maxSpan + 1;
+      _log.w('群 $groupCode 缺口 $total 条，超过补拉上限 $maxSpan，只补 $begin-$to（更早的靠翻历史）');
+    }
     try {
-      // 区间超过 20 条就只拉最后 20 条（PbGetGroupMsg 单次上限）。
-      final begin = (to - from + 1 > 20) ? to - 19 : from;
-      final page = await fetchGroupHistory(
-        groupCode: groupCode,
-        beginSeq: begin,
-        endSeq: to,
-      );
-      _log.i('群 $groupCode 回看 $begin-$to：result=${page.result} 条数=${page.messages.length}');
-      _emitGroupPage(groupCode, page);
+      while (begin <= to) {
+        final end = (begin + _catchUpPageSize - 1 > to) ? to : begin + _catchUpPageSize - 1;
+        final page = await fetchGroupHistory(
+          groupCode: groupCode,
+          beginSeq: begin,
+          endSeq: end,
+        );
+        _log.i('群 $groupCode 回看 $begin-$end：result=${page.result} 条数=${page.messages.length}');
+        if (page.result == 103) {
+          // 服务端对该群的准入结论，本会话不再试（与 _pollGroups 同一判据）。
+          _groupDead.add(groupCode);
+          _log.i('群 $groupCode 服务端判 103（该群无内容可下发），本会话不再拉取');
+          return;
+        }
+        if (page.messages.isNotEmpty) _emitGroupPage(groupCode, page);
+        // 空页也要往前走，否则同一个窗口会一直重试到上限。
+        begin = end + 1;
+      }
     } on Object catch (err) {
       _log.d('群 $groupCode 回看失败：$err');
     }
@@ -1609,6 +1643,14 @@ class Qq8LoginService {
       );
       final sso = qq8UnwrapRecv(frame);
       onDiagnostic?.call('fetch', frame, null);
+      if (sso.retcode != 0) {
+        throw Qq8ServerRetcodeException(
+          retcode: sso.retcode,
+          seq: sso.seq,
+          // 两条 code2d 请求走同一个信封命令字（见 qq8_qrcode.dart 头注）
+          cmd: 'wtlogin.trans_emp',
+        );
+      }
       final r = Qq8Qrcode.parseFetch(sso.payload, _ecdh!.shareKey);
       // 扫码这条链走的是 code2d 命令（0x12），不经过 _sendLoginBody，所以那里的
       // "登录响应 type=… + 0x146 文案" 日志在这里不生效——真机上取码失败时
@@ -1660,6 +1702,13 @@ class Qq8LoginService {
       );
       final sso = qq8UnwrapRecv(frame);
       onDiagnostic?.call('poll', frame, null);
+      if (sso.retcode != 0) {
+        throw Qq8ServerRetcodeException(
+          retcode: sso.retcode,
+          seq: sso.seq,
+          cmd: 'wtlogin.trans_emp',
+        );
+      }
       // 响应外壳偶有未知形态（2026-09-21 17:18：d2 长度解出 0x14000000 的乱值），
       // 此时把会话作废、引导重新取码，而不是把异常直接抛给 UI 卡死流程。
       final Qq8QrQuery q;
@@ -1759,20 +1808,38 @@ class Qq8LoginService {
     );
   }
 
-  /// 结束会话（停心跳、关连接）。之后要再用就重新登录。
-  Future<void> close() async {
+  /// 只拆连接（会话 + 传输层），**不动状态流**。
+  ///
+  /// 断线恢复用它：要换一条新连接，但不能因此把 `_states`/`_events` 关掉——
+  /// 那会连带 UI 的 provider 一起结束。关闭失败吞掉：这条连接本来就已经坏了。
+  Future<void> _teardownConnection() async {
     _pullTimer?.cancel();
     _pullTimer = null;
     await _pushSub?.cancel();
     _pushSub = null;
-    await _session?.close();
+    final s = _session;
     _session = null;
-    try {
-      await _tran?.close();
-    } on Object {
-      // 关闭失败无需上报
+    if (s != null) {
+      try {
+        await s.close();
+      } on Object {
+        // 已断的连接关闭时报错属正常
+      }
     }
+    final t = _tran;
     _tran = null;
+    if (t != null) {
+      try {
+        await t.close();
+      } on Object {
+        // 同上
+      }
+    }
+  }
+
+  /// 结束会话（停心跳、关连接）。之后要再用就重新登录。
+  Future<void> close() async {
+    await _teardownConnection();
     _emit(const Qq8LoginSnapshot(stage: Qq8LoginStage.idle));
     await _states.close();
     await _events.close();
@@ -2232,6 +2299,17 @@ class Qq8LoginService {
 
     final frame = await tran.send(pkt, timeout: timeout);
     final sso = qq8UnwrapRecv(frame);
+    // retcode != 0 时拆壳层不再抛（2026-10-26 21:46 的教训：抛等于丢帧，
+    // 等待方只能超时，服务端说的话一个字都读不到）。登录包的应答被拒要
+    // 立刻按"服务端拒绝"报错，而不是拿空 payload 去解析出一句看不懂的话。
+    if (sso.retcode != 0) {
+      onDiagnostic?.call(token == null ? 'login' : 'token', frame, null);
+      throw Qq8ServerRetcodeException(
+        retcode: sso.retcode,
+        seq: sso.seq,
+        cmd: cmd,
+      );
+    }
     late final Qq8LoginResponse r;
     try {
       r = Qq8LoginResponse.parse(sso.payload, ecdh.shareKey);
@@ -2607,7 +2685,14 @@ class Qq8LoginService {
 
   /// 轮询周期计数：每 [_groupResyncEvery] 次重新问一次 UnReadMsgSeq。
   int _pullCycles = 0;
-  static const int _groupResyncEvery = 10;
+
+  /// 隔几个轮询周期对齐一次群水位。
+  ///
+  /// 原先是 10。后台轮询 60s 一轮时，那就是**10 分钟才校准一次**——
+  /// 期间游标只能靠"盲推进窗口"猜，服务端后来才放行的消息根本看不见
+  /// （真机 2026-10-26 现场：水位停在 57662，窗口反复请求 57663-57682 全是 104）。
+  /// 一个 `PbUnReadMsgSeq` 批量覆盖所有群，成本是一次往返，不值得省。
+  static const int _groupResyncEvery = 2;
 
   /// 后台发 `StatSvc.register`，不挡上线。
   ///
@@ -2748,10 +2833,19 @@ class Qq8LoginService {
     if (_reconnecting) return;
     _reconnecting = true;
     try {
+      // **每轮都换一条新连接**。
+      // 真机 2026-10-26 21:47:57 现场：服务端 abort 后我们复用旧 transport，
+      // 那句「[连接] 已建立 msfwifi.3g.qq.com:8080」其实是旧 socket 的地址被重印，
+      // 紧接着 loginWithToken 就 `SocketException: Software caused connection abort`。
+      // 旧的 Qq8Session 也要一起扔掉——它的 _pending / 心跳定时器不该带进新一轮。
+      await _teardownConnection();
       for (var attempt = 1; attempt <= reconnectAttempts; attempt++) {
         if (_states.isClosed) return; // close() 之后不再抢跑
         await Future<void>.delayed(reconnectBaseDelay * attempt);
         if (_states.isClosed) return;
+        // 上一轮 loginWithToken 可能已经把 transport 弄坏（连上又断、或写失败），
+        // 所以每次都重建，而不是只在循环开始时重建一次。
+        if (attempt > 1) await _teardownConnection();
         final token = await tokenStore.load(uin);
         if (token == null || !token.usable) {
           _log.w('断线恢复：没有可用票据，停在断线状态等手动重登');
