@@ -1434,6 +1434,23 @@ class Qq8LoginService {
   ///   `[水位-19, 水位]`，这窗才是「用户没看过的最近消息」。
   /// - **之后**：按游标往前 `[游标+1, 游标+20]`。
   Future<void> _pollGroups(String reason) async {
+    // 重入闩：`_pullNewMessagesInner` 是在 finally 里 `unawaited(_pollGroups(...))`
+    // 的，上一轮还没跑完下一轮就开始了。真机日志里同一个群同一个窗口在
+    // 114ms 内被问了两遍（`群历史 gid=486045673 seq=57661-57680 result=104` 连出
+    // 两条），每个群翻一倍请求量，弱网下正是 -10008 堆积的推手。
+    // 丢一轮不丢消息：游标没动，下一轮问的还是同一个窗口（C36）。
+    if (_pollingGroups) return;
+    _pollingGroups = true;
+    try {
+      await _pollGroupsInner(reason);
+    } finally {
+      _pollingGroups = false;
+    }
+  }
+
+  bool _pollingGroups = false;
+
+  Future<void> _pollGroupsInner(String reason) async {
     for (final e in _groupLastSeq.entries.toList()) {
       if (_snapshot.stage != Qq8LoginStage.online) return;
       final gid = e.key, last = e.value;
