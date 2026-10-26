@@ -346,6 +346,19 @@ class Qq8LoginService {
   /// seq 探测两路都拿不到的群（本轮会话内不再重试，避免请求风暴）。
   final Set<int> _primeFailed = {};
 
+  /// 服务端明确回 103（「该群对本账号无可下发内容」）的群。
+  ///
+  /// 真机实证（analysis/_ref/applog-20261025.log:45-51 等四份日志）：
+  /// 7 个群两天固定分成两组，364425216 / 631157274 / 786409471 恒 103，
+  /// 486045673 / 932740593 / 1032107787 / 1128570010 恒 104 —— result
+  /// 是**群级别的准入结论**，不是请求区间问题。官方离线库
+  /// （analysis/_ref/offdb-3499239040.db）里这三个 103 群连
+  /// `mr_troop_<md5>` 表都不存在，反证「服务端确实不给我们这个群的内容」。
+  ///
+  /// 因此 103 之后再拉就是纯浪费：每 20 秒一轮 ×3 群，四份日志累计
+  /// 8517 次群历史请求里 0 次成功。这里记死，本会话不再重试。
+  final Set<int> _groupDead = {};
+
   // 一次登录流程内固定的材料（与参考实现一致：同一客户端实例复用同一套）
   Qq8Device? _device;
   EcdhKeyPair? _ecdh;
@@ -1247,21 +1260,6 @@ class Qq8LoginService {
     } on Object catch (err) {
       _log.d('群 seq 重校准失败（保持现状）：$err');
     }
-    // TODO(remove) 临时诊断：endSeq=0 时服务端是否回真实最新 seq？
-    // 三条引导源全灭（C33），这是第 4 条候选。
-    for (final gid in codes.take(2)) {
-      try {
-        final r2 = await session.sendUni(
-          Qq8History.cmdGetGroupMsg,
-          Qq8Pb.encode(<int, Object?>{1: gid, 2: 1, 3: 0, 6: 0}),
-        );
-        final p2 = Qq8History.parseGroupMsg(r2.payload);
-        _log.w('诊断群 $gid endSeq=0：result=${p2.result} '
-            'returnEndSeq=${p2.returnEndSeq} 条数=${p2.messages.length}');
-      } on Object catch (e) {
-        _log.d('诊断群 $gid 抛 $e');
-      }
-    }
   }
 
   /// 回看某群的 [from, to] seq 区间（游标跳变时补拉）。
@@ -1405,6 +1403,8 @@ class Qq8LoginService {
     for (final e in _groupLastSeq.entries.toList()) {
       if (_snapshot.stage != Qq8LoginStage.online) return;
       final gid = e.key, last = e.value;
+      // 103 = 服务端对该群的准入结论（见 [_groupDead]），本会话不再试。
+      if (_groupDead.contains(gid)) continue;
       final firstSync = !_groupSynced.contains(gid);
       final begin = firstSync ? (last - 19 < 1 ? 1 : last - 19) : last + 1;
       final end = firstSync ? last : last + 20;
@@ -1422,7 +1422,30 @@ class Qq8LoginService {
           beginSeq: begin,
           endSeq: end,
         );
-        if (page.messages.isEmpty) continue;
+        if (page.messages.isEmpty) {
+          // 空页不等于出错：必须按 result 分流。
+          // 四份真机日志累计 8517 次群历史请求、result=0 一次都没有，
+          // 其中 103 是「该群对本账号无可下发内容」的准入结论（见
+          // [_groupDead]），再拉一万次也还是 103。
+          switch (page.result) {
+            case 103:
+              // 官方离线库（offdb）里这三个 103 群连
+              // mr_troop_<md5(群号)> 表都不存在，反证服务端确实不给内容。
+              _groupDead.add(gid);
+              _log.i('群 $gid 服务端判 103（该群无内容可下发），本会话不再拉取');
+            case 0:
+            case 104:
+              // 0/104 = 窗口内没有新消息（104 = 区间越界/无更新）。
+              // **不能推进游标**：新消息就落在 `游标+1..` 这段，推进到
+              // 窗口末尾会把真消息永远跳过去（C36 的教训）。保持原样
+              // 重问同一窗口，正是我们「靠轮询发现新消息」的手段。第一次
+              // 的往回窗口例外——它拉的是历史，空就是空，标记已同步即可。
+              break;
+            default:
+              _log.d('$reason（群 $gid）空页但 result=${page.result}');
+          }
+          continue;
+        }
         _log.i('$reason（群）：gid=$gid 新消息 ${page.messages.length} 条'
             '${firstSync ? '（首次同步回看 $begin-$end）' : ''}');
         _emitGroupPage(gid, page);
@@ -1779,6 +1802,24 @@ class Qq8LoginService {
         _log.i('有新消息通知（type=$notifyType），去拉一次');
         // notifyType 可能是 null（畸形包）——那就只记日志，不猜
         if (notifyType != null) unawaited(_pullAfterNotify(notifyType));
+      case Qq8ReqPush(
+          :final svrip,
+          :final pushType,
+          :final groupCode,
+          :final eventType,
+        ):
+        // 「有新消息，自己来拉」——不带消息体。之前这个命令字落在 default
+        // 分支被当未知包丢掉（四份真机日志里一次都没出现过，说明服务端
+        // 压根没进到会推它的状态，但**丢掉它等于把唯一的唤醒信号扔掉**）。
+        // 处理：回执（服务端在等）+ 触发一次拉取。不动事件语义。
+        _log.i('ReqPush 唤醒（pushType=$pushType gid=$groupCode event=$eventType）→ 回执 + 拉一次');
+        if (svrip != null) unawaited(_ackPushRaw(svrip, r.seq));
+        unawaited(_pullNewMessages(reason: 'ReqPush 唤醒'));
+      case Qq8TransPush(:final svrip, :final transCmd, :final groupCode):
+        // 群事件（禁言/撤回/成员进出/管理员变更）：只回执 + 记日志。
+        // 事件本身要另建模型（成员列表、禁言状态），不在本轮范围。
+        _log.i('群事件推送 gid=$groupCode cmd=$transCmd');
+        if (svrip != null) unawaited(_ackPushRaw(svrip, r.seq));
       case Qq8UnknownPush(:final cmd, :final note):
         _log.d('未处理的推送 cmd=$cmd${note == null ? '' : '（$note）'}');
         // SSO.HelloPush = 推送通道握手。官方 msf/core/push/g.java:2343-2363
@@ -1790,16 +1831,16 @@ class Qq8LoginService {
         if (cmd == 'SSO.HelloPush' && _session != null &&
             _snapshot.stage == Qq8LoginStage.online) {
           _log.i('SSO.HelloPush → 回送握手（官方语义：原样回声）');
-          unawaited(
-            _session!
-                // seq 原样带回（官方 setRequestSsoSeq(fromServiceMsg.getRequestSsoSeq())）
-                .sendUni('SSO.HelloPush', Uint8List.fromList(r.payload),
-                    seq: r.seq, timeout: const Duration(seconds: 5))
-                .then((resp) => _log.d('HelloPush 回送已发出，服务端回 ${resp.payload.length}B'))
-                .catchError((Object e) {
-                  _log.d('HelloPush 回送失败', error: e);
-                }),
-          );
+          // 服务端**不回**这条回声（官方是同一条长连接上单向回送，
+          // setNeedCallback(false) 语义）。以前用 sendUni 等应答，必然空等
+          // 10 秒再报失败——改用只发不等。
+          unawaited(_session!
+              .sendUniNoReply('SSO.HelloPush', Uint8List.fromList(r.payload),
+                  seq: r.seq)
+              .then((_) => _log.d('HelloPush 回送已发出'))
+              .catchError((Object e) {
+            _log.d('HelloPush 回送失败', error: e);
+          }));
         }
         // 官方对 StatSvc.QueryHB 的处理就是"重新注册推送"
         // （jadx-main msf/core/push/g.java:601-607，RegPushReason.serverPush）。
@@ -1863,9 +1904,11 @@ class Qq8LoginService {
                     Qq8Jce.encodeStruct(<int, Object?>{0: configType, 2: pushSeq}),
               },
             );
-            // 这类回执本就没有应答（服务端不等回包），超时按预期忽略。
+            // 这类回执本就没有应答（服务端不等回包）：以前走 sendUni 空等
+            // 10 秒再报错（真机 `ConfigPushSvc.PushResp 失败 | 等待响应超时
+            // （seq=-1807239620，10s）`），现改只发不等。
             unawaited(_session!
-                .sendUni('ConfigPushSvc.PushResp', body, seq: r.seq)
+                .sendUniNoReply('ConfigPushSvc.PushResp', body, seq: r.seq)
                 .then((_) => _log.i('ConfigPushSvc.PushReq 已回执（type=$configType）'))
                 .catchError((Object e) =>
                     _log.d('ConfigPushSvc.PushResp 失败', error: e)));
@@ -1916,17 +1959,27 @@ class Qq8LoginService {
 
   /// 推送回执（`OnlinePush.RespPush`）。失败只记日志：回执丢了顶多被重推，
   /// 不该因为回执失败把消息流打断。
+  ///
+  /// **只发不等**：服务端从不回执回包。以前用 [Qq8Session.sendUni] 等应答，
+  /// 而推送的 seq 是服务端给的负数，必然空等 10 秒再抛超时
+  /// （真机：`等待响应超时（seq=-1807239620，10s）`）。
+  /// 官方对应实现 `MessageHandler` 里是 `setNeedCallback(false)`，发完就忘。
   Future<void> _ackPush(Qq8MessagePush ev, int seq) async {
+    await _ackPushRaw(ev.svrip ?? 0, seq);
+  }
+
+  /// 回执通用实现：`ReqPush` / `PbPushTransMsg` / 消息推送都走这里。
+  Future<void> _ackPushRaw(int svrip, int seq) async {
     final s = _session;
     final uin = _snapshot.uin;
     if (s == null || uin == null) return;
     try {
       final body = Qq8Msg.buildRespPushAck(
         uin: uin,
-        svrip: ev.svrip ?? 0,
+        svrip: svrip,
         seq: seq,
       );
-      await s.sendUni(Qq8Msg.respPushCmd, body, seq: seq, timeout: timeout);
+      await s.sendUniNoReply(Qq8Msg.respPushCmd, body, seq: seq);
     } on Object catch (e) {
       _log.d('推送回执发送失败（$seq）', error: e);
     }
@@ -2302,6 +2355,7 @@ class Qq8LoginService {
       _groupLastSeq.clear();
       _groupSynced.clear();
       _primeFailed.clear();
+      _groupDead.clear();
       _syncCookie = null;
       // 登录已成功（type=0 票据已落盘）。从这里开始再出错也绝不能归因成
       // 「提交短信验证码失败」——那会把成功登录误报成失败。
@@ -2471,7 +2525,9 @@ class Qq8LoginService {
     // 就回来了，但「已上线」要等 10.2 s——全耗在 register 的 10 s 超时上
     // （服务端从不回 ack）。而 register 之后的心跳、校时、拉好友/群列表
     // 都不读它的返回值，所以先放行上线，register 在后台跑完即可。
-    // 只有「拿到应答且 rsp[9] 为假」（明确被拒）才把状态改回 failed。
+    // 只有「拿到应答且 cReplyCode 非 0」（明确被拒）才把状态改回 failed。
+    // 判据出处：SvcRespRegister.java:63-85 的 tag2 = cReplyCode，官方
+    // msf/core/push/e.java:196-235 判 `cReplyCode == 0`。
     unawaited(_registerInBackground(session, uin));
     // 官方登录后立刻发这两个 JCE 检查（见 [Qq8OnlineCheck] 的注释）。
     // 我们从不发它们时，服务端只推配置类推送——`OnlinePush.*` /
@@ -2555,8 +2611,9 @@ class Qq8LoginService {
 
   /// 后台发 `StatSvc.register`，不挡上线。
   ///
-  /// 三态判据同 icqq `_register`：`true` = 收到且 `rsp[9]` 真；`false` = 收到
-  /// 但 `rsp[9]` 假（明确被拒）；抛异常（超时）= 等价 `-2`，继续当成功。
+  /// 三态判据：`true` = 收到且 `SvcRespRegister.cReplyCode == 0`（官方判据，
+  /// `msf/core/push/e.java:196-235`）；`false` = 收到但 cReplyCode 非 0
+  /// （明确被拒）；抛异常（超时）= 等价 icqq 的 `-2`，继续当成功。
   /// 只有明确被拒才回退状态——那时会话确实不可用，藏起来只会让用户
   /// 以为在线却什么都收不到。
   Future<void> _registerInBackground(Qq8Session session, int uin) async {

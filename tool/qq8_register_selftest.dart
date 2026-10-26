@@ -149,20 +149,32 @@ void testBody() {
 void testResponse() {
   section('3. 响应判读');
 
-  // 响应也是 WUP 包装（参考实现用 decodeWrapper 解）：合成
-  // [sBuffer(7) → 属性表 → SvcRespRegister 结构]，rsp[9]=1 成功 / 0 失败
-  Uint8List respWith(int tag9) {
-    final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 9: tag9});
+  // 响应也是 WUP 包装：合成 [sBuffer(7) → 属性表 → SvcRespRegister 结构]。
+  // 官方字段序（SvcRespRegister.java:63-85）：2=cReplyCode、9=bCrashFlag，
+  // 判据是 cReplyCode == 0（msf/core/push/e.java:196-235）。
+  Uint8List respWith({int? replyCode, int? crashFlag}) {
+    final struct = Qq8Jce.encodeStruct(<int, Object?>{
+      0: 10001,
+      if (replyCode != null) 2: replyCode,
+      if (crashFlag != null) 9: crashFlag,
+    });
     final payload = Qq8Jce.encode(<int, Object?>{
       0: <Object?, Object?>{'SvcRespRegister': struct},
     });
     return Qq8Jce.encode(<int, Object?>{7: payload});
   }
 
-  final okBody = respWith(1);
-  checkEq('rsp[9]=1 → 成功', Qq8Register.parseResponse(okBody), true);
-  final failBody = respWith(0);
-  checkEq('rsp[9]=0 → 失败', Qq8Register.parseResponse(failBody), false);
+  checkEq('cReplyCode=0 → 成功', Qq8Register.parseResponse(respWith(replyCode: 0)), true);
+  checkEq('cReplyCode=2 → 失败（明确被拒）',
+      Qq8Register.parseResponse(respWith(replyCode: 2)), false);
+  // bCrashFlag=1 只是崩溃标记，不能当失败（旧口径会误判）
+  checkEq('cReplyCode=0 且 bCrashFlag=1 → 仍成功',
+      Qq8Register.parseResponse(respWith(replyCode: 0, crashFlag: 1)), true);
+  // tag2 缺失（老样本/畸形包）退回旧口径
+  checkEq('缺 cReplyCode、bCrashFlag=1 → 退化口径判成功',
+      Qq8Register.parseResponse(respWith(crashFlag: 1)), true);
+  checkEq('缺 cReplyCode、bCrashFlag=0 → 退化口径判失败',
+      Qq8Register.parseResponse(respWith(crashFlag: 0)), false);
 }
 
 void testSetStatus() {

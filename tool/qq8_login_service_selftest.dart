@@ -323,9 +323,9 @@ Uint8List _successFrame(int seq, {Uint8List? key}) {
   return _frame(seq, 'wtlogin.login', _payload(0, <int, List<int>>{0x119: enc}));
 }
 
-/// 注册成功帧（`rsp[9] = 1`）。
+/// 注册成功帧（`cReplyCode(tag 2) = 0`）。
 Uint8List _registerFrame(int seq) {
-  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 9: 1});
+  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 2: 0});
   final payload = Qq8Jce.encode(<int, Object?>{
     0: <Object?, Object?>{'SvcRespRegister': struct},
   });

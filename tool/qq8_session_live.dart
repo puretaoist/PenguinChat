@@ -47,7 +47,7 @@
 ///
 /// | 输出 | 含义 |
 /// |---|---|
-/// | `register() = true` | 服务端接受了上线注册（`rsp[9]` 真值）→ **票据有效、会话成立** |
+/// | `register() = true` | 服务端接受了上线注册（`cReplyCode == 0`）→ **票据有效、会话成立** |
 /// | `register() = false` | 包被受理但注册被拒：多半是票据过期/d2 失效，或 body 字段不符 |
 /// | `校时 = <ts>` | `Client.CorrectTime` 有响应，前 4 字节是服务端时间 |
 /// | `Alive / UNI 心跳` 有响应 | 心跳链路通；UNI 心跳是**业务包**通道，通了说明 d2key 加密的 SSO 层也对 |
@@ -711,6 +711,13 @@ void _dumpPush(String cmd, Uint8List payload) {
         stdout.writeln('      payload 前 ${head.length} 字节：');
         stdout.writeln(hexdump(head, prefix: '        '));
       }
+    case Qq8ReqPush(:final svrip, :final pushType, :final groupCode):
+      stdout.writeln('    → 唤醒(ReqPush) svrip=$svrip pushType=$pushType'
+          '${groupCode == null ? '' : ' gid=$groupCode'}'
+          '（只是"有新消息"的信号，正文靠拉取）');
+    case Qq8TransPush(:final svrip, :final transCmd, :final groupCode):
+      stdout.writeln('    → 唤醒(TransMsg) svrip=$svrip cmd=$transCmd'
+          '${groupCode == null ? '' : ' gid=$groupCode'}');
     case Qq8KickPush(:final hint):
       stdout.writeln('    → 被踢下线：$hint');
     case Qq8NotifyPush(:final notifyType):

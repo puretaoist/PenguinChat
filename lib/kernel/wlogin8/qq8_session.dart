@@ -230,6 +230,30 @@ class Qq8Session {
     return _send(s, pkt, timeout);
   }
 
+  /// **只发不等**的 UNI 包（回执类请求专用）。
+  ///
+  /// 服务端对回执（[Qq8PushCmd.respPush] / `SSO.HelloPush` /
+  /// `ConfigPushSvc.PushResp`）**不会回包**——用 [sendUni] 就必然等到超时。
+  /// 真机实证：`ConfigPushSvc.PushResp 失败 | Qq8TransportException: 等待响应
+  /// 超时（seq=-1807239620，10s）`——推送的 seq 是服务端给的负数，
+  /// 我们却拿它当请求号去等一个永远不来的响应。
+  ///
+  /// 官方这三处全是 `setNeedCallback(false)` 发完就忘
+  /// （`MessageHandler.java:1043/1078` 等）；参考实现 `writeUni` 同义。
+  /// 因此这里**不登记 _pending**，直接写出去。
+  Future<void> sendUniNoReply(String cmd, Uint8List body, {int? seq}) {
+    final s = seq ?? _nextSeq();
+    final pkt = Qq8Uni.build(
+      uin: uin,
+      cmd: cmd,
+      body: body,
+      seq: s,
+      session: sessionId,
+      d2key: sig.d2key,
+    );
+    return transport.write(pkt);
+  }
+
   /// 预取一个包序号（配合 [sendUni] 的 `seq` 参数）。
   int nextSeq() => _nextSeq();
 
@@ -240,7 +264,14 @@ class Qq8Session {
   /// 上线注册（`StatSvc.register`）：登录成功后必须发的第一个业务请求。
   ///
   /// 出处：oicq `lib/core/base-client.ts` 的 `register()`；结构见 [Qq8Register]。
-  Future<bool> register({bool logout = false}) async {
+  ///
+  /// 超时 **30 秒**：官方 `msf/core/push/e.java` 对这条请求
+  /// `setTimeout(30000L)`，比业务请求（10 秒）宽——注册要等服务端在
+  /// push 通道上落一次记录，10 秒偏紧（真机多份日志都是 10s 超时）。
+  Future<bool> register({
+    bool logout = false,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final body = Qq8Register.buildBody(
       uin: uin,
       device: device,
@@ -250,6 +281,7 @@ class Qq8Session {
       Qq8Register.cmd,
       body,
       type: Qq8LoginType.online,
+      timeout: timeout,
     );
     return Qq8Register.parseResponse(r.payload);
   }

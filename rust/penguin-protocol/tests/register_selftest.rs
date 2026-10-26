@@ -153,10 +153,10 @@ fn logout_variant() {
 #[test]
 fn response_parsing() {
     // 响应也是 WUP 包装：合成 [sBuffer(7) → 属性表 → SvcRespRegister 结构]，
-    // rsp[9]=1 成功 / 0 失败
-    let resp_with = |tag9: i64| -> Vec<u8> {
+    // 官方判据：cReplyCode(tag 2) == 0 成功；tag2 缺失才退化看 tag9
+    let resp_with = |tag2: i64| -> Vec<u8> {
         let struct_bytes =
-            jce::encode_struct(&[(0, JceValue::Int(10001)), (9, JceValue::Int(tag9))]).unwrap();
+            jce::encode_struct(&[(0, JceValue::Int(10001)), (2, JceValue::Int(tag2))]).unwrap();
         let attrs = vec![(
             JceValue::Str("SvcRespRegister".into()),
             JceValue::Bytes(struct_bytes),
@@ -166,11 +166,11 @@ fn response_parsing() {
     };
 
     assert!(
-        register::parse_response(&resp_with(1)).unwrap(),
-        "rsp[9]=1 → 成功"
+        register::parse_response(&resp_with(0)).unwrap(),
+        "cReplyCode=0 → 成功"
     );
     assert!(
-        !register::parse_response(&resp_with(0)).unwrap(),
-        "rsp[9]=0 → 失败"
+        !register::parse_response(&resp_with(2)).unwrap(),
+        "cReplyCode=2 → 明确被拒"
     );
 }

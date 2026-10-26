@@ -13,6 +13,8 @@
 /// | `OnlinePush.PbPushDisMsg` | 讨论组消息 | [Qq8MessagePush] |
 /// | `MessageSvc.PushForceOffline` / `StatSvc.ReqMSFOffline` | 被踢下线 | [Qq8KickPush] |
 /// | `MessageSvc.PushNotify` | "有新消息，去拉"通知 | [Qq8NotifyPush] |
+/// | `OnlinePush.ReqPush` | "有新消息，自己来拉"（不带消息体） | [Qq8ReqPush] |
+/// | `OnlinePush.PbPushTransMsg` | 群事件（禁言/撤回/成员进出，不带消息体） | [Qq8TransPush] |
 /// | 其它 | —— | [Qq8UnknownPush]（原样留给上层） |
 ///
 /// ## 字段号出处（官方 8.9.50 pb 定义，逐项核对过）
@@ -90,6 +92,21 @@ abstract final class Qq8PushCmd {
 
   /// 已读回执推送。
   static const String pushReaded = 'MessageSvc.PushReaded';
+
+  /// 「有新消息了，你自己来拉」——**不带消息体**。
+  ///
+  /// 参考实现 `lib/internal/listeners.ts:40-50` 的注册表里就有它；
+  /// 我方此前没注册，四份真机日志里也从没出现过（服务端压根没进到
+  /// 会推这个命令字的状态）。补上它的作用不是「马上能收到群消息」，
+  /// 而是**不再把可能的唤醒当未知包丢掉**：收到就回执 + 触发一次拉取。
+  static const String reqPush = 'OnlinePush.ReqPush';
+
+  /// 群事件/系统消息推送（禁言、撤回、成员进出等，**不带聊天消息体**）。
+  ///
+  /// 参考实现 `onlinePushTransListener`（`lib/internal/onlinepush.ts`）：
+  /// 先回执，再按 `proto[3]` 分流（44 = 管理员变更、34 = 成员退出/解散）。
+  /// 我方只做「回执 + 记日志」——事件本身要另建模型，不是本轮范围。
+  static const String pushTransMsg = 'OnlinePush.PbPushTransMsg';
 
   /// 推送回执（**我们要发出去的**）。
   static const String respPush = 'OnlinePush.RespPush';
@@ -293,6 +310,66 @@ final class Qq8NotifyPush extends Qq8PushEvent {
   const Qq8NotifyPush(super.cmd, {required this.notifyType});
 }
 
+/// 「有新消息了，你自己来拉」——不带消息体。
+///
+/// 命令字 `OnlinePush.ReqPush`。参考实现 `lib/internal/onlinepush.ts` 的
+/// `onlinePushListener` 逐个字段读过：`nested[2]` 是条目列表（取第 0 条 `v`），
+/// `v[2]` = 推送大类（528 好友事件 / 732 群事件），`v[6]` 是事件体字节串：
+/// 前 4 字节大端 = 群号，第 5 字节 = 子类型。
+///
+/// 我方**不解事件语义**（加好友、禁言这些要另建模型），只做两件事：
+/// 回执（服务端在等）+ 触发一次拉取（这条命令字的意思就是"去拉"）。
+final class Qq8ReqPush extends Qq8PushEvent {
+  /// 服务端 IP（回执要带）。
+  final int? svrip;
+
+  /// 推送大类：528 好友事件 / 732 群事件 / 其它。
+  final int? pushType;
+
+  /// 群号（只从 `v[6]` 前 4 字节大端解得出时才有）。
+  final int? groupCode;
+
+  /// 事件子类型（`v[6][4]`）：0x8A/0x8B 撤回、0x11 群撤回、0x0C 禁言 …
+  final int? eventType;
+
+  final int payloadLength;
+
+  const Qq8ReqPush(
+    super.cmd, {
+    this.svrip,
+    this.pushType,
+    this.groupCode,
+    this.eventType,
+    required this.payloadLength,
+  });
+}
+
+/// 群事件/系统消息推送（禁言、撤回、成员进出、管理员变更）。
+///
+/// 命令字 `OnlinePush.PbPushTransMsg`。参考实现 `onlinePushTransListener`：
+/// `proto[11]` = svrip（回执要用）、`proto[3]` = 事件命令字、`proto[10]` = 事件体。
+/// 它把 44（管理员变更）和 34（成员退出/解散）解成了状态事件——我方只记日志，
+/// 不做状态推断（那会需要成员列表模型，超出本轮范围）。
+final class Qq8TransPush extends Qq8PushEvent {
+  /// 服务端 IP（回执要带）。
+  final int? svrip;
+
+  /// 事件命令字（`proto[3]`）：44 管理员变更 / 34 成员退出或解散 …
+  final int? transCmd;
+
+  /// 群号（`proto[10]` 前 4 字节大端）。
+  final int? groupCode;
+
+  final int payloadLength;
+
+  const Qq8TransPush(
+    super.cmd, {
+    this.svrip,
+    this.transCmd,
+    this.groupCode,
+    required this.payloadLength,
+  });
+}
 /// 我们不认识的推送（原样交给上层，附一句说明）。
 final class Qq8UnknownPush extends Qq8PushEvent {
   final int payloadLength;
@@ -322,6 +399,10 @@ Qq8PushEvent qq8ParsePush(String cmd, Uint8List payload) {
       return _parseKick(cmd, payload);
     case Qq8PushCmd.notify:
       return _parseNotify(cmd, payload);
+    case Qq8PushCmd.reqPush:
+      return _parseReqPush(cmd, payload);
+    case Qq8PushCmd.pushTransMsg:
+      return _parseTransMsg(cmd, payload);
     default:
       return Qq8UnknownPush(cmd,
           payloadLength: payload.length, note: '命令字未注册');
@@ -501,6 +582,104 @@ Qq8PushEvent _parseNotify(String cmd, Uint8List payload) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 内部：不带消息体的唤醒类推送
+// ---------------------------------------------------------------------------
+
+/// `OnlinePush.ReqPush`："有新消息，自己来拉"。
+///
+/// 参考实现 `onlinePushListener`（`lib/internal/onlinepush.ts:275-294`）：
+/// ```js
+/// const nested = jce.decodeWrapper(payload)
+/// const list = nested[2], v = list[0]
+/// handleOnlinePush(nested[3], seq, [rubbish])   // nested[3] = svrip
+/// if (v[2] === 528) { ...好友事件 } else if (v[2] === 732) {
+///   const gid = v[6].readUInt32BE(); const type = v[6][4]
+/// }
+/// ```
+/// 我方只取「回执要用的 svrip」+「群号/子类型」写进日志，不解事件语义。
+Qq8PushEvent _parseReqPush(String cmd, Uint8List payload) {
+  int? svrip;
+  int? pushType;
+  int? groupCode;
+  int? eventType;
+  try {
+    final nested = Qq8Jce.decodeWrapper(payload);
+    svrip = _int(nested[3]);
+    final list = nested[2];
+    if (list is List && list.isNotEmpty) {
+      final v = list.first;
+      if (v is List) {
+        // v[2] = 推送大类（528 好友 / 732 群）；v[6] = 事件体字节串
+        if (v.length > 2) pushType = _int(v[2]);
+        if (v.length > 6) {
+          final body = _bytes(v[6]);
+          if (body != null) {
+            groupCode = _beU32(body, 0);
+            eventType = body.length > 4 ? body[4] : null;
+          }
+        }
+      }
+    }
+  } on Object catch (e) {
+    return Qq8UnknownPush(cmd,
+        payloadLength: payload.length, note: 'ReqPush 解不开：$e');
+  }
+  return Qq8ReqPush(
+    cmd,
+    svrip: svrip,
+    pushType: pushType,
+    groupCode: groupCode,
+    eventType: eventType,
+    payloadLength: payload.length,
+  );
+}
+
+/// `OnlinePush.PbPushTransMsg`：群事件（pb 编码，不是 JCE）。
+///
+/// 参考实现 `onlinePushTransListener`（`lib/internal/onlinepush.ts:296-302`）：
+/// `proto[11]` = svrip（回执用）、`proto[3]` = 事件命令字、`proto[10]` = 事件体
+/// （前 4 字节大端 = 群号）。我方只记日志。
+Qq8PushEvent _parseTransMsg(String cmd, Uint8List payload) {
+  try {
+    final proto = Qq8Pb.decode(payload);
+    final body = _bytes(Qq8Pb.bytesAt(proto, 10));
+    return Qq8TransPush(
+      cmd,
+      svrip: Qq8Pb.intAt(proto, 11),
+      transCmd: Qq8Pb.intAt(proto, 3),
+      groupCode: body == null ? null : _beU32(body, 0),
+      payloadLength: payload.length,
+    );
+  } on Object catch (e) {
+    return Qq8UnknownPush(cmd,
+        payloadLength: payload.length, note: 'TransMsg 解不开：$e');
+  }
+}
+
+/// JCE 里的"字节串"可能是 `Uint8List`（SIMPLE_LIST）也可能是 int 列表
+/// （服务端两种写法都出现过），统一成 `List<int>`。
+List<int>? _bytes(Object? v) {
+  if (v is Uint8List) return v;
+  if (v is List) {
+    final out = <int>[];
+    for (final e in v) {
+      if (e is! int) return null;
+      out.add(e);
+    }
+    return out;
+  }
+  return null;
+}
+
+/// 读大端 u32（越界返回 null）。
+int? _beU32(List<int> b, int offset) {
+  if (b.length < offset + 4) return null;
+  return (b[offset] << 24) |
+      (b[offset + 1] << 16) |
+      (b[offset + 2] << 8) |
+      b[offset + 3];
+}
 String? _str(Object? v) {
   if (v is String) return v;
   if (v is Uint8List) return utf8.decode(v, allowMalformed: true);

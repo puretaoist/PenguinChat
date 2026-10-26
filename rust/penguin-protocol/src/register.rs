@@ -14,10 +14,16 @@
 //!
 //! ## 出处
 //!
-//! 参考实现 oicq `lib/core/base-client.ts` 的 `register()`（含信封与响应判读）。
-//! ⚠️ 官方对应的 Java 类**尚未定位**（`SvcReqRegister` 字符串在
-//! `classes14/18.dex` 可见，但类名混淆）；字段表暂以参考实现为准，
-//! **最终裁判是服务端**——发出后看响应 `rsp[9]`。
+//! 请求体字段表以参考实现 oicq `lib/core/base-client.ts:717-728` 为准；
+//! **响应判读以官方 Java 为准**（见 `parse_response`）。
+//!
+//! 官方对应类已定位：`SvcReqRegister`（writeTo 见
+//! `com/tencent/msf/service/protocol/push/SvcReqRegister.java:121-190`，
+//! 构造点 `com/tencent/mobileqq/msf/core/push/e.java:97-140`）；
+//! 响应类 `SvcRespRegister`（writeTo 见同目录 `SvcRespRegister.java:63-85`：
+//! 0 lUin / 1 lBid / **2 cReplyCode** / 3 strResult / 4 lServerTime /
+//! 5 bLogQQ / 6 bNeedKik / 7 bUpdateFlag / 8 timeStamp / 9 bCrashFlag / …）。
+//! 官方判据（`msf/core/push/e.java:196-235`）是 `cReplyCode == 0`。
 
 use crate::device::Device;
 use crate::jce::{decode_wrapper, encode_struct, encode_wrapper, JceError, JceValue};
@@ -130,10 +136,18 @@ pub fn build_body(
     Ok(encode_wrapper("PushService", "SvcReqRegister", &attrs)?)
 }
 
-/// 判读响应：`decode_wrapper(payload)[9]` 真值 = 注册成功（参考实现同款）。
+/// 判读响应：**官方判据是 `SvcRespRegister.cReplyCode(tag 2) == 0`**
+/// （`msf/core/push/e.java:196-235`）。
+///
+/// 参考实现（oicq `lib/core/base-client.ts:733-734`）读的 `rsp[9]` 是
+/// **bCrashFlag**（崩溃标记），不是应答码，语义错位。tag 2 缺失时退回
+/// 旧口径：tag 9 存在且非 0 视为成功。
 pub fn parse_response(payload: &[u8]) -> Result<bool, RegisterError> {
     let rsp = decode_wrapper(payload)?;
-    // 与 Dart 的 `v != null && v != 0` 同义：非数值类型必然不等于 0。
+    if let Some(JceValue::Int(code)) = rsp.get(&2) {
+        return Ok(*code == 0);
+    }
+    // 退化口径：非数值类型必然不等于 0。
     Ok(match rsp.get(&9) {
         None => false,
         Some(JceValue::Int(v)) => *v != 0,

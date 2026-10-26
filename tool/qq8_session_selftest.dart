@@ -18,6 +18,7 @@ import 'package:qqclient/infra/coder.dart';
 import 'package:qqclient/kernel/crypto/tea.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
@@ -128,9 +129,10 @@ Uint8List _frame({
       .build();
 }
 
-/// 注册响应（WUP 包装，`rsp[9]` 为结果码）。
-Uint8List _registerResp(int result) {
-  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 9: result});
+/// 注册响应（WUP 包装，`cReplyCode(tag 2)` 为结果码——官方
+/// `SvcRespRegister` 字段序，见 `qq8_register.dart` 的判读注释）。
+Uint8List _registerResp(int replyCode) {
+  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 2: replyCode});
   final payload = Qq8Jce.encode(<int, Object?>{
     0: <Object?, Object?>{'SvcRespRegister': struct},
   });
@@ -173,7 +175,7 @@ Future<void> main() async {
 
   const fixedTs = 1800000000; // 校时响应用
   final transport = Qq8ScriptedTransport(<Uint8List>[
-    _frame(seq: 101, cmd: 'StatSvc.register', payload: _registerResp(1)),
+    _frame(seq: 101, cmd: 'StatSvc.register', payload: _registerResp(0)),
     _frame(
       seq: 102,
       cmd: 'Client.CorrectTime',
@@ -181,7 +183,10 @@ Future<void> main() async {
     ),
     _frame(seq: 103, cmd: 'Heartbeat.Alive'),
     _frame(seq: 104, cmd: 'OidbSvc.0x480_9_IMCore', payload: hex('0a00')),
-    _frame(seq: 105, cmd: 'StatSvc.SetStatusFromClient', payload: _registerResp(1)),
+    _frame(seq: 105, cmd: 'StatSvc.SetStatusFromClient', payload: _registerResp(0)),
+    // 5b 用：回执类请求(seq 106)的"响应"——正常情况下服务端不会回，
+    // 这里故意给一个，用来证明我们**没有**在等它。
+    _frame(seq: 106, cmd: 'OnlinePush.RespPush'),
   ]);
 
   final session = Qq8Session(
@@ -264,7 +269,29 @@ Future<void> main() async {
   checkEq('推送命令字', push.cmd, 'MessageSvc.PushNotify');
   checkEq('推送负载', toHex(push.payload), 'cafe');
 
-  section('6. 心跳失败的降级');
+  section('5b. 只发不等（回执类请求不能等应答）');
+  {
+    // 真机实证：PushResp 用 sendUni 发时必然空等 10 秒再报超时
+    // （`ConfigPushSvc.PushResp 失败 | 等待响应超时（seq=-1807239620，10s）`）。
+    // 回执类请求服务端从不回包，官方是 setNeedCallback(false) 发完就忘。
+    final back = session.pushes.first;
+    final sw = Stopwatch()..start();
+    await session.sendUniNoReply(Qq8Msg.respPushCmd, hex('0a00'), seq: 106);
+    sw.stop();
+    checkEq('立即返回（不等任何响应，<1s）', sw.elapsedMilliseconds < 1000, true);
+    final sentAck = transport.sent[5];
+    checkEq('走 UNI 外壳（偏移 4 起是 0x0B）', toHex(sentAck.sublist(4, 8)),
+        '0000000b');
+    final ackParts = _uniParts(sentAck);
+    checkEq('命令字 = OnlinePush.RespPush', ackParts.cmd,
+        Qq8Msg.respPushCmd);
+    checkEq('body 原样带出', toHex(ackParts.body), '0a00');
+    // 关键：没登记 _pending，所以同 seq 的响应会走推送通道，而不是完成某个 Future
+    final stray = await back.timeout(const Duration(seconds: 2));
+    checkEq('同 seq 的"响应"被当推送（证明没登记 pending）', stray.seq, 106);
+  }
+
+    section('6. 心跳失败的降级');
   // 脚本已用尽 → 下一次 uniHeartbeat 会抛错；再调一次仍失败 → onOffline
   var offline = false;
   session.onOffline = () => offline = true;

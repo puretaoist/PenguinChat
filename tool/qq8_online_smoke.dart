@@ -21,7 +21,7 @@
 /// | 步 | 动作 | 成功判据 |
 /// |---|---|---|
 /// | 1 | `wtlogin.exchange_emp`（子命令 11） | 响应 `type=0` 且解出 tgt/d2/d2key |
-/// | 2 | `StatSvc.register`（登录层 type=1） | 响应 `rsp[9] != 0` |
+/// | 2 | `StatSvc.register`（登录层 type=1） | 响应 `SvcRespRegister.cReplyCode == 0` |
 /// | 3 | `Heartbeat.Alive`（type=0 空 body） | 收到任意响应 |
 /// | 4 | `Client.CorrectTime`（type=0 4 零字节） | 响应 ≥ 4 字节，解出服务端时间 |
 /// | 5 | `OidbSvc.0x480_9_IMCore`（UNI 包） | 收到任意响应 |
@@ -245,8 +245,8 @@ Future<void> main(List<String> argv) async {
     // --- 2. 上线注册 ---
     //
     // 判据按参考实现分三态（icqq `base-client.js:1466-1495`）：
-    //   收到响应且 `rsp[9]` 为真 → 1   上线
-    //   收到响应但 `rsp[9]` 为假 → -1  未上线
+    //   收到响应且 cReplyCode == 0 → 1   上线
+    //   收到响应但 cReplyCode 非 0 → -1  未上线
     //   等待响应超时（catch）    → -2  **不判失败**：调用方
     //                                 `else if (err === -2) return BUF0;`
     //                                 直接继续后面的上线流程。
@@ -257,8 +257,8 @@ Future<void> main(List<String> argv) async {
     try {
       final ok = await session.register();
       out(ok
-          ? '  ✓ 步骤 2 通过：注册成功（rsp[9] 真值）'
-          : '  ✗ 步骤 2 失败：rsp[9] 为假');
+          ? '  ✓ 步骤 2 通过：注册成功（cReplyCode == 0）'
+          : '  ✗ 步骤 2 失败：cReplyCode 非 0');
       if (!ok) failed++;
     } on Object catch (e) {
       if (e.toString().contains('等待响应超时')) {

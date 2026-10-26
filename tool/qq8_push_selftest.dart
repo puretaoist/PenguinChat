@@ -669,6 +669,70 @@ void main() {
         r[4] == 0 && !r.containsKey(3), 'keys=${r.keys}');
   }
 
+  // ----------------------------------------------------------------
+  section('10. 唤醒类推送：ReqPush / PbPushTransMsg（不带消息体，但要回执）');
+  {
+    // OnlinePush.ReqPush：JCE 包装 struct{2: [[uid, a, 732, c, ?, ?, body, ?, ...]], 3: svrip}
+    // 字段位置照参考实现 onlinePushListener：nested[2][0] 是条目、nested[3] 是 svrip，
+    // 条目的 v[2] = 推送大类、v[6] = 事件体（前 4 字节大端 = 群号、第 5 字节 = 子类型）。
+    final eventBody = Uint8List.fromList(<int>[
+      0x2B, 0x0D, 0x3A, 0x9C, // 722287260（群号）
+      0x11, // 子类型：群撤回
+    ]);
+    final reqPush = Qq8Jce.encodeWrapper(
+      service: 'OnlinePush',
+      method: 'ReqPush',
+      attributes: {
+        'r': Qq8Jce.encodeStruct({
+          2: <Object?>[
+            <Object?>[10001, 1, 732, 3, 0, 0, eventBody, 0, 0],
+          ],
+          3: 0x7F000001,
+        }),
+      },
+    );
+    final ev = qq8ParsePush(Qq8PushCmd.reqPush, reqPush);
+    check('ReqPush → Qq8ReqPush', ev is Qq8ReqPush, ev.runtimeType.toString());
+    if (ev is Qq8ReqPush) {
+      check('svrip 取 nested[3]', ev.svrip == 0x7F000001, '${ev.svrip}');
+      check('pushType 取 v[2] = 732', ev.pushType == 732, '${ev.pushType}');
+      check('群号取 v[6] 前 4 字节大端', ev.groupCode == 722287260, '${ev.groupCode}');
+      check('子类型取 v[6][4] = 0x11', ev.eventType == 0x11, '${ev.eventType}');
+    }
+
+    // 畸形：不是 JCE → UnknownPush（附原因，不猜）
+    final bad = qq8ParsePush(Qq8PushCmd.reqPush, Uint8List.fromList([0xff, 0xff]));
+    check('ReqPush 畸形包 → UnknownPush',
+        bad is Qq8UnknownPush && (bad.note ?? '').contains('ReqPush'),
+        bad is Qq8UnknownPush ? '${bad.note}' : bad.runtimeType.toString());
+
+    // OnlinePush.PbPushTransMsg：pb{3: 事件命令, 10: 事件体, 11: svrip}
+    final transBody = Uint8List.fromList(<int>[
+      0x2B, 0x0D, 0x3A, 0x9C, // 同一个群号
+      0x00,
+    ]);
+    final trans = Qq8Pb.encode(<int, Object?>{
+      3: 44,
+      10: transBody,
+      11: 0x0A0B0C0D,
+    });
+    final evT = qq8ParsePush(Qq8PushCmd.pushTransMsg, trans);
+    check('PbPushTransMsg → Qq8TransPush', evT is Qq8TransPush,
+        evT.runtimeType.toString());
+    if (evT is Qq8TransPush) {
+      check('svrip 取 proto[11]', evT.svrip == 0x0A0B0C0D, '${evT.svrip}');
+      check('事件命令取 proto[3] = 44', evT.transCmd == 44, '${evT.transCmd}');
+      check('群号取 proto[10] 前 4 字节大端', evT.groupCode == 722287260,
+          '${evT.groupCode}');
+    }
+
+    // 关键回归：这两个命令字以前落在 default 分支，被当「命令字未注册」丢掉 ——
+    // 服务端真的推唤醒时，我们会把唯一的信号扔进日志。
+    final again = qq8ParsePush(Qq8PushCmd.reqPush, reqPush);
+    check('ReqPush 不再落 default（note 里没有"未注册"）',
+        again is! Qq8UnknownPush,
+        again is Qq8UnknownPush ? '${again.note}' : again.runtimeType.toString());
+  }
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

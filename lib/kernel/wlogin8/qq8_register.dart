@@ -34,10 +34,17 @@
 ///
 /// ## 出处
 ///
-/// 参考实现 oicq `lib/core/base-client.ts` 的 `register()`（含信封与响应判读）。
-/// ⚠️ 官方对应的 Java 类**尚未定位**（`SvcReqRegister` 字符串在
-/// `classes14/18.dex` 可见，但类名混淆）；字段表暂以参考实现为准，
-/// **最终裁判是服务端**——发出后看响应 `rsp[9]`。
+/// 请求体字段表以参考实现 oicq `lib/core/base-client.ts:717-728` 的 `register()`
+/// 为准；**响应判读以官方 Java 为准**（见 [Qq8Register.parseResponse]）。
+///
+/// 官方对应类已定位：`SvcReqRegister`（writeTo 见
+/// `com/tencent/msf/service/protocol/push/SvcReqRegister.java:121-190`，
+/// 唯一构造点 `com/tencent/mobileqq/msf/core/push/e.java:97-140`）。
+/// 逐槽对照表明两边**表意不同**（官方 tag1 是 `lBid`=pushIds 位或=7、
+/// tag16 是 `vecGuid`、tag22 是 `bOpenPush`=1、tag38 是
+/// `uExtOnlineStatus` 默认 -1、tag39 是 `iBatteryStatus` 默认 0），
+/// 但取值恰好能对上官方默认——oicq 那组常量**不是错的**，只是从另一条路
+/// 推出来的。真正需要改的是响应判据（见下）。
 ///
 /// 本文件是纯 Dart。
 library;
@@ -65,7 +72,8 @@ abstract final class Qq8Register {
   /// 在线状态上报的命令字（**UNI 外壳 0x0B**，不是登录外壳 0x0A）。
   ///
   /// 与 [cmd] 是两件事，官方都发：
-  /// - `StatSvc.register`（0x0A）：注册这条连接，判据 `rsp[9]`；
+  /// - `StatSvc.register`（0x0A）：注册这条连接，判据 `SvcRespRegister`
+  ///   的 `cReplyCode(tag 2) == 0`（见 [parseResponse]）；
   /// - `StatSvc.SetStatusFromClient`（0x0B）：上报"我现在是在线状态"。
   ///
   /// 出处：[icqq] `lib/internal/internal.js:22-39`（`setStatus`），
@@ -145,9 +153,24 @@ abstract final class Qq8Register {
     );
   }
 
-  /// 判读响应：`decodeWrapper(payload)[9]` 真值 = 注册成功（参考实现同款）。
+  /// 判读响应：**官方判据是 `SvcRespRegister.cReplyCode(tag 2) == 0`**。
+  ///
+  /// 出处：`SvcRespRegister.java:63-85` 的 writeTo 字段序——
+  /// 0 lUin / 1 lBid / **2 cReplyCode** / 3 strResult / 4 lServerTime /
+  /// 5 bLogQQ / 6 bNeedKik / 7 bUpdateFlag / 8 timeStamp / **9 bCrashFlag** / …；
+  /// 判据在 `msf/core/push/e.java:196-235`：取出 `b5 = cReplyCode`，
+  /// `if (b5 == 0)` 才继续取 `uClientBatteryGetInterval`——即 **0 = 成功**。
+  ///
+  /// 参考实现（oicq `lib/core/base-client.ts:733-734`）读的 `rsp[9]` 是
+  /// **bCrashFlag**（崩溃标记），不是应答码，语义错位。真机上 register 是
+  /// **服务端根本没回包**（10s 超时），错位本身没暴露；但一旦服务端回了
+  /// 非 0 的 cReplyCode，旧口径会把它误判成成功，所以照官方改。
+  ///
+  /// tag 2 缺失（老样本/畸形包）时退回旧口径：tag 9 存在且非 0 视为成功。
   static bool parseResponse(Uint8List payload) {
     final rsp = Qq8Jce.decodeWrapper(payload);
+    final replyCode = rsp[2];
+    if (replyCode is int) return replyCode == 0;
     final v = rsp[9];
     return v != null && v != 0;
   }

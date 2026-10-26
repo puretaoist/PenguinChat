@@ -459,6 +459,12 @@ class Qq8SessionAdapter implements Session {
         _emit(SessionMessage(_toChatMessage(message)));
       case Qq8KickPush(:final hint):
         _log('warn', '被服务端踢下线：$hint');
+      // 唤醒类推送：只说明"那边有新消息"、不带正文，正文靠一轮拉取拿。
+      // 拉取由 qq8_login_service 负责（它同时管 PB 通道），适配层只留痕。
+      case Qq8ReqPush(:final groupCode, :final pushType):
+        _log('debug', 'ReqPush 唤醒 pushType=$pushType group=$groupCode');
+      case Qq8TransPush(:final groupCode, :final transCmd):
+        _log('debug', 'TransPush 唤醒 cmd=$transCmd group=$groupCode');
       case Qq8NotifyPush(:final notifyType):
         _log('debug', '新消息通知（type=$notifyType）');
       case Qq8UnknownPush(:final cmd, :final note):

@@ -88,10 +88,10 @@ fn frame(seq: i32, cmd: &str, payload: Option<Vec<u8>>) -> Vec<u8> {
     out
 }
 
-/// 注册响应（WUP 包装，`rsp[9]` 为结果码）。
+/// 注册响应（WUP 包装，`cReplyCode(tag 2)` 为结果码，0 = 成功）。
 fn register_resp(result: i64) -> Vec<u8> {
     let struct_bytes =
-        jce::encode_struct(&[(0, JceValue::Int(10001)), (9, JceValue::Int(result))]).unwrap();
+        jce::encode_struct(&[(0, JceValue::Int(10001)), (2, JceValue::Int(result))]).unwrap();
     let attrs = vec![(
         JceValue::Str("SvcRespRegister".into()),
         JceValue::Bytes(struct_bytes),
@@ -144,7 +144,7 @@ async fn session_flow_offline() {
     const FIXED_TS: i64 = 1800000000; // 0x6b49d200
 
     let (transport, control) = tran::Transport::scripted(vec![
-        frame(101, "StatSvc.register", Some(register_resp(1))),
+        frame(101, "StatSvc.register", Some(register_resp(0))),
         frame(102, "Client.CorrectTime", Some(hex("6b49d200"))),
         frame(103, "Heartbeat.Alive", None),
         frame(104, "OidbSvc.0x480_9_IMCore", Some(hex("0a00"))),

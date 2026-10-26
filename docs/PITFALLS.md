@@ -1995,6 +1995,8 @@ if (type === 160 || type === 162 || type === 239) {
 4. icqq 自己也是 `FN_SEND(pkt, 6)` 超时后按三态判据把 `-2`（超时）当作成功继续。
 
 **结论**：把 register 无 ack 当作"服务端不回这个命令字"处理，而不是当作失败。
+
+> **订正（2026-10-26，见 C38）**：本节第 1 条的「39 个字段的 tag 全部对上官方 `SvcReqRegister.writeTo`」是错记——当时官方类其实**未定位**，所谓对照是拿参考实现自证。官方类已定位在 `com/tencent/msf/service/protocol/push/SvcReqRegister.java:121-190`（tag 0..39，**没有 37 号槽位**）。另：判据 `rsp[9]` 也错了（那是 bCrashFlag，应答码是 tag 2 的 cReplyCode），详见 C38。
 icqq 的三态判据（`1` 收到且 rsp[9] 真 / `-1` 收到但假 / `-2` 超时继续）就是为这个准备的。
 
 **连带影响（未证实但高度怀疑）**：群消息内容 `PbGetGroupMsg` 对所有群、所有合法 seq 区间
@@ -2030,7 +2032,9 @@ register 无 ack 可能意味着服务端把我们按"受限客户端"对待：�
 
 **未解**：群内容被扣的根因仍指向 register 无 ack（C32）；对照实验确认官方 QQ 在线与否不影响。三个引导源全灭后，群历史在 8.2.11 会话上暂无可行路径。
 
-**追记（同日晚）**：第 4 个来源（`endSeq=0`）实测 `result=101`。四个引导源全灭 + `PbGetGroupMsg` 任意区间 103/104 + `PushResp` 无应答 + register 无 ack + 官方在线与否不影响 ⇒ 8.2.11 会话上群内容被服务端**整体扣留**，缺口在会话权限层（register 确认）。诊断探针暂留代码（`TODO(remove)`，每 10 轮 2 请求），供日后档案/会话变化时复测。
+**追记（同日晚）**：第 4 个来源（`endSeq=0`）实测 `result=101`。四个引导源全灭 + `PbGetGroupMsg` 任意区间 103/104 + `PushResp` 无应答 + register 无 ack + 官方在线与否不影响 ⇒ 8.2.11 会话上群内容被服务端**整体扣留**，缺口在会话权限层（register 确认）。
+
+> **订正（2026-10-26）**：`endSeq=0` 探针在两份真机日志上两天稳定复现 `result=101`，已按 101 定案并**从代码删除**（`_resyncGroupSeqs` 里的 `// TODO(remove) 临时诊断` 段）。同批还新增 `_groupDead`：服务端回 103 的群本会话不再重试（C36 已证 103 是群级准入结论，不是区间问题）。
 
 
 ## C34. `SSO.HelloPush` 是推送通道握手，不回送就永远收不到消息推送
@@ -2166,6 +2170,67 @@ String? _pathUrl(String origin, String? fragment) {
 **方法论**：这次不是靠读自己的代码发现的，而是把 `chat_*.jsonl` 里存的 URL 全导出来、逐个 `curl` —— 一看 `000` 就知道是 URL 非法而不是网络问题。**当「保存时能下、现在不能下」时，先把存下来的地址原样打出来试探一次。**
 
 
+
+## C38. 「参考实现读哪个字段」不等于「官方判哪个字段」——register 的成功判据错了十几天
+
+**现象**：`StatSvc.register` 从上线第一天起就真机超时（`等待响应超时（seq=1，10s）`），四份真机日志「unix 注册成功」计数全 0；同一秒发在同一条连接上的 `StatSvc.SetStatusFromClient` 却被确认。当时的解释是「服务端就是不回这个命令字」（C32），判据照抄参考实现读 `rsp[9]`。
+
+**根因（2026-10-26 定案）**：两条都对不上官方。
+
+1. **成功判据字段错**。官方响应类 `SvcRespRegister` 的 `writeTo` 字段序是
+   `0 lUin / 1 lBid / **2 cReplyCode** / 3 strResult / 4 lServerTime / 5 bLogQQ / 6 bNeedKik / 7 bUpdateFlag / 8 timeStamp / **9 bCrashFlag** / …`
+   （`analysis/_decompiled/jadx-main/sources/com/tencent/msf/service/protocol/push/SvcRespRegister.java:63-85`），
+   官方判据在 `com/tencent/mobileqq/msf/core/push/e.java:196-235`：取出 `cReplyCode`，`if (b5 == 0)` 才继续——**0 = 成功**。
+   我们（和 oicq `lib/core/base-client.ts:733-734`）读的 `rsp[9]` 是 **bCrashFlag**（崩溃标记），
+   两个字段语义无关。真机上服务端根本没回包，所以错位从没暴露；一旦服务端回了非 0 的 cReplyCode，旧口径会把它判成成功。
+2. **请求体字段我们一直以为「来源不明」**。`qq8_register.dart` 的头注释写着「官方 SvcReqRegister 尚未定位、字段表以参考实现为准」，
+   实际官方类就在 `com/tencent/msf/service/protocol/push/SvcReqRegister.java:121-190`（writeTo tag 0..39，**没有 37 号槽位**），
+   构造点唯一：`com/tencent/mobileqq/msf/core/push/e.java:97-140`。
+
+**为什么 oicq 那套常量「碰巧」对得上**（不必改请求体）：
+
+| tag | oicq 值 | 官方语义 | 官方来源 |
+|---|---|---|---|
+| 1 | 7 | `lBid` = pushIds 位或 | `mqq/app/BuiltInServlet.java:53-70` `pushIds=[1,2,4]`；`msf/core/push/g.java:230-232` `aVar.c \|= pushIds` |
+| 4 | 11 | `iStatus` = 在线 | `Qq8OnlineStatus.online` |
+| 22 | 1 | `bOpenPush` = 1 | `SvcReqRegister` 构造函数默认 1 |
+| 12 | 1 | `cNetType`：官方 wifi=1 | 真机走 wifi |
+
+真正**语义分叉**的只有两个：`tag 38 uExtOnlineStatus`（官方默认 **-1**，我们发 1000）与 `tag 39 iBatteryStatus`（官方 0，我们发 98）。
+它们不影响注册成功与否，但属于「值巧合、语义不同」，改动前要单独对照真机。
+
+**修法（已落地）**：`parseResponse` 改为 **tag 2 = cReplyCode，0 为成功**；tag 2 缺失（老样本/畸形包）才退化到旧口径。
+Dart（`lib/kernel/wlogin8/qq8_register.dart`）与 Rust（`rust/penguin-protocol/src/register.rs` `parse_response`）同步。
+超时从 10s 放到 **30s**（官方 `e.java` 对这条 `setTimeout(30000L)`）。
+
+**连带教训**：
+1. **「官方类未定位」这句话会自我封闭**。写进注释后，后面每个读代码的人都以为「官方没有，只能抄参考实现」，于是没人再去 `find` 一次。
+   实际那些类只是被 jadx 输出在 `jadx-main` 而不是 `jadx8950` 树里。**注释里的「未找到」必须带搜索范围与日期。**
+2. **判据字段要能说清「为什么是这个 tag」**。`rsp[9]` 这种写法在参考实现里从不解释，照着抄等于把对方的猜测变成自己的默认值。
+3. **同期同连接一个回一个不回**，是最强的「不是网络/加密问题，是请求本身」信号（C32 就记了这条现象，但当时停在了「服务端不爱回」）。
+
+## C39. 回执类请求要「只发不等」——用等应答的方式发回执，等于给自己造 10 秒假故障
+
+**现象**：真机日志里 `ConfigPushSvc.PushResp 失败 | Qq8TransportException: 等待响应超时（seq=-1807239620，10s）`，
+每隔一阵来一条；`SSO.HelloPush` 回送同样 5 秒超时报失败。看上去像「回执发不出去」，其实回执**发出去了**。
+
+**根因**：回执照抄业务请求的写法，走了 `sendUni`（登记 `_pending[seq]`、等一条带同 seq 的响应帧）。
+但服务端对回执**从不回包**，而且推送的 seq 是服务端给的**负数**——这条响应永远不存在，
+于是每次都空等 10 秒再抛超时，日志里就多一条「失败」。
+
+**官方语义**（`MessageHandler.java:1059-1078` 等）：回执是 `setNeedCallback(false)`，发完就忘；
+`SSO.HelloPush` 的回声（`msf/core/push/g.java:2343-2363`）同样是单向回送。
+
+**修法（已落地）**：`Qq8Session.sendUniNoReply(cmd, body, {seq})` —— 组包后直接 `transport.write`，
+**不登记 `_pending`**。`OnlinePush.RespPush` / `SSO.HelloPush` / `ConfigPushSvc.PushResp` 三处全部改用它。
+自测断言两条：(a) 返回耗时 < 1s；(b) 同 seq 的「响应」进 `pushes` 流而不是完成某个 Future（证明没登记 pending）。
+
+**判据教训**：
+1. **「超时」不等于「没送到」**。TCP 上对端收没收到跟对方回不回应答是两件事；把 ack 类请求套进 request/response 配对，
+   必然造出「每条回执都失败」的假象，还会把 `_pending` 表塞满短命 Completer。
+2. **seq 为负数是个信号**。我们自己的请求 seq 是自增正数；负数只可能来自服务端——
+   拿它去自己的 `_pending` 里找配对，本来就该先怀疑配对模型错了。
+3. 这类「假失败」最伤的地方是**淹没真故障**：日志里天天有超时，真出问题时没人会再点开看。
 
 ## D. 网络与环境
 

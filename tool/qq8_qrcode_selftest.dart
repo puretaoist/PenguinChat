@@ -234,12 +234,12 @@ Uint8List _successFrame(int seq, Uint8List key) {
   return _frame(seq, 'wtlogin.login', _wrap(payload.build()));
 }
 
-/// 上线类响应（`SvcRespRegister`，`rsp[9]` 为结果码）。
+/// 上线类响应（`SvcRespRegister`，`cReplyCode(tag 2)` 为结果码，0 = 成功）。
 ///
 /// [cmd] 默认 `StatSvc.register`；在线状态上报的响应结构相同，
 /// 只有命令字不同。
 Uint8List _registerFrame(int seq, {String cmd = 'StatSvc.register'}) {
-  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 9: 1});
+  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 2: 0});
   final payload = Qq8Jce.encode(<int, Object?>{
     0: <Object?, Object?>{'SvcRespRegister': struct},
   });
