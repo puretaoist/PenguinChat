@@ -870,7 +870,9 @@ Future<void> main(List<String> argv) async {
             ? Qq8SubCmd.submitSms
             : (useSendSms
                 ? Qq8SubCmd.sendSms
-                : (useToken ? Qq8SubCmd.token : Qq8SubCmd.password))),
+                : (useToken
+                    ? Qq8SubCmd.tokenControl
+                    : Qq8SubCmd.password))),
     // deterministic 时 curr 钉死，保证包可复现
     t544Curr: deterministic ? 1700000000000 : null,
     // 0x525 内嵌 0x536：null ⇒ TLV 层退回官方空形态 `01 00`

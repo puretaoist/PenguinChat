@@ -739,6 +739,50 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
+  section('4b. 准入拒绝（type=45）：停在 rejected 并带上返回码');
+  {
+    // 真机 2026-10-27：小号在这个 type 上四套档案一律被拒。
+    // 关键断言是 **stage 不是 failed**：failed 会诱导上游「改个参数再试」，
+    // 而这一句拒绝换参数不会变。
+    final msg = (ByteWriter()
+          ..u32(0)
+          ..bytes16(utf8.encode('登录失败'))
+          ..bytes16(utf8.encode('你当前使用的QQ版本过低，请更新到最新版本'))
+        ).build();
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      _frame(1, 'wtlogin.login',
+          _payload(Qq8LoginResultType.forbiddenLogin, <int, List<int>>{0x146: msg})),
+    ]);
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore(),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithPassword(uin: 10001, password: 'hunter2');
+    check('停在 rejected（不是 failed）',
+        svc.snapshot.stage == Qq8LoginStage.rejected, svc.snapshot.stage.name);
+    check('带回服务端返回码 45', svc.snapshot.resultType == 45,
+        '${svc.snapshot.resultType}');
+    check('错误文案仍是服务端原话（可读）',
+        (svc.snapshot.error ?? '').contains('版本过低'), '${svc.snapshot.error}');
+
+    // 分类判据本身：三条准入码都算拒绝，普通失败码不算。
+    check('isServerRejected(45/155/16) 为真',
+        Qq8LoginResultType.isServerRejected(45) &&
+            Qq8LoginResultType.isServerRejected(155) &&
+            Qq8LoginResultType.isServerRejected(16));
+    check('isServerRejected(2/204/0) 为假（滑块/设备锁是能继续走的）',
+        !Qq8LoginResultType.isServerRejected(Qq8LoginResultType.slider) &&
+            !Qq8LoginResultType.isServerRejected(Qq8LoginResultType.deviceLock) &&
+            !Qq8LoginResultType.isServerRejected(Qq8LoginResultType.success));
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
   section('5. token 登录：没有票据时要明确失败');
   {
     final svc = Qq8LoginService(

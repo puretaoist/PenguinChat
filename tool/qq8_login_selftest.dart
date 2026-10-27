@@ -407,6 +407,16 @@ Future<void> main() async {
       (body[0] << 8 | body[1]) == Qq8SubCmd.token,
       '${(body[0] << 8 | body[1])}',
     );
+    // 2026-10-27：曾把 token 子命令按官方 m.java 的 `this.u = 10` 改成 10，
+    // 那是误读——官方 token 分支把帧头 `i10 = 11` 写死（m.java:193/:198），
+    // `this.u`（10）只喂 0x544 的 i3。这两条**写死字面量**，就是为了让
+    // 任何人再改常量时自测立刻炸，而不是跟着常量一起漂走。
+    check('token：帧头子命令字面量是 11（官方 m.java:193）', Qq8SubCmd.token == 11,
+        '${Qq8SubCmd.token}');
+    check('token：0x544 的 i3 是 10（官方 m.java:141 的 this.u）',
+        Qq8SubCmd.tokenControl == 10, '${Qq8SubCmd.tokenControl}');
+    check('token：帧头与控制号是两个值，不允许相等',
+        Qq8SubCmd.token != Qq8SubCmd.tokenControl, '');
     check(
       // 官方 m.java 的顺序表是 21 项（2026-10-22 据 `m.java` 的 arraycopy
       // 拼接序更正，含 0x108/0x544 并修了 0x511 的位置）。本夹具的

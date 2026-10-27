@@ -162,7 +162,8 @@ Future<void> main(List<String> argv) async {
     tgt: tokTgt,
     srmToken: Uint8List(0),
     protocolDet: protocolDet,
-    t544SubCmd: Qq8SubCmd.token,
+    // 0x544 的 i3 官方取 m.java 的 this.u = 10（帧头另写 11），别混用
+    t544SubCmd: Qq8SubCmd.tokenControl,
   );
 
   final body = Qq8LoginBody.buildToken(ctx, d2: tokD2);

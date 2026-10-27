@@ -2397,6 +2397,68 @@ fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
    （`tool/qq8_qrcode_selftest.dart` 里已固定断言：显式传旧表 → 24 项且不含 `0x544`）。
    没有对照组的「修好了」和「换了个错法」在日志上长得一样。
 
+## C44. 「准入拒绝」是一类结论，不是一次失败 —— 把它当 failed 重试，只会替用户多问几遍
+
+**现象**：小号（uin=3499239040）在我方 app 里永远登不上。
+
+- 密码链：`type=45`「你当前使用的QQ版本过低，请更新到最新版本」；
+- 扫码链：`type=155`「你太久没有操作，请重新登录」；
+- 票据续期：`type=16`，自动重连三轮**连吃三记**（每轮退避 2s/4s/6s 再问一遍）。
+
+而这三种都落到了同一个 `Qq8LoginStage.failed`，UI 显示同一句「登录失败」，
+用户于是反复点重试——白耗尝试次数、给账号再添几条可疑记录。
+
+**排除过程**（三轴，每轴都换真机/真票）
+
+| 轴 | 试过 | 结果 |
+| --- | --- | --- |
+| 组包 | 官方 37 项表 / oicq 24 项老表 | 都是 45 |
+| 客户端档案 | 8.2.11 / 8.9.50 / 9.3.60 / TIM 4.1.0（各自 `ssoVer` 7/19/22/22） | 都是 45 |
+| 设备身份 | 官方真机身份 / 我方自采 `ourdev-identity.json` | 都是 45 |
+
+三条**反证**：
+
+1. **同一个包对大号是成功的**：大号 2089495846 的官方活票跑我方 8.2.11 token 续期
+   `type=0` 成功两次（tgt 72 / d2 64 / d2key 16 全解出）⇒ ECDH / TEA / SSO 三层信封、
+   37 项 TLV、`0x544` 降级形态**全部正确**。组包质量问题被排除。
+2. **官方 8.2.11 本体在同一台机上也提示版本过低** ⇒ 不是「我方抄错了哪一段」。
+3. **时间线**：`analysis/_ref/qqclient-dev-20261024.log:16/:17/:123/:128` 显示小号在
+   10-24/25/26 用**更老的 24 项口径**能登（`type=2` 滑块 → 通过 → `type=0` 上线）。
+   10-27 起才变成一律 45。同一份代码、同一台机，**变的是服务端的结论**。
+
+**结论**：`45` 是服务端对该账号 + 该客户端代际的**准入标记**，纯客户端无解。
+继续在组包上找差异是徒劳的——判据不在字节里。
+
+**修法**（把「结论」和「失败」在类型上分开）
+
+1. `lib/kernel/wlogin8/qq8_login.dart` `Qq8LoginResultType` 新增
+   `forbiddenLogin = 45` / `sessionTooOld = 155` / `type16TokenExpired = 16`，
+   以及唯一判据 `static bool isServerRejected(int type)`。
+   **判据只写一处**：这类返回码以后还会加，散在五处的 `if (t == 45)` 一定会漏。
+2. `enum Qq8LoginStage` 新增 `rejected`（与 `failed` 并列），
+   `Qq8LoginSnapshot` 新增 `int? resultType`（文案会变，返回码不会）。
+3. 分流点：`lib/client_api/qq8_login_service.dart` `_handleResponse` 兜底分支
+   → `stage: rejected ? rejected : failed`；`reconnect()` 遇 `rejected` **立即 return**；
+   `autoLoginIfSaved()` 遇 `rejected` 跳过；
+   `lib/client_api/session.dart` 新增 `AccessRejectedException(message, resultType)`，
+   `lib/client_api/qq8_session_adapter.dart` `_onStage` 把 rejected 包成它发进事件流；
+   `lib/client_api/qq8_providers.dart` `stateLabel` 加「服务端拒绝登录」；
+   `lib/ui/pages/qq8_connect_page.dart` 为 rejected 单独一段，说明「重试没用」+ 给替代路径。
+
+**判据教训**
+
+1. **失败码的语义要按「我该做什么」分类，不是按「哪里出错了」分类**。
+   `failed`（改参数再试有意义）/ `rejected`（再试就是同一句拒绝）——
+   这两种跟「错误发生在哪一层」没有关系，跟**上游下一步动作**有关系。
+2. **反例比正例更能定性**。大号 `type=0` 成功这一条，一次性否掉了「组包错」。
+   没有它，37/24 × 四套档案 × 两种身份这 16 组实验只会让人更困惑：
+   「为什么全失败」和「为什么有些能成」都能编出解释。
+3. **别把「隔离」，做成「隐藏」**。`rejected` 仍然保留服务端原话 + 返回码，
+   并且日志里明写 `不再自动重试`——隔离是为了不再无意义重试，不是为了让日志变干净。
+4. **加 enum 值要跑 `dart analyze lib tool`**：`rejected` 一加，
+   `qq8_connect_page.dart` / `qq8_providers.dart` / `qq8_session_adapter.dart` 三处
+   exhaustive switch 同时编译失败，只有 analyzer 能一次找全。
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

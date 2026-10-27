@@ -104,7 +104,7 @@ Future<void> main(List<String> argv) async {
     tgt: tgt,
     srmToken: Uint8List(0),
     protocolDet: protocolDet,
-    t544SubCmd: Qq8SubCmd.token,
+    t544SubCmd: Qq8SubCmd.tokenControl,
   );
   final loginBody = Qq8LoginBody.buildToken(ctx, d2: d2);
 

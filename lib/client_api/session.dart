@@ -208,6 +208,35 @@ class SessionFailure extends SessionEvent {
   const SessionFailure(this.error, [this.stackTrace]);
 }
 
+/// **服务端准入拒绝**：不是「这次操作写错了」，而是服务端对
+/// 「这个账号 + 这一代客户端」给出的结论。
+///
+/// 为什么要单独一个类型（而不是复用 [SessionException]）：
+/// 上游的处置完全不同——
+///
+/// * [SessionException]：改参数、改时机再试是有意义的；
+/// * [AccessRejectedException]：原地重试只会把同一句拒绝再问一遍，
+///   白耗尝试次数、给账号再添可疑记录。上游该做的是**停手并换路**
+///   （换后端 / 换账号 / 换设备），或者把选择权交给用户。
+///
+/// 真机依据（2026-10-27）：同一份代码对大号 `type=0` 成功、对小号
+/// 四套客户端档案一律 `type=45`；自动重连三轮连吃三记 `type=16`。
+class AccessRejectedException implements Exception {
+  /// 已转成给人看的话（服务端文案优先）。
+  final String message;
+
+  /// 服务端返回码（`45` / `155` / `16` …）；拿不到时为 null。
+  ///
+  /// **留着原样**：文案由服务端给、会变，返回码不会。排查时一句
+  /// 「服务端返回 type=45」比十句转述有用。
+  final int? resultType;
+
+  const AccessRejectedException(this.message, [this.resultType]);
+
+  @override
+  String toString() => 'AccessRejectedException: $message${resultType == null ? '' : ' (type=$resultType)'}';
+}
+
 /// 会话层操作失败。
 class SessionException implements Exception {
   final String message;

@@ -992,6 +992,24 @@ Future<void> main() async {
             const Qq8ConnectStatus(stage: Qq8LoginStage.needsSmsCode).needsHumanAction &&
             const Qq8ConnectStatus(stage: Qq8LoginStage.failed).stateLabel == '登录失败');
 
+    // 准入拒绝要和普通失败**说得不一样**，否则用户会以为再点一次就好。
+    // 这是 UI 侧唯一的区分点（阶段本身是同一条线路的终点）。
+    check('状态标签：rejected 与 failed 分开说',
+        const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).stateLabel ==
+                '服务端拒绝登录' &&
+            !const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).needsHumanAction);
+    check('rejected 不被当成「需要人做点什么」（不该弹任何验证表单）',
+        !const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).isOnline);
+
+    // 异常类型：resultType 要原样带出去（文案会变，返回码不会）。
+    const rejectedEx = AccessRejectedException('服务端拒绝', 45);
+    check('AccessRejectedException 保留返回码与文案',
+        rejectedEx.resultType == 45 &&
+            rejectedEx.toString().contains('type=45') &&
+            rejectedEx.toString().contains('服务端拒绝'));
+    check('AccessRejectedException 无返回码时不硬编 type=',
+        !const AccessRejectedException('x').toString().contains('type='));
+
     await controller.shutdown();
     await svc2.close();
     await tmp.delete(recursive: true);

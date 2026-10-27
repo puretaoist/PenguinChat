@@ -50,7 +50,7 @@
 /// | 2 | 滑动验证码提交（人工解出 ticket 后，`wtlogin.login`） | 4（清单 [qq8SliderTlvOrder]） |
 /// | 7 | 提交短信验证码 | 7 |
 /// | 8 | 请求下发短信 | 6 |
-/// | 11 | token 登录 / 票据续期（`wtlogin.exchange_emp`） | 16（清单 [qq8ExchangeEmpTlvOrder]） |
+/// | 11 | token 登录 / 票据续期（`wtlogin.exchange_emp`，**body 头写 11**） | 21（清单 [qq8ExchangeEmpTlvOrder]） |
 /// | 20 | 设备锁 | 4 |
 ///
 /// 本文件是纯 Dart。
@@ -70,7 +70,29 @@ abstract final class Qq8SubCmd {
   static const int slider = 2;
   static const int submitSms = 7;
   static const int sendSms = 8;
+  /// token 登录 / 票据续期（`wtlogin.exchange_emp`）。
+  ///
+  /// **body 头的子命令号是 11，不是构造器的 `this.u`（10）**（2026-10-27 复核）：
+  /// 官方 `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/m.java`
+  /// 构造器写 `this.u = 10; this.v = "wtlogin.exchange_emp";`（:8），但组包
+  /// `a(...)` 的尾部 `return b(bArr13, i10, i8)`（:272）里，**带 d2 的 token
+  /// 分支把 `i10 = 11` 写死**（:193 / :198），只有不带 d2 的 else 分支才
+  /// `i10 = i11`（= this.u = 10，:266 / :269）。8.9.50 同样如此（`request/l.java:340`
+  /// 也是 `i9 = 11`）。
+  ///
+  /// 所以 `this.u` 只用于构造器、日志和 0x544 的 i3 参数；**帧头不要照抄它**。
+  /// 参考实现 oicq（`base-client.ts:213-245` 的 `writeU16(11)`）在这里是对的
+  /// ——2026-10-27 曾误按 `this.u` 改成 10，已回退，并见
+  /// `tool/qq8_tlv_selftest.dart` 的帧头断言。
   static const int token = 11;
+
+  /// `wtlogin.exchange_emp` 的**控制号**，只用于 0x544 的 i3 参数（官方
+  /// `m.java:141` 传的是 `this.u` = 10）。
+  ///
+  /// 与 [token]（帧头 11）是两个不同的值，别合并：官方在 token 分支把帧头
+  /// 硬编码成 11，但构造器里的 `this.u` 仍是 10，且这个 10 会进 0x544 的
+  /// 签名原文末 4 字节。
+  static const int tokenControl = 10;
   static const int device = 20;
 }
 
@@ -111,6 +133,48 @@ abstract final class Qq8LoginResultType {
   static const int smsVerify1 = 160;
   static const int smsVerify2 = 162;
   static const int smsVerify3 = 239;
+
+  /// **服务端准入拒绝**：45（禁止登录 / 版本过低）。
+  ///
+  /// 这不是"这次登录写错了"，而是服务端对**这个账号 + 这个客户端代际**
+  /// 下的准入结论。真机实测同一份代码：
+  ///
+  /// * 大号 2089495846 用 8.2.11 档案 + 官方票据续期 → type=0 成功两次；
+  /// * 小号 3499239040 用 8.2.11 / 8.9.50 / 9.3.60 / TIM 四套档案、
+  ///   官方真机身份与我方自采身份两种身份、37 项与 24 项两套 TLV 表，
+  ///   **全部** type=45，文案「你当前使用的QQ版本过低」。
+  ///
+  /// 而且官方 8.2.11 本体在同一台机上也被判版本过低 ⇒ 不是组包质量问题
+  /// （三轴排除的完整记录见 docs/PITFALLS.md C44）。
+  ///
+  /// 处理原则：**重试没有意义**。原地重发只会把同一句拒绝再问一遍，
+  /// 白耗尝试次数、并给账号再添一条可疑记录。该做的是引导用户换线
+  /// （OneBot）或换设备/换账号，而不是让他一直点重试。
+  static const int forbiddenLogin = 45;
+
+  /// **服务端准入拒绝**：155（太久没有操作 / 请重新登录）。
+  ///
+  /// 只在扫码链出现过（我方 8.2.11 + 扫码）。它同样不是"重发一次就好"
+  /// 的瞬态错误——S_BABYLH_EXPIRED 常量其实是 116，155 不在官方 SDK
+  /// 常量表里，属服务端自定的准入码。
+  static const int sessionTooOld = 155;
+
+  /// 16：服务端要求清票据重新登录（官方 oicq_request.java case 15/16
+  /// "will clean sig for uin"）。
+  ///
+  /// 单独命名是因为两处判据不同：限流器把它当"瞬态"
+  /// （LoginAttemptLimiter.isTransientCode，记 progress 不算连败），
+  /// 而自动重连路径要把它当"别白试了"。语义不同就各自显式，
+  /// 不要在同一个布尔里塞两种意思。
+  static const int type16TokenExpired = 16;
+
+  /// 判定「服务端准入拒绝」——这一类**不要原地重试**。
+  ///
+  /// 真机 2026-10-27：票据续期反复吃 type=16，自动重连三次全是同一句拒绝。
+  static bool isServerRejected(int type) =>
+      type == forbiddenLogin ||
+      type == sessionTooOld ||
+      type == type16TokenExpired;
 }
 
 /// 登录 TLV 的准入条件。

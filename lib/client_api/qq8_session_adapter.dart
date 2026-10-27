@@ -440,8 +440,17 @@ class Qq8SessionAdapter implements Session {
     if (_state != before) {
       _emit(SessionStateChanged(_state, reason: s.error));
     }
-    if (s.stage == Qq8LoginStage.failed && s.error != null) {
-      _emit(SessionFailure(StateError(s.error!), null));
+    // failed 与 rejected 都往事件流报一条 [SessionFailure]（UI 要能弹一句人话），
+    // 但错误对象带的信息不同：rejected 额外挂 resultType，让上游能区分
+    // 「参数写错了，改一改再试」和「服务端不放这个账号进，别试了」。
+    if ((s.stage == Qq8LoginStage.failed || s.stage == Qq8LoginStage.rejected) &&
+        s.error != null) {
+      _emit(SessionFailure(
+        s.stage == Qq8LoginStage.rejected
+            ? AccessRejectedException(s.error!, s.resultType)
+            : StateError(s.error!),
+        null,
+      ));
     }
   }
 
@@ -583,6 +592,10 @@ class Qq8SessionAdapter implements Session {
         Qq8LoginStage.online => SessionState.ready,
         Qq8LoginStage.disconnected => SessionState.disconnected,
         Qq8LoginStage.failed => SessionState.disconnected,
+        // rejected 也必须是 disconnected，**不能落到下面的 connecting**：
+        // 服务端已经明确不放行，停在 connecting 会让上游以为「还在连、等着就好」，
+        // 顺手就把它当可重试状态再推一轮。
+        Qq8LoginStage.rejected => SessionState.disconnected,
         _ => SessionState.connecting,
       };
 

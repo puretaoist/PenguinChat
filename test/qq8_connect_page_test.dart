@@ -306,6 +306,25 @@ void main() {
       expect(find.text('登录失败：口令或账号不正确'), findsOneWidget);
     });
 
+    testWidgets('准入拒绝：文案要说清「重试没用」并给替代路径', (tester) async {
+      await tester.pumpWidget(_wrapView(const Qq8ConnectView(
+        status: Qq8ConnectStatus(
+          stage: Qq8LoginStage.rejected,
+          resultType: 45,
+          error: '登录失败：你当前使用的QQ版本过低，请更新到最新版本',
+        ),
+      )));
+      // 状态标签本身就要和 failed 分开，否则用户以为再点一次就好。
+      expect(find.text('服务端拒绝登录'), findsOneWidget);
+      expect(find.text('登录失败'), findsNothing);
+      // 服务端原话、返回码、以及「这不是你写错了」的说明三者都要在场。
+      expect(find.textContaining('版本过低'), findsOneWidget);
+      expect(find.byKey(const ValueKey('qq8-rejected-code')), findsOneWidget);
+      expect(find.text('服务端返回 type=45'), findsOneWidget);
+      expect(find.textContaining('原地重试不会变'), findsOneWidget);
+      expect(find.textContaining('OneBot'), findsOneWidget);
+    });
+
     testWidgets('busy 时按钮禁用并显示进度条', (tester) async {
       await tester.pumpWidget(_wrapView(Qq8ConnectView(
         status: const Qq8ConnectStatus(

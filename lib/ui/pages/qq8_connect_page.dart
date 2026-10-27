@@ -637,6 +637,30 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
             child: const Text('进入聊天'),
           ),
         ];
+      case Qq8LoginStage.rejected:
+        // 服务端明确不放行（45 版本过低 / 155 太久没操作 / 16 身份失效）。
+        //
+        // 这里**不能**只把服务端文案往屏幕上一贴就完事：用户会以为「再点一次
+        // 登录也许就好了」，然后反复点、把本地尝试次数耗光、给账号再添几条
+        // 可疑记录，最后连别的入口一起被卡。所以要说清三件事：这是服务端对
+        // 账号的结论、原地重试没用、还有哪条路能走。
+        return <Widget>[
+          const SizedBox(height: 12),
+          if (s.error != null)
+            Text(s.error!,
+                key: const ValueKey('qq8-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          if (s.resultType != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text('服务端返回 type=${s.resultType}',
+                key: const ValueKey('qq8-rejected-code')),
+          ],
+          const SizedBox(height: 8),
+          const Text('这是服务端对该账号的准入结论，不是口令或参数写错——原地重试不会变。',
+              key: ValueKey('qq8-rejected-hint')),
+          const SizedBox(height: 4),
+          const Text('可以改用 OneBot 后端登录同一账号，或换一个账号 / 设备。'),
+        ];
       case Qq8LoginStage.failed:
       case Qq8LoginStage.disconnected:
         return <Widget>[

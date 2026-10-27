@@ -108,6 +108,21 @@ enum Qq8LoginStage {
 
   /// 失败：原因在 [Qq8LoginSnapshot.error]（可直接显示给用户）。
   failed,
+
+  /// **服务端准入拒绝**（`type=45` 版本过低 / `type=155` 太久没操作 /
+  /// `type=16` 身份已失效）。
+  ///
+  /// 与 [failed] 分开的理由是**后续动作不同**：
+  ///
+  /// * [failed]：换口令/换参数可能就好了，重试有意义；
+  /// * [rejected]：服务端已经给出「这个账号在当前客户端代际不许进」的
+  ///   结论，原地重发只会再问一遍同一句拒绝（真机 2026-10-27：自动重连
+  ///   三次连吃三记 `type=16`）。上游必须**停止自动重试**，
+  ///   改用「换线（OneBot）/ 换设备 / 换账号」这类不同层级的动作。
+  ///
+  /// 判据收在 [Qq8LoginResultType.isServerRejected]，不要在别处再写一遍
+  /// 数字比较——这类返回码以后还会加。
+  rejected,
 }
 
 /// 未上线就想发消息等业务请求。
@@ -154,6 +169,12 @@ class Qq8LoginSnapshot {
   /// 失败原因（[Qq8LoginStage.failed] 时，已转成给人看的话）。
   final String? error;
 
+  /// 服务端返回码（[Qq8LoginStage.rejected] 时非空）。
+  ///
+  /// 单独留着是因为 UI 要能显示「服务端返回 type=45」这种可检索的一手
+  /// 事实：文案是服务端给的、会变，返回码不会。排查时两者都要。
+  final int? resultType;
+
   const Qq8LoginSnapshot({
     required this.stage,
     this.uin,
@@ -165,6 +186,7 @@ class Qq8LoginSnapshot {
     this.qrToken,
     this.qrMessage,
     this.error,
+    this.resultType,
   });
 
   bool get isOnline => stage == Qq8LoginStage.online;
@@ -2586,8 +2608,21 @@ class Qq8LoginService {
     final text = msg == null
         ? '登录未通过（服务端返回 type=${r.type}）'
         : '${msg.$1}：${msg.$2}';
+    // 45 / 155 / 16 是**服务端对这个账号的准入结论**，不是这次组包写错了。
+    // 区别在后续动作：failed 靠改参数可以重试，rejected 重试只会把同一句拒绝
+    // 再问一遍（真机 2026-10-27：自动重连三次连吃三记 type=16）。这一步分开，
+    // 上游的 reconnect / 自动登录 / UI 才有依据停手。
+    final rejected = Qq8LoginResultType.isServerRejected(r.type);
+    if (rejected) {
+      final why = msg == null ? '无文案' : msg.$1;
+      _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试，需换线（OneBot）或换账号/设备');
+    }
     _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.failed, uin: uin, error: text.trim()));
+      stage: rejected ? Qq8LoginStage.rejected : Qq8LoginStage.failed,
+      uin: uin,
+      error: text.trim(),
+      resultType: r.type,
+    ));
   }
 
   /// 注册上线 + 起心跳；成功则进入 [Qq8LoginStage.online]。
@@ -2931,6 +2966,16 @@ class Qq8LoginService {
         }
         if (_snapshot.stage == Qq8LoginStage.online) {
           _log.i('断线恢复成功（第 $attempt 次）');
+          return;
+        }
+        // **准入拒绝不重试**。
+        // 真机 2026-10-27 现场：票据续期连吃三记 type=16，三轮退避（2s/4s/6s）
+        // 每轮都把同一句「服务端拒绝」再问一遍——既救不回来，又白耗尝试次数、
+        // 给账号再添三条可疑记录。这种拒绝是服务端对「这个账号 + 这一代客户端」
+        // 的结论，换时间点不会变；要变只能换线（OneBot）或换账号/设备。
+        // 所以直接退出，把 _snapshot 停在 rejected 让 UI 说清楚。
+        if (_snapshot.stage == Qq8LoginStage.rejected) {
+          _log.w('断线恢复遇到服务端准入拒绝（type=${_snapshot.resultType}），停止重试');
           return;
         }
         _log.w('断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试');

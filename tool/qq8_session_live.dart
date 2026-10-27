@@ -137,9 +137,47 @@ Future<void> main(List<String> argv) async {
       ? qq8DefaultProfile
       : (qq8ClientProfiles[profileName] ?? qq8DefaultProfile);
 
-  // 设备必须与登录时**同一套**（同 uin 派生），否则"同一账号同一设备"的前提破了。
+  // 设备必须与登录时**同一套**，否则"同一账号同一设备"的前提破了。
+  //
+  // 2026-10-27 真机实证：登录那一步（qq8_live_smoke）用 `--identity` 注入真机
+  // 身份时 token 续期拿到 type=0；本工具却硬编码 `Qq8Device.generate(uin)`
+  // （OICQX Konata 2020 那套合成身份）→ 同一张票据换一台"不存在的设备"上线，
+  // `StatSvc.register` 直接静默不回（30s 超时）。所以这里也要能吃 `--identity`。
+  final identityPath = args['identity'];
+  Qq8DeviceIdentity? identity;
+  if (identityPath != null && identityPath.isNotEmpty) {
+    final f = File(identityPath);
+    if (!f.existsSync()) {
+      stderr.writeln('✗ --identity 文件不存在: $identityPath');
+      exitCode = 2;
+      return;
+    }
+    final decoded = jsonDecode(f.readAsStringSync());
+    if (decoded is! Map) {
+      stderr.writeln('✗ --identity 不是 JSON 对象: $identityPath');
+      exitCode = 2;
+      return;
+    }
+    identity = Qq8DeviceIdentity.fromJson(Map<String, Object?>.from(decoded));
+    if (identity == null) {
+      stderr.writeln('✗ --identity 缺少必需项 android_id / mac');
+      exitCode = 2;
+      return;
+    }
+  }
+
   // tgtgt 走 token 路径的约定值 MD5(d2key)。
-  final device = Qq8Device.generate(uin).withTgtgt(md5Bytes(token.d2key));
+  final device = (identity != null
+          ? Qq8Device.fromIdentity(identity)
+          : Qq8Device.generate(uin))
+      .withTgtgt(md5Bytes(token.d2key));
+
+  // QIMEI36：register 这类业务包要带（SSO 头 reserve tag 12）。
+  // 优先级：`--qimei` 手工串 > 身份文件里的 qimei。
+  final qimeiArg = args['qimei'];
+  final qimei36 = (qimeiArg != null && qimeiArg.isNotEmpty)
+      ? qimeiArg
+      : identity?.qimei;
   final ecdh = Ecdh.exchange(
     Uint8List.fromList(Qq8Config.serverEcdhPublicKey),
   );
@@ -233,6 +271,7 @@ Future<void> main(List<String> argv) async {
       srmToken: token.srmToken,
     ),
     randomKey: randomKey,
+    qimei36: qimei36,
   );
 
   var parseErrors = 0;

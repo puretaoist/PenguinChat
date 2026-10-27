@@ -461,6 +461,12 @@ class Qq8ConnectStatus {
   /// 失败原因（已转成给人看的话）。
   final String? error;
 
+  /// 服务端返回码（[Qq8LoginStage.rejected] 时非空）。
+  ///
+  /// 文案是服务端给的、会变；返回码不会。排查时一句「服务端返回 type=45」
+  /// 比十句重新描述的文案有用，所以原样带出来。
+  final int? resultType;
+
   /// 有动作在跑（UI 该禁用按钮）。
   final bool busy;
 
@@ -475,6 +481,7 @@ class Qq8ConnectStatus {
     this.qrToken,
     this.qrMessage,
     this.error,
+    this.resultType,
     this.busy = false,
   });
 
@@ -499,6 +506,10 @@ class Qq8ConnectStatus {
         Qq8LoginStage.online => '已上线',
         Qq8LoginStage.disconnected => '已断开',
         Qq8LoginStage.failed => '登录失败',
+        // 与 failed 分开说：failed 是「这次没成，可以再试」，rejected 是
+        // 「服务端不放这个账号进，重试没用」。用同一句「登录失败」会让用户
+        // 一直点重试，点到把尝试次数耗光。
+        Qq8LoginStage.rejected => '服务端拒绝登录',
       };
 }
 
@@ -528,9 +539,25 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   /// - 装新包 / 杀进程重开后不再走一遍密码→滑块→短信；
   /// - 只在 idle（用户还没手动发起登录）时尝试，不打断正在进行的流程；
   /// - 票据失效（服务端拒）会正常落到 failed/needsXxx 状态，用户重新登录即可。
+  /// - 但**准入拒绝（rejected）不再自动登录**：服务端已给出「这个账号/这一代
+  ///   客户端不许进」的结论，自动再问一遍只是白耗尝试次数（真机 2026-10-27
+  ///   连吃三记 type=16）。这种情况停在 rejected 让用户看见，等人决定换线。
   Future<void> autoLoginIfSaved() async {
     // ⚠️ Qq8ConnectStatus 没重写 ==（引用比较），必须比 stage 而不是比实例
     if (state.stage != Qq8LoginStage.idle || _busy) return;
+    // 本次运行内已经拿到准入拒绝结论：别再自动登，否则就是把同一句拒绝
+    // 再问一遍。
+    // 
+    // 注意范围：`rejected` **不跨进程持久化**。冷启动时 service 是新的、
+    // snapshot 是 idle，这里拦不住，仍然会试一次。这是有意保留的——冷启动
+    // 一次尝试的量级可以接受，而且万一服务端在这期间放开了，用户就自动回来了；
+    // 真正要杜绝的是「一次运行里反复试」（reconnect 三轮、用户点重试）。
+    // 用户手动点「登录」会走 loginWithPassword/loginWithToken（不受这里拦），
+    // 那是**人的决定**，不是我们替他反复试探服务端。
+    if (service.snapshot.stage == Qq8LoginStage.rejected) {
+      log?.call('w', '上次登录被服务端拒绝（type=${service.snapshot.resultType}），跳过自动登录');
+      return;
+    }
     try {
       final uins = await service.tokenStore.listUins();
       if (uins.isEmpty) return;
@@ -728,6 +755,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       qrToken: _snap.qrToken,
       qrMessage: _snap.qrMessage,
       error: _snap.error,
+      resultType: _snap.resultType,
       busy: _busy,
     );
   }
