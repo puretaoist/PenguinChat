@@ -2294,7 +2294,63 @@ else if (fromServiceMsg.getBusinessFailCode() == -10008) {
    排查这类问题的快捷方式：列出这个字段的**全部来源与去处**，逐个问「这条路上它会被清吗」。
 3. **日志要能区分「真的连上了」和「看起来连上了」**。`connectedEndpoint` 在短路路径上不更新，
    于是打出了一句骗人的「已建立」——凡是日志里出现的状态，都应该是**本次动作真的产生了**的状态，而不是「字段当前非空」。
+   （同一条「假消息」后来在 `_connect()` 里又出现一次：复用连接时照样打「已建立」，见 C42 第 3 条。）
 4. 复现成本高的坑，用「反证式断言」固定下来：自测里直接 `transport.close()` 后调 `send()`，断言抛「发送失败（连接已断开）」而不是静默成功。
+## C42. 「身份失效」是一类码，不是一个码——把它当普通失败重试，只会把日志刷成噪音
+
+**现象**：真机 2026-10-26 21:46 起，日志里每隔几秒一条
+`后台轮询失败 | Qq8ServerRetcodeException: 服务端返回 retcode=-10003`，
+中间夹着 `retcode=-10008（已自动重发一次）`，一直刷到 21:47:52 心跳连败断线。
+C40 已经把「不再丢帧」修好了，但**修好之后暴露出来的问题**是：
+上层把它当普通失败 `catch` 掉、下一轮照旧重试——每 8 秒问一次服务端同一句被拒的话。
+
+**根因**：`Qq8ServerRetcodeException` 只带 retcode，没有任何分类。上层的
+`_pullNewMessages` / `_pollGroupsInner` / `_resyncGroupSeqs` 三处 `catch` 都是
+`_log.d/w(...)` 后继续，等于假设「所有 retcode 都是暂时的」。
+
+**官方语义**（`analysis/_decompiled/jadx-main/sources/com/tencent/mobileqq/msf/core/ah.java`，`handleSsoFailCode` 全文 1–170 行）：
+```java
+// :35-37  ——「token/身份过期」类
+protected boolean a(int i2) {
+    return i2 == -12003 || i2 == 210 || i2 == -10001 || i2 == -10003
+        || i2 == -10004 || i2 == -10006 || i2 == -10106;
+}
+// :80-99  命中后：清账号登录态 + CODE_NO_LOGIN，即认定这条路要重新登录
+this.s.getAccountCenter().k(uin);
+fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
+```
+同文件里另外几个码是**连接层面已死**，处置同样是「别再用这条连接」：
+`-10009`（`sender.a(ssoInvalidCookie)` 关连接）、`-10102`（`s.suspend()` 挂起 SDK）、
+`-10103`（清票据 + `CODE_SSO_KICKEDANDCLEARTOKEN`，被踢）。
+而 `-10008` **不在**这两个集合里（它走 `ag.java:1782-1793` 的重发分支，见 C40）。
+
+**修法（已落地）**：
+1. `lib/kernel/wlogin8/qq8_session.dart` 新增 `const Set<int> qq8RetcodesAuthDead`
+   （上面 7 个 + `-10009/-10102/-10103`）与 `Qq8ServerRetcodeException.authDead` getter。
+2. `lib/client_api/qq8_login_service.dart` 新增 `bool _markAuthLost(Object e, String where)`：
+   命中就 `_authLost = true`、取消 `_pullTimer`、`_session?.stopHeartbeat()`、
+   `_emit(failed, error: '登录状态已失效（服务端 retcode=…），请重新登录')`。
+   三处轮询的 `catch` 都改成先 `if (_markAuthLost(...)) return;` 再记日志；
+   `_pullNewMessages` 开头加 `if (_authLost) return;`（定时器取消前可能还有一拍在队列里）；
+   `_goOnline` 里 `_authLost = false`（新票据 = 上个结论作废）。
+3. 顺手修了同一个日志家族里的**假消息**：`_connect()` 以前无条件打
+   `[连接] 已建立 …`，而 `connect()` 开头 `if (_socket != null) return;`，
+   复用连接时也照打。真机 2026-10-26 23:00 扫码轮询那 11 条「已建立」看起来像
+   “每 2 秒重建一次 TCP”，实际一次都没重连（C41 教训 3 的同一类错）。
+   现在按 `wasConnected` 区分：新建打 `已建立`（info），复用打 `复用已有连接`（debug）。
+
+**判据教训**：
+1. **错误码要先分类，再决定重试策略**。一个 `catch (e) { log(e); }` 隐含了「所有错误都可重试」这个假设，
+   而这个假设在协议层几乎总是错的——拒答、失效、网络故障是三件事，处置完全不同。
+   分类依据不能自己拍，去官方失败码处理函数里抄（`ah.java` 就一个 `return` 表达式，抄起来零成本）。
+2. **修好「不再丢帧」之后，问题会从「静默超时」变成「噪音刷屏」**。这是进步，但不是终点——
+   噪音会把真信号埋掉：那天 21:46 之后唯一一句有价值的话是「服务端说身份验证失败」，而它被 26 次重试淹了。
+3. **日志里的状态必须由「本次动作」产生**，不能是「字段当前非空」。同一条原则 C41 已经吃过一次（`connectedEndpoint` 残留），
+   这里是同一类错的另一处：`connect()` 短路返回后照样打「已建立」。检查方法：这条日志的触发条件里，
+   有没有哪个变量的值**不是这次调用产生的**。
+4. 什么时候**不要**急着改成「停止重试」：只对官方明确归类为「要重新登录 / 连接已死」的码这么做。
+   超时、`-10008`、`result=103/104` 这些仍然是「下一轮再说」，把它们也一并停掉就是把可用性砍掉。
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

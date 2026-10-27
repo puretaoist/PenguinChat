@@ -1263,6 +1263,7 @@ class Qq8LoginService {
         _log.i('群 seq 重校准：$updated 个群有跳变（result=$result）');
       }
     } on Object catch (err) {
+      if (_markAuthLost(err, '群 seq 重校准')) return;
       _log.d('群 seq 重校准失败（保持现状）：$err');
     }
   }
@@ -1501,6 +1502,8 @@ class Qq8LoginService {
             '${firstSync ? '（首次同步回看 $begin-$end）' : ''}');
         _emitGroupPage(gid, page);
       } on Object catch (err) {
+        // 103/104 之外唯一的"群级"硬失败：身份没了。整轮都别跑了。
+        if (_markAuthLost(err, '$reason（群 $gid）')) return;
         _log.d('$reason（群 $gid）失败', error: err);
       }
     }
@@ -2258,10 +2261,23 @@ class Qq8LoginService {
     if (tran is Qq8TcpTransport && tran.onConnectAttempt == null) {
       tran.onConnectAttempt = (String msg) => _log.i('[连接] $msg');
     }
+    // 只在这条连接**从无到有**时记「已建立」。
+    //
+    // 以前无条件打，于是复用已有 socket 的那些调用（扫码轮询每 2 s 一次）
+    // 全都印一遍「已建立」——真机 2026-10-26 23:00 那轮日志看起来像
+    // 「每秒重建一次 TCP」，实际只是重复打印：`connect()` 开头有
+    // `if (_socket != null) return;`，压根没重连。假日志比没日志更坏，
+    // 它把人的注意力引到一个不存在的 bug 上。
+    final wasConnected = tran.isConnected;
     await tran.connect();
     if (tran is Qq8TcpTransport) {
       final ep = tran.connectedEndpoint;
-      if (ep != null) _log.i('[连接] 已建立 ${ep.key}');
+      if (ep == null) return;
+      if (wasConnected) {
+        _log.d('[连接] 复用已有连接 ${ep.key}');
+      } else {
+        _log.i('[连接] 已建立 ${ep.key}');
+      }
     }
   }
 
@@ -2572,6 +2588,8 @@ class Qq8LoginService {
 
   /// 注册上线 + 起心跳；成功则进入 [Qq8LoginStage.online]。
   Future<void> _goOnline(int uin, Qq8SigBundle bundle) async {
+    // 新会话 = 新票据：上一次的「身份失效」结论作废。
+    _authLost = false;
     final tran = _tran!;
     final session = Qq8Session(
       transport: tran,
@@ -2781,8 +2799,39 @@ class Qq8LoginService {
     }
   }
 
+  /// 服务端已判定「身份/票据失效」——停掉后台动作，只留一句给人看的话。
+  ///
+  /// 判据是 [qq8RetcodesAuthDead]（官方 `msf/core/ah.java:35-37` 那一组，
+  /// 官方命中后做的是清账号登录态 + `CODE_NO_LOGIN`）。与普通失败的关键
+  /// 区别：**重试没有意义**。真机 2026-10-26 21:46 起服务端连续回 -10003，
+  /// 我们每 8 s 当普通失败重试一次，一路刷到 21:47:52 连接被 abort，
+  /// 日志里只剩这一种噪音，真正的信息（服务端说"身份验证失败"）被淹掉。
+  ///
+  /// 返回 true 表示「这个错误是身份失效，已处理」，调用方直接返回即可。
+  bool _markAuthLost(Object e, String where) {
+    if (e is! Qq8ServerRetcodeException || !e.authDead) return false;
+    if (_authLost) return true;
+    _authLost = true;
+    _log.w('$where：服务端判定身份已失效（retcode=${e.retcode}），'
+        '停止后台轮询，等用户重新登录');
+    _pullTimer?.cancel();
+    _pullTimer = null;
+    _session?.stopHeartbeat();
+    _emit(Qq8LoginSnapshot(
+      stage: Qq8LoginStage.failed,
+      uin: _snapshot.uin,
+      error: '登录状态已失效（服务端 retcode=${e.retcode}），请重新登录',
+    ));
+    return true;
+  }
+
+  /// 本会话是否已经判定身份失效（见 [_markAuthLost]）。
+  bool _authLost = false;
+
   /// 主动拉新消息并走推送同一条流水线（建会话/未读/去重全复用）。
   Future<void> _pullNewMessages({required String reason}) async {
+    // 身份失效后定时器已被取消，但可能在取消前又入队了一次。
+    if (_authLost) return;
     if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
     // 防重入：定时器、上线补拉、QueryHB 触发的补拉可能撞在一起。
     // 真机 2026-10-25 11:52:29 日志里同一秒出现两组完全相同的群历史请求
@@ -2799,6 +2848,7 @@ class Qq8LoginService {
       await _pullNewMessagesInner(reason: reason)
           .timeout(const Duration(seconds: 30));
     } on Object catch (e) {
+      if (_markAuthLost(e, '拉新消息')) return;
       _log.w('拉新消息失败（reason=$reason）', error: e);
     } finally {
       _pulling = false;

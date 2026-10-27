@@ -42,6 +42,37 @@ import 'qq8_tran.dart';
 /// 服务端连着回这个码，官方客户端会自动重发一次，我们之前是直接丢帧。
 const int qq8RetcodeResend = -10008;
 
+/// 官方认定为「票据/身份已失效」的 SSO 返回码。
+///
+/// 出处：反编译官方 9.3.60 的 MSF 失败码处理
+/// `com/tencent/mobileqq/msf/core/ah.java:35-37`：
+/// `return i2 == -12003 || i2 == 210 || i2 == -10001 || i2 == -10003
+///         || i2 == -10004 || i2 == -10006 || i2 == -10106;`
+/// 命中后官方做的是 `getAccountCenter().k(uin)`（清账号登录态）+
+/// `setBusinessFail(CODE_NO_LOGIN)`，即**认定这条路已经没用，要重新登录**。
+///
+/// 为什么要单独拎出来：这类码跟 -10008（要求重发）、跟超时/网络错误完全不同——
+/// 前者重试一万次也是同一句「身份验证失败」，继续轮询只是刷日志；
+/// 后者才值得重连。真机 2026-10-26 21:46 起服务端连续回 -10003，
+/// 我们当成普通失败每 8 秒重试，直到连接被 abort（C40/C42）。
+///
+/// 另外三个「连接层面已死」的码也归进来，理由同官方 `ah.java`：
+/// -10009（cookie 失效，官方 `sender.a(ssoInvalidCookie)` 关连接）、
+/// -10102（官方 `s.suspend()` 挂起 SDK）、
+/// -10103（被踢且清票据，官方 `CODE_SSO_KICKEDANDCLEARTOKEN`）。
+const Set<int> qq8RetcodesAuthDead = <int>{
+  -12003,
+  210,
+  -10001,
+  -10003,
+  -10004,
+  -10006,
+  -10106,
+  -10009,
+  -10102,
+  -10103,
+};
+
 /// 服务端用 SSO 返回码拒绝了一个请求（不是网络故障）。
 ///
 /// 与 [Qq8TransportException] 分开是必须的：传输异常意味着"这条连接可能坏了"，
@@ -59,6 +90,12 @@ class Qq8ServerRetcodeException implements Exception {
 
   /// 是否已经自动重发过一次（诊断用）。
   final bool resent;
+
+  /// 这个返回码是否意味着「身份/票据已失效，只能重新登录」。
+  ///
+  /// 判据见 [qq8RetcodesAuthDead]。上层据此停止轮询并提示重登，
+  /// 而不是把 -10003 当普通失败一直重试。
+  bool get authDead => qq8RetcodesAuthDead.contains(retcode);
 
   const Qq8ServerRetcodeException({
     required this.retcode,

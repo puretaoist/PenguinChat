@@ -313,13 +313,29 @@ Future<void> main() async {
     checkEq('该异常标记为已重发（resent=true）',
         resendErr is Qq8ServerRetcodeException && resendErr.resent, true);
     var thrown = '';
+    var authDead = false;
     try {
       await session.sendUni('MessageSvc.PbGetGroupMsg', Uint8List(0), seq: 108);
       thrown = '没有抛出';
     } on Qq8ServerRetcodeException catch (e) {
       thrown = 'retcode=${e.retcode} resent=${e.resent}';
+      authDead = e.authDead;
     }
     checkEq('-10003 不重发、直接抛出并带上 retcode', thrown, 'retcode=-10003 resent=false');
+
+    // 身份失效码的分类（官方 msf/core/ah.java:35-37 那一组）。
+    // 上层据此停止轮询并提示重登——判反了就是「一直重试一条永远失败的请求」。
+    checkEq('-10003 归入「身份失效」', authDead, true);
+    for (final code in <int>[
+      -12003, 210, -10001, -10004, -10006, -10106, -10009, -10102, -10103,
+    ]) {
+      checkEq('retcode=$code 归入「身份失效」',
+          Qq8ServerRetcodeException(retcode: code, seq: 0).authDead, true);
+    }
+    for (final code in <int>[-10008, -10007, -10000, 0, -1]) {
+      checkEq('retcode=$code **不**归入「身份失效」',
+          Qq8ServerRetcodeException(retcode: code, seq: 0).authDead, false);
+    }
   }
   section('6. 心跳失败的降级');
   // 脚本已用尽 → 下一次 uniHeartbeat 会抛错；再调一次仍失败 → onOffline
