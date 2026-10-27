@@ -26,6 +26,9 @@
 /// # 结束时正常下线（发 logout 注册）
 /// dart run tool/qq8_session_live.dart --send --token-file=token.json --logout
 ///
+/// # 严格口径：register 无 ack 也算失败（默认不算，见下方判读表）
+/// dart run tool/qq8_session_live.dart --send --token-file=token.json --strict-register
+///
 /// # 上线后发一条消息（文本）
 /// dart run tool/qq8_session_live.dart --send --token-file=token.json \
 ///     --to-uin=22222 --text="你好"
@@ -49,6 +52,7 @@
 /// |---|---|
 /// | `register() = true` | 服务端接受了上线注册（`cReplyCode == 0`）→ **票据有效、会话成立** |
 /// | `register() = false` | 包被受理但注册被拒：多半是票据过期/d2 失效，或 body 字段不符 |
+/// | `register 无 ack（等价 icqq -2）` | **不是失败**：官方这条命令字本来就不回包（C32/C38），改判为继续；要严格口径加 `--strict-register` |
 /// | `校时 = <ts>` | `Client.CorrectTime` 有响应，前 4 字节是服务端时间 |
 /// | `Alive / UNI 心跳` 有响应 | 心跳链路通；UNI 心跳是**业务包**通道，通了说明 d2key 加密的 SSO 层也对 |
 /// | 全部超时、无任何响应 | 与登录时"静默不回"同一类症状：包被丢弃（先看登录那一步是否真的 type=0） |
@@ -185,6 +189,7 @@ Future<void> main(List<String> argv) async {
   final randomKey = _randomBytes(16);
   final rounds = int.tryParse(args['rounds'] ?? '1') ?? 1;
   final logout = args.containsKey('logout');
+  final strictRegister = args.containsKey('strict-register');
   final live = args.containsKey('send');
 
   stdout.writeln('--- 会话参数 ---');
@@ -301,12 +306,39 @@ Future<void> main(List<String> argv) async {
     stdout.writeln('  已连接并开始收包');
 
     // 1) 上线注册
+    //
+    // 三态判据（见 docs/PITFALLS.md C32 与 C38）：
+    //   true  = 收到且 SvcRespRegister.cReplyCode == 0  → 真注册成功
+    //   false = 收到但 cReplyCode 非 0                  → 明确被拒，判失败
+    //   抛异常（超时）                                   → 等价 icqq 的 -2，
+    //            **不是失败**。官方这条命令在多数会话上不回 ack，官方
+    //            自己（msf/core/push/e.java）也按 30s 超时继续；
+    //            lib/client_api/qq8_login_service.dart:2778 的
+    //            `_registerInBackground` 同款处理。
+    //
+    // 这里此前把超时也算失败，于是「收到 ConfigPushSvc 推送（= 会话确实
+    // 活了）却报会话流程异常」——判据比事实更严，属于工具自身的假失败。
+    // 需要严格口径时加 `--strict-register`。
     stdout.writeln('');
     stdout.writeln('--- 1. StatSvc.register（上线注册）---');
-    final registered = await session.register();
-    stdout.writeln('  register() = $registered');
-    _log.i('register=$registered');
-    if (!registered) {
+    var registered = false;
+    var registerNoAck = false;
+    try {
+      registered = await session.register();
+      stdout.writeln('  register() = $registered');
+      _log.i('register=$registered');
+    } on Qq8TransportException catch (e) {
+      registerNoAck = true;
+      stdout.writeln('  ~ register 无 ack（等价 icqq -2）: ${e.message}');
+      _log.w('register 无 ack（等价 icqq -2）', error: e);
+      if (strictRegister) {
+        stdout.writeln('    ✗ --strict-register：把无 ack 当失败');
+        failed = true;
+      } else {
+        stdout.writeln('    → 不算失败，继续校时与心跳（服务端本就不回这条命令字）');
+      }
+    }
+    if (!registered && !registerNoAck) {
       stdout.writeln('  ✗ 注册未被接受：票据可能已失效，或 body 字段与服务端预期不符');
       failed = true;
     }
