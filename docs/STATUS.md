@@ -198,3 +198,26 @@ provider 对象，L4 的 `ProviderScope` 直接消费。**连接必须过 `Safet
 
 另有 `tool/qq8_live_smoke.dart`（真机冒烟，默认 dry-run，不参与
 `*_selftest` 通配，CI 里单独跑一步）。
+
+### 真服端到端（2026-10-27 首次跑通）
+
+`tool/qq8_e2e_chat_store.dart`（540 行）——**唯一一个从登录一路跑到 `ChatStore` 的验证工具**，
+也是三处真机 bug（群消息收不到 / 群里发表情重复气泡 / 断线不自愈）的端到端判据。
+
+```bash
+QQ_LIVE_CONFIRM=I_UNDERSTAND_THE_RISK dart run tool/qq8_e2e_chat_store.dart \
+  --uin=2089495846 --token-file=<票.json> --gid=486045673 \
+  --identity=../analysis/_ref/official-logs/identity-25091RP04C.json \
+  --send --text=/开枪 --heal --save-token=<新票.json>
+```
+
+19 项判据，2026-10-27 实测 **19/19 通过**（大号 + 8.2.11 档案 + 官方真机身份）：
+上线 → 票据被轮换 → 会话 93 个（群 24 / 好友 69）→ 群游标 57663 → 群历史 `result=0` 10 条
+→ 群推送进 `ChatStore` 20 条 → `loadMore` 20→40 → 发 `/开枪` 后同文本仍只 1 条（ID 换成服务端
+`HPh36XyLLSYAAOFATXU0UmrgdhYB`）→ 掐线后 `disconnected → connecting → ready` 且换新连接、仍能拉消息。
+
+代价与坑：
+- **一张票只能用一次**——服务端续期即轮换，旧票下一秒回 `type=15`。必须 `--save-token` 落盘。
+- 观测节奏要调快：`heartbeatInterval: 5s` / `pullInterval: 5s` / `startupPullDelay: 1s`。
+- 「掐线」要由工具自己的 `transportBuilder` 包一层去置 dead，`svc.close()` 验不出自愈。
+- 首跑 9/14 时四处「失败」全是工具自己的判据错（详见 PITFALLS **C46**）。
