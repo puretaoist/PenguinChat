@@ -417,10 +417,19 @@ Future<void> main() async {
         t106Data: t106Data, tgtgt: tgtgt, t16a: t16a, tgtQR: tgtQR);
     final tlvs = qq8ReadTlv(body, offset: 4);
     check('子命令 = 9', (body[0] << 8 | body[1]) == 9);
-    check('24 项且顺序与参考一致',
-        tlvs.length == 24 &&
-            tlvs.keys.join(',') == qq8QrLoginTlvOrder.join(','),
+    // 2026-10-27：扫码走官方 37 项表（密码同源），不再用 oicq 的 24 项精简表。
+    final official = qq8PasswordTlvOrderFor(ctx.apk);
+    final plan = Qq8LoginBody.plan(official,
+        cond: Qq8LoginConditions(
+            tgtQR: tgtQR, t16a: t16a, imsiMd5: ctx.device.imsi),
+        ctx: ctx);
+    check('项数与官方表 guard 后一致（官方 37 项，实发 ${plan.length} 项）',
+        tlvs.keys.join(',') == plan.join(','),
         '${tlvs.length} 项');
+    check('含 0x544（官方无条件发的设备证明）', tlvs.containsKey(0x544));
+    check('含 0x318（扫码专有 tgtQR）', tlvs.containsKey(0x318));
+    check('官方表覆盖项数 ≥ 28（oicq 那张 24 项表不够）', plan.length >= 28,
+        '${plan.length} 项');
     // 官方（TIM j.java case 262 的 _tmp_pwd 路径，2026-09-21 定案）：
     // 0x106 body = concat(t106料, tgtgt) 原样，不加密、不重建。
     // 之前只回带 t106料，真机四连 type=155「你太久没有操作」。
@@ -433,8 +442,21 @@ Future<void> main() async {
         'got ${tlvs[0x106]!.length}B want ${want106.length}B');
     check('0x16A = 扫到的 t16a', _hexOf(tlvs[0x16A]!) == _hexOf(t16a));
     check('0x318 = 扫到的 tgtQR', _hexOf(tlvs[0x318]!) == _hexOf(tgtQR));
-    check('不含 0x104/0x544（二维码流程不发这两个）',
-        !tlvs.containsKey(0x104) && !tlvs.containsKey(0x544));
+    // 0x104 是服务端下发的盐（首登必空 → 官方整条跳过）；0x544 反过来，
+    // 官方 k.java case 1348 无条件发（降级体 4 个零字节），必须出现。
+    check('不含 0x104（首登无盐），但含 0x544（设备证明恒发）',
+        !tlvs.containsKey(0x104) && tlvs.containsKey(0x544));
+    // 显式传 oicq 老表 → 回到 24 项（留一条 A/B 通路，证明差异只在清单）。
+    final legacy = Qq8LoginBody.buildQrLogin(ctx,
+        t106Data: t106Data,
+        tgtgt: tgtgt,
+        t16a: t16a,
+        tgtQR: tgtQR,
+        tlvOrder: qq8QrLoginTlvOrderOicq);
+    final legacyTlvs = qq8ReadTlv(legacy, offset: 4);
+    check('显式传 oicq 老表 → 回到 24 项（不含 0x544）',
+        legacyTlvs.length == 24 && !legacyTlvs.containsKey(0x544),
+        '${legacyTlvs.length} 项');
 
     var threw = false;
     try {

@@ -1784,12 +1784,16 @@ class Qq8LoginService {
       // 官方扫码登录（TIM 反编译，2026-09-21）：
       // 0x106 body = concat(t24料, t30料) 原样（j.java case 262 的 _tmp_pwd 路径），
       // 0x16A ← t25(nopicsig)、0x318 ← t101(tgtQR)。见 buildQrLogin 头注释。
+      // QIMEI 与密码路径同口径：有才进 0x545，没有就整条不发（官方 j.java
+      // case 1349）。扫码链路此前不带 QIMEI，补表后与密码包对齐。
+      final effectiveQimei = await _resolveQimei();
       final body2 = Qq8LoginBody.buildQrLogin(
         loginCtx,
         t106Data: q.t106!,
         tgtgt: q.tgtgt!,
         t16a: q.t16a!,
         tgtQR: q.t318!,
+        qimei: effectiveQimei,
       );
       await _sendLoginBody(uin, loginCtx, body2);
     } on Object catch (e, st) {

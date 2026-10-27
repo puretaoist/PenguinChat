@@ -2351,6 +2351,52 @@ fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
 4. 什么时候**不要**急着改成「停止重试」：只对官方明确归类为「要重新登录 / 连接已死」的码这么做。
    超时、`-10008`、`result=103/104` 这些仍然是「下一轮再说」，把它们也一并停掉就是把可用性砍掉。
 
+## C43. 参考实现把官方表裁剪过 —— 照抄那一刻就静默退化了，而且看起来一切正常
+
+**现象**：扫码登录（子命令 9）永远返回 `type=155`「你太久没有操作，请重新登录」。
+密码链同样失败但码不同（`type=45`「你当前使用的QQ版本过低」），扫码的二维码本身
+是成功的（轮询 48→53→0，uin / t106 / t16a / t318 / tgtgt 全部下发）。
+真机日志 2026-10-27 09:37:58 完整复现。
+
+**根因**：登录包少了一整批 TLV。
+
+- 官方扫码登录的组包入口是 `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/WtloginHelper.java:1271`：
+  `kVar.a(j, j2, tVarA.f, 0, t.af, _tmp_pwd, _tmp_no_pic_sig, mMiscBitmap, mSubSigMap, null, i3, j2, t.y, 0, 0, 1, bArr, wUserSigInfo)`
+  —— **这个 `k.a(...)` 就是密码登录用的那一个**，没有独立的「扫码 TLV 表」。
+- `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/k.java:56` 的
+  `int[] iArr` 是 **37 项**（`0x18,0x01,0x106,0x116,0x100,0x107,0x108,0x104,0x142,0x112,0x144,0x145,0x147,0x166,0x16A,0x154,0x141,0x08,0x511,0x172,0x185,0x400,0x187,0x188,0x194,0x191,0x201,0x202,0x177,0x516,0x521,0x525,0x529,0x318,0x544,0x545,0x548`）。
+- 我方原来用的是 oicq 的 `qrcodeLogin()`（`analysis/_ref/oicq-src/lib/core/base-client.ts:390-456`）
+  那张 **24 项**老表：缺 `0x108,0x104,0x112,0x166,0x172,0x185,0x400,0x201,0x525,0x529,0x544,0x545,0x548`
+  —— 其中 `0x544`（设备证明，官方无条件发）、`0x545`（QIMEI）、`0x548`（PoW）三条最可疑。
+- 关键点：**oicq 不是错的，它只是裁剪过**。它的 `0x106` 走 `writeTlv(t106)` 原样、
+  `tgtQR`→`0x318`、`nopicsig`→`0x16A` 三处与官方完全一致（`code2d/e.java:115-117`、
+  `request/k.java:102-114` case 262 非空原样），所以对着它的源码逐行读，
+  **每一行都「对得上官方」，唯独表短了 13 项**。这种退化不报错、不告警、组包长度也都合法。
+
+**修法**（`lib/kernel/wlogin8/qq8_login.dart`）：
+1. 新增 `List<int> qq8QrLoginTlvOrderFor(Qq8ApkInfo apk) => qq8PasswordTlvOrderFor(apk);`
+   —— 扫码没有独立表，直接复用官方的 37 项（`0x542` 在 ssoVer>12 时追加，9.3.60/TIM 是 38 项）。
+2. 旧的 24 项改名 `qq8QrLoginTlvOrderOicq`，**保留**，只用于 A/B 对照实验。
+3. `buildQrLogin` 补 `String? qimei` / `List<int>? tlvOrder` 两个参数，
+   `cond:` 补 `qimei / t548`，`args:` 补 `0x545`。
+   `Qq8LoginConditions` 本来就为这 13 个 tag 写好了 guard（`lib/kernel/wlogin8/qq8_login.dart:246-303`），
+   **一行条件代码都不用加**——只是表里没列，guard 永远不会被问到。
+
+**判据教训**：
+1. **「参考实现能跑」不等于「参考实现是全集」**。oicq / icqq 是给别人用的轻客户端，
+   裁掉设备证明、PoW、QIMEI 是它的生存策略（少发就少特征），不是它抄错了。
+   把它的表当官方表照抄，就继承了它的裁剪——而且继承得很安静。
+2. **对照的正确单位是「入参表」，不是「代码行」**。逐行读 oicq 的 `qrcodeLogin()`
+   会得出「全对」的结论（确实全对）；只有把官方的 `k.java:56` 数组整个抄下来数一遍，
+   才能发现少了 13 项。**先抄数组，再读代码**。
+3. **失败码不同 = 走的分支不同，先找「两边共用什么」**。密码链 45、扫码链 155，
+   看起来是两件事；实际上官方两条链共用同一个 `k.a(...)` 和同一张表，
+   差异只在我方实现。当两个失败码分别出现在「同一功能的两条入口」上时，
+   优先怀疑入口之间**不该有差异的地方被我方写出了差异**。
+4. **保留旧口径做 A/B**。把 24 项改名而不是删掉，是为了真机上一次能跑两种包对照
+   （`tool/qq8_qrcode_selftest.dart` 里已固定断言：显式传旧表 → 24 项且不含 `0x544`）。
+   没有对照组的「修好了」和「换了个错法」在日志上长得一样。
+
 ## D. 网络与环境
 
 ### D1. `github.com` / `api.github.com` 在 node 里 `fetch failed`，但 git 和 curl 正常

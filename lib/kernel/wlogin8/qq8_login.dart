@@ -616,6 +616,16 @@ abstract final class Qq8LoginBody {
   /// ⚠️ 2026-09-21 之前我们只回带了 t106料（缺 tgtgt 后缀），真机四连 `type=155`
   /// 「你太久没有操作」——正是这里的差异。
   ///
+  /// ## TLV 表：官方 37 项，不是 oicq 的 24 项（2026-10-27 修）
+  ///
+  /// 官方扫码登录走的是 `WtloginHelper.GetStWithQrSig`（`WtloginHelper.java:1238`）
+  /// → `k.a(...)`（`:1271`），也就是**密码登录用的同一个组包函数、同一张
+  /// 37 项表**（`k.java:56`），差异只在 `_tmp_pwd`/`_tmp_no_pic_sig`/`tgtQR`
+  /// 三个入参。此前这里用参考实现 oicq 的 24 项精简表，真机一路 `type=155`
+  /// 「你太久没有操作，请重新登录」——缺的正是 `0x544`（设备证明）、`0x545`
+  /// （QIMEI）、`0x525`（ProtocolDet）、`0x108`（ksid）这些官方无条件/半无条件
+  /// 都发的项。清单见 [qq8QrLoginTlvOrderFor]。
+  ///
   /// ⚠️ 成功响应的 `0x119` 要用**扫码得到的 tgtgt** 解密——调用方必须在发这条
   /// 之前把设备 tgtgt 换成它（`Qq8LoginService` 里就是这么做的），
   /// 否则票据解不出来。
@@ -625,6 +635,8 @@ abstract final class Qq8LoginBody {
     required Uint8List tgtgt,
     required Uint8List t16a,
     required Uint8List tgtQR,
+    String? qimei,
+    List<int>? tlvOrder,
   }) {
     if (t106Data.isEmpty || tgtgt.isEmpty || t16a.isEmpty || tgtQR.isEmpty) {
       throw Qq8LoginException(
@@ -643,31 +655,64 @@ abstract final class Qq8LoginBody {
     return build(
       ctx,
       Qq8SubCmd.password,
-      qq8QrLoginTlvOrder,
+      // 官方扫码走的是与密码同源的 37 项表（WtloginHelper.java:1271 调同一个
+      // k.a(...)），不是 oicq 那张 24 项精简表 —— 见 qq8QrLoginTlvOrderFor。
+      tlvOrder ?? qq8QrLoginTlvOrderFor(ctx.apk),
       // 0x16A 的 guard 看的是条件对象里的 t16a（短信流程同款语义），
-      // 二维码流程要显式把它带上，否则这一项会被滤掉、24 项变 23 项。
+      // 二维码流程要显式把它带上，否则这一项会被滤掉。
       // 0x194 跟设备走：官方 guard 看 t.L（MD5(IMSI)），设备里 IMSI 为空就整条不发。
-      cond: Qq8LoginConditions(tgtQR: tgtQR, t16a: t16a, imsiMd5: ctx.device.imsi),
+      // 0x545/0x548 与密码路径同口径（官方 k.java case 1349/1352）：
+      // 拿不到 QIMEI 就整条不发，PoW 有就发。
+      cond: Qq8LoginConditions(
+        tgtQR: tgtQR,
+        t16a: t16a,
+        imsiMd5: ctx.device.imsi,
+        qimei: qimei,
+        t548: ctx.t548,
+      ),
       args: <int, List<Object?>>{
         0x106: <Object?>[tmpPwd],
         0x16A: <Object?>[t16a],
         0x318: <Object?>[tgtQR],
+        if (qimei != null && qimei.isNotEmpty) 0x545: <Object?>[qimei],
       },
     );
   }
 }
 
-/// 二维码扫码登录的 TLV 清单（24 项，子命令 9）。
+/// 二维码扫码登录的 TLV 清单（子命令 9）。
 ///
-/// 出处：参考实现 `analysis/_ref/oicq-src/lib/core/base-client.ts` 的
-/// `qrcodeLogin()` 里那个 writer 的顺序。与密码登录的区别：
+/// ## 与密码登录共用同一张官方表（2026-10-27 修）
+///
+/// 官方那颗 **37 项**数组是**所有子命令共用**的一张表，靠 `switch` 条件分派
+/// 决定实际发哪几项：8.2.11 `oicq/wlogin_sdk/request/k.java:56`、
+/// 8.9.50 `.../j.java` 同序 37 项，9.3.60 `.../l.java` 末尾多 `0x553`。
+/// 扫码登录（`WtloginHelper.GetStWithQrSig` → 同一个 `k.a(...)`，
+/// `WtloginHelper.java:1271`）走的**就是它**，不是另一张表。
+///
+/// 参考实现 oicq 的 `qrcodeLogin()`（`analysis/_ref/oicq-src/lib/core/base-client.ts`）
+/// 只抄了其中 24 项，我们照抄以后真机一路 `type=155`「你太久没有操作」。
+/// 缺的正是官方无条件发的 `0x544`（设备证明）、`0x545`（QIMEI）、
+/// `0x525`（ProtocolDet）、`0x548`（PoW）与 `0x108`（ksid）这几项。
+///
+/// 因此这里直接复用密码路径的表（含 `0x318`，官方表内本就有它，
+/// 位置在 `0x529` 之后、`0x544` 之前），版本差异继续由
+/// [qq8PasswordTlvOrderFor] 的 `0x542` 追加规则承担。
+///
+/// ## 扫码专有的三处 body 覆写
 ///
 /// * `0x106` = **concat(t106料, tgtgt) 原样**（TIM `j.java` case 262 的
-///   `_tmp_pwd` 路径，2026-09-21 定案；之前只回带 t106料，真机 type=155）；
-/// * `0x16a` 用扫到的 t25（nopicsig）；
-/// * 末尾追加 `0x318`（tgtQR，`j.java:633` case 792）；
-/// * 不发 `0x544/0x545/0x400/0x104` 那些。
-const List<int> qq8QrLoginTlvOrder = <int>[
+///   `_tmp_pwd` 路径，2026-09-21 定案；之前只回带 t106料）；
+/// * `0x16A` 用扫到的 t25（nopicsig）；
+/// * `0x318` 用扫到的 t101（tgtQR，`j.java` case 792）。
+List<int> qq8QrLoginTlvOrderFor(Qq8ApkInfo apk) => qq8PasswordTlvOrderFor(apk);
+
+/// 旧口径：参考实现 oicq `qrcodeLogin()` 的 **24 项**清单。
+///
+/// **仅供对照实验**（`--tlv-set=oicq-qr` 之类的 A/B 才用它）。生产路径用
+/// [qq8QrLoginTlvOrderFor]。保留它是为了能回答「补表到底有没有用」——
+/// 若某天真机证明补表无效，回滚只需把 [Qq8LoginBody.buildQrLogin] 换回这张。
+const List<int> qq8QrLoginTlvOrderOicq = <int>[
   0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x142, 0x144, 0x145, 0x147,
   0x16A, 0x154, 0x141, 0x08, 0x511, 0x187, 0x188, 0x194, 0x191, 0x202,
   0x177, 0x516, 0x521, 0x318,
