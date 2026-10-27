@@ -275,6 +275,103 @@ Future<void> main() async {
     }
 
     // ---------------------------------------------------------------
+    print('\n[限制器] 「服务端准入拒绝」不是连败（type=45 / type=155）');
+    {
+      // 真机 2026-10-27：8.2.11 密码链一直 type=45「版本过低」。
+      // 那是服务端对这个账号的准入结论，不是口令错——原地重试拿到的
+      // 是同一句话。把它算成连败会让用户在"连续失败 5 次已锁定"面前
+      // 去改口令，而真正的解法是换线 / 换账号。
+      check('type=45 判为拒绝码', LoginAttemptLimiter.isRejectedCode('type=45'));
+      check(
+          'type=155 判为拒绝码', LoginAttemptLimiter.isRejectedCode('type=155'));
+      check('type=16 不算拒绝码（它已是瞬态）',
+          !LoginAttemptLimiter.isRejectedCode('type=16'));
+      check('type=2 不算拒绝码',
+          !LoginAttemptLimiter.isRejectedCode('type=2'));
+      check('type=1 不算拒绝码',
+          !LoginAttemptLimiter.isRejectedCode('type=1'));
+      check('null 不算拒绝码', !LoginAttemptLimiter.isRejectedCode(null));
+
+      final rej =
+          LoginAttemptLimiter(maxInWindow: 9, hardLockAfter: 5, window: const Duration(minutes: 10));
+      for (var i = 0; i < 4; i++) {
+        await rej.beginAttempt();
+        await rej.recordProgress(reasonCode: 'type=45');
+      }
+      check('四轮"准入拒绝"不累计连败', rej.consecutiveFailures == 0,
+          '实际 ${rej.consecutiveFailures}');
+      check('但照样占窗口名额', rej.status().usedInWindow == 4,
+          '${rej.status().usedInWindow}');
+      check('也不会因为拒绝码触发硬锁', rej.hardLockUntil == null);
+
+      // 拒绝码之后来一次真失败，只算 1——拒绝码不能"垫高"阶梯。
+      await rej.beginAttempt();
+      await rej.recordFailure(reasonCode: 'type=1');
+      check('拒绝码之后的真失败仍从 1 起算', rej.consecutiveFailures == 1,
+          '实际 ${rej.consecutiveFailures}');
+
+      // 拒绝码不延长冷却：冷却基准应停在最后一次**真失败**那刻，
+      // 而不是停在随后那次 type=45 上。
+      // 9:00:00 真失败 + baseCooldown 60s ⇒ 冷却到 9:01:00。
+      // 9:00:40 来了一次 type=45；若它也当失败，冷却会被推到 9:01:40。
+      final cd = LoginAttemptLimiter(
+          maxInWindow: 9,
+          hardLockAfter: 5,
+          baseCooldown: const Duration(seconds: 60));
+      await cd.beginAttempt(now: DateTime(2026, 10, 27, 9, 0, 0));
+      await cd.recordFailure(
+          reasonCode: 'type=1', now: DateTime(2026, 10, 27, 9, 0, 0));
+      await cd.beginAttempt(now: DateTime(2026, 10, 27, 9, 0, 40));
+      await cd.recordProgress(
+          reasonCode: 'type=45', now: DateTime(2026, 10, 27, 9, 0, 40));
+      check(
+          '拒绝码不重置也不延长冷却（9:00:55 仍在真失败那次的冷却内）',
+          !cd.status(DateTime(2026, 10, 27, 9, 0, 55)).allowed,
+          cd.status(DateTime(2026, 10, 27, 9, 0, 55)).describe());
+      check('冷却按 9:00:00 起算，9:01:05 已放行（没被 45 推到 9:01:40）',
+          cd.status(DateTime(2026, 10, 27, 9, 1, 5)).allowed,
+          cd.status(DateTime(2026, 10, 27, 9, 1, 5)).describe());
+    }
+
+    // ---------------------------------------------------------------
+    print('\n[限制器] 老数据里被误记为失败的"准入拒绝"，加载时重算');
+    {
+      final f = File('${tmp.path}/attempts-legacy-45.json');
+      final t0 = DateTime(2026, 10, 27, 9, 10, 0);
+      await f.writeAsString(jsonEncode(<String, Object?>{
+        'records': <Object?>[
+          <String, Object?>{
+            'at': t0.toIso8601String(),
+            'ok': false,
+            'rc': 'type=1',
+          },
+          <String, Object?>{
+            'at': t0.add(const Duration(seconds: 10)).toIso8601String(),
+            'ok': false,
+            'rc': 'type=45',
+          },
+          <String, Object?>{
+            'at': t0.add(const Duration(seconds: 20)).toIso8601String(),
+            'ok': false,
+            'rc': 'type=45',
+          },
+        ],
+        'fails': 3,
+        'lockUntil': null,
+        'lastFailureAt': t0.add(const Duration(seconds: 20)).toIso8601String(),
+      }));
+      final l = LoginAttemptLimiter(
+          persistFile: f, maxInWindow: 9, hardLockAfter: 5);
+      await l.load();
+      check('连败重算为 1（两条 type=45 不算）', l.consecutiveFailures == 1,
+          '实际 ${l.consecutiveFailures}');
+      check(
+          '冷却基准挪到 9:10:00 那次真失败（不是 45 的 9:10:20）',
+          !l.status(t0.add(const Duration(seconds: 20))).allowed,
+          l.status(t0.add(const Duration(seconds: 20))).describe());
+    }
+
+    // ---------------------------------------------------------------
     print('\n[限制器] 老数据里被误记为失败的"要求验证"，加载时重算');
     {
       final f = File('${tmp.path}/attempts-legacy.json');

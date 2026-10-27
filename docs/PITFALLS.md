@@ -2444,6 +2444,14 @@ fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
    `lib/client_api/qq8_session_adapter.dart` `_onStage` 把 rejected 包成它发进事件流；
    `lib/client_api/qq8_providers.dart` `stateLabel` 加「服务端拒绝登录」；
    `lib/ui/pages/qq8_connect_page.dart` 为 rejected 单独一段，说明「重试没用」+ 给替代路径。
+4. 限流器也要分开记账：`lib/kernel/safety/attempt_limiter.dart` 新增
+   `static bool isRejectedCode(String? rc)`（`'type=45'` / `'type=155'`），
+   在 `_recomputeConsecutive()` 与 `_lastRealFailureAt()` 的跳过条件里也加上它，
+   两个 tool 调用点（`tool/qq8_live_smoke.dart` 与 `tool/qq8_interactive.dart`）
+   命中它时改走 `recordProgress` 而不是 `recordFailure`。
+   **窗口名额照样要占**（这一趟确实打了服务器），只是不算连败。
+   只改调用侧不改 `_recomputeConsecutive` 是不行的：`load()` 会用后者把磁盘上
+   的历史记录重算一遍，老记录里的 45 仍会被算成连败。
 
 **判据教训**
 
@@ -2455,7 +2463,11 @@ fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
    「为什么全失败」和「为什么有些能成」都能编出解释。
 3. **别把「隔离」，做成「隐藏」**。`rejected` 仍然保留服务端原话 + 返回码，
    并且日志里明写 `不再自动重试`——隔离是为了不再无意义重试，不是为了让日志变干净。
-4. **加 enum 值要跑 `dart analyze lib tool`**：`rejected` 一加，
+4. **同一个语义要在「写入路径」和「重建路径」两处都改**。限流器的
+   `recordFailure`（写入）与 `_recomputeConsecutive`（加载时重算）是两条独立入口，
+   只改前者，用户重开 app 后老记录里的 45 又变成连败——症状是「明明没失败过，
+   一打开就显示已锁定」，比不改更难查。
+5. **加 enum 值要跑 `dart analyze lib tool`**：`rejected` 一加，
    `qq8_connect_page.dart` / `qq8_providers.dart` / `qq8_session_adapter.dart` 三处
    exhaustive switch 同时编译失败，只有 analyzer 能一次找全。
 

@@ -1275,7 +1275,9 @@ Future<void> main(List<String> argv) async {
   } else {
     // 「要求验证」是流程中间态（接着要提交 ticket 或走设备锁流程），
     // 不计入连败；type=15/16 是服务端要求清状态重登（票据失效），同样不算
-    // 凭据失败——能回 15/16 说明口令分支已通过；其余非成功码才算失败。
+    // 凭据失败——能回 15/16 说明口令分支已通过；45/155 是服务端对账号的
+    // 准入结论（不是口令错），也不能算连败——否则用户会看到"连续失败 5 次"
+    // 被误导去改口令，而真正的解法是换线/换账号。其余非成功码才算失败。
     final rc = 'type=${r.type}';
     if (LoginAttemptLimiter.isProgressCode(rc)) {
       await limiter.recordProgress(reasonCode: rc);
@@ -1288,6 +1290,14 @@ Future<void> main(List<String> argv) async {
       out('  ↻ 瞬态响应（$rc）：服务端要求清票据重新登录'
           '（官方 oicq_request.java case 15/16：will clean sig for uin）。');
       out('    这不是凭据错误——稍等片刻后原样重试即可（官方/参考实现都这么做）。');
+    } else if (LoginAttemptLimiter.isRejectedCode(rc)) {
+      await limiter.recordProgress(reasonCode: rc);
+      out('');
+      out('  ⛔ 服务端准入拒绝（$rc）：这是服务端对**这个账号**的准入结论，'
+          '不是口令或参数写错了。');
+      out('    原地重试拿到的会是同一句话（真机 2026-10-27 连吃三记），'
+          '所以**不计入失败次数**、也不该反复点。');
+      out('    可行方向：换登录线路（OneBot 后端），或换账号 / 换设备。');
     } else {
       await limiter.recordFailure(reasonCode: rc);
       out('');

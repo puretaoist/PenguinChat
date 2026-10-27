@@ -319,15 +319,42 @@ class LoginAttemptLimiter {
   static bool isTransientCode(String? rc) =>
       rc == 'type=15' || rc == 'type=16';
 
-  /// 从记录尾部重算连败次数：跳过"要求验证"、瞬态重试与未定结果的占位记录，
-  /// 遇到成功即止。
+  /// 「服务端准入拒绝」响应码：`type=45`（版本过低 / 禁止登录）、
+  /// `type=155`（太久没有操作 / 请重新登录）。
+  ///
+  /// 与 [isProgressCode] / [isTransientCode] 的区别在**语义**上，但它们对
+  /// 限流器的处置是同一种：**不计入连败**。
+  ///
+  /// 为什么拒绝码不能算失败：连败是一条通往「锁定 24 小时」的阶梯，而这条
+  /// 阶梯对外的含义是"你在试口令"。可 45 是服务端对**这个账号 + 这个客户端
+  /// 代际**下的准入结论（三轴排除见 docs/PITFALLS.md C44）——再试一百次还是
+  /// 45。把它算成连败，会让用户看到"连续失败 5 次，已触发保护性锁定"，
+  /// 从而误以为自己在猜口令、把注意力引到错误的方向上。
+  ///
+  /// 但**窗口名额照样要占**：不管结论如何，这一次往返确实打了服务器、
+  /// 也确实可能被算进失败上报。限制器挡的是"同一账号短时间内多次尝试"
+  /// 这个被采集的信号，不是"猜错了几次密码"。
+  ///
+  /// ⚠️ `type=16` 不在这里：它已经是 [isTransientCode]（官方 case 15/16
+  /// "will clean sig for uin"，清票据重登是有意义的动作）。两条路都落到
+  /// `recordProgress`，但判据分开写——同一个布尔里塞两种意思，
+  /// 以后想单独调整任一条就无从下手。
+  static bool isRejectedCode(String? rc) =>
+      rc == 'type=45' || rc == 'type=155';
+
+  /// 从记录尾部重算连败次数：跳过"要求验证"、瞬态重试、服务端准入拒绝与
+  /// 未定结果的占位记录，遇到成功即止。
+  ///
+  /// 拒绝码要在这里也跳过：`load()` 会用这个方法把磁盘上的旧记录重算一遍，
+  /// 只改 `recordFailure` 的调用侧而不改这里，历史记录里的 45 仍会被算成连败。
   int _recomputeConsecutive() {
     var n = 0;
     for (final r in _records.reversed) {
       if (r.success) break;
       if (r.pending ||
           isProgressCode(r.reasonCode) ||
-          isTransientCode(r.reasonCode)) {
+          isTransientCode(r.reasonCode) ||
+          isRejectedCode(r.reasonCode)) {
         continue;
       }
       n++;
@@ -341,7 +368,8 @@ class LoginAttemptLimiter {
       if (r.success) break;
       if (r.pending ||
           isProgressCode(r.reasonCode) ||
-          isTransientCode(r.reasonCode)) {
+          isTransientCode(r.reasonCode) ||
+          isRejectedCode(r.reasonCode)) {
         continue;
       }
       return r.at;
@@ -351,6 +379,10 @@ class LoginAttemptLimiter {
 
   /// 记录「服务端要求验证」：给占位记录补上返回码，但**不加连败、不延长冷却**
   /// （窗口限速仍然生效——一次验证往返照样占一个名额）。
+  ///
+  /// 「服务端准入拒绝」（[isRejectedCode]，如 `type=45`）也走这里：它同样
+  /// 不是"口令错"，同样要占名额，唯一区别只在记录下来的 reasonCode 上——
+  /// 事后看记录能分辨"当时是要验证"还是"当时被拒了"。
   Future<void> recordProgress({String? reasonCode, DateTime? now}) async {
     if (_records.isEmpty) {
       _records.add(AttemptRecord(

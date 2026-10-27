@@ -101,7 +101,7 @@
 | 文件 | 行数 | 状态 | 自测 | 验证 |
 |---|---|---|---|---|
 | `safety/safety_gate.dart` | 349 | 完成 | `safety_selftest.dart` | D |
-| `safety/attempt_limiter.dart` | 295 | 完成 | 同上（77 项合计） | D |
+| `safety/attempt_limiter.dart` | 479 | 完成 | 同上（107 项合计） | D |
 | `safety/environment_probe.dart` | 403 | 完成 | 同上 | D |
 
 **UI 接线时别忘了走 `SafetyGate`**：默认离线，
