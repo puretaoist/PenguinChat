@@ -94,6 +94,14 @@
 它们分别依赖 `libpoxy.so`、fekit、`libqimei.so`，纯 Dart 复现不了。
 所以本实现在服务端眼里**必然**是 oicq / Lagrange 那一档的信任级别。
 
+> 2026-10-27 补充（IG5 静态分析）：`libpoxy.so` **就在 8.2.11 APK 的**
+> `lib/arm64-v8a/` 里（51248B，sha256 `289c8f5e…`），旧文里「运行时下载」的说法
+> 只对「升级版优先」成立，APK 自带的那份是兜底且是唯一一份。它的 33445 通道
+> （31B 头 + `PWTLID` + AES-128-CBC，key 见 PITFALLS C45）已完整还原，
+> 卡在内层 433B 的二次加密密钥（疑走 `libwtecdh.so` 的 ECDH）。
+> 但**结论不变**：官方真机 0x544 取码成功（`cost:7` + pcap 实证）仍被判 `type=45`，
+> 而大号用我方 4 个零字节的降级形态却 `type=0` 成功 ⇒ 0x544 与 45 无因果。
+
 详见 [`../LIVE-TEST.md`](../LIVE-TEST.md)。
 
 ### safety

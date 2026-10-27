@@ -124,11 +124,19 @@ const List<int> qq8LoginTlvMissing = <int>[
 /// 深挖 `ByteData`（在 `classes3.dex`）后确认：
 ///
 /// * 真正的 native 实现在 **`libpoxy.so`**（`System.loadLibrary("poxy")`），
-///   不是 `libQSec.so`；且它**优先加载运行时下载到 `QQProtectQSecLibs/`
-///   并通过腾讯签名校验的那份**，APK 自带的只是兜底。
+///   不是 `libQSec.so`。它**就在 8.2.11 APK 的 `lib/arm64-v8a/` 里**
+///   （51248B，sha256 `289c8f5e…`）；`loadUpgradedLibrary()` 会**优先**尝试
+///   运行时下载到 `QQProtectQSecLibs/` 并通过签名的升级版，APK 自带的是兜底。
+///   8.9.50 / 9.3.60 / TIM 的 APK 里**没有**它，只有 `libQSec` / `libqimei`
+///   / `libwtecdh`。
 /// * `libpoxy.so` 只有 50KB，导入表是 `socket/connect/getaddrinfo` +
-///   `dlopen/dlsym` + `fopen/chmod`，**没有任何加密原语** —— 它是个下载器，
-///   真身靠联网取回。8.9.50 / 9.3.60 更是连它都不带了。
+///   `dlopen/dlsym` + `fopen/chmod`。2026-10-27 用 IG5 逆向确认：它**不是**
+///   单纯的下载器，而是自己带着完整的取码链路 —— 组包（`FUN_001020bc`）、
+///   身份三元组（包名 / 签名摘要 / APK 大小，经 JNI 反调 `QPMiscUtils`）、
+///   HMAC-SHA256 签名（`FUN_00108508`）、AES-128-CBC 加密（`FUN_00104ec8`
+///   + `FUN_001032ac`）、以及一条 `ts.qq.com:33445` 的短连接通道
+///   （`FUN_0010631c`）。外层协议已在 pcap 上验证可解密，卡在内层 433B 的
+///   二次加密（密钥疑由 `libwtecdh.so` 的 ECDH 协商）。
 ///
 /// 而 `ByteData.getCode` 有一条明确的降级返回：
 ///
@@ -172,7 +180,10 @@ const List<int> qq8Tlv544DegradedBody = <int>[0, 0, 0, 0];
 ///   SharedPreferences `DENGTA_META` 读（`util.java:343`）；取不到就返回空、
 ///   **官方自己也不发这个 TLV**。而这个字符串本身是腾讯灯塔（Beacon）
 ///   服务器按上报的设备属性**签发**的。
-/// * **L3 设备码（0x544）** —— `libpoxy.so` native + 联网，见上。
+/// * **L3 设备码（0x544）** —— `libpoxy.so` native + `ts.qq.com:33445` 联网取码，见上。
+///   注意：官方真机也确实取到了码（2026-10-27 抓包核实），但拿到的码与
+///   「是否被判版本过低」无因果 —— 官方真签照样 `type=45`，我方降级零字节
+///   在大号上却 `type=0` 成功。
 const String qq8QimeiSpName = 'DENGTA_META';
 const String qq8QimeiSpKey = 'QIMEI_DENGTA';
 
@@ -243,7 +254,7 @@ const List<int> qq8OfficialLoginTlvOrderWith553 = <int>[
 /// 1. **补 0x108（ksid）**：官方在 `bArr2 != null && bArr2.length > 0` 时
 ///    恒发（`tlv_t108Var.get_tlv_108(bArr2)`，实参为 `t.ac`），位置在 0x116 之后；
 /// 2. **补 0x544**：`bArr43 != null` 时追加到**末尾**（`tlv_t544.get_tlv_544(...)`
-///    内部走 `ByteData.getCode`，未加载 `libpoxy.so` 时降级为 4 个零字节）；
+///    内部走 `ByteData.getCode`，取码失败时降级为 4 个零字节 —— 我方恒走这条）；
 /// 3. **0x511 位置**：官方在 0x08 之后、0x147 之前（此前误放在末尾）。
 ///
 /// `0x172` / `0x194` / `0x201` 保留位次，靠 `Qq8LoginConditions.applies` 的
@@ -1116,7 +1127,10 @@ abstract final class Qq8Tlv {
         //
         //   official —— 官方降级体 `tlv544DegradedBody`（8.2.11 = 4 个零字节，
         //               出处 ByteData.getCode 的 `status`；SDK 正常时它发的才是
-        //               真签名，但那个值来自 libpoxy native + 联网，拿不到）。
+        //               真签名，那个值来自 libpoxy native + `ts.qq.com:33445`
+        //               联网取码，我方拿不到。注意这不是「官方也发零字节」——
+        //               2026-10-27 抓包证实官方真机拿到了码，只是码的真假与
+        //               `type=45` 无因果，详见 docs/PITFALLS.md C45）。
         //
         //   oicq     —— oicq 2.3.1 的纯算法签名（`lib/core/tlv.ts:334` 的
         //               `0x544` packer）：salt 布局 `u32(0)‖tlv(guid)‖tlv(sdkver)‖

@@ -287,9 +287,11 @@ merge 写入天然倾向保留旧值，而协议里"上一次的材料"几乎总
 | 会话连续性 | `--save-session` + `--load-session` 复用 ECDH/sessionId/randomKey | type=1 |
 
 **剩余嫌疑（按可行性）**：
-1. ~~**`0x544` 真签名**~~ —— **2026-10-21 排除**。见 C13 与下面的「0x544 真相」：
-   官方 8.2.11 发的也是 4 字节 `00 00 00 00`，我方降级形态与官方**逐字节一致**，
-   两边没有差异可言。
+1. ~~**`0x544` 真签名**~~ —— **2026-10-21 排除，2026-10-27 复核维持排除但改口径**。
+   原文理由是「官方 8.2.11 发的也是 4 字节 `00 00 00 00`」——**这条已被抓包推翻**
+   （官方真机打了 33445、拿到了码，见 C45）。现结论改为：0x544 的真假与 `type=45`
+   无因果关系（官方真签照样被判版本过低；大号用我方降级零字节却 `type=0` 成功），
+   所以即使复刻出真签也解决不了 45。
 2. **ticket 来源**：官方在应用内 WebView 里完成"视图验证"，我们是在外部浏览器里
    解、再从 F12 掏 ticket（`ti.qq.com/safe/tools/captcha/sms-verify-login`）。
    若服务端把 ticket 与"发起验证的那个客户端会话"绑定，这条就对不上。
@@ -307,12 +309,23 @@ if (this.status[1] != 0 || checkObject(obj4) || !this.mPoxyNativeLoaded || !this
 }
 ```
 
-而 `libpoxy.so` **不在 APK 里**（`loadUpgradedLibrary()` 从
-`QPDirUtils.getQQProtectQSecLibsDir() + "/libpoxy.so"` 读文件、`verifySoFile`
-校验签名后 `System.load`，运行时下载）。8.2.11 的 11 个 dex 里
-`libfekit`/`QQSecuritySign`/`fekit` 命中数为 **0**。
-⇒ **官方 8.2.11 真机上 0x544 就是 4 个零字节**，`cost:8` 是走完这段短路判断
-的耗时。我方 `tlv544DegradedBody: [0,0,0,0]` 与官方等价。
+而 `libpoxy.so` 的位置**原文记错了**：这里原本写「它不在 APK 里，靠运行时从
+`QQProtectQSecLibs/` 下载」，据此推出「官方必然降级成 4 个零字节」。两处都错。
+真实情况（2026-10-27 IG5 复核）：
+
+- APK 的 `lib/arm64-v8a/libpoxy.so` **就是它**（51248B，sha256 `289c8f5e…`）；
+  `loadUpgradedLibrary()` 先试 `QQProtectQSecLibs/` 下的升级版，失败才回落
+  `System.loadLibrary("poxy")` —— 即 APK 自带那份是兜底，且 8.9.50 / 9.3.60 / TIM
+  都不带它。
+- 8.2.11 的 11 个 dex 里 `libfekit`/`QQSecuritySign`/`fekit` 命中数为 **0** 仍然成立，
+  但 **dex 层没有不等于 native 层没有**，二者不能互相推断。
+- 官方真机确实取到了码：`wtlogin_20261022.txt:566` 的 `cost:7` 与同一会话的 33445
+  抓包（4 请求 4 响应）互相印证。所以「cost 只是短路耗时」这个解释被推翻。
+
+⇒ **不能再写「官方也是 4 个零字节」**。正确的表述是：官方会联网取码且取到了，
+我方发降级零字节；两者在服务端结果上**没有可观测差异**（同一账号同一设备，
+官方真签 ret=0 成功、大号用我方零字节 type=0 成功、小号两者都 type=45）。
+完整证据链与协议还原见 **C45**。
 
 **`0x508` 那条"换明文提示"的路已死**：`ts7/ts8.qq.com:8080` 实测 TCP 全部
 closed，**官方自己也连不上**（日志 `SocketTimeoutException`）。别再往这里投入。
@@ -2470,6 +2483,82 @@ fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
 5. **加 enum 值要跑 `dart analyze lib tool`**：`rejected` 一加，
    `qq8_connect_page.dart` / `qq8_providers.dart` / `qq8_session_adapter.dart` 三处
    exhaustive switch 同时编译失败，只有 analyzer 能一次找全。
+
+### C45. `0x544` 的 native 其实就躺在 APK 里，而它跟「版本过低」没有因果关系（2026-10-27）
+
+**现象**：文档里长期写着「`libpoxy.so` 不在 APK 里，运行时从
+`QQProtectQSecLibs/` 下载并验签」（C13 与 :310 一带）。据此推出的结论是
+「官方真机上 `0x544` 必然降级成 4 个零字节，我方与官方等价」。
+2026-10-27 用 IG5 打开 APK 抽出的 native 后，这个前提被证伪。
+
+**事实一：`libpoxy.so` 就在 APK 里，而且是唯一一份**
+
+- `QQ-com.tencent.mobileqq-play-8.2.11.apk` 的 `lib/arm64-v8a/libpoxy.so` = 51248B，
+  sha256 `289c8f5e46831890026aead5d22460c744ea5d436ffecd949c54612b91933ecd`，
+  与从 APK 抽出落到 `analysis/_ref/native/8211/libpoxy.so` 的那份逐字节相同。
+  APK 里它 `compress_type 8`（zlib deflate），全 APK 未声明 `extractNativeLibs`。
+- `ByteData.loadUpgradedLibrary()` 先试 `QQProtectQSecLibs/libpoxy.so` +
+  `VerifyFileUtil.verifySoFile`，**失败才回落 `System.loadLibrary("poxy")`**；
+  `initLoadlibrary()` 在 `UnsatisfiedLinkError` 时置 `status[1]=1`。
+  ⇒ APK 自带那份就是回落路径，官方真机大概率就走它。
+- 8.9.50 / 9.3.60 / TIM 4.1.0 的 APK 里**没有** `libpoxy.so`（只有 `libQSec`
+  / `libqimei` / `libwtecdh`）⇒ 8.2.11 是唯一带 poxy 的版本。这也解释了为什么
+  「8.2.11 是我们的主目标」在 0x544 这件事上并不划算。
+
+**事实二：官方 33445 通道跑通了，协议已完整还原**
+
+`official-login-20261024-204119.pcap`（linktype 276 / SLL2，1900 包）是唯一一份
+有 33445 流量的抓包，4 请求 4 响应：
+
+- 时间线：`t+3.710` 请求 645B → `t+3.792` 响应 28B；`t+4.722/4.846` 两个 MSF
+  包（1567B/1424B）→ `t+4.852` 请求 885B → `t+4.898` 响应。第二轮 `t+40.6xx` 同构。
+  ⇒ 33445 在 MSF 登录包**之前/之间**就被调用，不是登录后补偿。
+- 请求头 31B：`[0:4]=c6e6cded`（magic）、`[4:6]=0000`、`[22:24]=0009`、
+  `[24:28]`=密文长度（`00000260`=645B 那条 / `00000350`=885B 那条）、`[28:29]=01`；
+  payload 从第 31 字节起以 ASCII **`PWTLID`** 开头。
+- 4 条响应全部是同一个 **28B 成功头**
+  `c6e6cded 0000 0003 0000 0006 00000000 00000000 0001 0000 0000`，**没有 body**。
+- 外层可在纯 Dart 里 100% 构造：AES-128-CBC，key = IV =
+  `c6e6cded1efdebe35727280c89d8ac41`（取自 `.rodata 0x109c40`，紧跟 `ts.qq.com`
+  与 `33445`）；明文是 JSON `{"txt":"<自定义 base64>"}`；自定义表
+  `ABnuvwxCD+FGHIopqrstJKLRSTUlmyz012VWXYZaMNOPQbcdefghijk3456789E/` 按
+  「下标 = 标准表下标」反向映射再 `b64decode`。
+
+**事实三：内层载荷是二次加密，不是压缩 —— 这才是真天花板**
+
+- 解出的内层 = 8 字节 ASCII 随机前缀（`mssgvdas`/`ttknsrcy`/`qrdvtskv`/`xuxrkhxe`）
+  + 433B 或 616B 高熵体（熵 7.581/8）。
+- 对 offset 0..15 × wbits 15/-15/31 全组合做 zlib/gzip 解压，**全部失败**。
+- 同 APK 里的 `libwtecdh.so`（17800B）是 native 内 `dlopen` 的 ECDH 依赖，
+  内层密钥最可能来自它 ⇒ **纯 Dart 复刻 0x544 真签，卡在「内层会话密钥」**，
+  这比原来记的「卡在 ByteData native」精确一层，但结论同向：做不到。
+
+**事实四（决定性的）：0x544 的质量与 `type=45` 无因果**
+
+- 官方 8.2.11 日志 `analysis/_ref/official-logs/qq8211/wtlogin_20261022.txt:566`
+  有 `tgt 0x544 cost:7`，`:567` 紧接着 `tgtgt qimei len 16`，`:572`
+  `snd_rcv_req_msf ret=0` ⇒ **官方这次 0x544 真的取回了内容**（pcap 同一会话也
+  确实打了 33445）。
+- 同一账号、同一设备、官方本体，`ret=0` 登录成功。
+- 而大号 `2089495846` 用**我方发 4 个零字节降级 0x544** 的档案，`type=0` 成功两次。
+⇒ 同一台机器上，「真签 + 成功」与「零字节 + 成功」并存，「真签 + `type=45`」也存在。
+  **0x544 不是 45 的自变量**。继续追这条线买不到登录。
+
+**判据教训**
+
+1. **「我读不到某个东西」和「那个东西不在包里」是两件事**。C13 当时只在 11 个 dex
+   里 grep `libfekit`/`QQSecuritySign` 命中 0 就下了「不在 APK」的结论，跳过了
+   `lib/arm64-v8a/`。**dex 层的阴性命中不能推断 native 层缺失**——查 native 要直接
+   列 `lib/` 下的 `.so` 并比对 APK 的 `entries`。
+2. **「官方也降级」这类断言必须有抓包或日志撑着**。原文写「官方发 4 个零字节」时
+   只有 Java 短路逻辑和一条 `cost:7`，没有一份 response body 或 TLV 体佐证；
+   现在有了 33445 的实证，这句话必须改成「官方会取码且真的取到了」。
+3. **探索到一个协议的深水区，要先问「这里解开能不能改变结论」**。33445 从 31B 头
+   解到内层二次加密，投入了 IG5 解构 + 手写 pcap 解析 + 密码学还原，最后仍然回到
+   「45 是服务端对该账号的准入结论」这个 10 月 27 日就已由三轴实验得出的判断。
+   **先验证因果，再决定要不要往下挖**，比挖到底再回头便宜得多。
+4. **同一批证据里，反例要单独列出来看**。大号零字节也能成功这一条，在追 0x544 的
+   十几个小时里一直没有被当作否决证据使用——它其实一句话就能关掉整条路线。
 
 ## D. 网络与环境
 
