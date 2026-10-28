@@ -2475,6 +2475,22 @@ fromServiceMsg.setBusinessFail(CODE_NO_LOGIN, ...);
 >
 > ⚠️ 因此别再拿这条文案去反推任何客户端参数。四个轴（TLV 表 / 档案代际 / 设备身份 /
 > 口令对错）现在全部有对照实验支撑，全部无解。
+>
+> **补 2026-10-27（第二条链）：EasyLogin（A1 + noPicSig）也被 45 拦下**
+>
+> 官方密码登录成功后会把加密 A1（_en_A1）与 noPicSig 存进 tk_file；票据过期时官方
+> 静默改走 A1 链（qq8211/wtlogin_20260930.txt:1608-1620：GetNoPicSigByAccount return: not null
+> → user:2089495846 exchange A2 from A1. → start request_tgtgt_nopicsig），不输密码。
+> 我方据此给 tool/qq8_live_smoke.dart 加了 --a1-login（0x106 = _en_A1 整块、
+> 0x16A = noPicSig、子命令仍 9、tgtgt 取 A1 尾 16B —— 官方 oicq_request.c() 解不开
+> key 时本来就是「原样发密文」的回退形态）。真发两次：
+>
+> - QQ 原料（tk_1 小号 _en_A1 152B + _noPicSig 80B）+ 8.2.11 档案 + 官方身份 → **45**。
+> - TIM 原料（tim/tk_file-latest 小号 _en_A1 176B + _noPicSig 88B）+ tim4.1.0 档案
+>   + TIM 身份 → **45**。
+>
+> 官方客户端自己就是这么续期的，同一份原料喂给同一组包仍被拒 ⇒ **A1 链与密码链/票据链
+> 共用同一个账号级准入判断**。第五个轴（登录链路种类）对照完毕，同样无解。
 
 三条**反证**：
 

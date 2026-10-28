@@ -189,6 +189,23 @@ Future<void> main(List<String> argv) async {
   // token 续期模式（--token-login）与密码登录共用后面的收发流水线，
   // 差别只在"组什么 body / 用哪个命令字 / 响应用什么 key 解"。
   final useToken = args.containsKey('token-login');
+  // A1+noPicSig 免密登录（EasyLogin，2026-10-27 实验）：--a1-login --a1-file=<json>
+  // json 字段：uin/tgt/d2/d2key/en_a1/no_pic_sig（hex）。
+  // 官方 A1 包装（k.java:468）的 0x106 = c(_en_A1) 输出（明文A1 ‖ tgtgt_key 切尾）；
+  // c() 解密失败时静默回退为「密文原样切尾 16B」（oicq_request.java c() 的 bArrDecrypt==null 分支）。
+  // 我们没有 t10c key ⇒ 直接采用密文回退形态：0x106 = enA1[:-16]，tgtgt = enA1[-16:]。
+  final useA1 = args.containsKey('a1-login');
+  Map<String, dynamic>? a1Data;
+  if (useA1) {
+    final a1Path = args['a1-file'];
+    if (a1Path == null || a1Path.isEmpty) {
+      errOut('✗ --a1-login 必须配 --a1-file=<json（含 en_a1 / no_pic_sig hex）>');
+    }
+    a1Data = jsonDecode(File(a1Path!).readAsStringSync()) as Map<String, dynamic>;
+    if ((a1Data['en_a1'] as String?) == null || (a1Data['en_a1'] as String).isEmpty) {
+      errOut('✗ --a1-file 里没有 en_a1 字段');
+    }
+  }
 
   // 滑动验证提交模式（--slider-ticket）：密码登录被要求验证（type=2）后，
   // **人工**解出 ticket，用响应里下发的盐（0x104）提交、继续登录。
@@ -498,9 +515,11 @@ Future<void> main(List<String> argv) async {
       ? sliderOrder
       : (useToken
           ? qq8ExchangeEmpTlvOrder
-          : (tlvSet == 'oicq'
-              ? oicqPasswordOrder()
-              : qq8PasswordTlvOrderFor(profile.apk)));
+          : (useA1
+              ? qq8PasswordTlvOrderFor(profile.apk)
+              : (tlvSet == 'oicq'
+                  ? oicqPasswordOrder()
+                  : qq8PasswordTlvOrderFor(profile.apk))));
 
   out('--- 客户端档案 ---');
   out('  ${profile.describe()}');
@@ -736,6 +755,10 @@ Future<void> main(List<String> argv) async {
   if (useToken) {
     device = device.withTgtgt(md5Bytes(token!.d2key));
   }
+  if (useA1) {
+    final enA1 = _hex(a1Data!['en_a1'] as String);
+    device = device.withTgtgt(enA1.sublist(enA1.length - 16));
+  }
   // ---------- 会话（ECDH / sessionId / randomKey / seqId）----------
   //
   // 服务端把「密码登录 → 滑块提交」当**同一会话**：oicq 在同一 client 实例
@@ -852,7 +875,7 @@ Future<void> main(List<String> argv) async {
     t104: sliderSalt, // 验证分支要带上一条响应下发的盐；其余场景为空
     t174: verifyToken, // 短信流程（8/7）要回带的二次验证令牌
     tgt: useToken ? token!.tgt : Uint8List(0),
-    srmToken: Uint8List(0),
+    srmToken: useA1 ? _hex(a1Data!['no_pic_sig'] as String) : Uint8List(0),
     // 挑战带 0x546 时，提交要回 0x547（本地算出的防刷应答）；没有就不带
     t547: sliderPowHex == null ? null : _hex(sliderPowHex),
     t548: selfT548,
@@ -903,7 +926,20 @@ Future<void> main(List<String> argv) async {
                   ? Qq8LoginBody.buildDeviceUnlock(tlvCtx)
                   : (useToken
                       ? Qq8LoginBody.buildToken(tlvCtx, d2: token!.d2)
-                      : Qq8LoginBody.build(
+                      : (useA1
+                          ? Qq8LoginBody.build(
+                              tlvCtx,
+                              Qq8SubCmd.password,
+                              order,
+                              cond: Qq8LoginConditions(t16a: _hex(a1Data!['no_pic_sig'] as String)),
+                              args: <int, List<Object?>>{
+                                0x106: <Object?>[
+                                  _hex(a1Data['en_a1'] as String).sublist(0, (_hex(a1Data['en_a1'] as String).length - 16)),
+                                ],
+                                0x16A: <Object?>[_hex(a1Data['no_pic_sig'] as String)],
+                              },
+                            )
+                          : Qq8LoginBody.build(
                           tlvCtx,
                           Qq8SubCmd.password,
                           order,
@@ -919,7 +955,7 @@ Future<void> main(List<String> argv) async {
                               ? const <int, List<Object?>>{}
                               : <int, List<Object?>>{
                                   0x545: <Object?>[qimei],
-                                })))));
+                                }))))));
 
   // token 续期的票据要贯穿三层：SSO 信封的 tgt/d2（sig）、body 的 0x143（d2）。
   Qq8SigInfo? tokenSig;
@@ -1000,7 +1036,7 @@ Future<void> main(List<String> argv) async {
   }
   out('  ✓ 显式确认已给出');
 
-  if (!useToken && !useSlider && passwordMd5 == null) {
+  if (!useToken && !useSlider && !useA1 && passwordMd5 == null) {
     out('  ✗ 未提供口令，无法真发（设 QQ_LIVE_PWD 或 --pwd-md5）');
     await _finish(logDir, args);
     exitCode = 2;
@@ -1042,6 +1078,21 @@ Future<void> main(List<String> argv) async {
     await tran.connect();
     out('  已连接');
     _log.i('已连接');
+
+    // 实验开关：连接后先发一次官方 MSF 的 SSOPing 握手（21 字节），
+    // 服务端会回 25 字节（末尾追加 u32）。官方每次连接都发（见
+    // analysis/_decompiled/jadx-main/sources/com/tencent/mobileqq/msf/core/net/m.java:772-793）。
+    if (args.containsKey('ssoping')) {
+      final ping = Uint8List.fromList(<int>[
+        0x00,0x00,0x00,0x15,0x01,0x33,0x52,0x39,
+        0x00,0x00,0x00,0x00,0x04,0x4d,0x53,0x46,
+        0x05,0x00,0x00,0x00,0x00,
+      ]);
+      await tran.write(ping);
+      out('  已发 SSOPing ${ping.length} 字节（等 25 字节回包）');
+      _log.i('已发 SSOPing ${ping.length} 字节');
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
 
     out('--- 发送登录请求（${loginPacket.length} 字节）---');
     final frame = await tran.send(loginPacket);
