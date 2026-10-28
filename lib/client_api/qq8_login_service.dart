@@ -1765,20 +1765,29 @@ class Qq8LoginService {
     return r;
   }
 
-  /// 撤回自己发的一条群消息（单包）。**需已上线**。
+  /// 撤回自己发的一条群消息（单包或**分片**）。**需已上线**。
+  ///
+  /// [pktNum] > 1 表示这条是被分片发出的（消息 ID 里带片数），
+  /// 撤回体要按片展开，见 `Qq8Msg.buildGroupWithdrawBody` 的注释。
   Future<({int result, String errmsg})> withdrawGroup({
     required int gid,
     required int seq,
     required int rand,
+    int pktNum = 1,
   }) async {
     final s = _requireOnline();
     final frame = await s.sendUni(
       Qq8Msg.withdrawCmd,
-      Qq8Msg.buildGroupWithdrawBody(gid: gid, seq: seq, rand: rand),
+      Qq8Msg.buildGroupWithdrawBody(
+        gid: gid,
+        seq: seq,
+        rand: rand,
+        pktNum: pktNum,
+      ),
       timeout: timeout,
     );
     final r = Qq8Msg.parseWithdrawResponse(frame.payload, group: true);
-    _log.i('群撤回 gid=$gid seq=$seq result=${r.result} ${r.errmsg}');
+    _log.i('群撤回 gid=$gid seq=$seq pktNum=$pktNum result=${r.result} ${r.errmsg}');
     return r;
   }
 

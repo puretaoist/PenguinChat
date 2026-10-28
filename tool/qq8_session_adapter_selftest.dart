@@ -812,6 +812,34 @@ Future<void> main() async {
     check('带引用的回复能发出去（ReplySegment 翻成 src_msg）',
         replyId != null && replyId.isNotEmpty, replyId ?? '(null)');
 
+    // 群消息**分片**撤回：pktNum>1 时撤回体按片展开（以前这里直接抛"协议还没核实"）
+    final fragId = Qq8Msg.groupMessageId(
+        gid: 987654321,
+        senderUin: _me,
+        seq: 555,
+        rand: 0x0A0B0C0D,
+        time: 1700000600,
+        pktNum: 3);
+    check('群分片消息 ID 里带着片数（pktNum=3）',
+        Qq8Msg.parseGroupMessageId(fragId)?.pktNum == 3,
+        '${Qq8Msg.parseGroupMessageId(fragId)}');
+    scripted.scriptedResponses.add(_frame(
+        13,
+        Qq8Msg.withdrawCmd,
+        Qq8Pb.encode(<int, Object?>{
+          2: Qq8Pb.encode(<int, Object?>{1: 0, 2: ''}),
+        })));
+    final beforeFrag = scripted.sent.length;
+    var fragThrew = false;
+    try {
+      await adapter.recall('group_987654321', fragId);
+    } on SessionException {
+      fragThrew = true;
+    }
+    check('群分片消息（pktNum=3）能撤回：不抛异常且发了一个包',
+        !fragThrew && scripted.sent.length == beforeFrag + 1,
+        '已发 ${scripted.sent.length}');
+
     // 能力上报：撤回与已读现在都算支持
     check('supports：recall / set_message_read 已变为 true',
         adapter.supports('recall') && adapter.supports('set_message_read'));
@@ -821,7 +849,7 @@ Future<void> main() async {
   section('8. 多元素发送：表情能发；图片段只认本地文件、混排拒绝');
   {
     scripted.scriptedResponses.add(_frame(
-        13,
+        14,
         Qq8Msg.sendCmd,
         Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000600, 14: 79})));
     final before = scripted.sent.length;

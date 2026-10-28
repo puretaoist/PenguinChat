@@ -3242,3 +3242,47 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
 
 **还没做**：群文件发送；真机端到端（发/收/下载全链路）。
 
+
+---
+
+## C57 群消息「分片」撤回：不是协议不通，是没人照参考实现写
+
+**症状**：撤回自己发的群消息时，只有 `pktNum == 1` 的能发；分片的消息（长文本被切成
+多包）在 `lib/client_api/qq8_session_adapter.dart` 里直接
+`throw SessionException('分片消息的撤回协议还没核实')`。
+
+**根因**：不是服务端限制，是当初没读参考实现那一段。`analysis/_ref/oicq-src/lib/group.ts:359-401`
+的 `recallMsg` 里 `pktnum > 1` 有自己的写法：
+
+```js
+// pktnum > 1
+msg.push({1: seq, 2: rand});                 // 每片一条 MessageInfo，seq 逐片 +1
+pb_msg.push({1: seq, 3: pktnum, 4: i++});    // userdef 明细：总片数 + 片序号（从 0 起）
+reserver = {1: 1, 2: pb_msg}
+// pktnum == 1
+reserver = {1: 0}
+```
+
+即 `PbGroupMsgWithDrawReq` 的字段 4 由**单个** `MessageInfo` 变成**列表**，
+字段 5（`bytes_userdef`）由 `{1: 0}` 变成 `{1: 1, 2: [...]}`。
+"与官方 `MessageInfo` 字段对不上"这句话是错的——它本来就该是列表。
+
+**改法**（`lib/kernel/wlogin8/qq8_msg.dart` 的 `buildGroupWithdrawBody`）：
+新增可选参数 `int pktNum = 1`；`n > 1` 时字段 4 发列表、字段 5 发
+`{1: 1, 2: [{1: seq+i, 3: n, 4: i}]}`；单包时照参考实现也发 `{1: 0}`。
+服务层 `Qq8LoginService.withdrawGroup` 加 `pktNum` 透传，适配层 `recall` 把
+`m.pktNum`（消息 ID 里就有）传下去，删掉那行 `throw`。
+
+**验证**：`analysis/scripts/gen_withdraw_vectors.py` 是**独立第二实现**（手写 varint，
+不引用 oicq 也不引用 Dart），生成单包 / 分片 3 两组黄金 hex；`tool/qq8_msg_selftest.dart`
+逐字节比对（69 项），`tool/qq8_session_adapter_selftest.dart` 加端到端
+（消息 ID 带 pktNum=3 → 撤回发一个包、不抛异常，77 项）。
+
+**坑（写 protobuf 的通用教训）**：`2: list` 在 protobuf 里是 **repeated**，每个元素
+各自打一遍 tag 2；再套一层 `ld(2, ...)` 就多包一层，长度会多 2 字节。
+我的 Python 第一版就多包了一层，Dart 输出 74 字节 vs Python 76 字节，靠"黄金向量
+对不上"才抓出来——**这正是独立第二实现的价值：它不会复制我的错误**。
+
+**边界**：真机未验证（设备此时未连接）。结构按参考实现逐字段对齐，且分片撤回
+只影响 `pktNum > 1` 的群消息，单包路径字节未变（有 `pktNum=1` 等价的断言守着）。
+

@@ -491,6 +491,47 @@ Future<void> main() async {
             Qq8Pb.intAt(grpMsg, 1) == 777 &&
             Qq8Pb.intAt(grpMsg, 2) == 0x55667788,
         '');
+    check('群撤回（单包）：与独立 Python 实现的黄金向量逐字节一致',
+        _hexOf(grp) ==
+            '12190801100018b1d1f9d60322090889061088ef99ab052a020800',
+        _hexOf(grp));
+
+    // 分片群消息撤回（参考实现 lib/group.ts:359-401 的 pktnum>1 分支）：
+    // 4 变列表、每片 seq+1；5 = {1: 1, 2: [{1: seq+i, 3: pktNum, 4: i}]}
+    final grp3 = Qq8Msg.buildGroupWithdrawBody(
+        gid: 987654321, seq: 777, rand: 0x55667788, pktNum: 3);
+    check('群撤回（分片 3）：与独立 Python 实现的黄金向量逐字节一致',
+        _hexOf(grp3) ==
+            '124a0801100018b1d1f9d60322090889061088ef99ab052209088a061088ef99ab05'
+            '2209088b061088ef99ab052a1d08011207088906180320001207088a0618032001'
+            '1207088b0618032002',
+        _hexOf(grp3));
+    final g3Req = Qq8Pb.decode(Qq8Pb.bytesAt(Qq8Pb.decode(grp3), 2)!);
+    final g3Msgs = g3Req[4]!;
+    final g3Ud = Qq8Pb.decode(Qq8Pb.bytesAt(g3Req, 5)!);
+    final g3List = g3Ud[2]!;
+    check('群撤回（分片 3）：msg_list 三条，seq 逐片 +1',
+        g3Msgs.length == 3 &&
+            g3Msgs.every((e) => e is Uint8List) &&
+            [0, 1, 2].every((i) {
+              final e = Qq8Pb.decode(g3Msgs[i] as Uint8List);
+              return Qq8Pb.intAt(e, 1) == 777 + i &&
+                  Qq8Pb.intAt(e, 2) == 0x55667788;
+            }));
+    check('群撤回（分片 3）：userdef 标志=1，明细三条（总片数/片序号）',
+        Qq8Pb.intAt(g3Ud, 1) == 1 &&
+            g3List.length == 3 &&
+            [0, 1, 2].every((i) {
+              final e = Qq8Pb.decode(g3List[i] as Uint8List);
+              return Qq8Pb.intAt(e, 1) == 777 + i &&
+                  Qq8Pb.intAt(e, 3) == 3 &&
+                  Qq8Pb.intAt(e, 4) == i;
+            }));
+    final grp1 = Qq8Msg.buildGroupWithdrawBody(
+        gid: 987654321, seq: 777, rand: 0x55667788, pktNum: 1);
+    check('单包与 pktNum=1 显式传参等价（默认值不改变线上字节）',
+        _hexOf(grp1) == _hexOf(grp),
+        _hexOf(grp1));
 
     // 撤回响应（与请求同构）
     final okResp = Qq8Pb.encode({

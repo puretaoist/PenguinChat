@@ -541,24 +541,52 @@ abstract final class Qq8Msg {
   /// `3 uint64_group_code`、`4 msg_list`（`MessageInfo{1 序号, 2 随机数}`）、
   /// `5 bytes_userdef`。
   ///
-  /// ⚠️ 只支持**单包**消息（分片消息的撤回体参考实现另有一套写法，
-  /// 与官方 `MessageInfo` 字段对不上，等真机再说）。
+  /// ## 分片消息（[pktNum] > 1）
+  ///
+  /// 照参考实现 `lib/group.ts:359-401` 的 pktnum>1 分支：
+  /// * `4` 从单个 `MessageInfo` 变成**列表**，每片一条，`seq` 逐片 +1；
+  /// * `5` 从 `{1: 0}` 变成 `{1: 1, 2: [{1: seq+i, 3: pktNum, 4: i}]}`
+  ///   （`1` 是"是否分片"标志，`2` 里 `3` = 总片数、`4` = 片序号从 0 起）。
+  ///
+  /// 单包时 `5` 也照参考实现发 `{1: 0}`（官方 `bytes_userdef` 在参考实现里
+  /// 就是这个嵌套消息的序列化）。
   static Uint8List buildGroupWithdrawBody({
     required int gid,
     required int seq,
     required int rand,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        2: <int, Object?>{
-          1: 1, // sub_cmd
-          2: 0, // group_type
-          3: gid & 0xFFFFFFFF,
-          4: <int, Object?>{
-            1: seq & 0xFFFFFFFF,
-            2: rand & 0xFFFFFFFF,
-          },
+    int pktNum = 1,
+  }) {
+    final n = pktNum > 1 ? pktNum : 1;
+    final msgs = <Object?>[
+      for (var i = 0; i < n; i++)
+        <int, Object?>{
+          1: (seq + i) & 0xFFFFFFFF,
+          2: rand & 0xFFFFFFFF,
         },
-      });
+    ];
+    final userdef = n > 1
+        ? <int, Object?>{
+            1: 1,
+            2: <Object?>[
+              for (var i = 0; i < n; i++)
+                <int, Object?>{
+                  1: (seq + i) & 0xFFFFFFFF,
+                  3: n,
+                  4: i,
+                },
+            ],
+          }
+        : <int, Object?>{1: 0};
+    return Qq8Pb.encode(<int, Object?>{
+      2: <int, Object?>{
+        1: 1, // sub_cmd
+        2: 0, // group_type
+        3: gid & 0xFFFFFFFF,
+        4: n > 1 ? msgs : msgs.first,
+        5: userdef,
+      },
+    });
+  }
 
   /// 解析撤回响应。返回 `(result, errmsg)`。
   ///

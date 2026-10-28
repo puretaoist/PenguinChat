@@ -22,8 +22,8 @@
 /// * **群历史**需要"最新 seq"定位：从收到的群消息里学（`_groupSeq`）。
 ///   学到之前返回空页（确实还没有消息），**不发猜测性请求**；
 /// * 撤回 / 已读上报已接（消息 ID 反解出 seq/rand/time 再发，见
-///   `Qq8Msg.buildC2cWithdrawBody` 等）；分片群消息的撤回、戳一戳、非文本段
-///   仍是 [SessionException]；
+///   `Qq8Msg.buildC2cWithdrawBody` 等；群消息**分片也能撤回**，撤回体按片展开）；
+///   戳一戳、语音/视频这类非文本段仍是 [SessionException]；
 /// * 昵称：协议线在登录阶段拿不到自己的昵称，先留空（`AccountInfo.nickname`）。
 ///
 /// 本文件是纯 Dart。
@@ -414,13 +414,13 @@ class Qq8SessionAdapter implements Session {
     if (m == null) throw SessionException('消息 ID 不是本协议的格式：$messageId');
     final self = service.snapshot.uin ?? 0;
     if (m.senderUin != self) throw const SessionException('只能撤回自己发的消息');
-    if (m.pktNum > 1) {
-      throw const SessionException('分片消息的撤回协议还没核实（见 qq8_msg.dart 注释）');
-    }
+    // 分片消息（pktNum > 1）也能撤回：撤回体按片展开，见
+    // Qq8Msg.buildGroupWithdrawBody 的注释（参考实现 lib/group.ts:359-401）。
     final r = await service.withdrawGroup(
       gid: key.id!,
       seq: m.seq,
       rand: m.rand,
+      pktNum: m.pktNum,
     );
     if (r.result != 0) {
       throw SessionException(
