@@ -158,6 +158,12 @@ class Qq8SsoContext {
   /// 给了值就**原样写入**（不套 [Qq8Sso._withLength]）。
   final Uint8List? reserveFieldsOverride;
 
+  /// SSO 头 ksid 槽里那段版本串的覆写（null = 用 apk.ksidName ?? apk.name）。
+  ///
+  /// 该槽是明文 ASCII |imei|版本串，服务端判「版本过低」时读的就是它
+  /// （官方 8.2.11 发 A8.2.11.0153f87a8.2.11.0153f87a）。做版本二分实验时用它。
+  final String? ksidNameOverride;
+
   Qq8SsoContext({
     required this.uin,
     required this.apk,
@@ -170,6 +176,7 @@ class Qq8SsoContext {
     this.seqId = 0,
     this.qimei36,
     this.reserveFieldsOverride,
+    this.ksidNameOverride,
   }) : sig = sig ?? Qq8SigInfo();
 
   /// ksid：**服务端下发的 32 位十六进制串**，不是本地派生值。
@@ -206,7 +213,7 @@ class Qq8SsoContext {
   /// `apkName` 优先取 [Qq8ApkInfo.ksidName]（官方 8.2.11 是 33 字符的
   /// `A8.2.11.0153f87a8.2.11.0153f87a`，不是 `name` 那个 `A8.2.11.4530`）。
   Uint8List get ksid => Uint8List.fromList(
-        utf8.encode('|${device.imei}|${apk.ksidName ?? apk.name}'),
+        utf8.encode('|${device.imei}|${ksidNameOverride ?? apk.ksidName ?? apk.name}'),
       );
 
   /// SSO 头里 imei 槽的**实际内容**。

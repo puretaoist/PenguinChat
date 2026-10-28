@@ -633,6 +633,9 @@ class Qq8TlvContext {
   /// 我们没有 MSF 层，故默认 0（等价官方「没有 reserveData」的 else 分支）。
   final int msfSsoSeq;
 
+  /// 0x100/0x106 里 _sso_ver 的覆写（版本二分实验用）。
+  final int? ssoVerOverride;
+
   /// 会话密钥材料。
   final Uint8List ksid;
 
@@ -760,6 +763,7 @@ class Qq8TlvContext {
     this.da2BitActive = true,
     this.seqId = 0,
     this.msfSsoSeq = 0,
+    this.ssoVerOverride,
     this.randomBytes = _secureRandomImpl,
     this.teaPadding = _secureRandomImpl,
     this.nowMillis = _wallClockImpl,
@@ -937,7 +941,7 @@ abstract final class Qq8Tlv {
       case 0x100:
         final emp = args.isNotEmpty && (args[0] as num? ?? 0) != 0;
         w.u16(1); // db buf ver
-        w.u32(ctx.apk.ssoVer); // _sso_ver：8.2.11=7 / 8.9.50=19 / 9.3.60=22
+        w.u32(ctx.ssoVerOverride ?? ctx.apk.ssoVer); // _sso_ver：8.2.11=7 / 8.9.50=19 / 9.3.60=22
         w.u32(ctx.apk.appid);
         w.u32(emp ? 2 : ctx.apk.subid);
         w.u32(0);
@@ -957,7 +961,7 @@ abstract final class Qq8Tlv {
         final inner = ByteWriter()
           ..u16(4) // tgtgt ver
           ..raw(rnd(4))
-          ..u32(ctx.apk.ssoVer) // _SSoVer：8.2.11=7 / 8.9.50=19 / 9.3.60=22
+          ..u32(ctx.ssoVerOverride ?? ctx.apk.ssoVer) // _SSoVer：8.2.11=7 / 8.9.50=19 / 9.3.60=22
           ..u32(ctx.apk.appid)
           ..u32(0)
           ..u64(ctx.uin)

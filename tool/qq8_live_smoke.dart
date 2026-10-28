@@ -195,6 +195,8 @@ Future<void> main(List<String> argv) async {
   // c() 解密失败时静默回退为「密文原样切尾 16B」（oicq_request.java c() 的 bArrDecrypt==null 分支）。
   // 我们没有 t10c key ⇒ 直接采用密文回退形态：0x106 = enA1[:-16]，tgtgt = enA1[-16:]。
   final useA1 = args.containsKey('a1-login');
+  final ksidNameOverride = args['ksid-name'];
+  final ssoVerOverride = int.tryParse(args['ssover'] ?? '');
   Map<String, dynamic>? a1Data;
   if (useA1) {
     final a1Path = args['a1-file'];
@@ -909,6 +911,7 @@ Future<void> main(List<String> argv) async {
     // 我们没有 MSF 层，用本流程的 SSO seq 顶替：官方日志里两者都属于
     // 「同一流程内绑定、随流程走」的编号，且官方几乎从不发 0。
     msfSsoSeq: sessionSeq,
+    ssoVerOverride: ssoVerOverride,
   );
 
   final body = useSlider
@@ -981,6 +984,7 @@ Future<void> main(List<String> argv) async {
     ecdhShareKey: ecdh.shareKey,
     seqId: sessionSeq,
     sig: tokenSig,
+    ksidNameOverride: ksidNameOverride,
   );
 
   final oicqPacket = Qq8Sso.buildOicqPacket(ssoCtx, body);
