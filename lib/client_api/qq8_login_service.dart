@@ -47,6 +47,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import '../infra/log/logger.dart';
+import '../kernel/crypto/digest.dart';
 import '../kernel/crypto/ecdh.dart';
 import '../kernel/safety/safety_gate.dart';
 import '../kernel/wlogin8/qq8_config.dart';
@@ -55,6 +56,7 @@ import '../kernel/wlogin8/qq8_login.dart';
 import '../kernel/wlogin8/qq8_history.dart';
 import '../kernel/wlogin8/qq8_pb.dart';
 import '../kernel/wlogin8/qq8_file.dart';
+import '../kernel/wlogin8/qq8_gfs.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
@@ -1981,6 +1983,235 @@ class Qq8LoginService {
     _log.i('群成员列表 gid=$gid：${members.length} 人（$pages 页，result=$result）');
     return Qq8GroupMemberPage(result: result, nextUin: next, members: members);
   }
+
+  // ------------------------------------------------------------------
+  // 群文件（GFS：0x6d8 读 / 0x6d6 写 / 0x6d9 回执 + highway 71）
+  // ------------------------------------------------------------------
+
+  /// 群文件目录列表。**需已上线**。
+  ///
+  /// [pid] 传 `/` 就是根目录；目录条目的 fid 会以 `/` 开头（服务端约定）。
+  /// 一页最多 100 条（参考实现固定 100），继续翻页把 [start] 加上已拿到的条数。
+  Future<({int code, String? message, List<Qq8GfsEntry> entries})>
+      fetchGroupFiles(
+    int gid, {
+    String pid = Qq8Gfs.rootPid,
+    int start = 0,
+    int limit = 100,
+  }) async {
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      Qq8Gfs.cmdDir,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1Dir,
+        type2: 1,
+        body: Qq8Gfs.buildDirBody(gid: gid, pid: pid, start: start, limit: limit),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = Qq8Gfs.parseDir(frame.payload);
+    _log.i('群文件列表 gid=$gid pid=$pid start=$start code=${r.code} '
+        '条目=${r.entries.length}');
+    return r;
+  }
+
+  /// 单个群文件/目录的属性（`0x6d8_0`）。**需已上线**。
+  Future<({int code, String? message, Qq8GfsEntry? entry})> groupFileStat(
+    int gid,
+    String fid,
+  ) async {
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      Qq8Gfs.cmdStat,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1Dir,
+        type2: 0,
+        body: Qq8Gfs.buildStatBody(gid: gid, fid: fid),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    return Qq8Gfs.parseStat(frame.payload);
+  }
+
+  /// 取群文件的下载直链（`0x6d6_2`）。**需已上线**。
+  ///
+  /// 返回的 URL 形如 `http://<host>/ftn_handler/<token>/?fname=<名字>`，
+  /// 由调用方用 [Qq8File.downloadHttp] 或自己的 HttpClient 去下。
+  Future<({String name, String url, int size, String fid})>
+      groupFileDownloadUrl(int gid, String fid) async {
+    final stat = await groupFileStat(gid, fid);
+    final e = stat.entry;
+    if (stat.code != 0 || e == null) {
+      throw Qq8GfsException(
+          '取群文件属性失败：${stat.message ?? stat.code}');
+    }
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      Qq8Gfs.cmdDownload,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1File,
+        type2: 2,
+        body: Qq8Gfs.buildDownloadBody(gid: gid, busid: e.busid, fid: e.fid),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = Qq8Gfs.parseDownload(frame.payload);
+    if (r.code != 0 || r.host.isEmpty) {
+      throw Qq8GfsException('取群文件下载地址失败：${r.message ?? r.code}');
+    }
+    final url = Qq8Gfs.buildDownloadUrl(
+        host: r.host, tokenHex: r.tokenHex, name: e.name);
+    _log.i('群文件下载地址 gid=$gid fid=${e.fid} → $url');
+    return (name: e.name, url: url, size: e.size, fid: e.fid);
+  }
+
+  /// 上传一个文件到群（申请 `0x6d6_0` → highway 71 → 回执 `0x6d9_4`）。
+  /// **需已上线**。
+  ///
+  /// 服务端已有同 md5 文件时会**秒传**（应答字段 10 非 0），此时跳过传输直接回执。
+  Future<Qq8GfsEntry> uploadGroupFile({
+    required int gid,
+    required String name,
+    required Uint8List bytes,
+    String pid = Qq8Gfs.rootPid,
+    void Function(double progress)? onProgress,
+    Duration uploadTimeout = const Duration(seconds: 300),
+  }) async {
+    if (bytes.isEmpty) throw Qq8GfsException('要上传的文件是空的');
+    final s = _requireOnline();
+    final self = s.uin;
+    final md5 = md5Bytes(bytes);
+    final sha1 = sha1Bytes(bytes);
+
+    final applyFrame = await s.sendUni(
+      Qq8Gfs.cmdApplyUpload,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1File,
+        type2: 0,
+        body: Qq8Gfs.buildApplyUploadBody(
+          gid: gid,
+          name: name,
+          size: bytes.length,
+          md5: md5,
+          sha1: sha1,
+          pid: pid,
+        ),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final ap = Qq8Gfs.parseApplyUpload(applyFrame.payload);
+    if (ap.code != 0 || ap.fid.isEmpty) {
+      throw Qq8GfsException('群文件申请上传失败：${ap.message ?? ap.code}');
+    }
+    _log.i('群文件申请上传 gid=$gid name=$name size=${bytes.length} '
+        '秒传=${ap.exists} busid=${ap.busid} fid=${ap.fid}');
+
+    if (!ap.exists) {
+      final ch = await _ensureBigdataChannel(s);
+      final ext = Qq8Gfs.buildUploadExt(
+        uin: self,
+        gid: gid,
+        name: name,
+        size: bytes.length,
+        md5: md5,
+        sha1: sha1,
+        busid: ap.busid,
+        fid: ap.fid,
+        uploadTicket: ap.uploadTicket,
+        subid: profile.apk.subid,
+        ext500a: ap.ext500a,
+        ext500b: ap.ext500b,
+      );
+      await Qq8Highway.upload(
+        host: ch.host,
+        port: ch.port,
+        uin: '$self',
+        appid: profile.apk.subid,
+        buCmdId: Qq8Gfs.highwayCmdIdGroupFile,
+        ticket: ch.ticket,
+        fileMd5: md5,
+        data: bytes,
+        ext: ext,
+        netFlag: 2052,
+        timeout: uploadTimeout,
+        onProgress: onProgress,
+      );
+    }
+
+    final feedFrame = await s.sendUni(
+      Qq8Gfs.cmdFeed,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1Feed,
+        type2: 4,
+        body: Qq8Gfs.buildFeedBody(
+          gid: gid,
+          busid: ap.busid,
+          fid: ap.fid,
+          rand: Random().nextInt(0x7FFFFFFF),
+        ),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final fr = Qq8Gfs.parseFeed(feedFrame.payload);
+    if (fr.code != 0) {
+      throw Qq8GfsException('群文件上传回执失败：${fr.message ?? fr.code}');
+    }
+    final finalFid = fr.fid.isEmpty ? ap.fid : fr.fid;
+    _log.i('群文件上传完成 gid=$gid fid=$finalFid');
+
+    final stat = await groupFileStat(gid, finalFid);
+    final e = stat.entry;
+    if (e == null) {
+      // 属性读失败不算上传失败：用本地已知信息拼一个等价条目回去。
+      return Qq8GfsEntry(
+        fid: finalFid,
+        pid: pid,
+        name: name,
+        isDir: false,
+        size: bytes.length,
+        busid: ap.busid,
+        md5: md5,
+        sha1: sha1,
+        uploaderUin: self,
+      );
+    }
+    return e;
+  }
+
+  /// 删除群文件（`0x6d6_3`）。**需已上线**。
+  ///
+  /// 只支持文件；目录走 `0x6d7_1`，本层暂未实现（参考实现同样分两条命令）。
+  Future<({int code, String? message})> deleteGroupFile({
+    required int gid,
+    required Qq8GfsEntry file,
+  }) async {
+    if (file.isDir) throw Qq8GfsException('删目录还没接（0x6d7_1），只支持删文件');
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      Qq8Gfs.cmdDelete,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1File,
+        type2: 3,
+        body: Qq8Gfs.buildDeleteBody(
+          gid: gid,
+          busid: file.busid,
+          pid: file.pid.isEmpty ? Qq8Gfs.rootPid : file.pid,
+          fid: file.fid,
+        ),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = Qq8Gfs.parseDelete(frame.payload);
+    _log.i('删除群文件 gid=$gid fid=${file.fid} code=${r.code}');
+    return r;
+  }
+
 
   /// 会话标识（4 字节）当 u32 用——同步 cookie 的 seed（参考实现同款）。
   int _sessionSeedU32() {

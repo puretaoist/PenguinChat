@@ -498,6 +498,8 @@ abstract final class Qq8Highway {
     required int fileSize,
     required int offset,
     required Uint8List chunk,
+    Uint8List? ext,
+    int? netFlag,
   }) {
     final head = Qq8Pb.encode(<int, Object?>{
       1: <int, Object?>{
@@ -509,6 +511,9 @@ abstract final class Qq8Highway {
         6: appid, // uint32_appid（oicq 用档案的 subid）
         7: dataFlag, // uint32_dataflag
         8: buCmdId, // uint32_command_id
+        // 10 = 固定标志（参考实现 highway.ts:65 `10: 2052`）。只有群文件
+        // 上传才写，图片上传保持原样（图片的黄金向量里没有这个字段）。
+        10: ?netFlag,
       },
       2: <int, Object?>{
         2: fileSize, // uint64_filesize
@@ -518,6 +523,9 @@ abstract final class Qq8Highway {
         8: md5Bytes(chunk), // bytes_md5（本片）
         9: fileMd5, // bytes_file_md5（整文件）
       },
+      // 3 = ext（业务扩展）。**在 head 顶层**，不是 basehead 里
+      // （参考实现 highway.ts:56-76 的 `3: this.obj.ext`）。
+      3: ?ext,
     });
     final out = Uint8List(9 + head.length + chunk.length + 1);
     out[0] = stx;
@@ -565,6 +573,8 @@ abstract final class Qq8Highway {
     required Uint8List ticket,
     required Uint8List fileMd5,
     required Uint8List data,
+    Uint8List? ext,
+    int? netFlag,
     Duration timeout = const Duration(seconds: 60),
     Duration connectTimeout = const Duration(seconds: 10),
     void Function(double progress)? onProgress,
@@ -651,6 +661,8 @@ abstract final class Qq8Highway {
           fileSize: fileSize,
           offset: offset,
           chunk: chunk,
+          ext: ext,
+          netFlag: netFlag,
         ));
         offset = end;
       }

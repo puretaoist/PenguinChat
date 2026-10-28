@@ -21,6 +21,8 @@ import 'package:qqclient/client_api/session.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_list.dart';
 import 'package:qqclient/ui/theme/telegram_theme.dart';
 import 'package:qqclient/ui/widgets/message_bubble.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_gfs.dart';
+import 'package:qqclient/ui/widgets/group_files_panel.dart';
 import 'package:qqclient/ui/widgets/group_members_panel.dart';
 import 'package:qqclient/ui/widgets/jump_to_latest.dart';
 import 'package:qqclient/ui/widgets/message_actions.dart';
@@ -933,7 +935,157 @@ void main() {
       expect(historyBtn.onPressed, isNull);
     });
   });
+
+  group('GroupFilesPanel：群文件面板', () {
+    const fileEntry = Qq8GfsEntry(
+      fid: 'a1b2c3d4',
+      pid: '/',
+      name: '测试.bin',
+      isDir: false,
+      size: 12345,
+      busid: 102,
+      uploaderUin: 20002,
+      createTime: 1760000000,
+    );
+    const dirEntry = Qq8GfsEntry(
+      fid: '/docs',
+      pid: '/',
+      name: 'docs',
+      isDir: true,
+      fileCount: 3,
+      uploaderUin: 20001,
+    );
+
+    Widget host(Widget child) => MaterialApp(
+          theme: buildTelegramTheme(),
+          home: Scaffold(body: child),
+        );
+
+    testWidgets('加载中显示 loading，加载完列出文件与目录', (tester) async {
+      final completer = Completer<List<Qq8GfsEntry>>();
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) => completer.future,
+      )));
+      expect(find.byKey(const ValueKey('gf-title')), findsOneWidget);
+      expect(find.text('加载中…'), findsOneWidget);
+
+      completer.complete(<Qq8GfsEntry>[dirEntry, fileEntry]);
+      await tester.pumpAndSettle();
+      expect(find.text('2 个文件'), findsOneWidget);
+      expect(find.byKey(const ValueKey('gf-entry-/docs')), findsOneWidget);
+      expect(find.byKey(const ValueKey('gf-entry-a1b2c3d4')), findsOneWidget);
+      expect(find.textContaining('文件夹 · 3 项'), findsOneWidget);
+      expect(find.textContaining('12.1 KB'), findsOneWidget);
+    });
+
+    testWidgets('点目录进下一层，出现上一级按钮', (tester) async {
+      final asked = <String>[];
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (pid) async {
+          asked.add(pid);
+          if (pid == Qq8Gfs.rootPid) return <Qq8GfsEntry>[dirEntry];
+          return <Qq8GfsEntry>[fileEntry];
+        },
+      )));
+      await tester.pumpAndSettle();
+      expect(asked, <String>[Qq8Gfs.rootPid]);
+      expect(find.byKey(const ValueKey('gf-up')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('gf-entry-/docs')));
+      await tester.pumpAndSettle();
+      expect(asked.last, '/docs');
+      expect(find.byKey(const ValueKey('gf-entry-a1b2c3d4')), findsOneWidget);
+      expect(find.byKey(const ValueKey('gf-up')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('gf-up')));
+      await tester.pumpAndSettle();
+      expect(asked.last, Qq8Gfs.rootPid);
+      expect(find.byKey(const ValueKey('gf-up')), findsNothing);
+    });
+
+    testWidgets('加载失败：把原因显示出来（不假装成功）', (tester) async {
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async => throw const SessionException('当前后端没有群文件能力'),
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('gf-error')), findsOneWidget);
+      expect(find.textContaining('没有群文件能力'), findsOneWidget);
+    });
+
+    testWidgets('空目录显示提示', (tester) async {
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async => <Qq8GfsEntry>[],
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('gf-empty')), findsOneWidget);
+    });
+
+    testWidgets('下载：回调拿到条目，成功后提示落盘路径', (tester) async {
+      Qq8GfsEntry? got;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async => <Qq8GfsEntry>[fileEntry],
+        onDownload: (f) async {
+          got = f;
+          return r'C:\tmp\测试.bin';
+        },
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-download-a1b2c3d4')));
+      await tester.pumpAndSettle();
+      expect(got?.fid, 'a1b2c3d4');
+      expect(find.textContaining('已保存到'), findsOneWidget);
+    });
+
+    testWidgets('删除：确认后回调，未确认不发', (tester) async {
+      var deleted = 0;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async => <Qq8GfsEntry>[fileEntry],
+        onDelete: (_) async => deleted++,
+      )));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('gf-delete-a1b2c3d4')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('gf-delete-dialog')), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(deleted, 0);
+
+      await tester.tap(find.byKey(const ValueKey('gf-delete-a1b2c3d4')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(deleted, 1);
+    });
+
+    testWidgets('上传：回调跑完自动重列一次', (tester) async {
+      var uploads = 0;
+      var loads = 0;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async {
+          loads++;
+          return <Qq8GfsEntry>[fileEntry];
+        },
+        onUpload: () async => uploads++,
+      )));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+
+      await tester.tap(find.byKey(const ValueKey('gf-upload')));
+      await tester.pumpAndSettle();
+      expect(uploads, 1);
+      expect(loads, 2);
+    });
+  });
 }
+
 
 /// 1×1 透明 PNG：足够让 [Image.file] 真的解码成功。
 const List<int> _tinyPng = <int>[

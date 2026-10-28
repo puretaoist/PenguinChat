@@ -28,6 +28,8 @@ import '../../client_api/segment.dart';
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
 import '../../client_api/session.dart';
+import '../../kernel/wlogin8/qq8_file.dart';
+import '../../kernel/wlogin8/qq8_gfs.dart';
 import '../../client_api/session_providers.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
@@ -35,6 +37,7 @@ import '../widgets/message_bubble.dart';
 import '../widgets/chat_actions.dart';
 import '../widgets/face_panel.dart';
 import '../widgets/forward_picker.dart';
+import '../widgets/group_files_panel.dart';
 import '../widgets/group_members_panel.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
@@ -949,6 +952,132 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+
+  /// 打开群文件面板：列目录 / 下载 / 上传 / 删除全走协议线
+  /// （`OidbSvc.0x6d8_1` 列目录、`0x6d6_0` 申请上传、`0x6d6_2` 取下载直链、
+  /// `0x6d6_3` 删文件，上传本体走 highway 的 GroupFile=71）。
+  ///
+  /// 面板是哑的：这里把「怎么拉、怎么存」注入进去，面板只管画。
+  Future<void> _openGroupFiles(Chat chat) async {
+    final gid = chat.rawId;
+    if (gid == null) return;
+    final store = ref.read(chatStoreProvider);
+    await GroupFilesPanel.show(
+      context,
+      title: '${chat.title} · 群文件',
+      loader: (String pid) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('当前后端没有群文件能力（协议线在线才有）');
+        }
+        final page = await svc.fetchGroupFiles(gid, pid: pid);
+        if (page.code != 0) {
+          throw SessionException(
+              '拉群文件失败：${page.message ?? '服务端返回 ${page.code}'}');
+        }
+        return page.entries;
+      },
+      onDownload: (Qq8GfsEntry file) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('群文件要协议线在线才能下载');
+        }
+        final link = await svc.groupFileDownloadUrl(gid, file.fid);
+        final bytes = await Qq8File.downloadHttp(url: link.url);
+        if (store == null) {
+          throw const SessionException('拿不到数据目录，没法落盘');
+        }
+        final dir = Directory(
+            '${store.dataDir.path}${Platform.pathSeparator}downloads');
+        if (!dir.existsSync()) dir.createSync(recursive: true);
+        final out = File(
+            '${dir.path}${Platform.pathSeparator}${_safeFileName(link.name)}');
+        await out.writeAsBytes(bytes, flush: true);
+        return out.path;
+      },
+      onUpload: () => _uploadGroupFile(gid),
+      onDelete: (Qq8GfsEntry file) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('群文件要协议线在线才能删除');
+        }
+        final r = await svc.deleteGroupFile(gid: gid, file: file);
+        if (r.code != 0) {
+          throw SessionException(
+              '删文件失败：${r.message ?? '服务端返回 ${r.code}'}');
+        }
+      },
+    );
+  }
+
+  /// 上传到群文件：先填本地路径 → 申请上传（服务端已有同 md5 就秒传）→
+  /// highway 传本体 → 0x6d9_4 回执。面板拿到返回后会自己重列。
+  Future<void> _uploadGroupFile(int gid) async {
+    final pathCtl = TextEditingController();
+    final nameCtl = TextEditingController();
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('gf-upload-dialog'),
+        backgroundColor: TelegramColors.bgSidebar,
+        title: Text('上传到群文件',
+            style: TextStyle(color: TelegramColors.textPrimary)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text('填本地文件路径（任意类型，建议 ≤ 100 MiB）：'),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('gf-upload-path'),
+              controller: pathCtl,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: r'C:文档说明.pdf'),
+            ),
+            const SizedBox(height: 12),
+            const Text('群里的文件名（留空 = 用原文件名）：'),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('gf-upload-name'),
+              controller: nameCtl,
+              decoration: const InputDecoration(hintText: '说明.pdf'),
+              onSubmitted: (_) => Navigator.of(ctx)
+                  .pop(<String>[pathCtl.text.trim(), nameCtl.text.trim()]),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const ValueKey('gf-upload-ok'),
+            onPressed: () => Navigator.of(ctx)
+                .pop(<String>[pathCtl.text.trim(), nameCtl.text.trim()]),
+            child: const Text('上传'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.isEmpty || result.first.isEmpty) return;
+    final path = result.first;
+    final file = File(path);
+    if (!file.existsSync()) {
+      throw SessionException('找不到文件：$path');
+    }
+    final bytes = await file.readAsBytes();
+    final fallback = path.split(RegExp(r'[\\/]')).last;
+    final name = result.last.isEmpty ? fallback : result.last;
+    final svc = ref.read(qq8LoginServiceProvider);
+    if (!svc.isOnline) {
+      throw const SessionException('群文件要协议线在线才能上传');
+    }
+    if (mounted) _toast('上传中：$name（${bytes.length} 字节）…');
+    await svc.uploadGroupFile(gid: gid, name: name, bytes: bytes);
+    if (mounted) _toast('已上传：$name');
+  }
+
   /// 多选工具条：TG 顶部那条"已选 N 条"。
   Widget _buildSelectionBar(Chat chat) {
     return Container(
@@ -1370,6 +1499,17 @@ class _HomePageState extends ConsumerState<HomePage> {
               ],
             ),
           ),
+          if (chat.isGroup)
+            IconButton(
+              key: const ValueKey('open-group-files'),
+              onPressed: () => unawaited(_openGroupFiles(chat)),
+              icon: Icon(
+                Icons.folder_outlined,
+                color: TelegramColors.textSecondary,
+                size: 22,
+              ),
+              tooltip: '群文件',
+            ),
           IconButton(
             onPressed: _openSettings,
             icon: Icon(

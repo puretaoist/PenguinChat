@@ -3426,3 +3426,70 @@ uploadBody  080110051809221e10cdba9cec02220e1f8b080000000000000346414b4528023204
 **边界**：真机未验证（设备离线）。群/私聊节点只差 3/4/9/14 四个字段，**不要合并成一套**。
 
 
+
+---
+
+## C60. 群文件（GFS）：列表 / 上传 / 下载 / 删除 全链落地
+
+**背景**：C59 的结论里「群文件不能照抄参考实现」是错的 —— 参考实现
+`../analysis/_ref/oicq-src/lib/gfs.ts`（461 行）有完整群文件系统（df/stat/dir/upload/
+download/rm/rename/mv）。群文件是**纯协议**（OIDB + highway），不需要语音那种 SILK
+编解码 native，所以本轮把它接通。
+
+**协议要点（照 gfs.ts，逐条已在 `tool/qq8_gfs_selftest.dart` 里逐字节比对）**
+
+| 动作 | 命令字 | 应答取哪层 |
+|---|---|---|
+| 列目录 | `OidbSvc.0x6d8_1` | `[4][2]` |
+| 取属性 | `OidbSvc.0x6d8_0` | `[4][1]` |
+| 申请上传 | `OidbSvc.0x6d6_0` | `[4][1]` |
+| 取下载地址 | `OidbSvc.0x6d6_2` | `[4][3]` |
+| 删文件 | `OidbSvc.0x6d6_3` | `[4][4]` |
+| 上传回执 | `OidbSvc.0x6d9_4` | `[4][5]` |
+
+- **条目字段**：文件 `1 fid / 2 name / 4 busid / 5 size / 6 createTime / 7 duration /
+  9 downloadTimes / 10 sha1 / 12 md5 / 15 uploader / 16 pid`；目录
+  `1 fid / 2 pid / 3 name / 4 createTime / 6 uploader / 8 fileCount`。
+  列表条目在 `[4][2][5]`，元素内 **`2` 是目录、`3` 是文件**（不是 1/2）。
+- 上传本体走 highway `buCmdId = 71`（`CmdID.GroupFile`），**请求头顶层多一个
+  `3: ext`**（`highway.ts:56-76`），seghead/basehead 里再加 `basehead[10] = 2052`。
+  ext 396B 结构见 `gen_gfs_vectors.py` 的 `uploadExt`；其中 `600` 位置要放 fid、
+  `700` 位置的两处分别塞 **0x6d6_0 与 0x6d6_2 的完整应答体**。
+- **fid 与 pid 都是字符串**且都以 `/` 开头；根目录 `pid == "/"`，进入子目录时
+  把该目录的 **fid 当 pid** 用（没有单独的 dirId）。
+- 申请上传应答里 `10` 非 0 = **秒传**（服务端已有同 md5），此时不要再传本体，
+  直接 0x6d9_4 回执（用 `6`=busid、`7`=fid）。
+
+**落地位置**
+
+- `lib/kernel/wlogin8/qq8_gfs.dart`（新，约 460 行）：`Qq8GfsEntry` / `Qq8Gfs`
+  的组包解包 + `sizeText`（12345 → `12.1 KB`）。
+- `lib/kernel/wlogin8/qq8_image.dart`：`Qq8Highway.buildFrame/upload` 新增
+  `Uint8List? ext, int? netFlag`，null 时与改动前逐字节相同（图片黄金向量不动）。
+  坑：ext 在 **head 顶层 3**，放进 basehead 会撞 `equal_keys_in_map`（3=cmd、4=seq
+  已占用）。
+- `lib/client_api/qq8_login_service.dart`：`fetchGroupFiles` / `groupFileStat` /
+  `groupFileDownloadUrl` / `uploadGroupFile` / `deleteGroupFile`。
+- `lib/ui/widgets/group_files_panel.dart`（新）：**哑视图**，注入
+  `loader(pid)` / `onDownload` / `onUpload` / `onDelete`，自己不认识协议。
+  键位：`gf-title` `gf-count` `gf-error` `gf-empty` `gf-up` `gf-upload`
+  `gf-refresh` `gf-entry-<fid>` `gf-download-<fid>` `gf-delete-<fid>`
+  `gf-delete-dialog` `gf-delete-confirm`。
+- `lib/ui/pages/home_page.dart`：群聊标题栏加文件夹按钮（`open-group-files`，仅
+  `chat.isGroup`）+ `_openGroupFiles(Chat)`（注入 loader / 下载落盘到
+  `<dataDir>/downloads/` / 上传 / 删除）+ `_uploadGroupFile(gid)`（`gf-upload-dialog`
+  `gf-upload-path` `gf-upload-name` `gf-upload-ok`）。
+
+**验证**
+
+- `analysis/scripts/gen_gfs_vectors.py`：独立第二实现（手写 varint），13 组黄金
+  hex；`tool/qq8_gfs_selftest.dart` **29 项全过**（请求体 7 组逐字节、uploadExt 结构
+  5 项、应答解析 12 项、highway 帧 5 项）。
+- `test/message_bubble_test.dart` 新增 GroupFilesPanel 7 条 widget 用例（loading /
+  进目录 / 错误 / 空 / 下载 / 删除确认 / 上传后重列）⇒ `flutter test` **156 项全过**。
+- 全量 42 个 `tool/*_selftest.dart` 失败文件 0；`dart analyze lib` 干净。
+
+**边界**：①真机未验证（设备离线）②只做了列表 / 进子目录 / 上传 / 下载 / 删除；
+建目录（`0x6d7_0`）、删目录（`0x6d7_1`）、改名（`0x6d6_4`）、移动（`0x6d6_5`）、
+群文件转发**还没接**，`deleteGroupFile` 遇到目录会明确抛「删目录还没接（0x6d7_1）」
+③面板没传 `onProgress`，上传进度暂时只在日志里。
