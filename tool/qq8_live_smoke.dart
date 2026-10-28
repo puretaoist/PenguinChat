@@ -856,13 +856,26 @@ Future<void> main(List<String> argv) async {
     }
   }
   final t544Mode = args['t544'] ?? 'official';
-  if (t544Mode != 'official' && t544Mode != 'oicq' && t544Mode != 'oicq-salt') {
-    errOut('✗ --t544 只支持 official / oicq / oicq-salt，收到 "$t544Mode"');
+  if (t544Mode != 'official' &&
+      t544Mode != 'oicq' &&
+      t544Mode != 'oicq-salt' &&
+      t544Mode != 'native') {
+    errOut('✗ --t544 只支持 official / oicq / oicq-salt / native，收到 "$t544Mode"');
     exit(2);
+  }
+  final t544SignHex = args['t544-sign'];
+  if (t544Mode == 'native' &&
+      (t544SignHex == null || t544SignHex.isEmpty)) {
+    errOut('✗ --t544=native 需要 --t544-sign=<hex>');
+    exit(2);
+  }
+  if (t544Mode == 'native') {
+    out('  0x544 真签: ${t544SignHex!.length ~/ 2} 字节');
   }
   out('  0x544 形态: ${switch (t544Mode) {
         'oicq' => 'oicq 布局纯算法真签名（39 字节）',
         'oicq-salt' => '官方 bArr3 布局纯算法真签名（39 字节）',
+        'native' => 'libfekit.so 真签（--t544-sign 提供 hex）',
         _ => '官方降级（默认）',
       }}');
   out('  0x545（QIMEI）: ${qimei == null ? '不发（取不到就是官方行为）' : '发'}');
@@ -913,8 +926,10 @@ Future<void> main(List<String> argv) async {
     t544Mode: switch (t544Mode) {
       'oicq' => Qq8T544Mode.oicq,
       'oicq-salt' => Qq8T544Mode.officialSalt,
+      'native' => Qq8T544Mode.native,
       _ => Qq8T544Mode.officialDegraded,
     },
+    t544NativeBody: t544SignHex == null ? null : _hex(t544SignHex),
     t544SubCmd: useSlider
         ? Qq8SubCmd.slider
         : useSubmitSms

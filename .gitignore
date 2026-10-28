@@ -85,3 +85,7 @@ test/failures/
 
 # 真机导出的 A1 材料（含凭证，绝不入库）
 a1_*.json
+
+# 一次性实验：TIM native 安全库与批处理输入（体积大、非我方所有，不入库）
+android/app/src/main/jniLibs/
+fekit_req.txt

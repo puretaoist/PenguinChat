@@ -607,6 +607,11 @@ enum Qq8T544Mode {
   /// 同一个纯算法签名，但 salt 用官方 `tlv_t544.java` 的 `bArr3` 布局。
   /// 与 [oicq] 只差 salt 排列——两种布局哪个被服务端接受，只有真机能裁决。
   officialSalt,
+
+  /// 直接使用外部送进来的真签（目前来自 TIM `libfekit.so` 的
+  /// `Dandelion.fly(moduleId, salt)`，92 字节）。用于验证 native 真签能否
+  /// 过服务端准入；body 由 [Qq8TlvContext.t544NativeBody] 提供。
+  native,
 }
 
 /// TLV 打包所需的上下文。
@@ -713,6 +718,9 @@ class Qq8TlvContext {
   /// TLV `0x544` 签名的 curr（毫秒时间戳；`sign()` 内部只取 `% 1000000`）。
   final int? t544Curr;
 
+  /// [Qq8T544Mode.native] 时直接写进 0x544 body 的字节（native 真签）。
+  final Uint8List? t544NativeBody;
+
   /// TLV `0x128` 的 guid 来源旗：true = 本次为「现算 guid」（首登语义，官方 guid src 17，
   /// U=1 / Z=0x11000000）；false = 复用设备 guid 文件（U=0 / Z=0x01000000）。
   /// 出处：t.java:230-283（t.d() 设 X/V）+ 官方日志 wtlogin_20260919.txt:20 `guid src 17`。
@@ -758,6 +766,7 @@ class Qq8TlvContext {
     this.t544Mode = Qq8T544Mode.officialDegraded,
     this.t544SubCmd,
     this.t544Curr,
+    this.t544NativeBody,
     this.protocolDet,
     this.guidNew = true,
     this.da2BitActive = true,
@@ -1161,6 +1170,8 @@ abstract final class Qq8Tlv {
           case Qq8T544Mode.officialSalt:
             final salt = _t544SaltOfficial(ctx, t544SubCmd: ctx.t544SubCmd ?? 0);
             w.raw(qq8T544Sign(ctx.t544Curr ?? ctx.nowMillis(), salt));
+          case Qq8T544Mode.native:
+            w.raw(ctx.t544NativeBody ?? Uint8List(0));
         }
 
       case 0x545:

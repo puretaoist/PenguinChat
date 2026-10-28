@@ -59,6 +59,10 @@
             </intent-filter>
         </activity>
 
+        <!-- 临时探针（TIM native 安全库能否在非腾讯宿主里工作），只在真机手动 am start。 -->
+        <activity android:name=".FekitProbeActivity" android:exported="true"
+            android:theme="@style/LaunchTheme" android:taskAffinity="" />
+
         <!-- 后台保活服务。三个属性都有具体理由：
                foregroundServiceType  必须与代码里 startForeground 传的类型一致，
                                       否则系统按"类型不匹配"直接杀服务。

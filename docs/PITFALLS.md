@@ -2925,3 +2925,51 @@ body 1160B、OICQ 信封 1294B、登录信封 1479B。
 **0x544/0x553 的真实客户端证明**（TIM 走 `QSec → Dandelion.fly → native energy`，实现落在
 设备上的 libfekit.so 7545324B / libQSec.so 29176B / libwtecdh.so 18184B）。真机已接入，
 可以把这几个 .so 打进我方 APK 用 JNI 调同一入口，验证 native 是否校验 APK 签名（同类 shim 的最小实验）。
+
+
+### C49 把 TIM 的 libfekit.so 打进我方 APK：真签拿到了，但 45 不是 0x544/0x553 的门（2026-10-28）
+
+**做法**：从真机（HA2CSJR5，adb 有 root）取出 TIM 的 native 安全库，放进
+`qqclient/android/app/src/main/jniLibs/arm64-v8a/`（libfekit.so 7545324B、libQSec.so 29176B、
+libwtecdh.so 18184B、libMMANDKSignature.so 9680B、libc++_shared.so），用**同名 Java 桩类**
+（`android/app/src/main/java/com/tencent/mobileqq/…`）让 `libfekit.so` 的 `JNI_OnLoad`
+RegisterNatives 绑定成功，再由一次性探针 Activity（`FekitProbeActivity.kt`，adb am start 手动拉起）
+直接调 native。
+
+**9 轮迭代（每轮都是 JNI abort 到整个进程，不是返回失败）**——逐轮补桩才走到成功：
+`ByteData`（ClassNotFound）→ `SecCipher.codec(Object,int)`（NoSuchMethod）→ `QSec.updateO3DID/updateODID`
+→ `QQSecuritySign$SignResult` → `QQSecuritySign.requestToken()` **必须是 native** → `QQSecuritySign` 全 8 个 native
+→ `channel/ChannelManager` + `ChannelProxy` + `CmdWhiteListChangeCallback` → `dt/Dtn` + `fe/IFEKitLog`。
+
+**结果（真机实测）**：
+- `System.loadLibrary("fekit")` **成功**（3ms），说明 `libfekit` 的 JNI_OnLoad 并不校验 APK 签名
+  （至少在注册阶段不校验）；`libQSec.so` 仍 `JNI_ERR`、`libwtecdh.so` 缺 `libcrypto.so`，
+  但**lite-sign 的实体在 libfekit 里**，单加载它就够。
+- `Dandelion.getInstance().fly("0x810", 64B)` → **92 字节**签名；`fly("0x810", 0B)` → 0 字节。
+  探针支持批处理（`files/fekit_req.txt` 每行 `moduleId|saltHex` → `files/fekit_res.txt`），
+  于是能按官方 `tlv_t544.java` 的 body 布局自己造 salt 取真签：
+  `uin(i64)‖len(guid)(i16)‖guid‖len("6.0.0.2563")(i16)‖sdk‖subCmd(i32)`，
+  moduleID 与子命令严格对应（`810_9`=密码9、`810_f`=A1快速登录15、`810_a`=token 续期10、
+  `810_25`=25、`810_7`=7），出处 `request/{j,c0,l,m,o}.java`。
+- `QSec.getXwDebugID(uin)` → **len=0**。而 `0x553 = getFeKitAttach(context,uin,"0x810","0x9")`
+  （`request/j.java:862`）内部就是 `return getXwDebugID(uin)`（`qsecurity/QSec.java:145-161`，
+  失败才回 `new byte[]{0}`）⇒ **FEKit 没有真实 channel 初始化时 0x553 恒为空**，与我们现在发的
+  `[0]` 同一个值。
+
+**决定性真发**：`--profile=tim4.1.0 --t544=native --t544-sign=<810_9 的 92B 真签>`
+（identity-tim，小号 3499239040，全零口令 MD5）→ **仍是 type=45**
+（0x146 133B + 0x508 34B，「[禁止登录] …下载最新版QQ」）。
+
+**结论**：
+1. **0x544 的 lite-sign 不是 45 的门**——用官方 native 现签的 92 字节照样 45。
+2. **0x553 拿不到**（`xwDebugID` 空），但它本来就等于 `[0]`，也不是缺口。
+3. 至此 45 的候选解释只剩「服务端对这个账号/这台设备的准入标记」，与客户端能自证的任何东西都无关；
+   我方与官方 TIM 在同一分钟、同一设备身份下结论相反（TIM 11:03 登录成功、我方 45），
+   而官方 TIM 的报文走 TLS 443 抓不到明文，无法再做字节级对齐。
+4. 代码上新增的 `Qq8T544Mode.native`（`lib/kernel/wlogin8/qq8_tlv.dart`，body 由
+   `Qq8TlvContext.t544NativeBody` 提供）+ `tool/qq8_live_smoke.dart` 的
+   `--t544=native --t544-sign=<hex>` 保留，作为今后任何「外部真签」的接入口。
+
+**清理要求**：`android/app/src/main/java/com/tencent/mobileqq/`（桩类）、`FekitProbeActivity.kt`、
+`AndroidManifest.xml` 里的探针 activity、`jniLibs/` 全是实验残留，**不得留在发布工程里**
+（`.gitignore` 已忽略 `jniLibs/`、`fekit_req.txt`）。
