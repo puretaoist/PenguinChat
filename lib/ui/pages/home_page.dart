@@ -1156,6 +1156,27 @@ class _HomePageState extends ConsumerState<HomePage> {
         return out.path;
       },
       onUpload: () => _uploadGroupFile(gid),
+      onCreateDir: (String name) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('建群文件夹要协议线在线');
+        }
+        final r = await svc.createGroupDir(gid: gid, name: name);
+        if (r.code != 0) {
+          throw SessionException(
+              '建文件夹失败：${r.message ?? '服务端返回 ${r.code}'}');
+        }
+      },
+      onRename: (Qq8GfsEntry entry, String name) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('改名要协议线在线');
+        }
+        final r = await svc.renameGroupEntry(gid: gid, entry: entry, name: name);
+        if (r.code != 0) {
+          throw SessionException('改名失败：${r.message ?? '服务端返回 ${r.code}'}');
+        }
+      },
       onDelete: (Qq8GfsEntry file) async {
         final svc = ref.read(qq8LoginServiceProvider);
         if (!svc.isOnline) {

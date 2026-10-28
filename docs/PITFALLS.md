@@ -3550,3 +3550,60 @@ widget 用例（有/无 onMemberMenu 的按钮出现、群设置三回调、无�
 
 **边界**：真机未验证（设备离线）；禁言时长只暴露了 10 分钟与解除两个预设；公告只支持
 纯文本（官方富文本公告是另一条 JCE 通道）。
+
+---
+
+## C62 群文件目录写操作（0x6d7_0 / 0x6d7_1 / 0x6d7_2 / 0x6d6_4 / 0x6d6_5）
+
+**为什么做**：C60 的群文件面板只能列/传/下/删文件，官方 GFS 还有**建目录、删目录、
+改名、移动**五条写命令（参考实现 `lib/gfs.ts`）。全是 OIDB 一发一收，可离线用独立
+Python 第二实现做逐字节向量，补齐后群文件这一块功能完整。
+
+**命令与请求体**（`analysis/_ref/oicq-src/lib/gfs.ts:166-262`）
+
+| 动作 | 命令 | 请求体 | 应答位置 |
+| --- | --- | --- | --- |
+| 建目录 | `OidbSvc.0x6d7_0` | `{1: {1: gid, 2: 0, 3: '/', 4: name}}`（官方只允许建在根目录） | `[4][1]`，目录属性在 `[4][1][4]` |
+| 删目录 | `OidbSvc.0x6d7_1` | `{2: {1: gid, 2: 1, 3: fid}}` | `[4][2]` |
+| 改目录名 | `OidbSvc.0x6d7_2` | `{3: {1: gid, 2: 2, 3: fid, 4: name}}` | `[4][3]` |
+| 改文件名 | `OidbSvc.0x6d6_4` | `{5: {1: gid, 2: 4, 3: busid, 4: fid, 5: pid, 6: name}}` | `[4][5]` |
+| 移动文件 | `OidbSvc.0x6d6_5` | `{6: {1: gid, 2: 5, 3: busid, 4: fid, 5: pid, 6: toPid}}` | `[4][6]` |
+
+注意：**改目录名（0x6d7_2）与改文件名（0x6d6_4）不是一条命令**，前者不带 busid/pid；
+删目录会连带删掉目录下所有文件，UI 必须二次确认。
+
+**落地位置**
+
+- `lib/kernel/wlogin8/qq8_gfs.dart`：5 个 build + 5 个 parse（`parseMkdir` 额外解目录
+  属性），公共判码抽成 `_parseCode(rsp, where)`（缺应答字段返回 `code=-1` 而不是 0）；
+  新增常量 `cmdMkdir/cmdDeleteDir/cmdRenameDir/cmdRenameFile/cmdMoveFile`、
+  `type1DirWrite = 0x6d7`。
+- `lib/client_api/qq8_login_service.dart`：`createGroupDir / renameGroupEntry /
+  moveGroupFile`；`deleteGroupFile` 改为**按 `file.isDir` 内部分流**（文件 0x6d6_3、
+  目录 0x6d7_1），调用方不需要知道自己删的是哪种。
+- `lib/ui/widgets/group_files_panel.dart`：新增 `onCreateDir` / `onRename`；标题栏
+  `gf-newdir` 按钮**只在根目录显示**（官方限制）；目录行现在有 `gf-rename-<fid>` 与
+  `gf-delete-<fid>`，文件行也有 `gf-rename-<fid>`；新建/改名共用一个 `_askName`
+  对话框（`gf-newdir-dialog/gf-newdir-name/gf-newdir-ok`、
+  `gf-rename-dialog/gf-rename-name/gf-rename-ok`）。
+- `lib/ui/pages/home_page.dart`：`_openGroupFiles` 里注入 `onCreateDir`（调
+  `svc.createGroupDir`）与 `onRename`（调 `svc.renameGroupEntry`）。
+
+**验证**：`analysis/scripts/gen_gfs_dir_vectors.py` 独立第二实现产出 7 组 hex；
+`tool/qq8_gfs_selftest.dart` 29→**42 项全过**（5 个请求体逐字节 + 建目录应答解出目录
+属性 + 4 条判码 + 错误码如实返回 + 缺字段返回 -1）；`test/message_bubble_test.dart`
+新增 5 条 widget 用例（新建文件夹、进子目录后按钮消失、重命名目录、名字不变不发请求、
+删目录把 isDir 交给回调）。
+
+**坑**
+
+1. **`TextEditingController` 在 `showDialog` 返回后立刻 `dispose()` 会抛**
+   `A TextEditingController was used after being disposed` —— 对话框退场动画还在用它。
+   改成 `TextFormField(initialValue: ..., onChanged: ...)`，根本不需要 controller。
+2. 目录行的 trailing 从「单个 chevron」变成 Row 之后，**必须保留 chevron 表示可进入**，
+   否则用户不知道点得进去。
+3. `gf-newdir` 只在 `_pid == Qq8Gfs.rootPid` 时渲染 —— 服务端虽然可能接受子目录建，
+   参考实现明确只在根目录建，别自创用法。
+
+**边界**：真机未验证（设备离线）；建目录固定建在根目录；移动**只支持文件**（目录不能
+移动，参考实现同样如此）；群文件转发（`APPLY_FORWARD_FILE-700`）仍未接。

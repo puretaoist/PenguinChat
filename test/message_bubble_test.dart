@@ -1191,8 +1191,106 @@ void main() {
       expect(uploads, 1);
       expect(loads, 2);
     });
+
+    testWidgets('新建文件夹：dialog 输入 → onCreateDir 收到 → 重列一次', (tester) async {
+      String? created;
+      var loads = 0;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async {
+          loads++;
+          return <Qq8GfsEntry>[dirEntry];
+        },
+        onCreateDir: (name) async => created = name,
+      )));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+
+      await tester.tap(find.byKey(const ValueKey('gf-newdir')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('gf-newdir-name')), '  新文件夹  ');
+      await tester.tap(find.byKey(const ValueKey('gf-newdir-ok')));
+      await tester.pumpAndSettle();
+      expect(created, '新文件夹');
+      expect(loads, 2);
+    });
+
+    testWidgets('进子目录后不显示新建文件夹（官方只允许建在根目录）', (tester) async {
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (pid) async => <Qq8GfsEntry>[dirEntry],
+        onCreateDir: (_) async {},
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('gf-newdir')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('gf-entry-/docs')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('gf-newdir')), findsNothing);
+    });
+
+    testWidgets('重命名目录：回调拿到原条目与新名字', (tester) async {
+      Qq8GfsEntry? target;
+      String? newName;
+      var loads = 0;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async {
+          loads++;
+          return <Qq8GfsEntry>[dirEntry];
+        },
+        onRename: (entry, name) async {
+          target = entry;
+          newName = name;
+        },
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-rename-/docs')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('gf-rename-dialog')), findsOneWidget);
+      await tester.enterText(
+          find.byKey(const ValueKey('gf-rename-name')), '资料');
+      await tester.tap(find.byKey(const ValueKey('gf-rename-ok')));
+      await tester.pumpAndSettle();
+      expect(target?.fid, '/docs');
+      expect(target?.isDir, isTrue);
+      expect(newName, '资料');
+      expect(loads, 2);
+    });
+
+    testWidgets('名字没改就点保存不会发请求', (tester) async {
+      var called = 0;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async => <Qq8GfsEntry>[fileEntry],
+        onRename: (_, __) async => called++,
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-rename-a1b2c3d4')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-rename-ok')));
+      await tester.pumpAndSettle();
+      expect(called, 0);
+    });
+
+    testWidgets('删目录：确认后把 isDir 的条目交给回调', (tester) async {
+      Qq8GfsEntry? removed;
+      await tester.pumpWidget(host(GroupFilesPanel(
+        title: '测试群',
+        loader: (_) async => <Qq8GfsEntry>[dirEntry],
+        onDelete: (f) async => removed = f,
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-delete-/docs')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('gf-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(removed?.fid, '/docs');
+      expect(removed?.isDir, isTrue);
+    });
   });
 }
+
 
 
 /// 1×1 透明 PNG：足够让 [Image.file] 真的解码成功。

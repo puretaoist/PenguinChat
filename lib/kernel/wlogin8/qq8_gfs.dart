@@ -130,6 +130,11 @@ abstract final class Qq8Gfs {
   static const String cmdDownload = 'OidbSvc.0x6d6_2';
   static const String cmdDelete = 'OidbSvc.0x6d6_3';
   static const String cmdFeed = 'OidbSvc.0x6d9_4';
+  static const String cmdMkdir = 'OidbSvc.0x6d7_0';
+  static const String cmdDeleteDir = 'OidbSvc.0x6d7_1';
+  static const String cmdRenameDir = 'OidbSvc.0x6d7_2';
+  static const String cmdRenameFile = 'OidbSvc.0x6d6_4';
+  static const String cmdMoveFile = 'OidbSvc.0x6d6_5';
 
   /// 0x6d8 系列（目录/属性）。
   static const int type1Dir = 0x6d8;
@@ -139,6 +144,9 @@ abstract final class Qq8Gfs {
 
   /// 0x6d9 系列（上传完成回执）。
   static const int type1Feed = 0x6d9;
+
+  /// 0x6d7 系列（目录写操作：建/删/改名）。
+  static const int type1DirWrite = 0x6d7;
 
   /// highway 上的群文件业务号（参考实现 `CmdID.GroupFile`）。
   static const int highwayCmdIdGroupFile = 71;
@@ -451,6 +459,131 @@ abstract final class Qq8Gfs {
       message: Qq8Pb.textAt(inner, 2),
       fid: Qq8Pb.textAt(inner, 3) ?? '',
     );
+  }
+
+  // ------------------------------------------- 建目录 / 删目录 / 改名 / 移动
+
+  /// 建目录请求体（`OidbSvc.0x6d7_0`）。官方只允许在**根目录**下建，
+  /// 所以字段 3 恒为 `/`（参考实现 `gfs.ts:166-179`）。
+  static Uint8List buildMkdirBody({
+    required int gid,
+    required String name,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        1: <int, Object?>{
+          1: gid,
+          2: 0,
+          3: rootPid,
+          4: name,
+        },
+      });
+
+  /// 解建目录应答：`[4][1]` 判码，目录属性在 `[4][1][4]`（与文件属性的布局不同）。
+  static ({int code, String? message, Qq8GfsEntry? entry}) parseMkdir(
+    Uint8List payload,
+  ) {
+    final rsp = _msg(_msg(Qq8Pb.decode(payload), 4), 1);
+    if (rsp == null) return (code: -1, message: '应答缺少 [4][1]', entry: null);
+    final code = Qq8Pb.intAt(rsp, 1) ?? 0;
+    final message = Qq8Pb.textAt(rsp, 2);
+    final bytes = Qq8Pb.bytesAt(rsp, 4);
+    return (
+      code: code,
+      message: message,
+      entry: bytes == null ? null : _dirStat(Qq8Pb.decode(bytes)),
+    );
+  }
+
+  /// 删目录请求体（`OidbSvc.0x6d7_1`）。**删目录会连带删掉里面的所有文件**，
+  /// 调用方必须先给用户明确的二次确认。
+  static Uint8List buildDeleteDirBody({
+    required int gid,
+    required String fid,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        2: <int, Object?>{
+          1: gid,
+          2: 1,
+          3: fid,
+        },
+      });
+
+  /// 解删目录应答：`[4][2]`。
+  static ({int code, String? message}) parseDeleteDir(Uint8List payload) =>
+      _parseCode(_msg(_msg(Qq8Pb.decode(payload), 4), 2), '[4][2]');
+
+  /// 改文件名请求体（`OidbSvc.0x6d6_4`）。
+  static Uint8List buildRenameFileBody({
+    required int gid,
+    required int busid,
+    required String fid,
+    required String pid,
+    required String name,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        5: <int, Object?>{
+          1: gid,
+          2: 4,
+          3: busid,
+          4: fid,
+          5: pid,
+          6: name,
+        },
+      });
+
+  /// 解改文件名应答：`[4][5]`。
+  static ({int code, String? message}) parseRenameFile(Uint8List payload) =>
+      _parseCode(_msg(_msg(Qq8Pb.decode(payload), 4), 5), '[4][5]');
+
+  /// 改目录名请求体（`OidbSvc.0x6d7_2`）。注意它和改文件名**不是**一条命令。
+  static Uint8List buildRenameDirBody({
+    required int gid,
+    required String fid,
+    required String name,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        3: <int, Object?>{
+          1: gid,
+          2: 2,
+          3: fid,
+          4: name,
+        },
+      });
+
+  /// 解改目录名应答：`[4][3]`。
+  static ({int code, String? message}) parseRenameDir(Uint8List payload) =>
+      _parseCode(_msg(_msg(Qq8Pb.decode(payload), 4), 3), '[4][3]');
+
+  /// 移动文件请求体（`OidbSvc.0x6d6_5`）：`5` 是原目录 pid、`6` 是目标目录 pid。
+  static Uint8List buildMoveFileBody({
+    required int gid,
+    required int busid,
+    required String fid,
+    required String pid,
+    required String toPid,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        6: <int, Object?>{
+          1: gid,
+          2: 5,
+          3: busid,
+          4: fid,
+          5: pid,
+          6: toPid,
+        },
+      });
+
+  /// 解移动文件应答：`[4][6]`。
+  static ({int code, String? message}) parseMoveFile(Uint8List payload) =>
+      _parseCode(_msg(_msg(Qq8Pb.decode(payload), 4), 6), '[4][6]');
+
+  /// 所有写操作的应答形状都一样（`1`=码、`2`=文案），抽出来。
+  static ({int code, String? message}) _parseCode(
+    Map<int, List<Object>>? rsp,
+    String where,
+  ) {
+    if (rsp == null) return (code: -1, message: '应答缺少 $where');
+    return (code: Qq8Pb.intAt(rsp, 1) ?? 0, message: Qq8Pb.textAt(rsp, 2));
   }
 
   // ------------------------------------------------------------ 内部

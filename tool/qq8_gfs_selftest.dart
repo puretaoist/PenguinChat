@@ -279,6 +279,82 @@ void main() {
           frameExt.last == Qq8Highway.etx &&
           ((frameExt[5] << 24) | (frameExt[6] << 16) | (frameExt[7] << 8) | frameExt[8]) == 3);
 
+  section('六、目录写操作（0x6d7_0/1/2、0x6d6_4/5）');
+
+  check('命令字与参考实现一致',
+      Qq8Gfs.cmdMkdir == 'OidbSvc.0x6d7_0' &&
+          Qq8Gfs.cmdDeleteDir == 'OidbSvc.0x6d7_1' &&
+          Qq8Gfs.cmdRenameDir == 'OidbSvc.0x6d7_2' &&
+          Qq8Gfs.cmdRenameFile == 'OidbSvc.0x6d6_4' &&
+          Qq8Gfs.cmdMoveFile == 'OidbSvc.0x6d6_5');
+
+  check(
+      '建目录请求体 = 黄金向量',
+      _hexOf(Qq8Gfs.buildMkdirBody(gid: gid, name: '新文件夹')) ==
+          '0a1908cdba9cec0210001a012f220ce696b0e69687e4bbb6e5a4b9',
+      _hexOf(Qq8Gfs.buildMkdirBody(gid: gid, name: '新文件夹')));
+  check(
+      '删目录请求体 = 黄金向量',
+      _hexOf(Qq8Gfs.buildDeleteDirBody(gid: gid, fid: fid)) ==
+          '121608cdba9cec0210011a0c613162326333643465356636');
+  check(
+      '改目录名请求体 = 黄金向量',
+      _hexOf(Qq8Gfs.buildRenameDirBody(gid: gid, fid: fid, name: '新文件夹')) ==
+          '1a2408cdba9cec0210021a0c613162326333643465356636220ce696b0e69687e4bbb6e5a4b9');
+  check(
+      '改文件名请求体 = 黄金向量',
+      _hexOf(Qq8Gfs.buildRenameFileBody(
+              gid: gid, busid: busid, fid: fid, pid: '/', name: '新文件夹')) ==
+          '2a2908cdba9cec0210041866220c6131623263336434653566362a012f320ce696b0e69687e4bbb6e5a4b9');
+  check(
+      '移动文件请求体 = 黄金向量',
+      _hexOf(Qq8Gfs.buildMoveFileBody(
+              gid: gid, busid: busid, fid: fid, pid: '/', toPid: '/dir2')) ==
+          '322208cdba9cec0210051866220c6131623263336434653566362a012f32052f64697232');
+
+  final dirStat = Qq8Pb.encode(<int, Object?>{
+    1: '/abc123',
+    2: '/',
+    3: '新文件夹',
+    4: 1760000000,
+    6: uin,
+    8: 0,
+  });
+  final mk = Qq8Gfs.parseMkdir(Qq8Pb.encode(<int, Object?>{
+    4: <int, Object?>{
+      1: <int, Object?>{1: 0, 4: dirStat},
+    },
+  }));
+  check(
+      '解建目录应答：[4][1][4] 是目录属性',
+      mk.code == 0 &&
+          mk.entry != null &&
+          mk.entry!.isDir &&
+          mk.entry!.name == '新文件夹' &&
+          mk.entry!.fid == '/abc123' &&
+          mk.entry!.uploaderUin == uin);
+
+  Uint8List rsp(int outer, int innerTag, {int code = 0, String? msg}) =>
+      Qq8Pb.encode(<int, Object?>{
+        outer: <int, Object?>{
+          innerTag: <int, Object?>{
+            1: code,
+            if (msg != null) 2: msg,
+          },
+        },
+      });
+  check('删目录应答 [4][2] 判码', Qq8Gfs.parseDeleteDir(rsp(4, 2)).code == 0);
+  check('改文件名应答 [4][5] 判码', Qq8Gfs.parseRenameFile(rsp(4, 5)).code == 0);
+  check('改目录名应答 [4][3] 判码', Qq8Gfs.parseRenameDir(rsp(4, 3)).code == 0);
+  check('移动应答 [4][6] 判码', Qq8Gfs.parseMoveFile(rsp(4, 6)).code == 0);
+  final denied = Qq8Gfs.parseDeleteDir(rsp(4, 2, code: 5, msg: '没有权限'));
+  check('应答带错误码时如实返回（不假成功）',
+      denied.code == 5 && denied.message == '没有权限');
+  check('应答缺字段时返回 -1 而不是 0',
+      Qq8Gfs.parseMoveFile(Qq8Pb.encode(<int, Object?>{4: <int, Object?>{}}))
+              .code ==
+          -1);
+
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

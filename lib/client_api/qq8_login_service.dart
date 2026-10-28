@@ -2303,15 +2303,31 @@ class Qq8LoginService {
     return e;
   }
 
-  /// 删除群文件（`0x6d6_3`）。**需已上线**。
+  /// 删除群文件**或目录**。**需已上线**。
   ///
-  /// 只支持文件；目录走 `0x6d7_1`，本层暂未实现（参考实现同样分两条命令）。
+  /// 文件和目录是两条命令（`0x6d6_3` / `0x6d7_1`），但是同一件事，
+  /// 调用方不需要知道自己删的是哪种——按 [file].isDir 内部分流。
+  /// **删目录会连带删掉里面所有文件**，确认由 UI 负责。
   Future<({int code, String? message})> deleteGroupFile({
     required int gid,
     required Qq8GfsEntry file,
   }) async {
-    if (file.isDir) throw Qq8GfsException('删目录还没接（0x6d7_1），只支持删文件');
     final s = _requireOnline();
+    if (file.isDir) {
+      final frame = await s.sendUni(
+        Qq8Gfs.cmdDeleteDir,
+        Qq8Msg.buildOidbWrapper(
+          type1: Qq8Gfs.type1DirWrite,
+          type2: 1,
+          body: Qq8Gfs.buildDeleteDirBody(gid: gid, fid: file.fid),
+          apkVersion: profile.apk.ver,
+        ),
+        timeout: timeout,
+      );
+      final r = Qq8Gfs.parseDeleteDir(frame.payload);
+      _log.i('删除群文件夹 gid=$gid fid=${file.fid} code=${r.code}');
+      return r;
+    }
     final frame = await s.sendUni(
       Qq8Gfs.cmdDelete,
       Qq8Msg.buildOidbWrapper(
@@ -2332,6 +2348,94 @@ class Qq8LoginService {
     return r;
   }
 
+
+
+  /// 建群文件夹（`0x6d7_0`，官方只允许建在**根目录**下）。**需已上线**。
+  Future<({int code, String? message, Qq8GfsEntry? entry})> createGroupDir({
+    required int gid,
+    required String name,
+  }) async {
+    if (name.trim().isEmpty) throw Qq8GfsException('文件夹名字不能为空');
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      Qq8Gfs.cmdMkdir,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1DirWrite,
+        type2: 0,
+        body: Qq8Gfs.buildMkdirBody(gid: gid, name: name.trim()),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = Qq8Gfs.parseMkdir(frame.payload);
+    _log.i('建群文件夹 gid=$gid name=${name.trim()} code=${r.code} '
+        'fid=${r.entry?.fid}');
+    return r;
+  }
+
+  /// 给群文件/目录改名（文件走 `0x6d6_4`、目录走 `0x6d7_2`）。**需已上线**。
+  Future<({int code, String? message})> renameGroupEntry({
+    required int gid,
+    required Qq8GfsEntry entry,
+    required String name,
+  }) async {
+    final newName = name.trim();
+    if (newName.isEmpty) throw Qq8GfsException('新名字不能为空');
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      entry.isDir ? Qq8Gfs.cmdRenameDir : Qq8Gfs.cmdRenameFile,
+      Qq8Msg.buildOidbWrapper(
+        type1: entry.isDir ? Qq8Gfs.type1DirWrite : Qq8Gfs.type1File,
+        type2: entry.isDir ? 2 : 4,
+        body: entry.isDir
+            ? Qq8Gfs.buildRenameDirBody(gid: gid, fid: entry.fid, name: newName)
+            : Qq8Gfs.buildRenameFileBody(
+                gid: gid,
+                busid: entry.busid,
+                fid: entry.fid,
+                pid: entry.pid.isEmpty ? Qq8Gfs.rootPid : entry.pid,
+                name: newName,
+              ),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = entry.isDir
+        ? Qq8Gfs.parseRenameDir(frame.payload)
+        : Qq8Gfs.parseRenameFile(frame.payload);
+    _log.i('群文件改名 gid=$gid fid=${entry.fid} dir=${entry.isDir} '
+        'name=$newName code=${r.code}');
+    return r;
+  }
+
+  /// 把群文件移到另一个目录（`0x6d6_5`）。**需已上线**。
+  Future<({int code, String? message})> moveGroupFile({
+    required int gid,
+    required Qq8GfsEntry file,
+    required String toPid,
+  }) async {
+    if (file.isDir) throw Qq8GfsException('移动只支持文件（目录不能移动）');
+    final s = _requireOnline();
+    final frame = await s.sendUni(
+      Qq8Gfs.cmdMoveFile,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Gfs.type1File,
+        type2: 5,
+        body: Qq8Gfs.buildMoveFileBody(
+          gid: gid,
+          busid: file.busid,
+          fid: file.fid,
+          pid: file.pid.isEmpty ? Qq8Gfs.rootPid : file.pid,
+          toPid: toPid,
+        ),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = Qq8Gfs.parseMoveFile(frame.payload);
+    _log.i('移动群文件 gid=$gid fid=${file.fid} to=$toPid code=${r.code}');
+    return r;
+  }
 
   /// 会话标识（4 字节）当 u32 用——同步 cookie 的 seed（参考实现同款）。
   int _sessionSeedU32() {
