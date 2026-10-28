@@ -286,6 +286,38 @@ class Qq8SessionAdapter implements Session {
             );
     }
 
+    if (segments.any((s) => s is FileSegment)) {
+      if (segments.length != 1 || segments.first is! FileSegment) {
+        throw SessionException('文件暂时只能单独发（文字/表情混排还没做）');
+      }
+      if (key.type != ChatType.private) {
+        throw SessionException('群文件还没接（群文件是另一套命令，还要处理目录）');
+      }
+      final seg = segments.first as FileSegment;
+      final path = seg.file;
+      final f = File(path);
+      if (path.isEmpty || !f.existsSync()) {
+        throw SessionException('这个文件本地没有，发不出去：$path');
+      }
+      final bytes = await f.readAsBytes();
+      final r = await service.sendFile(
+        bytes: bytes,
+        name: seg.name ?? f.uri.pathSegments.last,
+        uid: key.id!,
+      );
+      if (!r.ok) {
+        throw SessionException(
+            '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+      }
+      return Qq8Msg.dmMessageId(
+        peerUin: key.id!,
+        seq: r.seq,
+        rand: r.rand,
+        time: r.time,
+        outgoing: true,
+      );
+    }
+
     final elems = _elemsOf(segments);
     final reply = _replyOf(segments, chatId);
 

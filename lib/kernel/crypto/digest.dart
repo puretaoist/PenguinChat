@@ -33,3 +33,16 @@ Uint8List md5Bytes(List<int> data) {
   digest.doFinal(out, 0);
   return out;
 }
+
+/// SHA-1，返回 20 字节。
+///
+/// 离线文件（`OfflineFilleHandleSvr` 的 1700/highway ext）要 `filesha`，
+/// 官方与参考实现都是裸 SHA-1（参考实现 `common.ts` 的 `sha()`）。
+Uint8List sha1Bytes(List<int> data) {
+  final digest = SHA1Digest();
+  final bytes = data is Uint8List ? data : Uint8List.fromList(data);
+  final out = Uint8List(digest.digestSize);
+  digest.update(bytes, 0, bytes.length);
+  digest.doFinal(out, 0);
+  return out;
+}

@@ -54,6 +54,7 @@ import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_login.dart';
 import '../kernel/wlogin8/qq8_history.dart';
 import '../kernel/wlogin8/qq8_pb.dart';
+import '../kernel/wlogin8/qq8_file.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
@@ -406,6 +407,14 @@ class Qq8LoginService {
   /// （群推送可能走这条通道；icqq 存盘并在需要时读回）。
   Uint8List? _bigdataSigSession;
   Uint8List? _bigdataSessionKey;
+
+  /// bigdata 上传通道的地址（同一份 PushReq 的 `1281.3` 里）。
+  ///
+  /// 离线文件上传是 **HTTP**（`http://<host>:<port>/cgi-bin/httpconn?...`），
+  /// 不像图床那样由 PicUp 回执直接给地址，只能从这条通道拿（参考实现
+  /// `lib/internal/highway.ts:162-171` 用的就是 `sig.bigdata.ip/port`）。
+  String? _bigdataHost;
+  int? _bigdataPort;
 
   /// 取（或首次分配）本次登录流程的 SSO 序号。
   int get _seq => _flowSeq ??= DateTime.now().millisecondsSinceEpoch & 0x7FFF;
@@ -1081,6 +1090,139 @@ class Qq8LoginService {
     return dm
         ? sendC2c(uid: targetUid, elems: <Uint8List>[elem])
         : sendGroup(gid: targetGid!, elems: <Uint8List>[elem]);
+  }
+
+  // ------------------------------------------------------------------
+  // 发文件（私聊离线文件：申请 → HTTP 上传 → 声明完成 → 消息体）
+  // ------------------------------------------------------------------
+
+  /// 发一个**离线文件**（私聊）。**需已上线**。
+  ///
+  /// 链路见 `lib/kernel/wlogin8/qq8_file.dart`：1700 申请拿 fid/ticket →
+  /// 走 bigdata 通道用 HTTP 把数据传上去（服务端已有同 md5 就跳过）→
+  /// 800 声明完成 → 用 `msg_content`（`NotOnlineFile`）发一条消息。
+  ///
+  /// [name] 留空时用 `file<md5>`（与参考实现一致）；[onProgress] 是上传进度。
+  ///
+  /// 群文件是另一套命令（`GROUP_FILE` 系列、还有目录概念），本方法只管私聊。
+  Future<Qq8MsgSendResult> sendFile({
+    required Uint8List bytes,
+    String name = '',
+    required int uid,
+    void Function(double progress)? onProgress,
+    Duration? uploadTimeout,
+  }) async {
+    final s = _requireOnline();
+    final info = Qq8FileInfo.of(name, bytes);
+    _log.i('发文件 私聊 uid=$uid：$info');
+
+    // ① 申请：拿 fid / ticket / 完整响应体
+    final rsp = await s.sendUni(
+      Qq8File.cmdApplyUpload,
+      Qq8File.buildApplyUploadBody(uin: s.uin, peerUin: uid, file: info),
+      timeout: timeout,
+    );
+    final t = Qq8File.parseApplyUpload(rsp.payload);
+    if (!t.ok) {
+      throw Qq8FileException('申请上传被拒：code=${t.code} ${t.message}');
+    }
+    _log.i('1700 回执：$t');
+
+    // ② 传数据：服务端已有同 md5 就跳过（fid 仍按目标换）
+    if (t.alreadyExists) {
+      _log.i('服务端已有同 md5 的文件，跳过上传');
+      onProgress?.call(1);
+    } else {
+      final ch = await _ensureBigdataChannel(s);
+      final ext = Qq8File.buildHighwayExt(
+        uin: s.uin,
+        peerUin: uid,
+        applyUploadResponse: t.rawResponse,
+        file: info,
+        fid: t.fid,
+        ticket: t.ticket,
+        subid: profile.apk.subid,
+      );
+      await Qq8File.uploadHttp(
+        host: ch.host,
+        port: ch.port,
+        uin: '${s.uin}',
+        subid: profile.apk.subid,
+        ticket: ch.ticket,
+        fileMd5: info.md5,
+        data: bytes,
+        ext: ext,
+        timeout: uploadTimeout ?? const Duration(seconds: 300),
+        onProgress: onProgress,
+      );
+      _log.i('文件上传完成：${bytes.length} 字节 → ${ch.host}:${ch.port}');
+    }
+
+    // ③ 声明上传完成
+    final rsp2 = await s.sendUni(
+      Qq8File.cmdUploadSucc,
+      Qq8File.buildUploadSuccBody(uin: s.uin, peerUin: uid, fid: t.fid),
+      timeout: timeout,
+    );
+    if (!Qq8File.parseUploadSucc(rsp2.payload)) {
+      throw Qq8FileException(
+          '上传完成（800）被拒：响应 ${rsp2.payload.length} 字节');
+    }
+
+    // ④ 发消息体
+    final seq = s.nextSeq();
+    final rand = _randomU32();
+    final body = Qq8FileMsg.buildC2cBody(
+      uid: uid,
+      seq: seq,
+      rand: rand,
+      fid: t.fid,
+      md5: info.md5,
+      name: info.name,
+      size: info.size,
+      syncCookieSeed: _sessionSeedU32(),
+      nowSeconds: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      syncR5: _randomU32(),
+      syncR9: _randomU32(),
+      syncR11: _randomU32(),
+    );
+    final rsp3 =
+        await s.sendUni(Qq8Msg.sendCmd, body, seq: seq, timeout: timeout);
+    final r = Qq8Msg.parseSendResponse(rsp3.payload, seq: seq, rand: rand);
+    _log.i('文件消息 uid=$uid fid=${t.fid} code=${r.code} '
+        '${r.ok ? 'ok' : r.message}');
+    return r;
+  }
+
+  /// 取（必要时主动查一次）bigdata 上传通道。
+  ///
+  /// 通道一般由登录后的 `ConfigPushSvc.PushReq`（type=2）下发；没收到时
+  /// 用 `HttpConn.0x6ff_501` 补问一次。
+  Future<({String host, int port, Uint8List ticket})> _ensureBigdataChannel(
+      Qq8Session s) async {
+    final cached = _bigdataSigSession;
+    final host = _bigdataHost;
+    final port = _bigdataPort;
+    if (host != null && port != null && cached != null && cached.isNotEmpty) {
+      return (host: host, port: port, ticket: cached);
+    }
+    _log.i('还没有 bigdata 通道，主动查一次（${Qq8File.cmdBigdataChannel}）');
+    final rsp = await s.sendUni(
+      Qq8File.cmdBigdataChannel,
+      Qq8File.buildBigdataChannelBody(uin: s.uin),
+      timeout: timeout,
+    );
+    final got = Qq8File.parseBigdataChannel(rsp.payload);
+    if (got == null || got.ticket.isEmpty) {
+      throw Qq8FileException('没有 bigdata 上传通道'
+          '（响应 ${rsp.payload.length} 字节，解析不出 ip/port）');
+    }
+    _bigdataHost = got.host;
+    _bigdataPort = got.port;
+    _bigdataSigSession = got.ticket;
+    _log.i('bigdata 通道：${got.host}:${got.port} '
+        'ticket=${got.ticket.length}B');
+    return got;
   }
 
   // ------------------------------------------------------------------
@@ -2001,7 +2143,30 @@ class Qq8LoginService {
                     final m = Qq8Pb.decode(inner);
                     _bigdataSigSession = Qq8Pb.bytesAt(m, 1);
                     _bigdataSessionKey = Qq8Pb.bytesAt(m, 2);
-                    _log.i('bigdata 会话已存（sig_session=${_bigdataSigSession!.length}B key=${_bigdataSessionKey!.length}B）');
+                    // 1281.3 = [{1: 10, 2: [{2: ip(u32), 3: port}]}]（v[1]==10 才是
+                    // 上传通道；参考实现 base-client.ts:612-622）。
+                    final eps = m[3];
+                    if (eps != null) {
+                      for (final e in eps) {
+                        if (e is! Uint8List) continue;
+                        final em = Qq8Pb.decode(e);
+                        if (Qq8Pb.intAt(em, 1) != 10) continue;
+                        final list = em[2];
+                        if (list == null || list.isEmpty) continue;
+                        final first = list.first;
+                        if (first is! Uint8List) continue;
+                        final hm = Qq8Pb.decode(first);
+                        final ip = Qq8Pb.intAt(hm, 2);
+                        final port = Qq8Pb.intAt(hm, 3);
+                        if (ip != null && port != null && port > 0) {
+                          _bigdataHost = Qq8File.u32ToIp(ip);
+                          _bigdataPort = port;
+                        }
+                      }
+                    }
+                    _log.i('bigdata 会话已存（sig_session=${_bigdataSigSession!.length}B '
+                        'key=${_bigdataSessionKey!.length}B '
+                        '通道=${_bigdataHost ?? '-'}:${_bigdataPort ?? '-'}）');
                   }
                 }
               }

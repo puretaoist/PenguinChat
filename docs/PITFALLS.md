@@ -3148,3 +3148,52 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
 - 回 type=2 ⇒ 冷却假设成立，产品按「一次机会 + 30 分钟冷却」交付（已实现）；
 - 仍 type=45 ⇒ 还有别的门，但那也只能在冷却后单发才判得准（连发必然 45，测不出真东西）。
 
+
+---
+
+## C55 · 离线文件（私聊）协议：先做「离线层面可证明」，再谈真机
+
+**背景**：登录线卡在服务端准入（见 C52/C54），真机离线。按用户 m19099 的要求
+转做「其他方面」。审计后选**离线文件消息**：语音要 SILK 编解码器（只有腾讯 native
+有），视频要另一套；文件不用编解码器、能复用图床那套 highway 帧格式、且有 A 级
+参考实现（oicq `lib/friend.ts:415-528` + `lib/internal/highway.ts:162-171`）。
+
+### 落地的文件
+- `lib/kernel/wlogin8/qq8_file.dart`（新）：1700 申请上传 / 800 上传完成 /
+  400 撤回 / 700 转发 / 1200 取直链，各带 build+parse；highway HTTP
+  （`uploadHttp`，逐片 512KB 顺序 POST，最后一片回执的 7 号扩展为空即判校验失败）；
+  `Qq8FileMsg.buildC2cBody`（路由字段 15 + `msg_content` 里套 `NotOnlineFile`）。
+- `lib/kernel/crypto/digest.dart`：补 `sha1Bytes`（文件的 filesha 是**裸 SHA-1**，
+  不是 HMAC；参考实现 `common.ts` 的 `sha()`）。
+- `lib/client_api/qq8_login_service.dart`：`sendFile(...)` 四步串起来；
+  PushReq 的 `1281.3` 现在会解出 **bigdata 上传通道 ip/port**（此前只取了
+  `sig_session`/`session_key`）；没收到通道时用 `HttpConn.0x6ff_501` 主动补问。
+- `lib/client_api/qq8_session_adapter.dart`：`sendMessage` 新增 `FileSegment` 分支
+  （只允许单独发、只支持私聊；群文件是另一套命令 + 目录概念，明确抛错而不是假装成功）。
+- `analysis/scripts/gen_file_vectors.py`（新）：**独立第二实现**——Python 手写
+  varint/protobuf 编码，不引用 oicq、不引用 Dart，产出 15 组黄金 hex。
+- `tool/qq8_file_selftest.dart`（新，29 项）：8 组请求体 + 6 组回执解析 +
+  8 项 HTTP 帧结构 + 3 项摘要 + 4 项 bigdata 通道。
+
+### 关键协议结论（双源核对：参考实现 + 官方 pb FieldMap）
+- 文件走 `MsgBody.msg_content`（字段 **2**，不是 rich_text），内容是
+  `MsgBody_subtype4{1: msg_not_online_file, 2: msg_time}`，里面再套 `NotOnlineFile`。
+- `NotOnlineFile` 只用 `{1 file_type=0, 3 fid, 4 md5, 5 name, 6 size, 9 subcmd=1}`；
+  **57 ticket 在 8.2.11 的 proto 里不存在**（只有 oicq 的转发路径写它），已保留但标注不确定。
+- 私聊路由要换成 `RoutingHead` 的**字段 15**（`{1: 对方uin, 2: 4}`），不是文本的字段 1。
+- 上传地址**不是** 1700 回执给的（图床才是），只能来自 bigdata 通道
+  （`ConfigPushSvc.PushReq` type=2 的 `1281.3`：`[{1:10, 2:[{2: ip(u32), 3: port}]}]`），
+  ticket 用 `1281.1`（sig_session）；请求路径
+  `http://<ip>:<port>/cgi-bin/httpconn?htcmd=0x6FF0087&uin=<uin>`。
+- ext 里 `100.100.700` 必须是 **1700 的完整响应体**，`100.200.700` 是 1700 回执的
+  ticket，`100.300` 是客户端标识（`{100:2,200:'<subid>',300:2,400:'d92615c5',600:4}`）。
+- 1700 的**响应**字段 110 是「服务端已有同 md5」的布尔位，而**请求**字段 110 是 md5
+  本身——同一个 tag 两个方向含义不同，别写反。
+
+### 离线可证的边界（写清楚，别自我感动）
+- 能证明：字段号/顺序/编码规则与**独立第二实现**逐字节一致；帧外层自洽
+  （STX 40 / 头长 / 块长 / ETX 41 / 本片 md5 ≠ 整文件 md5）。
+- 不能证明：服务端是否接受。**真机可用后第一件事**是发一个 1KB 小文件跑全链路；
+  第二件事是确认 `HttpConn.0x6ff_501` 响应里 `1281.3` 的真实层级
+  （`parseBigdataChannel` 现在按两种形态试探，解不出就返回 null 让调用方抛
+  「没有上传通道」，并把响应长度打进日志——**不要瞎猜一个地址去连**）。
