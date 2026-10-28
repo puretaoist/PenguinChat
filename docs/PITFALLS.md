@@ -3098,3 +3098,17 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
 ### 工具教训（本轮真踩）
 
 `tools.read` 默认 **limit=2000 行**；用它读完整大文件再 `write` 回写会把文件**截断**（本轮把 `tool/qq8_live_smoke.dart` 从 2197 行写成 1162 行，靠 `git checkout --` 恢复）。改文件一律用 `edit`（定点替换），不要 read-all + write。
+---
+
+## C53 纯净包 / 实验包分流（2026-10-28）
+
+- 背景：B 路线把 TIM 的 117 个 .so（87MB）+ 24 个 dex 放进了 `android/app/src/main/jniLibs/`，结果**每次 `flutter build apk` 都把它们打进包**（181MB→ 现在实测纯净构建仍带 87MB）。用户要求在用户装的包上不许出现这些库，同时还要继续能做实验。
+- 做法（不引入 product flavor，避免打断现有 `flutter build apk` 与 CI）：`android/app/build.gradle.kts` 新增属性开关 `withTimLibs`（默认 false）。
+  - `withTimLibs=false`（默认，**纯净包**）：包名 `com.example.qqclient`；`sourceSets.main` 不加 `jniLibs-tim`，一个腾讯 .so 都不进包；12 dex（纯 Flutter）。
+  - `withTimLibs=true`（**实验包**）：`applicationIdSuffix = ".test"`（`com.example.qqclient.test`，可与纯净包**同时安装**）+ `versionNameSuffix = "-tim"` + `jniLibs.srcDir("jniLibs-tim")`。
+- so 目录已从 `android/app/src/main/jniLibs/arm64-v8a/` 移到 **`android/app/jniLibs-tim/arm64-v8a/`**（不再属于 main 源集，必须靠开关显式加入）。`.gitignore` 同时忽略两个路径。
+- ⚠️ **`flutter build apk` 不会转发 `ORG_GRADLE_PROJECT_withTimLibs`**：实测 `export ORG_GRADLE_PROJECT_withTimLibs=true && flutter build apk ...` 之后 `withTimLibs` 仍是 false（包名不变、so 不进包）。同一环境下 `./gradlew -q :app:properties` 能看到 `withTimLibs: true`，说明是 flutter tool 清掉了子进程环境。⇒ 实验包必须走 `./gradlew :app:assembleDebug -PwithTimLibs=true`（`gradlew :app:assembleDebug` 本身已包含 Flutter 的 Dart 编译任务，产物路径与 `flutter build apk` 相同：`build/app/outputs/flutter-apk/app-debug.apk`）。
+- 构建日志里加了一行 `logger.lifecycle("[qqclient] withTimLibs=... -> <包名>")`：装错包（把纯净包当实验包）时先看这行，不用解包数 so。
+- 脚本：`repack/build_tim.sh`（gradlew -P + repack4.py 追加 TIM 24 dex + zipalign + apksigner + install）与 `repack/build_pure.sh`（普通 `flutter build apk` + install）。
+- 实测体积（arm64 debug，本机 Flutter）：纯净包 **173MB / 8 个 so / 12 dex**（大头是 `assets/flutter_assets/kernel_blob.bin` 72MB 与三份引擎 libflutter.so，debug 固有）；实验包基包 **242MB / 127 so**，repack 后 **325MB / 127 so / 36 dex**，签名产物 `repack/app-tim-signed.apk`。
+- 遗留：`AndroidManifest.xml` 里仍声明 `.TimCoreProbeActivity`（纯 instrument 用，无 launcher intent-filter）。纯净包里这个类仍被编译进来（只依赖 `libs/tim-stubs.jar` 的 compileOnly 签名），点不到它；如果在纯净包里启动它会因为找不到 TIM 的 .so 在 loadLibrary 处失败并写日志，不影响主流程。若要彻底清掉，改用一个只作用于实验包的 manifest overlay。

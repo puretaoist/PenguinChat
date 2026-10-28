@@ -93,7 +93,7 @@ debug / release、本机 / CI，任意两次构建都能互相覆盖安装。
 手机升级安装会报"签名不一致"。
 
 ---
-
+## 两种包：纯净包 与 实验包（带官方库）2026-10-28 起，本工程能出**两个可共存的包**：| | 纯净包（默认） | 实验包（B 路线） || --- | --- | --- || 包名 | `com.example.qqclient` | `com.example.qqclient.test` || 构建命令 | `flutter build apk --debug --target-platform android-arm64` | `cd android && ./gradlew :app:assembleDebug -PwithTimLibs=true`，再 `python ../repack/repack4.py` + `zipalign` + `apksigner`（即 `bash repack/build_tim.sh`） || 官方 .so | 无 | 127 个（`android/app/jniLibs-tim/arm64-v8a/`，87MB 原始） || dex 数 | 12（纯 Flutter） | 36（12 + TIM 24，由 repack4.py 追加） || 产物 | `build/app/outputs/flutter-apk/app-debug.apk` | `repack/app-tim-signed.apk` |为什么要分开：TIM 那 117 个 .so / 24 个 dex 只服务「官方栈能否在非腾讯宿主里跑」这条实验路线（见 `docs/PITFALLS.md` C49/C52），**纯 Dart 的登录链路一个都不需要**。把 87MB 打进用户装的包里没有任何收益，还会让「这个 App 到底用了多少腾讯代码」说不清楚。⚠️ **`flutter build apk` 不会把 `ORG_GRADLE_PROJECT_withTimLibs` 传进 Gradle 子进程**（实测：`export` 之后 `withTimLibs` 仍是 false，包名不变、so 也不进包）。所以实验包必须走 `./gradlew ... -PwithTimLibs=true`，不要去给 `flutter build` 加环境变量。构建日志里会打一行 `[qqclient] withTimLibs=... -> <包名>`，装错包时先看这一行。实验包与纯净包签名相同但包名不同，所以**可以同时装在一台手机上**——这一点很关键：卸载会连带清掉 `/data/data/<pkg>` 下的登录票据与日志，测一次卸一次等于每次都要重新取证。---
 ## 工作流做了什么
 
 `.github/workflows/build.yml` 的步骤：

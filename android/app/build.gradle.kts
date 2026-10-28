@@ -33,6 +33,27 @@ val gitCommit: String =
 
 val buildTime: String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date())
 
+// ---- 官方库（B 路线实验）开关（2026-10-28）--------------------------------
+// 为什么要这个开关：
+//   为了验证「TIM 官方 dex+native 能否在非腾讯宿主里跑起来」，我们往工程里放了
+//   117 个 TIM 的 .so（87MB）。这些东西只服务那条实验路线，纯 Dart 的登录链路
+//   一个都不需要 —— 但它们在模块目录里时**每次 flutter build 都会被打进包**
+//   （181MB，装到用户手机上毫无必要）。
+// 所以：
+//   * 默认（不带属性）= **纯净包**：包名 com.example.qqclient，不含任何腾讯 so，
+//     jniLibs 目录整个不参与打包；
+//   * -PwithTimLibs=true（或环境变量 ORG_GRADLE_PROJECT_withTimLibs=true）= **实验包**：
+//     包名加 .test 后缀（com.example.qqclient.test，可与纯净包共存），带上 jniLibs-tim。
+// 为什么不走 product flavor：本仓库已有 scripts/build-local.sh 与 CI 文档里的
+//   flutter build apk（不带 --flavor）。一旦定义 flavor，所有不带 --flavor 的
+//   构建都会直接报错，等于把现有构建链全部打断。属性开关对现有命令零影响。
+val withTimLibs: Boolean =
+    (project.findProperty("withTimLibs") as String?)?.toBoolean() == true
+
+// 把结果打进构建日志：装错包（纯净包当实验包用）时第一眼就能在 flutter build
+// 的输出里看到这一行，不用去解包数 so。
+logger.lifecycle("[qqclient] withTimLibs=$withTimLibs" + if (withTimLibs) " -> com.example.qqclient.test" else " -> com.example.qqclient")
+
 android {
     namespace = "com.example.qqclient"
     compileSdk = flutter.compileSdkVersion
@@ -94,6 +115,25 @@ android {
             "API_HOST_OVERRIDE",
             "\"${project.findProperty("qq8ApiHostOverride") ?: ""}\"",
         )
+
+        // 让日志/排障一眼看出这个包装的是哪条线（纯净包=false / 实验包=true）。
+        // 注意：Kotlin 侧**不要**用 BuildConfig 去决定 loadLibrary —— 纯净包里根本没有
+        // 那些 .so，多加判断只是多一条路径。这里只是标记位。
+        buildConfigField("boolean", "TIM_LIBS", "$withTimLibs")
+        if (withTimLibs) {
+            // 实验包与纯净包必须能同时装在一台机器上：否则测一次就要卸载一次，
+            // 而卸载会连带清掉 /data/data 下的票据与日志，取证很麻烦。
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-tim"
+        }
+    }
+
+    sourceSets.getByName("main") {
+        // 87MB 的腾讯 so 只在实验包里参与打包。默认构建的输出里不会出现
+        // libfekit.so 等任何一个 —— 纯净包就该是纯 Flutter + 纯 Dart。
+        if (withTimLibs) {
+            jniLibs.srcDir("jniLibs-tim")
+        }
     }
 
     // 统一签名（2026-09-11）：debug 与 release 共用同一把钥匙 qqclient.p12，
@@ -125,6 +165,13 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    // B 路线实验专用：只为编译期提供 oicq.wlogin_sdk 的**类签名**（不打包进 APK，
+    // 真正的实现由 TIM 的 classes*.dex 提供）。缺了它 TimDataSenderBridge 无法
+    // 声明与 TIM 反射查找完全一致的参数类型。
+    compileOnly(files("libs/tim-stubs.jar"))
 }
 
 flutter {

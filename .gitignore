@@ -87,5 +87,7 @@ test/failures/
 a1_*.json
 
 # 一次性实验：TIM native 安全库与批处理输入（体积大、非我方所有，不入库）
+# 2026-10-28 起 so 移出 main 源集，只在 -PwithTimLibs=true 时被编入实验包
 android/app/src/main/jniLibs/
+android/app/jniLibs-tim/
 fekit_req.txt
