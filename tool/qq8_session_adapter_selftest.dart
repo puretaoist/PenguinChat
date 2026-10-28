@@ -1015,6 +1015,59 @@ Future<void> main() async {
     await tmp.delete(recursive: true);
   }
 
+  // -------------------------------------------------------------------
+  // 准入拒绝冷却（PITFALLS C54）
+  //
+  // 为什么值得一条回归：真机 2026-10-28 的对照实验显示，服务端对这个账号的
+  // 处置会**升级** —— 同参数静默 40 分钟后是 type=2（滑块，能往下走），
+  // 被连续试探 5 次之后立刻变 type=45（禁止登录）。所以「冷却期内不发包」
+  // 是产品正确性，不是体验优化：一旦这条闸坏了，用户每点一次重试都在
+  // 把账号往更难登的方向推。
+  // -------------------------------------------------------------------
+  {
+    final tmp = await Directory.systemTemp.createTemp('qq8-cooldown-');
+    final until = DateTime.now()
+        .add(const Duration(minutes: 30))
+        .toIso8601String();
+    final coolFile =
+        File('${tmp.path}${Platform.pathSeparator}qq8-login-cooldown.json');
+    await coolFile.writeAsString(
+        '{"uin":$_me,"type":45,"until":"$until"}');
+
+    var transportAsked = 0;
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore(),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () {
+        transportAsked++;
+        return Qq8ScriptedTransport(<Uint8List>[]);
+      },
+      timeout: const Duration(seconds: 5),
+    );
+    final c = Qq8ConnectController(service: svc, dataDir: tmp);
+    check('冷却文件存在时控制器能正常构造（不抛）', true);
+    await c.loginWithPassword(_me, 'whatever');
+    check('冷却期内：口令登录一个包都不发（transport 未被请求）',
+        transportAsked == 0, 'transportAsked=$transportAsked');
+    check('冷却期内：状态停在 rejected 且带回 resultType=45',
+        c.status.stage == Qq8LoginStage.rejected && c.status.resultType == 45,
+        '${c.status.stage}/${c.status.resultType}');
+    check('冷却期内：提示给出剩余等待分钟数',
+        (c.status.error ?? '').contains('分钟'), c.status.error ?? '');
+
+    // 冷却文件损坏 / 是垃圾内容时不能崩，也不能永久拦人（当成没有冷却）。
+    await coolFile.writeAsString('not-a-json');
+    final c2 = Qq8ConnectController(service: svc, dataDir: tmp);
+    check('冷却文件是垃圾内容时控制器仍能构造，且状态是干净的 idle',
+        c2.status.stage == Qq8LoginStage.idle, c2.status.stage.name);
+    await c2.shutdown();
+
+    await c.shutdown();
+    await svc.close();
+    await tmp.delete(recursive: true);
+  }
+
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

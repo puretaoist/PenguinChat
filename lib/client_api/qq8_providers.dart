@@ -531,7 +531,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   }) : super(Qq8ConnectStatus.idle) {
     _sub = service.states.listen(_onSnapshot);
     _onSnapshot(service.snapshot);
-    unawaited(_loadCooldownThenAutoLogin());
+    // 冷却记录要在**任何登录动作之前**读到：否则用户装完包立刻点"登录"，
+    // 会在读盘完成前就发包，等于冷却不存在。所以记住这个 Future，
+    // loginWithPassword / autoLoginIfSaved 都先 await 它。
+    _cooldownReady = _loadCooldown();
+    unawaited(_cooldownReady.then((_) => autoLoginIfSaved()));
   }
 
   /// 启动自动登录：票据目录里有号就挑「文件最新修改的那个」用票据续期上线。
@@ -543,6 +547,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   ///   客户端不许进」的结论，自动再问一遍只是白耗尝试次数（真机 2026-10-27
   ///   连吃三记 type=16）。这种情况停在 rejected 让用户看见，等人决定换线。
   Future<void> autoLoginIfSaved() async {
+    await _cooldownReady;
     // ⚠️ Qq8ConnectStatus 没重写 ==（引用比较），必须比 stage 而不是比实例
     if (state.stage != Qq8LoginStage.idle || _busy) return;
     // 本次运行内已经拿到准入拒绝结论：别再自动登，否则就是把同一句拒绝
@@ -635,11 +640,8 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   /// 风控类拒绝码 → 是否需要冷却。
   static bool _isRiskRejection(int? type) => type == 45 || type == 243;
 
-  Future<void> _loadCooldownThenAutoLogin() async {
-    await _loadCooldown();
-    if (!mounted) return;
-    await autoLoginIfSaved();
-  }
+  /// 冷却记录的加载 Future（构造时启动，见构造器里的说明）。
+  Future<void> _cooldownReady = Future<void>.value();
 
   Future<void> _loadCooldown() async {
     try {
@@ -715,6 +717,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   /// [rejectedCooldown] 上方那段——每多打一次，账号风险就升一级，
   /// 从 type=2（能过滑块）掉到 type=45（连滑块都不给）。
   Future<void> loginWithPassword(int uin, String password) async {
+    await _cooldownReady;
     final left = _activeCooldown(uin);
     if (left != null) {
       final mins = (left.inSeconds / 60).ceil();
