@@ -320,6 +320,74 @@ class _HomePageState extends ConsumerState<HomePage> {
     await store.send(chatId, <Segment>[ImageSegment(path)]);
   }
 
+  /// 📄：发本地**文件**（离线文件）。同样用"填路径"的对话框，读文件在适配器里做。
+  ///
+  /// 只支持私聊：群文件是另一套命令、还有目录概念（适配器会明确抛错）。
+  Future<void> _sendFileFromPath() async {
+    final store = ref.read(chatStoreProvider);
+    final chatId = _resolvedChatId;
+    if (store == null || chatId == null) return;
+    if (Chat.parseKey(chatId)?.type != ChatType.private) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('群文件还没接，先用私聊发文件')),
+      );
+      return;
+    }
+    final pathCtl = TextEditingController();
+    final nameCtl = TextEditingController();
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('send-file-dialog'),
+        title: const Text('发送文件'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text('填本地文件路径（任意类型，建议 ≤ 100 MiB）：'),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('send-file-path'),
+              controller: pathCtl,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: r'C:文档说明.pdf'),
+            ),
+            const SizedBox(height: 12),
+            const Text('对方看到的文件名（留空 = 用原文件名）：'),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('send-file-name'),
+              controller: nameCtl,
+              decoration: const InputDecoration(hintText: '说明.pdf'),
+              onSubmitted: (_) => Navigator.of(ctx)
+                  .pop(<String>[pathCtl.text.trim(), nameCtl.text.trim()]),
+            ),
+            const SizedBox(height: 8),
+            const Text('发送时先传到 QQ 的离线文件通道（服务端已有同 md5 就免传），'
+                '再把文件 id 填进消息发出去。',
+                style: TextStyle(fontSize: 12)),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const ValueKey('send-file-ok'),
+            onPressed: () => Navigator.of(ctx)
+                .pop(<String>[pathCtl.text.trim(), nameCtl.text.trim()]),
+            child: const Text('发送'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || result.isEmpty || result.first.isEmpty) return;
+    await store.send(chatId, <Segment>[
+      FileSegment(result.first, name: result.last.isEmpty ? null : result.last),
+    ]);
+  }
+
   /// 打开表情面板：选中的表情以 `/名字` 插到光标处。
   ///
   /// 不直接塞 FaceSegment，是因为输入框里只有文本——协议层本来就认 `/名字`
@@ -1042,6 +1110,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           replyTarget: _replyTarget,
           onSend: _send,
           onAttachImage: () => unawaited(_sendImageFromPath()),
+          onAttachFile: () => unawaited(_sendFileFromPath()),
           onOpenFaces: _openFacePicker,
           onCancelReply: _cancelReply,
         ),
@@ -1112,6 +1181,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           controller: _inputController,
           onSend: _send,
           onAttachImage: () => unawaited(_sendImageFromPath()),
+          onAttachFile: () => unawaited(_sendFileFromPath()),
           onOpenFaces: _openFacePicker,
           onCancelReply: _cancelReply,
         ),

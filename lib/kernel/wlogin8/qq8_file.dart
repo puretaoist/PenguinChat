@@ -473,6 +473,36 @@ abstract final class Qq8File {
     return b.takeBytes();
   }
 
+  /// 把直链内容下载下来（1200 给的 url，一般指向 `ftn_handler`）。
+  ///
+  /// 只做「GET → 收字节」，不解密也不校验（md5 由调用方比：1200 回执里带）。
+  /// [maxBytes] 是硬上限，防止一个坏 url 把内存吃满。
+  static Future<Uint8List> downloadHttp({
+    required String url,
+    Duration timeout = const Duration(seconds: 120),
+    int maxBytes = 100 << 20,
+  }) async {
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      final req = await client.getUrl(Uri.parse(url));
+      req.followRedirects = true;
+      final resp = await req.close().timeout(timeout);
+      if (resp.statusCode != 200 && resp.statusCode != 206) {
+        throw Qq8FileException('下载失败：HTTP ${resp.statusCode}（$url）');
+      }
+      final b = BytesBuilder(copy: false);
+      await for (final chunk in resp.timeout(timeout)) {
+        b.add(chunk);
+        if (b.length > maxBytes) {
+          throw Qq8FileException('文件超过 $maxBytes 字节上限（$url）');
+        }
+      }
+      return b.takeBytes();
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   /// 解析 HTTP 回包：开头 STX、尾巴 ETX，中间 `[头长u32][块长u32][头pb][数据]`。
   static ({int code, int offset, int length, Uint8List? extendInfo}) _parseHttpAck(
       Uint8List body) {

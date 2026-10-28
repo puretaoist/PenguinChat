@@ -1225,6 +1225,67 @@ class Qq8LoginService {
     return got;
   }
 
+  /// 取一个离线文件的下载直链（1200）。需已上线。
+  Future<Qq8FileLink> fetchFileLink({required String fid}) async {
+    final s = _requireOnline();
+    final rsp = await s.sendUni(
+      Qq8File.cmdApplyDownload,
+      Qq8File.buildApplyDownloadBody(uin: s.uin, fid: fid),
+      timeout: timeout,
+    );
+    final link = Qq8File.parseApplyDownload(rsp.payload);
+    _log.i('文件直链 fid=$fid → ${link.url}（${link.size} B）');
+    return link;
+  }
+
+  /// 把一个离线文件**下载到内存**（1200 取直链 → HTTP GET）。
+  ///
+  /// 需要落到磁盘时由调用方写文件——L3 不碰具体存储路径。
+  Future<Uint8List> downloadFile({
+    required String fid,
+    Duration? downloadTimeout,
+    int maxBytes = 100 << 20,
+  }) async {
+    final link = await fetchFileLink(fid: fid);
+    final bytes = await Qq8File.downloadHttp(
+      url: link.url,
+      timeout: downloadTimeout ?? const Duration(seconds: 120),
+      maxBytes: maxBytes,
+    );
+    _log.i('文件下载完成 fid=$fid ${bytes.length} B');
+    return bytes;
+  }
+
+  /// 撤回一个离线文件（400）。需已上线。
+  Future<void> recallFile({required String fid}) async {
+    final s = _requireOnline();
+    final rsp = await s.sendUni(
+      Qq8File.cmdRecall,
+      Qq8File.buildRecallBody(uin: s.uin, fid: fid),
+      timeout: timeout,
+    );
+    if (!Qq8File.parseRecall(rsp.payload)) {
+      throw Qq8FileException('撤回文件被拒（响应 ${rsp.payload.length} 字节）');
+    }
+    _log.i('文件已撤回 fid=$fid');
+  }
+
+  /// 把一个离线文件转发给另一个私聊（700），返回**新的** fid。
+  Future<String> forwardFile({required String fid, required int toUid}) async {
+    final s = _requireOnline();
+    final rsp = await s.sendUni(
+      Qq8File.cmdForward,
+      Qq8File.buildForwardBody(uin: s.uin, peerUin: toUid, fid: fid),
+      timeout: timeout,
+    );
+    final r = Qq8File.parseForward(rsp.payload);
+    if (!r.ok || r.newFid.isEmpty) {
+      throw Qq8FileException('转发文件被拒：${r.message}');
+    }
+    _log.i('文件已转发 fid=$fid → ${r.newFid}（to=$toUid）');
+    return r.newFid;
+  }
+
   // ------------------------------------------------------------------
   // 收消息的"主动取"：拉新消息 / 私聊历史 / 群历史
   // ------------------------------------------------------------------

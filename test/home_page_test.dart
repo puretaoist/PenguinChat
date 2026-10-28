@@ -135,6 +135,32 @@ void main() {
     await _teardownStore(tester);
   });
 
+  testWidgets('发文件：点 📄 → 填路径与文件名 → 真的发出一个 FileSegment', (tester) async {
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('attach-local-file')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('send-file-dialog')), findsOneWidget);
+
+    await tester.enterText(
+        find.byKey(const ValueKey('send-file-path')), r'C:	mp说明.pdf');
+    await tester.enterText(
+        find.byKey(const ValueKey('send-file-name')), 'rename.pdf');
+    await tester.tap(find.byKey(const ValueKey('send-file-ok')));
+    await tester.pumpAndSettle();
+
+    expect(session.sent.length, 1);
+    expect(session.sent.first.chatId, 'private_20002');
+    final seg = session.sent.first.segments.single;
+    expect(seg, isA<FileSegment>());
+    expect((seg as FileSegment).file, r'C:	mp说明.pdf');
+    expect(seg.name, 'rename.pdf');
+    await _teardownStore(tester);
+  });
+
   testWidgets('长按会话 → 菜单出现，置顶真的生效并排到最前', (tester) async {
     await tester.pumpWidget(_wrap());
     await tester.pumpAndSettle();

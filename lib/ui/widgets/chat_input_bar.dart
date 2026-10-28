@@ -19,6 +19,7 @@ class ChatInputBar extends StatelessWidget {
     this.replyTarget,
     required this.onSend,
     required this.onAttachImage,
+    required this.onAttachFile,
     required this.onOpenFaces,
     required this.onCancelReply,
   });
@@ -31,6 +32,7 @@ class ChatInputBar extends StatelessWidget {
   final ChatMessage? replyTarget;
   final VoidCallback onSend;
   final VoidCallback onAttachImage;
+  final VoidCallback onAttachFile;
   final VoidCallback onOpenFaces;
   final VoidCallback onCancelReply;
 
@@ -58,6 +60,18 @@ class ChatInputBar extends StatelessWidget {
                     size: 22,
                   ),
                   tooltip: '发送图片',
+                ),
+                // 📄 发本地文件：走离线文件链路（申请 → HTTP 上传 → 声明完成 →
+                // 消息体），只在私聊里支持（群文件是另一套命令）。
+                IconButton(
+                  key: const ValueKey('attach-local-file'),
+                  onPressed: onAttachFile,
+                  icon: Icon(
+                    Icons.insert_drive_file_outlined,
+                    color: TelegramColors.textSecondary,
+                    size: 22,
+                  ),
+                  tooltip: '发送文件',
                 ),
                 const SizedBox(width: 4),
                 // 表情面板：不依赖连接状态（没连线也能先打字/选表情），
