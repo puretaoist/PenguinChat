@@ -3197,3 +3197,40 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
   第二件事是确认 `HttpConn.0x6ff_501` 响应里 `1281.3` 的真实层级
   （`parseBigdataChannel` 现在按两种形态试探，解不出就返回 null 让调用方抛
   「没有上传通道」，并把响应长度打进日志——**不要瞎猜一个地址去连**）。
+
+---
+
+## C56 文件消息补齐「收」这一半：私聊离线文件不在 elems 里
+
+**症状**：我方已经能**发**文件，但对方发来的文件在气泡里是空的/「不支持显示的消息」。
+
+**根因**：私聊离线文件走的是 `MsgBody.msg_content`（字段 2）= `MsgBody_subtype4`，
+里面 `1 = msg_not_online_file`（`NotOnlineFile`）——**它根本不在 `rich_text.elems` 里**。
+我们收消息只扫 `rich_text`（字段 1）的 elems 与 `ptt`（字段 4），所以这条内容被整段丢掉。
+（群文件是另一条路：`Elem.trans_elem` 字段 5，早就支持了。两条路容易混。）
+
+**改法**：
+- `lib/kernel/wlogin8/qq8_elem.dart` 的 `Qq8ElemScan` 新增 `scanMsgContent(Uint8List)`：
+  解 `subtype4[1]` → `NotOnlineFile` 的 `3=fid 4=md5(字节) 5=文件名 6=大小` → `Qq8FileElem`；
+  畸形数据只丢这一个元素（整段包 try/catch），不影响同一条消息里的文本。
+- `lib/kernel/wlogin8/qq8_push.dart` 的 `qq8ParseMsg` 在扫完 rich_text 后补一句
+  `scan.scanMsgContent(MsgBody[2])`（注意它在 `bodyBytes != null` 分支里，别再写 `?? Uint8List(0)`，
+  那里 bodyBytes 已被提升为非空，多写一次 null-aware 会吃 `dead_code` 警告）。
+
+**判据（`tool/qq8_push_selftest.dart` 新增 12 项，总 108 项）**：
+- `NotOnlineFile{3:'a1b2c3d4e5f6', 4:0..15, 5:'测试.bin', 6:12345}` → 解出 1 个 `Qq8FileElem`，
+  md5 转成小写 hex `000102…0e0f`，`text` 里留 `[文件]`，`elemKinds` 含 `file`，正文文本照旧；
+- `msg_content` 只有 `2: msg_time`（不是 NotOnlineFile）→ 不抛、不产生文件元素、文本不受影响。
+
+**顺带**：
+- `lib/client_api/qq8_login_service.dart` 补齐文件侧的四个服务方法：
+  `fetchFileLink(fid)`（1200）、`downloadFile(fid)`（1200 + HTTP GET，L3 不落盘）、
+  `recallFile(fid)`（400，`parseRecall` 为假抛）、`forwardFile(fid, toUid)`（700，返回**新** fid）。
+- `lib/kernel/wlogin8/qq8_file.dart` 新增 `downloadHttp(url, timeout, maxBytes)`：只收 200/206，
+  超 `maxBytes` 直接抛（别让一个坏 url 把内存吃满）。
+- `tool/qq8_session_adapter_selftest.dart` 的收尾 `tmp.delete(recursive: true)` 在 Windows 上偶发
+  `FileSystemException(32)`（日志/MMKV 句柄没放开）会把 75 项全绿变成 exit 255 —— 已用
+  `on FileSystemException` 吞掉。**判据只看「失败 0 项」与 exit code，别被清理动作骗了。**
+
+**还没做**：文件气泡的点击下载（UI 未接 4 个新 API）；群文件发送；真机端到端。
+

@@ -1065,7 +1065,13 @@ Future<void> main() async {
 
     await c.shutdown();
     await svc.close();
-    await tmp.delete(recursive: true);
+    // Windows 上偶发：日志/MMKV 的句柄还没完全放开，递归删临时目录会抛
+    // FileSystemException(32)。清理失败不该让 75 项判据变成红——吞掉它。
+    try {
+      await tmp.delete(recursive: true);
+    } on FileSystemException {
+      // 忽略：下一次运行会用新目录。
+    }
   }
 
   stdout.writeln('\n${'=' * 62}');

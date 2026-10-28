@@ -502,6 +502,9 @@ Qq8IncomingMessage? qq8ParseMsg(
       final ptt = Qq8Pb.bytesAt(rich, 4);
       if (ptt != null && ptt.isNotEmpty) scan.scanPtt(ptt);
     }
+    // 私聊离线文件也不在 elems 里：它在 MsgBody.msg_content（字段 2）。
+    final msgContent = Qq8Pb.bytesAt(Qq8Pb.decode(bodyBytes), 2);
+    if (msgContent != null && msgContent.isNotEmpty) scan.scanMsgContent(msgContent);
   }
 
   return Qq8IncomingMessage(

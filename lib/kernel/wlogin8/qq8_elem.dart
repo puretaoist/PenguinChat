@@ -518,6 +518,34 @@ class Qq8ElemScan {
     ));
   }
 
+  /// 私聊离线文件：**不在 `rich_text.elems` 里**，而是 `MsgBody.msg_content`
+  /// （字段 2）= `MsgBody_subtype4`，里面 `1 = msg_not_online_file`。
+  ///
+  /// 字段号（NotOnlineFile，官方 `im_msg_body$NotOnlineFile.__fieldMap__`）：
+  /// `3 = file_uuid（fid）4 = file_md5（字节）5 = file_name 6 = file_size`。
+  /// 发送侧也是这条路（见 `qq8_file.dart` 的 `Qq8FileMsg.buildC2cBody`）。
+  void scanMsgContent(Uint8List msgContent) {
+    try {
+      final sub4 = Qq8Pb.decode(msgContent);
+      final fileBytes = Qq8Pb.bytesAt(sub4, 1);
+      if (fileBytes == null) return; // 别的 subtype（图片/音频走 rich_text），不归这里
+      final f = Qq8Pb.decode(fileBytes);
+      final fid = Qq8Pb.textAt(f, 3);
+      final name = Qq8Pb.textAt(f, 5);
+      if (fid == null && name == null) return;
+      kinds.add('file');
+      text.write('[文件]');
+      elems.add(Qq8FileElem(
+        fileId: fid,
+        md5: _hex(Qq8Pb.bytesAt(f, 4)),
+        name: name,
+        size: Qq8Pb.intAt(f, 6),
+      ));
+    } catch (_) {
+      return; // 畸形数据只丢这一个元素，别带崩整条消息
+    }
+  }
+
   /// 短视频（`Elem.video_file`，字段 19）。
   Qq8VideoElem _parseVideo(Uint8List bytes) {
     final v = Qq8Pb.decode(bytes);

@@ -85,10 +85,14 @@ Uint8List _buildPush({
   Map<int, Object?>? richAttr,
   Map<int, Object?>? richExtra,
   Map<int, Object?>? outer,
+  Map<int, Object?>? msgContent,
 }) {
   final rich = <int, Object?>{2: elems, ...?richExtra};
   if (richAttr != null) rich[1] = richAttr;
-  final msg = <int, Object?>{1: head, 3: {1: rich}};
+  final body = <int, Object?>{1: rich};
+  // 私聊离线文件走 MsgBody.msg_content（字段 2），**不在 rich_text.elems 里**
+  if (msgContent != null) body[2] = msgContent;
+  final msg = <int, Object?>{1: head, 3: body};
   if (content != null) msg[2] = content;
   return Qq8Pb.encode(<int, Object?>{
     1: msg,
@@ -733,6 +737,55 @@ void main() {
         again is! Qq8UnknownPush,
         again is Qq8UnknownPush ? '${again.note}' : again.runtimeType.toString());
   }
+  // ----------------------------------------------------------------
+  section('私聊离线文件：MsgBody.msg_content（字段 2）');
+  {
+    // NotOnlineFile：3 = file_uuid（fid）/ 4 = file_md5（字节）/ 5 = 文件名 / 6 = 大小
+    final nof = Qq8Pb.encode(<int, Object?>{
+      3: 'a1b2c3d4e5f6',
+      4: Uint8List.fromList(List<int>.generate(16, (i) => i)),
+      5: '测试.bin',
+      6: 12345,
+    });
+    final push = _buildPush(
+      head: {1: 22222, 2: _me, 3: 9, 5: 1234, 6: 1700000000, 14: '小明'},
+      content: {1: 1, 2: 0, 3: 0},
+      elems: [_textElem('接着'), _flagsElem()],
+      msgContent: {1: nof},
+    );
+    final ev = qq8ParsePush(Qq8PushCmd.pushC2c, push);
+    check('带文件的推送能解析', ev is Qq8MessagePush, ev.runtimeType.toString());
+    if (ev is Qq8MessagePush) {
+      final m = ev.message;
+      final files = m.elems.whereType<Qq8FileElem>().toList();
+      check('解出一个 Qq8FileElem', files.length == 1, '${files.length} 个');
+      if (files.isNotEmpty) {
+        final f = files.first;
+        check('fid = a1b2c3d4e5f6', f.fileId == 'a1b2c3d4e5f6', '${f.fileId}');
+        check('文件名 = 测试.bin', f.name == '测试.bin', '${f.name}');
+        check('大小 = 12345', f.size == 12345, '${f.size}');
+        check('md5 转小写 hex',
+            f.md5 == '000102030405060708090a0b0c0d0e0f', '${f.md5}');
+      }
+      check('纯文本里留 [文件] 占位', m.text.contains('[文件]'), m.text);
+      check('kind 记了 file', m.elemKinds.contains('file'), '${m.elemKinds}');
+      check('正文文本没被文件元素顶掉', m.text.contains('接着'), m.text);
+    }
+
+    // 畸形：msg_content 里没有 1 号字段（不是 NotOnlineFile）→ 不抛、不产生文件元素
+    final badPush = _buildPush(
+      head: {1: 22222, 2: _me, 3: 9, 5: 1234, 6: 1700000000},
+      elems: [_textElem('只有字')],
+      msgContent: {2: 12345},
+    );
+    final badEv = qq8ParsePush(Qq8PushCmd.pushC2c, badPush);
+    check('畸形 msg_content 不炸', badEv is Qq8MessagePush, badEv.runtimeType.toString());
+    if (badEv is Qq8MessagePush) {
+      check('不产生文件元素', badEv.message.elems.whereType<Qq8FileElem>().isEmpty);
+      check('文本照旧', badEv.message.text == '只有字', badEv.message.text);
+    }
+  }
+
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);
