@@ -656,10 +656,12 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
                 key: const ValueKey('qq8-rejected-code')),
           ],
           const SizedBox(height: 8),
-          const Text('这是服务端对该账号的准入结论，不是口令或参数写错——原地重试不会变。',
+          const Text('这是服务端对该账号的准入结论，不是口令或参数写错——原地重试不会变，\n'
+              '而且短时间连打会让账号风险升级（实测：静默 40 分钟后同参数可用，'
+              '被连试 5 次后立刻被拒）。',
               key: ValueKey('qq8-rejected-hint')),
           const SizedBox(height: 4),
-          const Text('可以改用 OneBot 后端登录同一账号，或换一个账号 / 设备。'),
+          const Text('请先停手等 30 分钟以上，再用这个账号试一次；仍不行就换账号 / 设备。'),
         ];
       case Qq8LoginStage.failed:
       case Qq8LoginStage.disconnected:

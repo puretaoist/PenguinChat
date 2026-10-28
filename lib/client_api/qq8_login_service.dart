@@ -2137,11 +2137,13 @@ class Qq8LoginService {
       tgt: token?.tgt ?? Uint8List(0),
       srmToken: Uint8List(0),
       t547: _t547,
-      // 维护版 oicq v1.26.25：密码首登包带客户端自构造 PoW（0x548）；
-      // token 续期与手机号短信那条线不发。滑块提交走 buildSlider（清单里没有 548）。
-      t548: (token == null && !smsLogin && profile.apk.ssoVer > 12)
-          ? qq8BuildClientPow548().body
-          : null,
+      // 0x548 官方只有一条路径：服务端在 0x547/0x546 里下发挑战，客户端解完
+      // 放进 t.an（pow/b.java:65）才会带。我们自己造一份 PoW 是维护版 oicq 的
+      // 土办法，官方包里从来没有（TIM 密码首登 body 1038B，不含 0x548）。
+      // 2026-10-28 实测：造它只会让包长从 1070 涨到 1558，且服务端回 45 的概率
+      // 明显更高 —— 所以 lib 侧不再自造，只保留官方 an 路径。
+      // （CLI 仍有 --pow / --no-pow 开关用于对照实验，见 tool/qq8_live_smoke.dart）
+      t548: null,
       // 短信登录那次：盐用流程里拿到的 msalt（0x106 密钥种子 / 0x184 都用它），
       // 登录类型 3，账号串写手机号。
       msalt: smsLogin ? _smsMsalt : 0,
@@ -2615,7 +2617,8 @@ class Qq8LoginService {
     final rejected = Qq8LoginResultType.isServerRejected(r.type);
     if (rejected) {
       final why = msg == null ? '无文案' : msg.$1;
-      _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试，需换线（OneBot）或换账号/设备');
+      _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试；'
+          '这类拒绝与组包参数无关，连续重试只会让账号风险更高，请等待一段时间后再试一次');
     }
     _emit(Qq8LoginSnapshot(
       stage: rejected ? Qq8LoginStage.rejected : Qq8LoginStage.failed,
@@ -2972,7 +2975,8 @@ class Qq8LoginService {
         // 真机 2026-10-27 现场：票据续期连吃三记 type=16，三轮退避（2s/4s/6s）
         // 每轮都把同一句「服务端拒绝」再问一遍——既救不回来，又白耗尝试次数、
         // 给账号再添三条可疑记录。这种拒绝是服务端对「这个账号 + 这一代客户端」
-        // 的结论，换时间点不会变；要变只能换线（OneBot）或换账号/设备。
+        // 的结论。而且连打会让账号风险升级（真机 2026-10-28：静默 40 分钟后
+        // type=2，被连续尝试 5 次后同一参数立刻变 type=45），所以要停手。
         // 所以直接退出，把 _snapshot 停在 rejected 让 UI 说清楚。
         if (_snapshot.stage == Qq8LoginStage.rejected) {
           _log.w('断线恢复遇到服务端准入拒绝（type=${_snapshot.resultType}），停止重试');

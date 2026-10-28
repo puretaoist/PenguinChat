@@ -531,7 +531,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   }) : super(Qq8ConnectStatus.idle) {
     _sub = service.states.listen(_onSnapshot);
     _onSnapshot(service.snapshot);
-    unawaited(autoLoginIfSaved());
+    unawaited(_loadCooldownThenAutoLogin());
   }
 
   /// 启动自动登录：票据目录里有号就挑「文件最新修改的那个」用票据续期上线。
@@ -570,6 +570,14 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
           best = u;
         }
       }
+      // 冷却期内连**自动**登录也不做：票据链虽然走的是子命令 11（不吃 45），
+      // 但整个账号处在风控观察期时，少一次陌生客户端的连接就少一次风险信号。
+      final left = _activeCooldown(best);
+      if (left != null) {
+        log?.call('w', '启动自动登录跳过：该账号冷却中（还剩 '
+            '${(left.inSeconds / 60).ceil()} 分钟）');
+        return;
+      }
       log?.call('i', '启动自动登录：用保存的票据登录 $best');
       await loginWithToken(best);
     } on Object catch (e) {
@@ -596,6 +604,98 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   StreamSubscription<Qq8LoginSnapshot>? _sub;
   Qq8LoginSnapshot _snap = const Qq8LoginSnapshot(stage: Qq8LoginStage.idle);
   bool _busy = false;
+
+  // ------------------------------------------------------------------
+  // 准入拒绝冷却（跨进程持久化）
+  // ------------------------------------------------------------------
+  //
+  // 为什么需要它：真机 2026-10-28 的对照实验显示，服务端对这个账号的处置是
+  // **会升级的** —— 16:43 与 17:23 同参数都是 type=2（滑块，正常流程），
+  // 17:35–17:41 手机端连试 5 次（含 type=16 与 45）之后，17:44 用**完全相同
+  // 的参数**连发 3 次全部变成 type=45（禁止登录）。
+  //
+  // 也就是说「多试几次总会成功」是错的：每多打一次，账号风险就涨一格，
+  // 最后连滑块都不给了。产品必须做到「被拒后停手」——而且这条结论必须
+  // **跨进程**记住，否则用户杀进程重开、或冷启动自动登录，又把次数烧掉。
+  //
+  // 只对「风控类」拒绝码生效（45 禁止登录 / 243 不安全环境）；票据类
+  // （16 身份失效 / 155）不在此列，那是票的问题，重登一次换票是正常动作。
+  static const Duration rejectedCooldown = Duration(minutes: 30);
+
+  /// 冷却截止时间（null = 没有冷却）。
+  DateTime? _cooldownUntil;
+
+  /// 冷却针对的账号与拒绝码（只用于文案，不参与判断）。
+  int? _cooldownUin;
+  int? _cooldownType;
+
+  File get _cooldownFile =>
+      File('${dataDir.path}${Platform.pathSeparator}qq8-login-cooldown.json');
+
+  /// 风控类拒绝码 → 是否需要冷却。
+  static bool _isRiskRejection(int? type) => type == 45 || type == 243;
+
+  Future<void> _loadCooldownThenAutoLogin() async {
+    await _loadCooldown();
+    if (!mounted) return;
+    await autoLoginIfSaved();
+  }
+
+  Future<void> _loadCooldown() async {
+    try {
+      if (!await _cooldownFile.exists()) return;
+      final raw = await _cooldownFile.readAsString();
+      if (raw.trim().isEmpty) return;
+      final j = jsonDecode(raw);
+      if (j is! Map) return;
+      final until = DateTime.tryParse('${j['until'] ?? ''}');
+      if (until == null) return;
+      _cooldownUntil = until;
+      _cooldownUin = (j['uin'] as num?)?.toInt();
+      _cooldownType = (j['type'] as num?)?.toInt();
+      if (DateTime.now().isBefore(until)) {
+        log?.call('w', '上次被服务端拒绝（type=$_cooldownType），冷却到 '
+            '${until.toIso8601String()}，期间不自动登录');
+      }
+    } on Object catch (e) {
+      log?.call('w', '读取登录冷却记录失败（忽略）', e);
+    }
+  }
+
+  Future<void> _recordCooldown(int uin, int type) async {
+    final until = DateTime.now().add(rejectedCooldown);
+    _cooldownUntil = until;
+    _cooldownUin = uin;
+    _cooldownType = type;
+    try {
+      await _cooldownFile.parent.create(recursive: true);
+      await _cooldownFile.writeAsString(jsonEncode(<String, Object?>{
+        'uin': uin,
+        'type': type,
+        'until': until.toIso8601String(),
+      }));
+    } on Object catch (e) {
+      log?.call('w', '写入登录冷却记录失败（忽略）', e);
+    }
+  }
+
+  Future<void> _clearCooldown() async {
+    _cooldownUntil = null;
+    _cooldownUin = null;
+    _cooldownType = null;
+    try {
+      if (await _cooldownFile.exists()) await _cooldownFile.delete();
+    } on Object catch (_) {}
+  }
+
+  /// 当前生效的冷却（对该账号）；返回 null = 不冷却。
+  Duration? _activeCooldown(int uin) {
+    final until = _cooldownUntil;
+    if (until == null) return null;
+    if (_cooldownUin != null && _cooldownUin != uin) return null;
+    final left = until.difference(DateTime.now());
+    return left.isNegative ? null : left;
+  }
   Qq8SessionAdapter? _adapter;
   ChatStore? _store;
 
@@ -610,8 +710,27 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   ChatStore? get store => _store;
 
   /// 口令登录（口令只在本进程内转 MD5，不落盘）。
-  Future<void> loginWithPassword(int uin, String password) =>
-      _run(() => service.loginWithPassword(uin: uin, password: password));
+  ///
+  /// 冷却期内的点击**不发包**：直接给出「等 N 分钟」的提示。理由见
+  /// [rejectedCooldown] 上方那段——每多打一次，账号风险就升一级，
+  /// 从 type=2（能过滑块）掉到 type=45（连滑块都不给）。
+  Future<void> loginWithPassword(int uin, String password) async {
+    final left = _activeCooldown(uin);
+    if (left != null) {
+      final mins = (left.inSeconds / 60).ceil();
+      log?.call('w', '登录冷却中（type=$_cooldownType，还剩 $mins 分钟），本次不发起网络请求');
+      _snap = Qq8LoginSnapshot(
+        stage: Qq8LoginStage.rejected,
+        uin: uin,
+        resultType: _cooldownType,
+        error: '服务端上次拒绝了这个账号（type=$_cooldownType）。'
+            '短时间内重复尝试会让风控升级，请等约 $mins 分钟后再试一次。',
+      );
+      _emit();
+      return;
+    }
+    await _run(() => service.loginWithPassword(uin: uin, password: password));
+  }
 
   /// 用本地票据登录（不需要口令）。
   Future<void> loginWithToken(int uin) =>
@@ -684,6 +803,16 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   void _onSnapshot(Qq8LoginSnapshot s) {
     _snap = s;
+    // 上线 = 这个账号现在放行了，冷却作废。
+    if (s.stage == Qq8LoginStage.online) {
+      unawaited(_clearCooldown());
+    }
+    // 风控类拒绝 → 记一条冷却，跨进程生效。
+    if (s.stage == Qq8LoginStage.rejected &&
+        s.uin != null &&
+        _isRiskRejection(s.resultType)) {
+      unawaited(_recordCooldown(s.uin!, s.resultType!));
+    }
     if (s.stage == Qq8LoginStage.online && _adapter == null) {
       unawaited(_attach());
     }

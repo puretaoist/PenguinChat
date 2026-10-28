@@ -3112,3 +3112,39 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
 - 脚本：`repack/build_tim.sh`（gradlew -P + repack4.py 追加 TIM 24 dex + zipalign + apksigner + install）与 `repack/build_pure.sh`（普通 `flutter build apk` + install）。
 - 实测体积（arm64 debug，本机 Flutter）：纯净包 **173MB / 8 个 so / 12 dex**（大头是 `assets/flutter_assets/kernel_blob.bin` 72MB 与三份引擎 libflutter.so，debug 固有）；实验包基包 **242MB / 127 so**，repack 后 **325MB / 127 so / 36 dex**，签名产物 `repack/app-tim-signed.apk`。
 - 遗留：`AndroidManifest.xml` 里仍声明 `.TimCoreProbeActivity`（纯 instrument 用，无 launcher intent-filter）。纯净包里这个类仍被编译进来（只依赖 `libs/tim-stubs.jar` 的 compileOnly 签名），点不到它；如果在纯净包里启动它会因为找不到 TIM 的 .so 在 loadLibrary 处失败并写日志，不影响主流程。若要彻底清掉，改用一个只作用于实验包的 manifest overlay。
+
+---
+
+## C54 「type=45」的真因是风控降级，不是组包参数（2026-10-28，修正 C52）
+
+用户给了手机侧两份 App 日志（实验包 `qqclient-log-0.1.0_1-20261028-174121.txt`、纯净包 `...-174135.txt`），两份都是同一份 Dart 代码、只差 so/dex，行为完全一致：**8.2.11 档案 24/25 项 TLV → 45；TIM 档案 27/28 项（含自造 0x548 + 0x553 + 0x542）→ 45；票据链 subCmd=11 → 16**。
+
+把 `%TEMP%/qqclient-logs` 里 106 份响应与 299 份运行日志全量统计后，时间线决定性：
+
+| 时间 | 档案 | 0x548 | 结果 |
+|---|---|---|---|
+| 16:43 | tim4.1.0 | 无 | **type=2**（滑块，body 1070B） |
+| 17:23 | tim4.1.0 | 无 | **type=2** |
+| 17:35–17:41（手机端 5 次） | 混合 | 有/无 | 16 / 45 |
+| 17:44（我用**完全相同的参数**连发 3 次） | tim4.1.0 | 无 | **全部 type=45** |
+
+16:43 / 17:23 / 17:44 之间唯一的变化，是中间那 5 次尝试。⇒ **45 不是「包写错了」，而是服务端对这个账号的风控降级**：先给 type=2（滑块，正常流程），被连续试探若干次后升级为 type=45（连滑块都不给，文案伪装成「版本过低 / 请下载最新版」）。C52 把「自造 0x548」当 45 的真因属于**时间巧合**——0x548 不官方这一点仍然成立（官方 TIM 密码首登 pack 里没有它），但它不是 45 的开关。
+
+副产品：0x508 的 `userBuf[27]` 尾部就是回显的 type（45→0x2d、16→0x10），不是风险 id，别指望从 0x508 里读出判据。
+
+### 因此改了三处代码（都是产品行为，不是实验开关）
+
+1. `lib/client_api/qq8_login_service.dart` 的 `_tlvCtx()`：`t548: null`。**lib 侧不再自造 0x548 PoW**（C52 是只加了 CLI 的 `--no-pow`，App 一直在自造）。官方只有一条 0x548 路径：服务端在 0x547/0x546 下发挑战、客户端解完放进 `t.an` 才带。CLI 保留 `--pow/--no-pow` 做对照。
+2. `lib/client_api/qq8_providers.dart` 的 `Qq8ConnectController`：新增**准入拒绝冷却**（`rejectedCooldown = 30 分钟`，落 `<dataDir>/qq8-login-cooldown.json`，跨进程）。
+   - `_onSnapshot`：`stage == rejected` 且 `resultType` 是风控码（45 / 243）→ 记冷却；上线 → 清冷却。
+   - `loginWithPassword`：冷却期内**直接不发包**，只把「等 N 分钟」写进 status（`stage=rejected` + `resultType`）。这是关键：用户的直觉是「多点几次」，而实测每多打一次风险就升一级。
+   - `autoLoginIfSaved`：冷却期内连自动票据登录也跳过（票据链虽不吃 45，但观察期里少一次陌生连接就少一个风险信号）。
+   - 票据类拒绝（16 身份失效 / 155）**不冷却**——那是票的问题，重登换票是正常动作。
+3. UI 文案去 OneBot 化（用户 m16818 已否决 OneBot 路线）：`qq8_login_service.dart` 的 rejected 日志、`reconnect()` 注释、`qq8_connect_page.dart` 的 rejected 提示改成「请先停手等 30 分钟以上，再用这个账号试一次；仍不行就换账号 / 设备」。
+
+### 待验证（下一步唯一有价值的实验）
+
+静默 ≥30–60 分钟后，**只发一次** `tim4.1.0 + --no-pow` 探针：
+- 回 type=2 ⇒ 冷却假设成立，产品按「一次机会 + 30 分钟冷却」交付（已实现）；
+- 仍 type=45 ⇒ 还有别的门，但那也只能在冷却后单发才判得准（连发必然 45，测不出真东西）。
+
