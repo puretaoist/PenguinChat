@@ -1125,7 +1125,15 @@ Future<void> main(List<String> argv) async {
   // ---------- 真发 ----------
   out('');
   out('--- 连接 ---');
-  final tran = Qq8TcpTransport();
+  final hostArg = args['host'];
+  final portArg = int.tryParse(args['port'] ?? '');
+  final tran = (hostArg == null || hostArg.isEmpty) && portArg == null
+      ? Qq8TcpTransport()
+      : Qq8TcpTransport(
+          host: (hostArg == null || hostArg.isEmpty) ? qq8DefaultHost : hostArg,
+          port: portArg ?? qq8DefaultPort,
+          fallbacks: const <Qq8Endpoint>[],
+        );
   out('  目标: ${tran.host}:${tran.port}');
   _log.i('连接 ${tran.host}:${tran.port}');
 

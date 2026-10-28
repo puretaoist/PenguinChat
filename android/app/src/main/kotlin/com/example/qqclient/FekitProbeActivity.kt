@@ -55,6 +55,13 @@ class FekitProbeActivity : Activity() {
         step("QSec.doSomething(ctx, 2)") {
             sb.append("     -> rc=${QSec.getInstance().probeDoSomething(this, 2)}\n")
         }
+        for (sub in listOf("0x9", "0xf", "0xa", "0x19", "0x7", "0x14")) {
+            step("QSec.getFeKitAttach(uin,\"0x810\",\"$sub\")") {
+                val r = QSec.getInstance().probeFeKitAttach(this, "3499239040", "0x810", sub)
+                val hx = r?.joinToString("") { "%02x".format(it) } ?: "null"
+                sb.append("     -> len=${r?.size ?: -1} hex=$hx\n")
+            }
+        }
 
         // ── 批处理：喂任意 moduleId + salt，取真签 ──
         val req = File(filesDir, "fekit_req.txt")

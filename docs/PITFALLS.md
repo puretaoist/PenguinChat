@@ -2973,3 +2973,77 @@ RegisterNatives 绑定成功，再由一次性探针 Activity（`FekitProbeActiv
 **清理要求**：`android/app/src/main/java/com/tencent/mobileqq/`（桩类）、`FekitProbeActivity.kt`、
 `AndroidManifest.xml` 里的探针 activity、`jniLibs/` 全是实验残留，**不得留在发布工程里**
 （`.gitignore` 已忽略 `jniLibs/`、`fekit_req.txt`）。
+
+---
+
+## C50（2026-10-28）五项对照实验：一切客户端变量都不是 45 的门
+
+按「密码登录还能从哪突破」清单执行第 1/2/3/5/6 项，**全部为负**，但把可用空间彻底封死：
+
+### C50-1 TIM 常量逐项核对（清单第 1 项）—— 已全部对齐
+- TIM 4.1.0 `tlv_t18`：`_sso_version = 1536`、body 22B = `u16(1) ‖ u32(1536) ‖ u32 ‖ u32 ‖ u32 ‖ u16 ‖ u16(0)`
+  ⇒ 我方 `qq8_tlv.dart` `case 0x18` 就是 `u16(1); u32(1536); u32(appid); u32(0); u32(uin); u16(0); u16(0)`，**一致**。
+- TIM `tlv_t100`：`_sso_ver = 22`、22B；调用点 `m.java:143`
+  `get_tlv_100(async_context._appid, _sub_appid, 0, _main_sigmap)`
+  ⇒ 实证字段序 = **appid ‖ subAppId ‖ 0 ‖ mainSigMap**，我方同序同值（TIM subid `537298353`、mainSigMap `34869472`）。
+- TIM `tlv_t177` 调用点 `j.java:466`：`get_tlv_177(1724313621L, "6.0.0.2563")`
+  ⇒ 我方 `case 0x177` = `u8(1) ‖ u32(buildtime) ‖ tlv(sdkver)`，TIM 档案 buildtime=`1724313621`、sdkver=`6.0.0.2563`，**一致**。
+  （8.2.11 档案则是 `1784552169` / `6.0.0.2591`——各自代际自带值，本来就分开维护。）
+- `0x191` 单字节 `0x82`、`0x185` = `01 01`：与 TIM `j.java:551/482` 一致。
+- **结论：清单第 1 项（TIM 沿用 QQ 常量）不成立**——三处常量三代同源或已分档案维护，没有这一刀。
+
+### C50-2 `0x146` / `0x508` 结构（清单第 2 项）—— 无结构化风险码
+用 `--unwrap-file=<响应json> --dump-tlv=0x146`（离线用 `share_key` 全解，不联网）dump 了 5 条响应：
+
+```
+0x146 body = u32 type ‖ u16 len(title) ‖ title(UTF-8) ‖ u16 len(content) ‖ content(UTF-8) ‖ u32 0
+0x508 body = u8 1 ‖ u32 1000 ‖ u8 0 ‖ u8 27 ‖ u8 2 ‖ 3B 0 ‖ u8 16 ‖ u32 subAppId ‖ u16 0x0810(=2064)
+             ‖ 3B 0 ‖ u8 type ‖ 4B 0 ‖ u32 <每次不同> ‖ u32 type
+```
+- `0x146` 里**只有 type + 标题 + 文案**，没有任何 risk id / 引导码 / 处置码字段。
+- `0x508` 里唯一有信息量的是 **回显的 subAppId**（TIM 档案 `537298353` / QQ 档案 `537064117`，两批样本正好对应）与 **type 双写**；`@26..30` 那个 u32 每条都不同，是随机/时间值。
+- ⇒ 服务端**不下发**拒绝原因，只给话术；「解响应体拿判据」这条路关闭。
+
+### C50-3 换接入点（清单第 3 项）—— 与集群无关
+新增 `--host/--port`（`tool/qq8_live_smoke.dart`，`Qq8TcpTransport(host:, port:, fallbacks: const [])`）。三组真发（8.2.11 + identity-25091RP04C + 全零口令）：
+| 端点 | 结果 |
+| `msf.3g.qq.com:8080` | 连接失败（该域不接明文 8080） |
+| `153.3.46.86:443` | 已连接，276B，**type=45**，文案「你当前使用的QQ版本过低…」 |
+| `43.137.59.88:8080` | 已连接，276B，**type=45**，同一文案 |
+注意：换集群后响应从 308B 缩到 **276B**、文案也换了一句 ⇒ 45 的文案由接入侧模板决定，但**结论码恒 45**。
+
+### C50-4 其他子命令（清单第 5 项）—— 无独立密码入口
+TIM `request/*.java` 的 `this.k`（TIM 用 `k` 不用 `u`）与 `this.l`（命令字）全表：
+| k | 类 | 命令字 | 用途/证据 |
+| 1 | d0 | wtlogin.trans_emp | 取码（二维码） |
+| 2 | n | wtlogin.login | 滑块检查（t104/t105/t165） |
+| 3 | q | wtlogin.login | 只有 `c()` 响应处理（t104/105/165/161/546）⇒ 校验/引导，无请求体 |
+| 4 | t | wtlogin.name2uin | 手机号→uin |
+| 7 | o | wtlogin.login | 检查类（t116 等） |
+| 8 | r | wtlogin.login | 下发短信 |
+| 9 | j | wtlogin.login | **密码登录**（38 项 TLV） |
+| 10 | l | wtlogin.exchange_emp | 票据续期（A2/D2/KEY） |
+| 13 | k | wtlogin.login | 空体（无 TLV 代码） |
+| 15 | c0 | wtlogin.exchange_emp | A1 快速登录 |
+| 17 | z | wtlogin.login | 手机号登录 |
+| 18 | b0 | wtlogin.login | 空体 |
+| 19 | a0 | wtlogin.login | 空体 |
+| 20 | p | wtlogin.login | **密保/设备锁验证**（t401/t402/t403 + `util.get_mpasswd()`，需挑战 t402/403） |
+| 23 | v | wtlogin.login | `quickLoginByGateway.request_login_by_gateway`（t543/t113/t178/t179/t17d，请求体在 `oicq_request.java:909` 共用构造） |
+| 24 | s | wtlogin.login | 二次校验（t192/t543/t546） |
+| 25 | m | wtlogin.login | **token 续期**（我们已在用） |
+⇒ 没有第二条密码入口：13/18/19 是空体，3/24 是响应处理器，20 需要先拿到 t402/403 挑战（45 下拿不到），23 是网关快登（需要 t543/119 会话上下文）。清单第 5 项关闭。
+
+### C50-5 `0x553` 真值（第 1 项的尾巴）—— native 里没有这个入口
+- 给桩类 `QSec` 加了 `private native byte[] getFeKitAttach(Context,String,String,String)` 并在探针里对 `0x9/0xf/0xa/0x19/0x7/0x14` 六个 module 各调一次：
+  **全部 `UnsatisfiedLinkError: No implementation found`** ⇒ `getFeKitAttach` 在 TIM 里是 **Java 层实现**（`FEKit`/`ChannelManager` 通道），libfekit 的 RegisterNatives 表里没有它。
+- 同一轮探针再证：`libwtecdh.so` 因缺 `libcrypto.so` 加载失败；`libQSec.so` 的 `JNI_OnLoad` 返回 `JNI_ERR`（与 C49 同）。
+- 官方 `WtloginHelper` 在 fekit 不可用时也是 `new byte[]{0}` ⇒ **我方发 `[0]` 与官方等效**，0x553 不是缺口。
+
+### C50-6 仍未做的第 6 项（需用户操作手机）
+「先过一次设备验证/设备锁」只能在官方 App 里手动完成；本轮未做。今天 11:03 官方 TIM 已用小号登录成功（本该解锁）仍 45，使该假设偏弱。
+
+### 工具教训
+- `LoginAttemptLimiter` 把**连接失败**也计成一次尝试（`beginAttempt` 在 connect 之前）⇒ 端点评测时必须先 `rm -f $TEMP/qqclient-attempts.json`，且一次会话只试一个端点。
+- `--unwrap-file=<json>` 走 `share_key` 可**完全离线**解密响应并 `--dump-tlv` 任意 TLV，做结构分析零风险、零限流消耗——今后分析响应体一律用这条路。
+
