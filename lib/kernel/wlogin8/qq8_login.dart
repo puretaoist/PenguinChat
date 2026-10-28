@@ -165,6 +165,19 @@ abstract final class Qq8LoginResultType {
   /// （OneBot）或换设备/换账号，而不是让他一直点重试。
   static const int forbiddenLogin = 45;
 
+  /// **服务端准入拒绝**：235（版本过低 / 可更换设备后重试）。
+  ///
+  /// 与 45 的区别是**发生时机**，真机 2026-10-28 21:25 纯净包实测：
+  ///
+  /// * 首发 subCmd=9 就被拒 → **45**（连滑块都没下发，0x146+0x508）；
+  /// * 首发回 type=2、无感验证通过、提交 subCmd=2 的 ticket 之后被拒 →
+  ///   **235**（0x146+0x508+**0x543**），文案「你当前使用的QQ版本过低……
+  ///   若无法升级新版本，可更换设备后重试。」
+  ///
+  /// 所以 235 是"进了验证门、过完验证才被判版本/设备"的结论，信息量比 45
+  /// 大得多：它证明验证环节是通的。处理原则同 45 —— 不原地重试。
+  static const int forbiddenVersion = 235;
+
   /// **服务端准入拒绝**：155（太久没有操作 / 请重新登录）。
   ///
   /// 只在扫码链出现过（我方 8.2.11 + 扫码）。它同样不是"重发一次就好"
@@ -186,6 +199,7 @@ abstract final class Qq8LoginResultType {
   /// 真机 2026-10-27：票据续期反复吃 type=16，自动重连三次全是同一句拒绝。
   static bool isServerRejected(int type) =>
       type == forbiddenLogin ||
+      type == forbiddenVersion ||
       type == sessionTooOld ||
       type == type16TokenExpired;
 }

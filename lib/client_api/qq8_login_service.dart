@@ -3169,7 +3169,7 @@ class Qq8LoginService {
     // "档案换了、实际清单变没变""某项是不是被 guard 滤掉了"都只能靠猜
     // （2026-09-21 的教训：9.3.60 有没有真发 0x553 无从确认）。
     final peek = Qq8LoginBody.peekBody(body);
-    _log.i('发登录包 subCmd=${peek.$1} TLV=${peek.$2.length}项 '
+    _log.i('发登录包 uin=$uin subCmd=${peek.$1} TLV=${peek.$2.length}项 '
         '${peek.$2.map((t) => '0x${t.toRadixString(16)}').join(',')}');
     final pkt = Qq8Sso.buildLoginPacket(
       ssoCtx,
@@ -3199,7 +3199,7 @@ class Qq8LoginService {
       rethrow;
     }
     onDiagnostic?.call(token == null ? 'login' : 'token', frame, r);
-    _log.i('登录响应 type=${r.type} '
+    _log.i('登录响应 uin=$uin type=${r.type} '
         '${r.tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(',')}');
     await _handleResponse(uin, r, smsStep: smsStep);
   }
@@ -3427,6 +3427,17 @@ class Qq8LoginService {
     } else {
       _log.i('0x146 缺失：本次响应只有 type=${r.type}，无服务端文案');
     }
+    // 其他关键 TLV 一律打长度 + hex（超 64B 只打前 64B）。
+    // 235（版本过低/可更换设备）专带 0x543，此前从未解过；0x546 是防刷题挑战；
+    // 0x544/0x553 是我方客户端证明。被拒时这几格是唯一还没被读过的证据。
+    for (final tag in const <int>[0x543, 0x544, 0x546, 0x553, 0x130]) {
+      final b = r.tlvs[tag];
+      if (b == null) continue;
+      final hex =
+          b.take(64).map((v) => v.toRadixString(16).padLeft(2, '0')).join();
+      _log.i('TLV 0x${tag.toRadixString(16)} 长度=${b.length}'
+          '${b.length > 64 ? '（只显示前 64B）' : ''} hex=$hex');
+    }
     final text = msg == null
         ? '登录未通过（服务端返回 type=${r.type}）'
         : '${msg.$1}：${msg.$2}';
@@ -3438,7 +3449,9 @@ class Qq8LoginService {
     if (rejected) {
       final why = msg == null ? '无文案' : msg.$1;
       _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试；'
-          '这类拒绝与组包参数无关，连续重试只会让账号风险更高，请等待一段时间后再试一次');
+          '连续重试只会让账号风险更高，请等待一段时间后再试一次。'
+          '注：2026-10-28 21:25 真机见到 235（验证通过后）与 45（提交包多带 '
+          '0x544/0x553）两种情况，但两次档案不同，尚未做干净单变量 A/B。');
     }
     _emit(Qq8LoginSnapshot(
       stage: rejected ? Qq8LoginStage.rejected : Qq8LoginStage.failed,

@@ -638,7 +638,10 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       File('${dataDir.path}${Platform.pathSeparator}qq8-login-cooldown.json');
 
   /// 风控类拒绝码 → 是否需要冷却。
-  static bool _isRiskRejection(int? type) => type == 45 || type == 243;
+  /// 服务端风控/准入拒绝：45（首发即拒）、235（验证通过后判版本/设备）、
+  /// 243（手机号链不安全）。这三类重试只会加重账号风险，一律进冷却。
+  static bool _isRiskRejection(int? type) =>
+      type == 45 || type == 235 || type == 243;
 
   /// 冷却记录的加载 Future（构造时启动，见构造器里的说明）。
   Future<void> _cooldownReady = Future<void>.value();
