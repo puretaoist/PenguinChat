@@ -916,6 +916,47 @@ class ChatStore {
     return sent;
   }
 
+  /// 把若干条消息**合并转发**成一张"聊天记录"卡片发到 [toChatId]。
+  ///
+  /// 与 [forwardMessages] 的区别：那边是"内容重发一遍"，这边是打包成一个
+  /// 卡片（官方 MultiMsg）。所以：
+  /// * 引用关系同样不带过去（[ReplySegment] 会被丢掉）；
+  /// * 图片/文件等**不会失败**——协议层会把它们降级成「[图片]」之类的占位文本；
+  /// * 需要用 [session] 的 multi_msg 能力，不支持时抛 [SessionException]。
+  ///
+  /// 返回打包的条数（0 表示没挑到消息）。
+  Future<int> forwardMessagesAsCard({
+    required String fromChatId,
+    required List<String> messageIds,
+    required String toChatId,
+  }) async {
+    final all = _messages[fromChatId] ?? const <ChatMessage>[];
+    final picked = <ChatMessage>[
+      for (final id in messageIds)
+        for (final m in all)
+          if (m.id == id) m,
+    ];
+    if (picked.isEmpty) return 0;
+    if (!session.supports('multi_msg')) {
+      throw SessionException('当前连接不支持合并转发');
+    }
+    final nodes = <ForwardNode>[
+      for (final m in picked)
+        ForwardNode(
+          senderName: m.senderName.isEmpty ? m.senderId : m.senderName,
+          senderId: int.tryParse(m.senderId),
+          time: m.time,
+          content: <Segment>[
+            for (final seg in m.segments)
+              if (seg is! ReplySegment) seg,
+          ],
+        ),
+    ];
+    await session.forwardAsCard(toChatId, nodes);
+    _log.i('合并转发 ${nodes.length} 条：$fromChatId → $toChatId');
+    return nodes.length;
+  }
+
   /// 改一个会话的本地字段并落盘、广播（上面几个开关的公共实现）。
   Future<void> _patchChat(String chatId, Chat Function(Chat) patch) async {
     final chat = _chats[chatId];

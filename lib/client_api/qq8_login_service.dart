@@ -58,6 +58,7 @@ import '../kernel/wlogin8/qq8_file.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
+import '../kernel/wlogin8/qq8_multimsg.dart';
 import '../kernel/wlogin8/qq8_jce.dart';
 import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_pow.dart';
@@ -1191,6 +1192,103 @@ class Qq8LoginService {
     final r = Qq8Msg.parseSendResponse(rsp3.payload, seq: seq, rand: rand);
     _log.i('文件消息 uid=$uid fid=${t.fid} code=${r.code} '
         '${r.ok ? 'ok' : r.message}');
+    return r;
+  }
+
+/// 把若干条消息合并转发成一张"聊天记录"卡片（QQ 的合并转发）。
+  ///
+  /// **需已上线**。[target] 在 [group] 为真时是群号，否则是好友 uin。
+  /// 链路见 `lib/kernel/wlogin8/qq8_multimsg.dart` 头注：
+  /// ApplyUp → highway(id=27) → 发 XML 卡片。任何一步失败都抛
+  /// [Qq8LoginException]（不返回"半个结果"）。
+  Future<Qq8MsgSendResult> sendMultiMsg({
+    required int target,
+    required bool group,
+    required List<Qq8MultiMsgNode> nodes,
+    String cardFileName = 'MULTIMSG',
+  }) async {
+    if (nodes.isEmpty) {
+      throw Qq8LoginException('合并转发至少要有一条消息');
+    }
+    final s = _requireOnline();
+    final built = <Uint8List>[];
+    for (final n in nodes) {
+      built.add(Qq8MultiMsg.buildNode(
+        senderUin: n.senderUin,
+        target: target,
+        dm: !group,
+        seq: _randomU32() & 0xFFFF,
+        time: n.time,
+        rand: _randomU32(),
+        rich: Qq8Msg.richElems(n.elems),
+        nickname: n.nickname,
+      ));
+    }
+    final content = Qq8MultiMsg.buildContent(built);
+    final compressed = Qq8MultiMsg.gzipContent(content);
+
+    // ① 申请上传
+    final up = await s.sendUni(
+      Qq8MultiMsg.cmdApplyUp,
+      Qq8MultiMsg.buildApplyUpBody(
+        target: target,
+        size: compressed.length,
+        md5: md5Bytes(compressed),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final ticket = Qq8MultiMsg.parseApplyUp(up.payload);
+    if (ticket == null) {
+      throw Qq8LoginException(
+          'MultiMsg.ApplyUp 应答解析失败（${up.payload.length} 字节）');
+    }
+    if (!ticket.ok) {
+      throw Qq8LoginException('MultiMsg.ApplyUp 被拒（code=${ticket.code}）');
+    }
+    if (ticket.host.isEmpty || ticket.port <= 0 || ticket.ticket.isEmpty) {
+      throw Qq8LoginException(
+          'MultiMsg.ApplyUp 没给上传通道（${ticket.host}:${ticket.port}）');
+    }
+    _log.i('合并转发 ApplyUp resid=${ticket.resid} 通道=${ticket.host}:${ticket.port} '
+        '压缩后 ${compressed.length} B');
+
+    // ② highway 传内容（业务号 27）
+    final body = Qq8MultiMsg.buildUploadBody(
+      target: target,
+      compressed: compressed,
+      uploadKey: ticket.uploadKey,
+    );
+    await Qq8Highway.upload(
+      host: ticket.host,
+      port: ticket.port,
+      uin: '${s.uin}',
+      appid: profile.apk.subid,
+      buCmdId: Qq8MultiMsg.cmdIdMultiMsg,
+      ticket: ticket.ticket,
+      fileMd5: md5Bytes(body),
+      data: body,
+      timeout: const Duration(seconds: 120),
+    );
+
+    // ③ 发卡片
+    final previews = <String>[
+      for (final n in nodes.take(4))
+        n.brief.isEmpty ? n.nickname : '${n.nickname}: ${n.brief}',
+    ];
+    final xml = Qq8MultiMsg.buildXmlCard(
+      resid: ticket.resid,
+      total: built.length,
+      fileSize: compressed.length,
+      previews: previews,
+      fileName: cardFileName,
+    );
+    final elem = Qq8MultiMsg.buildXmlElem(xml);
+    final r = group
+        ? await sendGroup(gid: target, elems: <Uint8List>[elem])
+        : await sendC2c(uid: target, elems: <Uint8List>[elem]);
+    _log.i('合并转发 → ${group ? 'group' : 'c2c'} $target 共 ${built.length} 条 '
+        'resid=${ticket.resid} code=${r.code} ${r.ok ? 'ok' : r.message}');
     return r;
   }
 

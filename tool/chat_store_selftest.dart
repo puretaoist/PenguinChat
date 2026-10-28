@@ -201,6 +201,18 @@ class FakeSession implements Session {
   @override
   Future<void> sendPoke(String chatId, String userId) async => _requireReady();
 
+  int cardCalls = 0;
+  List<ForwardNode> cardNodes = const <ForwardNode>[];
+  String? cardChatId;
+
+  @override
+  Future<void> forwardAsCard(String chatId, List<ForwardNode> nodes) async {
+    _requireReady();
+    cardCalls++;
+    cardNodes = nodes;
+    cardChatId = chatId;
+  }
+
   @override
   bool supports(String capability) => true;
 
@@ -1206,6 +1218,63 @@ Future<void> testForward() async {
   await session.dispose();
 }
 
+Future<void> testForwardAsCard() async {
+  section('12b. 合并转发：打包成卡片，图片降级而不是整批失败');
+
+  final f = await readyStore('forwardcard', chats: [
+    fakeGroup(),
+    fakeFriend('private_20002', '小明'),
+  ]);
+  final store = f.store;
+  final session = f.session;
+
+  session.emit(SessionMessage(msg('800', '第一句', time: at(1))));
+  session.emit(SessionMessage(msg('801', '引用的', time: at(2))));
+  session.emit(SessionMessage(msg('802', '图来了', time: at(3))));
+  await sleep(60);
+  store.replaceSegmentsForTest('group_12345', '801', <Segment>[
+    const ReplySegment('', text: '原话'),
+    const TextSegment('引用的'),
+  ]);
+  store.replaceSegmentsForTest('group_12345', '802', <Segment>[
+    const TextSegment('图来了'),
+    const ImageSegment('abc.jpg'),
+  ]);
+
+  final sentBefore = session.sent.length;
+  final n = await store.forwardMessagesAsCard(
+    fromChatId: 'group_12345',
+    messageIds: <String>['800', '801', '802'],
+    toChatId: 'private_20002',
+  );
+  check('返回打包条数', n == 3, '$n');
+  check('走的是 forwardAsCard（不是逐条 send）',
+      session.cardCalls == 1 && session.sent.length == sentBefore,
+      'cardCalls=${session.cardCalls} sent+=${session.sent.length - sentBefore}');
+  check('目标会话正确', session.cardChatId == 'private_20002', '${session.cardChatId}');
+  check('节点数正确', session.cardNodes.length == 3, '${session.cardNodes.length}');
+  check('引用段被剔除',
+      session.cardNodes[1].content.length == 1 &&
+          session.cardNodes[1].content.first is TextSegment,
+      '${session.cardNodes[1].content}');
+  check('图片段保留给协议层降级（这里不替它抛错）',
+      session.cardNodes[2].content.any((s) => s is ImageSegment),
+      '${session.cardNodes[2].content}');
+  check('节点带发送者名字', session.cardNodes.first.senderName.isNotEmpty,
+      session.cardNodes.first.senderName);
+
+  final n0 = await store.forwardMessagesAsCard(
+    fromChatId: 'group_12345',
+    messageIds: const <String>[],
+    toChatId: 'private_20002',
+  );
+  check('没挑到消息返回 0 且不发包', n0 == 0 && session.cardCalls == 1,
+      'n0=$n0 calls=${session.cardCalls}');
+
+  await store.dispose();
+  await session.dispose();
+}
+
 Future<void> testSearch() async {
   section('13. 本地搜索：只搜已加载的消息，按时间倒序');
 
@@ -1288,6 +1357,7 @@ Future<void> main() async {
     await testRetention();
     await testSorting();
     await testForward();
+    await testForwardAsCard();
     await testSearch();
     await testLifecycle();
   } finally {

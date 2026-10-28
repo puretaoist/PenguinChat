@@ -728,6 +728,43 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  /// 合并转发：同样是先挑目标会话，再让 store 打包成一张"聊天记录"卡片。
+  Future<void> _forwardAsCard(String fromChatId, List<String> ids) async {
+    final store = ref.read(chatStoreProvider);
+    if (store == null || ids.isEmpty) return;
+    final chats = ref.read(chatsProvider).valueOrNull ?? const <Chat>[];
+    final candidates = chats.where((c) => c.id != fromChatId).toList();
+    if (candidates.isEmpty) {
+      _toast('没有别的会话可转发');
+      return;
+    }
+    await ForwardPickerSheet.show(
+      context,
+      chats: candidates,
+      onPick: (target) => _doForwardAsCard(store, fromChatId, ids, target),
+    );
+  }
+
+  Future<void> _doForwardAsCard(
+    ChatStore store,
+    String fromChatId,
+    List<String> ids,
+    Chat target,
+  ) async {
+    try {
+      final n = await store.forwardMessagesAsCard(
+        fromChatId: fromChatId,
+        messageIds: ids,
+        toChatId: target.id,
+      );
+      if (mounted) _toast('已合并转发 $n 条到「${target.title}」');
+    } on SessionException catch (e) {
+      if (mounted) _toast('合并转发失败：${e.message}');
+    } on Object catch (e) {
+      if (mounted) _toast('合并转发失败：$e');
+    }
+  }
+
   /// 多选模式：复制选中的消息（按时间顺序用换行拼起来）。
   Future<void> _copySelected(String chatId) async {
     final store = ref.read(chatStoreProvider);
@@ -948,6 +985,12 @@ class _HomePageState extends ConsumerState<HomePage> {
             onPressed: () => _forwardMessages(chat.id, _selected.toList()),
             icon: Icon(Icons.forward, color: TelegramColors.textSecondary),
             tooltip: '转发',
+          ),
+          IconButton(
+            key: const ValueKey('ms-merge-forward'),
+            onPressed: () => _forwardAsCard(chat.id, _selected.toList()),
+            icon: Icon(Icons.merge_type, color: TelegramColors.textSecondary),
+            tooltip: '合并转发',
           ),
           IconButton(
             key: const ValueKey('ms-delete'),

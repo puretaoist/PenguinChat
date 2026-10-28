@@ -112,13 +112,25 @@ class FakeSession implements Session {
     throw const SessionException('假实现不支持戳一戳');
   }
 
+  /// 最近一次合并转发的目标与节点数（没调用过为 null）。
+  String? lastCardChatId;
+  int lastCardNodeCount = 0;
+
+  @override
+  Future<void> forwardAsCard(String chatId, List<ForwardNode> nodes) async {
+    _requireReady();
+    lastCardChatId = chatId;
+    lastCardNodeCount = nodes.length;
+  }
+
   @override
   bool supports(String capability) =>
       capability == 'list_chats' ||
       capability == 'fetch_history' ||
       capability == 'send_message' ||
       capability == 'recall' ||
-      capability == 'set_message_read';
+      capability == 'set_message_read' ||
+      capability == 'multi_msg';
 
   @override
   Future<void> dispose() async {

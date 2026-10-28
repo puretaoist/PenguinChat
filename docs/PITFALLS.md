@@ -3355,3 +3355,74 @@ oidbWrapper(group) = 08d31d10011800220c0880cdc8840d10cdba9cec023212616e64726f696
 **边界**：真机未验证（设备离线）。私聊戳的 body 用了参考实现 `friend.ts` 的
 `{1: 对方, 5: 对方}`，与群戳的 `{1: 对方, 2: 群号}` 字段号不同，**不要合并**。
 
+---
+
+## C59. 合并转发（MultiMsg）：内核、服务层、适配层、UI 一次接通
+
+**背景**：戳一戳提交后按「推进其他能力」继续。排除项：群文件发送不能照抄参考实现
+（`analysis/_ref/oicq-src/lib/friend.ts:417 sendFile` 只有好友发文件，QQ 群文件是
+独立服务）；群成员列表不是缺口（`lib/kernel/wlogin8/qq8_list.dart:314` 已有
+`buildGroupMemberListBody`）。于是做**合并转发**：无需编解码器、链路已在参考实现里
+走通、且现有「转发」只是把内容逐条重发（`lib/client_api/chat_store.dart:881`
+`forwardMessages`），用户侧确实差这个能力。
+
+**协议（参考 `analysis/_ref/oicq-src/lib/internal/contactable.ts`）**
+
+1. `MultiMsg.ApplyUp`（`_uploadMultiMsg` :374-414）：请求
+   `{1:1, 2:5, 3:9, 4:3, 5:apk.version, 6:[{1:target, 2:len, 3:md5, 4:3, 5:0}], 8:1}`；
+   应答 `pb.decode(payload)[2]` = `{1:码, 2:resid, 3:上传key, 4:ip, 5:port, 10:ticket}`。
+2. 上传体 `{1:1, 2:5, 3:9, 4:[{2:target, 4:gzip内容, 5:2, 6:上传key}]}`，
+   highway 业务号 **27**（复用 `lib/kernel/wlogin8/qq8_image.dart:559`
+   `Qq8Highway.upload`，帧长一样）。
+3. 正文字节 = `{1: nodes, 2: {1:'MultiMsg', 2: {1: nodes}}}` → **gzip**。
+   节点（`makeForwardMsg` :422-487）：
+   `{1:{1:senderUin, 2:target, 3:dm?166:82, 4:dm?11:缺省, 5:seq(u16), 6:time,
+   7:rand2uuid(rand), 9:dm?缺省:{1:target, 4:昵称}, 14:dm?昵称:缺省,
+   20:{1:0, 2:rand}}, 3:{1:rich}}`。
+   `rand2uuid(rand) = (0x1000000 << 32) | (rand & 0xFFFFFFFF)`
+   （`analysis/_ref/oicq-src/lib/message/message.ts:19-21`）。
+4. 卡片 = XML 元素 12（`analysis/_ref/oicq-src/lib/message/converter.ts:317-326`）：
+   `{12: {1: [0x01] + 裸deflate(xml), 2: serviceID=35}}`；XML 里
+   `action="viewMultiMsg" / serviceID="35" / flag="3" / brief="[聊天记录]"`，
+   前 4 行 `<title color="#777777" size="26">昵称: 摘要</title>`。
+
+**落地位置**
+
+* `lib/kernel/wlogin8/qq8_multimsg.dart`（新）：`Qq8MultiMsgNode`、`Qq8MultiMsgTicket`，
+  `Qq8MultiMsg` 提供 `buildNode / buildContent / gzipContent / buildApplyUpBody /
+  parseApplyUp / buildUploadBody / buildXmlCard / buildXmlElem / rand2uuid / u32ToIp`。
+  `parseApplyUp` **没有 2 号字段就返回 null，不猜**；`buildXmlElem` 用
+  `ZLibEncoder(raw: true)` 才是「裸 deflate」（带 zlib 头会多发 2 字节）。
+* `lib/client_api/qq8_login_service.dart`：`sendMultiMsg({target, group, nodes, cardFileName})`
+  串三步；ApplyUp 解析不出 / 被拒 / 没通道都抛 `Qq8LoginException`。
+* `lib/client_api/qq8_session_adapter.dart`：实现 `forwardAsCard`，能力表加
+  `'multi_msg'`；新增 `_cardElemsOf`——**与 `_elemsOf` 相反，不认识的段降级成
+  `s.preview`**（卡片里图片/文件本来就只能显示 `[图片]` 这种占位，这里抛错会让
+  整次转发失败，得不偿失）。
+* `lib/client_api/chat_store.dart`：`forwardMessagesAsCard({fromChatId, messageIds, toChatId})`，
+  剔 `ReplySegment`、不支持的连接先抛「当前连接不支持合并转发」。
+* `lib/client_api/onebot_session.dart`：显式抛「暂不支持合并转发卡片」——各实现对
+  `send_forward_msg` 的字段名不一致，本机没有在线实例可对照，不瞎写。
+* UI：多选工具条加 `ms-merge-forward`（`Icons.merge_type`）→ 复用
+  `ForwardPickerSheet` → `_doForwardAsCard`。
+
+**验证**：`analysis/scripts/gen_multimsg_vectors.py` 是独立第二实现（手写 varint，
+不引用 oicq/Dart）。黄金向量（SENDER=3499239040 TARGET_GID=763829581
+TARGET_UIN=2089495846 TIME=1760000000 SEQ=100 RAND=0x11223344
+APK=4.1.0.4050 RESID=RESID1234567890 UPLOAD_KEY=01020304 TICKET=40..47）：
+
+```
+nodeGroup   77B、nodeDm 68B、content 314B
+applyUpBody 08011005180920032a0a342e312e302e34303530321e08cdba9cec02100e1a10a0d3947acf922f0cef336bd77b0ca7c5200328004001
+applyUpRsp  122c0800120f5245534944313233343536373839301a0401020304209482a0850c28903f52084041424344454647  (ip 192.168.1.20 / port 8080)
+uploadBody  080110051809221e10cdba9cec02220e1f8b080000000000000346414b452802320401020304
+```
+
+`tool/qq8_multimsg_selftest.dart` 16 项全过；`tool/chat_store_selftest.dart` 新增 12b
+段 8 项（合并转发走 `forwardAsCard`、不逐条 send、引用剔除、图片保留不抛）⇒ 160 项；
+`test/home_page_test.dart` 新增一条 widget 用例（点 `ms-merge-forward` → 选目标 →
+`lastCardChatId == 'group_12345'`、`sent` 不变）⇒ 全量 149 项。
+
+**边界**：真机未验证（设备离线）。群/私聊节点只差 3/4/9/14 四个字段，**不要合并成一套**。
+
+

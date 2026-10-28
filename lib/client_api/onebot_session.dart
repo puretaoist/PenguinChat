@@ -293,6 +293,15 @@ class OneBotSession implements Session {
   }
 
   @override
+  Future<void> forwardAsCard(String chatId, List<ForwardNode> nodes) async {
+    _ensureReady();
+    // OneBot 的合并转发要造 node_list（每个节点自带 name/uin/content），
+    // 而各实现（Lagrange / NapCat）对 "send_forward_msg" 的字段名不完全一致，
+    // 且本机没有可对照的在线实例 ⇒ 先显式不支持，接了实例再按适配表补。
+    throw SessionException('后端 ${_profile?.name} 暂不支持合并转发卡片');
+  }
+
+  @override
   Future<void> dispose() async {
     _disposed = true;
     await _sub?.cancel();

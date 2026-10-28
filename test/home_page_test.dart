@@ -424,6 +424,47 @@ void main() {
     await _teardownStore(tester);
   });
 
+  testWidgets('多选：合并转发 → 选目标会话 → 走 forwardAsCard（不是逐条发）',
+      (tester) async {
+    _wideScreen(tester);
+    session.emit(SessionMessage(ChatMessage(
+      id: 'm-1',
+      text: '要合并的',
+      segments: <Segment>[const TextSegment('要合并的')],
+      time: DateTime(2026, 9, 12, 12),
+      chatId: 'private_20002',
+      senderId: '20002',
+      senderName: '小明',
+    )));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.descendant(
+      of: find.byType(MessageBubble),
+      matching: find.text('要合并的'),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('action-select')));
+    await tester.pumpAndSettle();
+
+    final sentBefore = session.sent.length;
+    await tester.tap(find.byKey(const ValueKey('ms-merge-forward')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('forward-title')), findsOneWidget,
+        reason: '先弹目标会话选择层');
+
+    await tester.tap(find.byKey(const ValueKey('forward-to-group_12345')));
+    await tester.pumpAndSettle();
+
+    expect(session.lastCardChatId, 'group_12345');
+    expect(session.lastCardNodeCount, 1);
+    expect(session.sent.length, sentBefore,
+        reason: '合并转发不走逐条 sendMessage');
+    expect(find.textContaining('已合并转发'), findsOneWidget);
+    await _teardownStore(tester);
+  });
+
   testWidgets('删除单条消息：确认后消息消失，会话还在', (tester) async {
     _wideScreen(tester);
     session.emit(SessionMessage(ChatMessage(

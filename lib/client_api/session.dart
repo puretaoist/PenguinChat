@@ -299,6 +299,12 @@ abstract class Session {
   /// 戳一戳。
   Future<void> sendPoke(String chatId, String userId);
 
+  /// 合并转发：把若干条消息打包成一张"聊天记录"卡片发到 [chatId]。
+  ///
+  /// 后端不支持时抛 [SessionException]——调用方先问 [supports]（能力名
+  /// `multi_msg`）再决定要不要给入口。
+  Future<void> forwardAsCard(String chatId, List<ForwardNode> nodes);
+
   /// 查询后端是否具备某项能力（逻辑 API 名，如 `set_message_read`）。
   ///
   /// 各 OneBot 实现的 API 覆盖不同（实测：`set_group_name` 只有 Lagrange 有，

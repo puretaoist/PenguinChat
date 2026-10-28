@@ -35,6 +35,7 @@ import 'dart:typed_data';
 
 import '../kernel/wlogin8/qq8_elem.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
+import '../kernel/wlogin8/qq8_multimsg.dart';
 import '../kernel/wlogin8/qq8_push.dart';
 import 'objects.dart';
 import 'qq8_login_service.dart';
@@ -110,6 +111,7 @@ class Qq8SessionAdapter implements Session {
     'recall', // 撤回自己发的消息（私聊 / 单包群消息）
     'set_message_read', // 已读上报（chat_store 问的就是这个能力名）
     'poke', // 戳一戳（群/私聊同一个 OIDB 命令 0xed3）
+    'multi_msg', // 合并转发（MultiMsg.ApplyUp + highway 27 + 卡片）
   };
 
   /// 建连 = 用本地票据登录并上线。**认证类动作（口令/滑块/扫码）走服务本身**。
@@ -471,6 +473,87 @@ class Qq8SessionAdapter implements Session {
     if (!r.ok) {
       throw SessionException('戳一戳失败：服务端返回 ${r.code ?? '未知码'}');
     }
+  }
+
+  /// 合并转发：把若干条消息打包成一张"聊天记录"卡片。
+  ///
+  /// 官方链路是三步（ApplyUp 拿 resid/通道 → highway 传 gzip 内容 → 发 XML
+  /// 卡片元素 12），全部在 [Qq8LoginService.sendMultiMsg] 里；这里只做
+  /// L3 数据对象到内核节点的转换。
+  @override
+  Future<void> forwardAsCard(String chatId, List<ForwardNode> nodes) async {
+    _requireReady();
+    if (nodes.isEmpty) {
+      throw const SessionException('合并转发至少要有一条消息');
+    }
+    final key = Chat.parseKey(chatId);
+    if (key == null || key.id == null) {
+      throw SessionException('会话 ID 不合法：$chatId');
+    }
+    final now = DateTime.now();
+    final built = <Qq8MultiMsgNode>[
+      for (final n in nodes)
+        Qq8MultiMsgNode(
+          senderUin: n.senderId ?? service.snapshot.uin ?? 0,
+          nickname: n.senderName,
+          brief: _briefOf(n.content),
+          time: (n.time ?? now).millisecondsSinceEpoch ~/ 1000,
+          elems: _cardElemsOf(n.content),
+        ),
+    ];
+    final r = await service.sendMultiMsg(
+      target: key.id!,
+      group: key.type == ChatType.group,
+      nodes: built,
+    );
+    if (!r.ok) {
+      throw SessionException(
+          '合并转发失败：${r.message.isEmpty ? '服务端返回 ${r.code}' : r.message}');
+    }
+  }
+
+  /// 卡片摘要行用的短文本（最多 40 个字，多余截断加省略号）。
+  static String _briefOf(List<Segment> content) {
+    final text = content.map((s) => s.preview).join(' ').replaceAll('\n', ' ');
+    final t = text.trim();
+    if (t.length <= 40) return t;
+    return '${t.substring(0, 40)}…';
+  }
+
+  /// 合并转发内部的元素：与 [_elemsOf] 同类，但**不认识就降级成文字**
+  /// （图片/文件/语音在卡片里本来就只能显示占位，抛错会让整次转发失败）。
+  static List<Uint8List> _cardElemsOf(List<Segment> segments) {
+    final elems = <Uint8List>[];
+    final buf = StringBuffer();
+    void flush() {
+      if (buf.isEmpty) return;
+      elems.add(Qq8Msg.textElem(buf.toString()));
+      buf.clear();
+    }
+
+    for (final s in segments) {
+      switch (s) {
+        case TextSegment(:final text):
+          buf.write(text);
+        case FaceSegment(:final id):
+          final fid = int.tryParse(id);
+          if (fid == null) {
+            buf.write(s.preview);
+          } else {
+            flush();
+            elems.add(Qq8Msg.faceElem(fid));
+          }
+        case AtSegment(:final qq, :final name):
+          buf.write(name != null && name.isNotEmpty ? '@$name ' : '@$qq ');
+        case ReplySegment():
+          break;
+        default:
+          buf.write(s.preview);
+      }
+    }
+    flush();
+    if (elems.isEmpty) elems.add(Qq8Msg.textElem(''));
+    return elems;
   }
 
   // ------------------------------------------------------------------
