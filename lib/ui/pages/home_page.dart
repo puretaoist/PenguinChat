@@ -16,6 +16,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -24,6 +25,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../client_api/chat_store.dart';
 import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
+import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
 import '../../client_api/session.dart';
 import '../../client_api/session_providers.dart';
@@ -822,6 +824,57 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// 点文件气泡：把离线文件下载到 `<dataDir>/downloads/` 并提示路径。
+  ///
+  /// 只在协议线在线时可用（离线文件走 1200 取直链 + HTTP GET，其他后端没有
+  /// 这套命令）。下载是**显式动作**——不在打开会话时自动拉，避免手一滑就
+  /// 把几十 MB 的东西吸下来。
+  Future<void> _downloadFileMessage(FileSegment seg) async {
+    final store = ref.read(chatStoreProvider);
+    final fid = (seg.fileId ?? '').trim().isNotEmpty
+        ? seg.fileId!.trim()
+        : seg.file.trim();
+    if (store == null || fid.isEmpty) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    const offlineHint = SnackBar(content: Text('需要协议线在线才能下载文件'));
+    // provider 本身就取不到（比如没注入数据目录 / 当前是别的后端）时也算「不在线」，
+    // 别把 provider 的异常抛到 UI 上——用户只需要知道这条现在下载不了。
+    final Qq8LoginService svc;
+    try {
+      svc = ref.read(qq8LoginServiceProvider);
+    } catch (_) {
+      messenger.showSnackBar(offlineHint);
+      return;
+    }
+    if (!svc.isOnline) {
+      messenger.showSnackBar(offlineHint);
+      return;
+    }
+
+    final name =
+        (seg.name ?? '').trim().isEmpty ? 'file-$fid' : seg.name!.trim();
+    messenger.showSnackBar(SnackBar(content: Text('开始下载：$name…')));
+    try {
+      final bytes = await svc.downloadFile(fid: fid);
+      final dir = Directory(
+          '${store.dataDir.path}${Platform.pathSeparator}downloads');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final out =
+          File('${dir.path}${Platform.pathSeparator}${_safeFileName(name)}');
+      await out.writeAsBytes(bytes, flush: true);
+      messenger.showSnackBar(SnackBar(content: Text('已保存到 ${out.path}')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('下载失败：$e')));
+    }
+  }
+
+  /// 文件名消毒：去掉路径分隔符与 Windows 不认的字符（下载后落盘用）。
+  static String _safeFileName(String name) {
+    final cleaned = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+    return cleaned.isEmpty ? 'download.bin' : cleaned;
+  }
+
   /// 打开群成员面板（只有协议线在线时才有数据源；别的后端显示原因）。
   Future<void> _openMembers(Chat chat) async {
     final gid = chat.rawId;
@@ -1072,6 +1125,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                                     child: MessageBubble(
                                       message: m,
                                       localMedia: store?.mediaPathOf,
+                                      onOpenFile: (seg) =>
+                                          unawaited(_downloadFileMessage(seg)),
                                       onRetry:
                                           m.isFailed ? () => _retry(m.id) : null,
                                       showSenderName: item.showSenderName,

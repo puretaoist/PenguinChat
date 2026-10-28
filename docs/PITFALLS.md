@@ -3232,5 +3232,13 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
   `FileSystemException(32)`（日志/MMKV 句柄没放开）会把 75 项全绿变成 exit 255 —— 已用
   `on FileSystemException` 吞掉。**判据只看「失败 0 项」与 exit code，别被清理动作骗了。**
 
-**还没做**：文件气泡的点击下载（UI 未接 4 个新 API）；群文件发送；真机端到端。
+**文件气泡的点击下载（已接）**：`MessageContent`/`MessageBubble` 新增 `onOpenFile` 回调，`_MediaRow`
+在拿到回调时套 `InkWell(key: 'open-file')`；`home_page.dart` 的 `_downloadFileMessage` 走
+`svc.downloadFile(fid)` 落到 `<dataDir>/downloads/<消毒后的文件名>` 并 SnackBar 报路径。
+两个坑：①**取 provider 要 try/catch**——没注入数据目录时 `qq8LoginServiceProvider` 直接抛
+`UnimplementedError('qq8TokenStoreProvider 必须被 override')`，widget 测试里点击就会炸；
+②**别用 `\$` 转义写 Dart 插值**（我一开始在 TS 模板里写 `\${fid}`，生成的是字面量
+`${fid}`，Dart 只会给出「变量未使用」的警告，运行行为是错的）。
+
+**还没做**：群文件发送；真机端到端（发/收/下载全链路）。
 

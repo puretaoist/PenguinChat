@@ -47,6 +47,9 @@ class MessageBubble extends StatelessWidget {
   /// 存在，测试里也就能直接传一个假的解析器。
   final String? Function(Segment segment)? localMedia;
 
+  /// 点文件块时的动作（下载/另存）。为 null = 只展示，不可点。
+  final void Function(FileSegment segment)? onOpenFile;
+
   const MessageBubble({
     super.key,
     required this.message,
@@ -55,6 +58,7 @@ class MessageBubble extends StatelessWidget {
     this.highlighted = false,
     this.onReveal,
     this.localMedia,
+    this.onOpenFile,
   });
 
   @override
@@ -170,6 +174,7 @@ class MessageBubble extends StatelessWidget {
                       message: message,
                       isOut: isOut,
                       localMedia: localMedia,
+                      onOpenFile: onOpenFile,
                     ),
                     if (message.deleted)
                       Text(

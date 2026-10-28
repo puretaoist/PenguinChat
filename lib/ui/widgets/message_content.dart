@@ -35,11 +35,18 @@ class MessageContent extends StatelessWidget {
   /// 老测试因此不用改。
   final String? Function(Segment segment)? localMedia;
 
+  /// 点文件块时要做什么（下载/另存）。
+  ///
+  /// 为 null 时文件块只是静态展示——**气泡自己不做网络请求**：它不知道
+  /// 当前后端是不是协议线、也不知道该存到哪。上层接进来才有点击行为。
+  final void Function(FileSegment segment)? onOpenFile;
+
   const MessageContent({
     super.key,
     required this.message,
     required this.isOut,
     this.localMedia,
+    this.onOpenFile,
   });
 
   @override
@@ -129,11 +136,13 @@ class MessageContent extends StatelessWidget {
           ));
         case FileSegment():
           flush();
+          final open = onOpenFile;
           blocks.add(_MediaRow(
             icon: Icons.insert_drive_file_outlined,
             title: s.name?.isNotEmpty == true ? s.name! : '文件',
             detail: _withSize('', s.size),
             isOut: isOut,
+            onTap: open == null ? null : () => open(s),
           ));
         case XmlSegment():
         case JsonSegment():
@@ -219,11 +228,15 @@ class _MediaRow extends StatelessWidget {
   final String detail;
   final bool isOut;
 
+  /// 可点时才套一层手势（语音/视频现在没有可点的动作，传 null 就不加）。
+  final VoidCallback? onTap;
+
   const _MediaRow({
     required this.icon,
     required this.title,
     required this.detail,
     required this.isOut,
+    this.onTap,
   });
 
   @override
@@ -231,7 +244,7 @@ class _MediaRow extends StatelessWidget {
     final body = isOut
         ? TelegramColors.bubbleOutText
         : TelegramColors.textPrimary;
-    return Container(
+    final row = Container(
       constraints: const BoxConstraints(maxWidth: 240),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -269,6 +282,14 @@ class _MediaRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+    final tap = onTap;
+    if (tap == null) return row;
+    return InkWell(
+      key: const ValueKey('open-file'),
+      onTap: tap,
+      borderRadius: BorderRadius.circular(10),
+      child: row,
     );
   }
 }

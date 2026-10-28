@@ -158,6 +158,11 @@ void main() {
     expect(seg, isA<FileSegment>());
     expect((seg as FileSegment).file, r'C:	mp说明.pdf');
     expect(seg.name, 'rename.pdf');
+
+    // 文件气泡可点：离线（协议线没在线）时点它要给一句明确提示，而不是没反应
+    await tester.tap(find.byKey(const ValueKey('open-file')));
+    await tester.pumpAndSettle();
+    expect(find.text('需要协议线在线才能下载文件'), findsOneWidget);
     await _teardownStore(tester);
   });
 
