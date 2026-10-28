@@ -3493,3 +3493,60 @@ download/rm/rename/mv）。群文件是**纯协议**（OIDB + highway），不�
 建目录（`0x6d7_0`）、删目录（`0x6d7_1`）、改名（`0x6d6_4`）、移动（`0x6d6_5`）、
 群文件转发**还没接**，`deleteGroupFile` 遇到目录会明确抛「删目录还没接（0x6d7_1）」
 ③面板没传 `onProgress`，上传进度暂时只在日志里。
+
+---
+
+## C61 群设置与成员管理（0x89a_0 / 0x8a0_0 / 0x570_8 / 0x55c_1）
+
+**为什么做**：群文件之后，群里「能用得上」的下一步是改名 / 发公告 / 全员禁言 / 禁言
+单人 / 踢人 / 设管理员。全部是 OIDB 一发一收，无需外部二进制，可用独立 Python 第二
+实现做逐字节黄金向量，是最适合离线推进的一块。
+
+**命令字与请求体**（来源 `analysis/_ref/oicq-src`）
+
+| 动作 | 命令 | body | 成功判据 |
+| --- | --- | --- | --- |
+| 改群名 | `OidbSvc.0x89a_0` | `{1: gid, 2: {3: name}}` | `[3] == 0` |
+| 发公告 | `OidbSvc.0x89a_0` | `{1: gid, 2: {4: content}}` | `[3] == 0` |
+| 全员禁言 | `OidbSvc.0x89a_0` | `{1: gid, 2: {17: 0xffffffff 或 0}}` | `[3] == 0` |
+| 踢人 | `OidbSvc.0x8a0_0` | `{1: gid, 2: {1: 5, 2: uid, 3: 拒加群?1:0}}` | `[4][2][1] == 0` |
+| 禁言单人 | `OidbSvc.0x570_8` | 15B 二进制 `u32 gid ‖ u8 32 ‖ u16 1 ‖ u32 uid ‖ u32 秒` | 参考实现不检查 |
+| 设管理员 | `OidbSvc.0x55c_1` | 9B 二进制 `u32 gid ‖ u32 uid ‖ u8 开关` | `[3] == 0` |
+
+注：`0x570_8` / `0x55c_1` 的 body **不是 protobuf**，是定长二进制；照参考实现逐字段
+写，别习惯性套 pb 编码。
+
+**落地位置**
+
+- `lib/kernel/wlogin8/qq8_group_admin.dart`（新）：6 个 build + 6 个 parse。所有 parse
+  返回 `({bool ok, int? code, String? message})`，**缺结果码一律 ok=false**（腾讯的
+  「成功」有时只是一个空 body，宁可报未确认也不假成功）。
+- `lib/client_api/qq8_login_service.dart`：`_oidbTypesOf(cmd)` 从 `OidbSvc.0x89a_0`
+  里拆 type1/type2（`type2` 缺省 1），`_sendGroupOidb` 复用
+  `Qq8Msg.buildOidbWrapper`；对外 6 个方法 `setGroupName / setGroupAnnounce /
+  setGroupWholeMute / kickGroupMember / muteGroupMember / setGroupAdmin`。
+- `lib/ui/widgets/group_settings_panel.dart`（新）：哑视图，三个回调注入。
+- `lib/ui/pages/home_page.dart`：群聊标题右侧的文件夹 IconButton 换成
+  `PopupMenuButton`（key `group-menu`，三项 `group-menu-files` /
+  `group-menu-settings` / `group-menu-members`）；`_openGroupSettings(chat)`、
+  `_memberMenu(chat, m)`（禁言 10 分钟 / 解除 / 设(取消)管理员 / 踢出，
+  踢出前 `_confirmKick` 二次确认）、`GroupMembersPanel.onMemberMenu` 每行
+  `member-menu-<uin>`。
+
+**验证**：`analysis/scripts/gen_group_admin_vectors.py` 独立第二实现（手写 varint 与
+大端）产出 17 组 hex；`tool/qq8_group_admin_selftest.dart` **24 项全过**（含秒数上限
+夹到 2592000、负数按 0、应答缺字段不假成功）；`test/message_bubble_test.dart` 新增 4 条
+widget 用例（有/无 onMemberMenu 的按钮出现、群设置三回调、无回调时按钮禁用）。
+
+**坑**
+
+1. **Widget 测试里 `FractionallySizedBox(heightFactor:0.72)` + `ListView` 的下半部分
+   不会 build**，`find.byKey` 直接 0 命中。测试要先
+   `tester.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).last)`。
+2. 全员禁言**故意不用 Switch**：我们还没接群详情（`0x88d_0` 那套），拿不到当前状态，
+   画一个可能反了的开关比给两个明确按钮更糟。
+3. `GroupMembersPanel` 的 trailing 本来是「群主/管理员」标签，加了菜单按钮后必须包成
+   `Row(mainAxisSize: MainAxisSize.min)`，否则 ListTile 会溢出。
+
+**边界**：真机未验证（设备离线）；禁言时长只暴露了 10 分钟与解除两个预设；公告只支持
+纯文本（官方富文本公告是另一条 JCE 通道）。

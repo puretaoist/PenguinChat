@@ -57,6 +57,7 @@ import '../kernel/wlogin8/qq8_history.dart';
 import '../kernel/wlogin8/qq8_pb.dart';
 import '../kernel/wlogin8/qq8_file.dart';
 import '../kernel/wlogin8/qq8_gfs.dart';
+import '../kernel/wlogin8/qq8_group_admin.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
@@ -1920,6 +1921,125 @@ class Qq8LoginService {
     );
     final r = Qq8Msg.parsePokeResponse(frame.payload);
     _log.i('戳一戳 peer=$peerUin gid=$gid code=${r.code} ok=${r.ok}');
+    return r;
+  }
+
+  /// 群设置 / 成员管理共用的 OIDB 外壳。
+  ///
+  /// 命令字形如 `OidbSvc.0x89a_0`：`type1 = 0x89a`、`type2 = 0`；
+  /// 参考实现 `lib/client.ts:584-598 sendOidb`（`type2` 解析不出时按 1）。
+  static ({int type1, int type2}) _oidbTypesOf(String cmd) {
+    final body = cmd.startsWith('OidbSvc.') ? cmd.substring(8) : cmd;
+    final parts = body.split('_');
+    final head = parts.first;
+    final hex = head.startsWith('0x') || head.startsWith('0X')
+        ? head.substring(2)
+        : head;
+    final type1 = int.tryParse(hex, radix: 16) ?? 0;
+    final type2 = parts.length > 1 ? (int.tryParse(parts[1]) ?? 1) : 1;
+    return (type1: type1, type2: type2);
+  }
+
+  Future<Qq8SsoResponse> _sendGroupOidb(String cmd, Uint8List body) async {
+    final s = _requireOnline();
+    final t = _oidbTypesOf(cmd);
+    return s.sendUni(
+      cmd,
+      Qq8Msg.buildOidbWrapper(
+        type1: t.type1,
+        type2: t.type2,
+        body: body,
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+  }
+
+  /// 改群名（`OidbSvc.0x89a_0` 的字段 3）。**需已上线，且自己是群主/管理员**。
+  Future<({bool ok, int? code, String? message})> setGroupName({
+    required int gid,
+    required String name,
+  }) async {
+    final frame = await _sendGroupOidb(
+      Qq8GroupAdmin.cmdSetting,
+      Qq8GroupAdmin.buildSettingBody(gid: gid, name: name),
+    );
+    final r = Qq8GroupAdmin.parseSetting(frame.payload);
+    _log.i('改群名 gid=$gid ok=${r.ok} code=${r.code}');
+    return r;
+  }
+
+  /// 发（简易）群公告（同命令的字段 4）。**需已上线**。
+  Future<({bool ok, int? code, String? message})> setGroupAnnounce({
+    required int gid,
+    required String content,
+  }) async {
+    final frame = await _sendGroupOidb(
+      Qq8GroupAdmin.cmdSetting,
+      Qq8GroupAdmin.buildSettingBody(gid: gid, announce: content),
+    );
+    final r = Qq8GroupAdmin.parseSetting(frame.payload);
+    _log.i('发群公告 gid=$gid len=${content.length} ok=${r.ok} code=${r.code}');
+    return r;
+  }
+
+  /// 全员禁言开/关（同命令的字段 17）。**需已上线**。
+  Future<({bool ok, int? code, String? message})> setGroupWholeMute({
+    required int gid,
+    required bool enable,
+  }) async {
+    final frame = await _sendGroupOidb(
+      Qq8GroupAdmin.cmdSetting,
+      Qq8GroupAdmin.buildSettingBody(gid: gid, wholeMute: enable),
+    );
+    final r = Qq8GroupAdmin.parseSetting(frame.payload);
+    _log.i('全员禁言 gid=$gid enable=$enable ok=${r.ok} code=${r.code}');
+    return r;
+  }
+
+  /// 踢群成员（`OidbSvc.0x8a0_0`）。**需已上线，且自己是管理员**。
+  Future<({bool ok, int? code, String? message})> kickGroupMember({
+    required int gid,
+    required int uid,
+    bool rejectAddRequest = false,
+  }) async {
+    final frame = await _sendGroupOidb(
+      Qq8GroupAdmin.cmdKick,
+      Qq8GroupAdmin.buildKickBody(
+          gid: gid, uid: uid, rejectAddRequest: rejectAddRequest),
+    );
+    final r = Qq8GroupAdmin.parseKick(frame.payload);
+    _log.i('踢人 gid=$gid uid=$uid ok=${r.ok} code=${r.code}');
+    return r;
+  }
+
+  /// 禁言单个成员（`OidbSvc.0x570_8`，秒数 0 = 解除）。**需已上线**。
+  Future<({bool ok, int? code, String? message})> muteGroupMember({
+    required int gid,
+    required int uid,
+    int seconds = 1800,
+  }) async {
+    final frame = await _sendGroupOidb(
+      Qq8GroupAdmin.cmdMuteMember,
+      Qq8GroupAdmin.buildMuteMemberBody(gid: gid, uid: uid, seconds: seconds),
+    );
+    final r = Qq8GroupAdmin.parseMuteMember(frame.payload);
+    _log.i('禁言 gid=$gid uid=$uid seconds=$seconds ok=${r.ok} code=${r.code}');
+    return r;
+  }
+
+  /// 设/取消管理员（`OidbSvc.0x55c_1`）。**需已上线，且自己是群主**。
+  Future<({bool ok, int? code, String? message})> setGroupAdmin({
+    required int gid,
+    required int uid,
+    required bool enable,
+  }) async {
+    final frame = await _sendGroupOidb(
+      Qq8GroupAdmin.cmdSetAdmin,
+      Qq8GroupAdmin.buildSetAdminBody(gid: gid, uid: uid, enable: enable),
+    );
+    final r = Qq8GroupAdmin.parseSetAdmin(frame.payload);
+    _log.i('设管理员 gid=$gid uid=$uid enable=$enable ok=${r.ok} code=${r.code}');
     return r;
   }
 

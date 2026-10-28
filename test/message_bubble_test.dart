@@ -24,6 +24,7 @@ import 'package:qqclient/ui/widgets/message_bubble.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_gfs.dart';
 import 'package:qqclient/ui/widgets/group_files_panel.dart';
 import 'package:qqclient/ui/widgets/group_members_panel.dart';
+import 'package:qqclient/ui/widgets/group_settings_panel.dart';
 import 'package:qqclient/ui/widgets/jump_to_latest.dart';
 import 'package:qqclient/ui/widgets/message_actions.dart';
 import 'package:qqclient/ui/widgets/message_list_builder.dart';
@@ -872,6 +873,113 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(find.text('没有成员数据'), findsOneWidget);
+    });
+  });
+
+
+  group('群管理：成员菜单与群设置面板', () {
+    testWidgets('给了 onMemberMenu 才出现「更多」按钮，点了带出该成员', (tester) async {
+      Qq8GroupMember? picked;
+      await tester.pumpWidget(MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          body: GroupMembersPanel(
+            title: '测试群',
+            onMemberMenu: (Qq8GroupMember m) => picked = m,
+            loader: () async => <Qq8GroupMember>[
+              Qq8GroupMember(uin: 20003, nick: '路人', card: '', gender: -1, age: 0, level: 1, title: '', titleExpireTime: 0, joinTime: 0, lastSpeakTime: 0, shutupUntil: 0, admin: false),
+            ],
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('member-menu-20003')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('member-menu-20003')));
+      await tester.pumpAndSettle();
+      expect(picked?.uin, 20003);
+    });
+
+    testWidgets('不给 onMemberMenu 就不出现「更多」按钮', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          body: GroupMembersPanel(
+            title: '测试群',
+            loader: () async => <Qq8GroupMember>[
+              Qq8GroupMember(uin: 20003, nick: '路人', card: '', gender: -1, age: 0, level: 1, title: '', titleExpireTime: 0, joinTime: 0, lastSpeakTime: 0, shutupUntil: 0, admin: false),
+            ],
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('member-menu-20003')), findsNothing);
+    });
+
+    testWidgets('群设置：改群名 / 发公告 / 全员禁言各自回调，空输入本地拒', (tester) async {
+      String? renamed;
+      String? announced;
+      bool? muteAll;
+      await tester.pumpWidget(MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          body: GroupSettingsPanel(
+            title: '测试群',
+            initialName: '旧群名',
+            onRename: (String v) async {
+              renamed = v;
+              return true;
+            },
+            onAnnounce: (String v) async {
+              announced = v;
+              return true;
+            },
+            onWholeMute: (bool v) async {
+              muteAll = v;
+              return true;
+            },
+          ),
+        ),
+      ));
+      expect(find.byKey(const ValueKey('gset-title')), findsOneWidget);
+      expect(find.text('旧群名'), findsOneWidget);
+
+      await tester.enterText(find.byKey(const ValueKey('gset-name')), '  新群名  ');
+      await tester.tap(find.byKey(const ValueKey('gset-name-ok')));
+      await tester.pumpAndSettle();
+      expect(renamed, '新群名');
+
+      await tester.enterText(find.byKey(const ValueKey('gset-announce')), '明天不上课');
+      await tester.tap(find.byKey(const ValueKey('gset-announce-ok')));
+      await tester.pumpAndSettle();
+      expect(announced, '明天不上课');
+
+      // 全员禁言那一段在 ListView 下方，得先滚出来（否则根本没 build）。
+      await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('gset-mute-all-on')), 200,
+          scrollable: find.byType(Scrollable).last);
+      await tester.tap(find.byKey(const ValueKey('gset-mute-all-on')));
+      await tester.pumpAndSettle();
+      expect(muteAll, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('gset-mute-all-off')));
+      await tester.pumpAndSettle();
+      expect(muteAll, isFalse);
+    });
+
+    testWidgets('群设置：没有回调时按钮禁用（不假装能发）', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          body: GroupSettingsPanel(title: '测试群', initialName: '旧群名'),
+        ),
+      ));
+      final TextButton rename = tester.widget(find.byKey(const ValueKey('gset-name-ok')));
+      expect(rename.onPressed, isNull);
+      await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('gset-mute-all-on')), 200,
+          scrollable: find.byType(Scrollable).last);
+      final OutlinedButton muteOn = tester.widget(find.byKey(const ValueKey('gset-mute-all-on')));
+      expect(muteOn.onPressed, isNull);
     });
   });
 

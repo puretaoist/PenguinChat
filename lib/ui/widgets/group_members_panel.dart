@@ -28,11 +28,16 @@ class GroupMembersPanel extends StatefulWidget {
   /// 拉成员（协议线传 `service.fetchGroupMembers` 包一层）。
   final Future<List<Qq8GroupMember>> Function() loader;
 
+  /// 每行右侧「更多」按钮的回调（禁言/踢人/设管理员都由调用方弹菜单）。
+  /// 为空时行尾只显示身份标签，不出现按钮。
+  final void Function(Qq8GroupMember member)? onMemberMenu;
+
   const GroupMembersPanel({
     super.key,
     required this.title,
     required this.loader,
     this.ownerUin = 0,
+    this.onMemberMenu,
   });
 
   /// 弹出面板（加载中就有 loading 态）。
@@ -41,6 +46,7 @@ class GroupMembersPanel extends StatefulWidget {
     required String title,
     required Future<List<Qq8GroupMember>> Function() loader,
     int ownerUin = 0,
+    void Function(Qq8GroupMember member)? onMemberMenu,
   }) =>
       showModalBottomSheet<void>(
         context: context,
@@ -50,6 +56,7 @@ class GroupMembersPanel extends StatefulWidget {
           title: title,
           loader: loader,
           ownerUin: ownerUin,
+          onMemberMenu: onMemberMenu,
         ),
       );
 
@@ -195,11 +202,23 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
           overflow: TextOverflow.ellipsis,
           style:
               TextStyle(color: TelegramColors.textMuted, fontSize: 12)),
-      trailing: isOwner
-          ? _chip('群主', TelegramColors.accent)
-          : m.admin
-              ? _chip('管理员', TelegramColors.textSecondary)
-              : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          if (isOwner)
+            _chip('群主', TelegramColors.accent)
+          else if (m.admin)
+            _chip('管理员', TelegramColors.textSecondary),
+          if (widget.onMemberMenu != null)
+            IconButton(
+              key: ValueKey('member-menu-${m.uin}'),
+              onPressed: () => widget.onMemberMenu!(m),
+              icon: Icon(Icons.more_vert,
+                  size: 18, color: TelegramColors.textSecondary),
+              tooltip: '成员管理',
+            ),
+        ],
+      ),
     );
   }
 

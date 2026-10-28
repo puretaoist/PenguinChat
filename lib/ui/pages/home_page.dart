@@ -30,6 +30,7 @@ import '../../client_api/qq8_providers.dart';
 import '../../client_api/session.dart';
 import '../../kernel/wlogin8/qq8_file.dart';
 import '../../kernel/wlogin8/qq8_gfs.dart';
+import '../../kernel/wlogin8/qq8_list.dart';
 import '../../client_api/session_providers.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
@@ -39,6 +40,7 @@ import '../widgets/face_panel.dart';
 import '../widgets/forward_picker.dart';
 import '../widgets/group_files_panel.dart';
 import '../widgets/group_members_panel.dart';
+import '../widgets/group_settings_panel.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
 import '../widgets/chat_input_bar.dart';
@@ -949,7 +951,165 @@ class _HomePageState extends ConsumerState<HomePage> {
         final page = await svc.fetchGroupMembers(gid);
         return page.members;
       },
+      onMemberMenu: (Qq8GroupMember m) => unawaited(_memberMenu(chat, m)),
     );
+  }
+
+  /// 群设置面板：改群名 / 发群公告 / 全员禁言。
+  Future<void> _openGroupSettings(Chat chat) async {
+    final gid = chat.rawId;
+    if (gid == null) return;
+    await GroupSettingsPanel.show(
+      context,
+      title: chat.title,
+      initialName: chat.title,
+      onRename: (String name) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('改群名要协议线在线');
+        }
+        if (name.isEmpty) throw const SessionException('群名不能为空');
+        final r = await svc.setGroupName(gid: gid, name: name);
+        return r.ok;
+      },
+      onAnnounce: (String content) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('发公告要协议线在线');
+        }
+        if (content.isEmpty) throw const SessionException('公告不能为空');
+        final r = await svc.setGroupAnnounce(gid: gid, content: content);
+        return r.ok;
+      },
+      onWholeMute: (bool enable) async {
+        final svc = ref.read(qq8LoginServiceProvider);
+        if (!svc.isOnline) {
+          throw const SessionException('全员禁言要协议线在线');
+        }
+        final r = await svc.setGroupWholeMute(gid: gid, enable: enable);
+        return r.ok;
+      },
+    );
+  }
+
+  /// 成员管理菜单：禁言 10 分钟 / 解除禁言 / 踢出 / 设(取消)管理员。
+  Future<void> _memberMenu(Chat chat, Qq8GroupMember m) async {
+    final gid = chat.rawId;
+    if (gid == null) return;
+    final isOwner = chat.ownerUin != 0 && m.uin == chat.ownerUin;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: TelegramColors.bgSidebar,
+      builder: (BuildContext ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  m.displayName,
+                  key: const ValueKey('member-menu-title'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: TelegramColors.textPrimary,
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            ListTile(
+              key: const ValueKey('member-menu-mute'),
+              leading: Icon(Icons.volume_off_outlined,
+                  color: TelegramColors.textSecondary),
+              title: const Text('禁言 10 分钟'),
+              onTap: () => Navigator.of(ctx).pop('mute'),
+            ),
+            ListTile(
+              key: const ValueKey('member-menu-unmute'),
+              leading: Icon(Icons.volume_up_outlined,
+                  color: TelegramColors.textSecondary),
+              title: const Text('解除禁言'),
+              onTap: () => Navigator.of(ctx).pop('unmute'),
+            ),
+            if (!isOwner)
+              ListTile(
+                key: const ValueKey('member-menu-admin'),
+                leading: Icon(Icons.shield_outlined,
+                    color: TelegramColors.textSecondary),
+                title: Text(m.admin ? '取消管理员' : '设为管理员'),
+                onTap: () => Navigator.of(ctx).pop('admin'),
+              ),
+            if (!isOwner)
+              ListTile(
+                key: const ValueKey('member-menu-kick'),
+                leading: Icon(Icons.person_remove_outlined,
+                    color: TelegramColors.danger),
+                title: Text('踢出群聊',
+                    style: TextStyle(color: TelegramColors.danger)),
+                onTap: () => Navigator.of(ctx).pop('kick'),
+              ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    final svc = ref.read(qq8LoginServiceProvider);
+    if (!svc.isOnline) {
+      _toast('群成员管理要协议线在线');
+      return;
+    }
+    try {
+      switch (choice) {
+        case 'mute':
+          final r = await svc.muteGroupMember(gid: gid, uid: m.uin);
+          _toast(r.ok ? '已禁言 10 分钟' : '禁言未确认：${r.message ?? r.code}');
+        case 'unmute':
+          final r = await svc.muteGroupMember(gid: gid, uid: m.uin, seconds: 0);
+          _toast(r.ok ? '已解除禁言' : '解除未确认：${r.message ?? r.code}');
+        case 'admin':
+          final r = await svc.setGroupAdmin(
+              gid: gid, uid: m.uin, enable: !m.admin);
+          _toast(r.ok
+              ? (m.admin ? '已取消管理员' : '已设为管理员')
+              : '操作未确认：${r.message ?? r.code}');
+        case 'kick':
+          final confirmed = await _confirmKick(m.displayName);
+          if (!confirmed) return;
+          final r = await svc.kickGroupMember(gid: gid, uid: m.uin);
+          _toast(r.ok ? '已踢出' : '踢出未确认：${r.message ?? r.code}');
+      }
+    } on Object catch (e) {
+      _toast('操作失败：$e');
+    }
+  }
+
+  Future<bool> _confirmKick(String name) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext ctx) => AlertDialog(
+        key: const ValueKey('member-kick-dialog'),
+        backgroundColor: TelegramColors.bgSidebar,
+        title: const Text('踢出群聊'),
+        content: Text('确定把 $name 移出本群？'),
+        actions: <Widget>[
+          TextButton(
+            key: const ValueKey('member-kick-cancel'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const ValueKey('member-kick-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('踢出', style: TextStyle(color: TelegramColors.danger)),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
   }
 
 
@@ -1500,15 +1660,41 @@ class _HomePageState extends ConsumerState<HomePage> {
             ),
           ),
           if (chat.isGroup)
-            IconButton(
-              key: const ValueKey('open-group-files'),
-              onPressed: () => unawaited(_openGroupFiles(chat)),
+            PopupMenuButton<String>(
+              key: const ValueKey('group-menu'),
+              tooltip: '群工具',
               icon: Icon(
                 Icons.folder_outlined,
                 color: TelegramColors.textSecondary,
                 size: 22,
               ),
-              tooltip: '群文件',
+              onSelected: (String value) {
+                switch (value) {
+                  case 'files':
+                    unawaited(_openGroupFiles(chat));
+                  case 'settings':
+                    unawaited(_openGroupSettings(chat));
+                  case 'members':
+                    unawaited(_openMembers(chat));
+                }
+              },
+              itemBuilder: (_) => const <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  key: ValueKey('group-menu-files'),
+                  value: 'files',
+                  child: Text('群文件'),
+                ),
+                PopupMenuItem<String>(
+                  key: ValueKey('group-menu-settings'),
+                  value: 'settings',
+                  child: Text('群设置'),
+                ),
+                PopupMenuItem<String>(
+                  key: ValueKey('group-menu-members'),
+                  value: 'members',
+                  child: Text('群成员'),
+                ),
+              ],
             ),
           IconButton(
             onPressed: _openSettings,
