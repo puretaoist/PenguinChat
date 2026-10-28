@@ -2801,3 +2801,38 @@ Get-ChildItem $t -Directory | ForEach-Object {
 
 **验收**：`git cat-file -t HEAD` 为 commit、`git fsck --connectivity-only`
 只剩 `dangling`（不能有 `missing`）。2026-09-15 用此法完成 8d9308b。
+
+## C47. 「版本过低」不是版本判据；短信/验证分支整棵树都锁在同一道门后
+
+**结论（2026-10-28 实证）**：type=45 的那句「你当前使用的QQ版本过低」是**盾牌文案**，
+与任何版本字节都无关。四组对照（小号 3499239040，全零口令 MD5，其余参数不变）：
+
+| # | 改的东西 | 位置 | 结果 |
+|---|---|---|---|
+| 1 | `--ksid-name="A9.3.60.41075"`（SSO 头版本串） | `lib/kernel/wlogin8/qq8_sso.dart:208-210` | type=45 |
+| 2 | `--ssover=22` + 上面的版本串（0x100/0x106 的 ssoVer） | `lib/kernel/wlogin8/qq8_tlv.dart` case 0x100/0x106 | type=45 |
+| 3 | 整套 tim4.1.0 档案 + `--ksid-name="A9.0.75.12345"` | `lib/kernel/wlogin8/qq8_apk_info.dart` | type=45 |
+| 4 | 整套 9.3.60 档案 | 同上 | type=45 |
+
+⇒ 版本串、ssoVer、档案代际三条轴全否。**不要再往"补版本参数"上花时间**。
+
+**第二件事：验证分支不可达。** 想走短信验证码（子命令 8）必须先有 `0x104` 盐和
+`0x174` 令牌，而这两个只由 `type=160/162/239` 的响应给出；密码链直接回 45，
+永远拿不到 160 ⇒ 直接抛：
+
+```
+Qq8LoginException: 请求下发短信缺少盐或令牌（ctx.t104 / ctx.t174 为空）：两者都来自上一条 type=160/162/239 响应
+  at Qq8LoginBody.buildSendSms (lib/kernel/wlogin8/qq8_login.dart:613)
+```
+
+滑块（子命令 2）、设备锁、短信提交（7）同理，全在 45 这道门后面。
+
+**唯一不经过密码门的原生子命令：17 `check_uin_account`（手机号登录第 1 段）。**
+它只要手机号原文（走 `0x112`），不需要 t104/t174。组包已实现并 dry-run 通过：
+`dart run tool/qq8_live_smoke.dart --phone=<绑定手机号> --profile=8.2.11 --identity=<identity>`
+ → 成功则 `--send` 拿 t104/0x126/0x183 → 子命令 19 下发 → 子命令 18 提交拿票。
+若 17 也被 45 拦，则证明风控是账号级的、与子命令无关，只能等/申诉/导票。
+
+**已验证的另一半**：小号走**票据链**（exchange_emp）能正常回 15/16（服务端正常处理），
+且 2026-10-25 曾用官方签的票 `type=0` 成功 ⇒ 我方信封/组包对小号是被接受的，
+门只开在 `wtlogin.login` 系列子命令上。
