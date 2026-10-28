@@ -641,6 +641,9 @@ class Qq8TlvContext {
   /// 0x100/0x106 里 _sso_ver 的覆写（版本二分实验用）。
   final int? ssoVerOverride;
 
+  /// 0x100 里 mainSigMap 的覆写（票据链按票据签发的 sigmap 回带用）。
+  final int? mainSigMapOverride;
+
   /// 会话密钥材料。
   final Uint8List ksid;
 
@@ -773,6 +776,7 @@ class Qq8TlvContext {
     this.seqId = 0,
     this.msfSsoSeq = 0,
     this.ssoVerOverride,
+    this.mainSigMapOverride,
     this.randomBytes = _secureRandomImpl,
     this.teaPadding = _secureRandomImpl,
     this.nowMillis = _wallClockImpl,
@@ -954,7 +958,7 @@ abstract final class Qq8Tlv {
         w.u32(ctx.apk.appid);
         w.u32(emp ? 2 : ctx.apk.subid);
         w.u32(0);
-        w.u32(ctx.apk.mainSigMap);
+        w.u32(ctx.mainSigMapOverride ?? ctx.apk.mainSigMap);
 
       case 0x104:
         w.raw(ctx.t104);

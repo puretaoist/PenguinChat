@@ -63,6 +63,22 @@ class FekitProbeActivity : Activity() {
             }
         }
 
+        // ── QimeiSDK 探针（libqimei.so） ──
+        step("load qimei") { System.loadLibrary("qimei") }
+        step("U.ensureLoaded") { sb.append("     -> loaded=${com.tencent.qimei.uin.U.ensureLoaded()}\n") }
+        step("U.init(appkey, empty)") { com.tencent.qimei.uin.U.probeInit(this, "0AND063BSR94DSGA", arrayOf<Any>()) }
+        step("U.z2(ctx, sdkInt)") { sb.append("     -> ${com.tencent.qimei.uin.U.probeZ2(this, android.os.Build.VERSION.SDK_INT)}\n") }
+        step("U.z(ctx)") { sb.append("     -> ${com.tencent.qimei.uin.U.probeZ(this)}\n") }
+        step("U.o()") { sb.append("     -> ${com.tencent.qimei.uin.U.probeO()}\n") }
+        step("U.p()") { sb.append("     -> ${com.tencent.qimei.uin.U.probeP()}\n") }
+        step("U.u()") { sb.append("     -> ${com.tencent.qimei.uin.U.probeU()}\n") }
+        step("U.tvc()") { sb.append("     -> ${com.tencent.qimei.uin.U.probeTvc()}\n") }
+        step("U.tvd()") { sb.append("     -> ${com.tencent.qimei.uin.U.probeTvd()}\n") }
+        step("U.tvs()") { sb.append("     -> ${com.tencent.qimei.uin.U.probeTvs()}\n") }
+        for (i in 0..6) {
+            step("U.m($i)") { sb.append("     -> ${com.tencent.qimei.uin.U.probeM(i)}\n") }
+        }
+
         // ── 批处理：喂任意 moduleId + salt，取真签 ──
         val req = File(filesDir, "fekit_req.txt")
         if (req.exists()) {

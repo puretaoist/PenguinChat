@@ -3047,3 +3047,39 @@ TIM `request/*.java` 的 `this.k`（TIM 用 `k` 不用 `u`）与 `this.l`（命�
 - `LoginAttemptLimiter` 把**连接失败**也计成一次尝试（`beginAttempt` 在 connect 之前）⇒ 端点评测时必须先 `rm -f $TEMP/qqclient-attempts.json`，且一次会话只试一个端点。
 - `--unwrap-file=<json>` 走 `share_key` 可**完全离线**解密响应并 `--dump-tlv` 任意 TLV，做结构分析零风险、零限流消耗——今后分析响应体一律用这条路。
 
+
+## C51 0x545（qimei）两种取值全否 + 0x553 根因锁定在 FEKit 通道 + 票据链 sigmap 对齐仍 16
+
+### C51-1 `0x545` 的两个候选值都试过了，仍是 type=45
+背景：`libqimei.so`（539416B，只导出 `JNI_OnLoad`，RegisterNatives）已能在我方 APK 里加载；桩类 `com/tencent/qimei/uin/U.java` 逐字复制私有 native 签名并探针调用成功（`U.init("0AND063BSR94DSGA", [])` OK，`U.z2` / `U.z` / `U.o` / `U.p` 都有返回值，`U.m(0..6)` 恒为 `93E4062466A29E88611824CFE31EA493`）。但仍拿不到 qimei36。
+
+- TIM 缓存文件 `/data/data/com.tencent.tim/files/com.tencent.qimei.sdk.QimeiSDK`（262B）首段 base64 解出 = ASCII `02286868749062218CF2598BA4BF88`（32 hex）+ 二进制尾巴 ⇒ 这是 TIM 的 **qimei16**，qimei36 的后 4 位仍在密文里。
+- `com.tencent.qimei.sdk.Qimei`（`tim-classes2.dex`）：字段 `b`=qimei16、`c`=qimei36，`getQimei16()`/`getQimei36()` 都受 `com.tencent.qimei.as.a.e/.f` 开关控制（关则返回空）；`IQimeiSDK` 只有 `init(Context)` / `getQimei()` / `getBeaconTicket()` / `getToken()`。
+- **实测两发（均为 tim4.1.0 档案 + identity-tim + 全零口令 MD5，`--qimei=` 注入）**：
+  1. `--qimei=c5da7bd11af782c8a3dec3d710001591a806`（QQ 那串 36 位；TIM 的 shared_prefs 里也出现 5 次）→ 0x545 36 字节 → **type=45**
+  2. `--qimei=02286868749062218CF2598BA4BF88`（TIM 自己的 qimei16 32 位）→ 0x545 30 字节 → **type=45**
+⇒ 0x545 这个变量也**不是** 45 的门；`Qq8QimeiMode.rawSource` 已按 TIM 代际发原文，无需再动。
+
+### C51-2 `0x553` 的根因（先前 C50-5 只说「Java 层实现」，现在有了确切出口）
+`tim-classes2.dex/sources/com/tencent/mobileqq/qsec/qsecurity/QSec.java:145-161`：
+
+```java
+public byte[] getFeKitAttach(Context context, String str, String str2, String str3) {
+    if (!FEKit.getInstance().mInit) { e.b().i(); }   // 未初始化就现初始化
+    xwDebugID = getXwDebugID(str);                    // ← private native（libfekit）
+    ...
+    return xwDebugID != null ? xwDebugID : new byte[]{0};
+}
+```
+
+- 调用点原文：`tim-classes19.dex/sources/oicq/wlogin_sdk/request/j.java:862` → `QSec.getInstance().getFeKitAttach(this.a, uin, "0x810", "0x9")` 进 `tlv_t553`。
+- `getXwDebugID` 是 **libfekit 里的 private native**（`QSec.java:109`）；我方探针里 FEKit 从未 init ⇒ 返回 len=0 ⇒ body `[0]`。
+- `FEKit.init(Context,String,String,String,String,String)`（`tim-classes2.dex/sources/com/tencent/mobileqq/fe/FEKit.java:201-235`）要拉起 `Dtc.setQ36` / `f.a().g("mainAccount")` / `b.a(...)` / `Dtc`/`Dtn` 初始化 / `QSec.init` / `QQSecuritySign.init` / `ChannelManager.setNativeChannel` / `startTaskSystem`（`QSec.execTasks`）——即 **整条 FEKit/MSF 通道**。
+- ⇒ 结论：0x553 不是「算」出来的，是「聊」出来的（通道状态）；要复现必须把我方的裸 TCP 伪装成 MSF 会话并实现 FEKit 子协议，工作量 = 半个 MSF。
+
+### C51-3 票据链按票据签发的 mainSigMap 回带，仍是 type=16
+- 新开关：`lib/kernel/wlogin8/qq8_tlv.dart` 的 `Qq8TlvContext.mainSigMapOverride`（`case 0x100` 改为 `w.u32(ctx.mainSigMapOverride ?? ctx.apk.mainSigMap)`）+ `tool/qq8_live_smoke.dart --mainsigmap=<十进制>`。
+- 原由：真机 TIM 的 `tk_file` 里 `WloginAllSigInfo.mainSigMap = 34607328`（0x21010E0），而我方 tim4.1.0 档案写的是 QQ 的 `34869472`（0x21410E0）⇒ 怀疑「回带错 sigmap」导致「身份失效」。
+- 实测（15:22 从真机现取 tk_file，5 分钟内真发，`--mainsigmap=34607328`）：**仍 type=16**，0x146 99B + 0x508 34B「你的用户身份已失效」。
+- 对照：大号 2089495846 的 QQ 票（tgt 72 / d2 88 / d2key 16 / sig_key 10，与 TIM 票长度完全一致）走同一条 token 链曾 **type=0 成功** ⇒ 管线本身没问题，差异只剩票的签发侧（TIM 域）。
+- 注意 oicq 语义：`case 16` 客户端要 **清 local sig**；同一张票被告知失效后再重试仍是 16，所以「用同一张票反复试」永远得 16，不能据此判断票据链通不通。

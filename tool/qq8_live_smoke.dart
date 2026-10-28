@@ -208,6 +208,8 @@ Future<void> main(List<String> argv) async {
   final a1TgtgtD2Key = args.containsKey('a1-tgtgt-d2key');
   final ksidNameOverride = args['ksid-name'];
   final ssoVerOverride = int.tryParse(args['ssover'] ?? '');
+  // 0x100 的 mainSigMap 覆写：票据链按票据签发时的 sigmap 回带
+  final mainSigMapOverride = int.tryParse(args['mainsigmap'] ?? '');
   Map<String, dynamic>? a1Data;
   if (useA1 || useA1Exchange) {
     final a1Path = args['a1-file'];
@@ -955,6 +957,7 @@ Future<void> main(List<String> argv) async {
     // 「同一流程内绑定、随流程走」的编号，且官方几乎从不发 0。
     msfSsoSeq: sessionSeq,
     ssoVerOverride: ssoVerOverride,
+    mainSigMapOverride: mainSigMapOverride,
   );
 
   final body = useSlider
