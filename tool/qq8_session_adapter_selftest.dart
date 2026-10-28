@@ -922,16 +922,27 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
-  section('10. 仍未支持的操作与释放');
+  section('10. 戳一戳（OidbSvc.0xed3）与释放');
   {
-    var pokeThrew = false;
+    // 群戳：一个请求、一个应答 {3:0}。上一段的最后一个 seq 是 14。
+    scripted.scriptedResponses.add(
+        _frame(15, Qq8Msg.pokeCmd, Qq8Pb.encode(<int, Object?>{3: 0})));
+    final beforePoke = scripted.sent.length;
+    await adapter.sendPoke('group_987654321', '22222');
+    check('群戳一戳发出去了（不抛异常）', scripted.sent.length == beforePoke + 1,
+        '已发 ${scripted.sent.length}');
+    check('能力表里承认 poke', adapter.supports('poke'));
+
+    // 用户 ID 不是数字：本地就拒，不能拿垃圾值去撞服务端
+    var badIdThrew = false;
     try {
-      await adapter.sendPoke('private_22222', '22222');
-    } on SessionException {
-      pokeThrew = true;
+      await adapter.sendPoke('group_987654321', 'not-a-uin');
+    } on SessionException catch (e) {
+      badIdThrew = e.message.contains('uin');
     }
-    check('戳一戳仍不支持（抛 SessionException + supports 报 false）',
-        pokeThrew && !adapter.supports('send_poke'));
+    check('userId 不是数字 → 本地拒绝且说明原因', badIdThrew);
+    check('被拒时没有发包', scripted.sent.length == beforePoke + 1,
+        '${scripted.sent.length}');
 
     await adapter.dispose();
     await svc.close();

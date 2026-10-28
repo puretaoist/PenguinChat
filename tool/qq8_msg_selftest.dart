@@ -692,6 +692,56 @@ Future<void> main() async {
         '${rElems.length} 个元素');
   }
 
+  // ----------------------------------------------------------------
+  section('11. 戳一戳（OidbSvc.0xed3）—— 黄金向量比对');
+  {
+    // 黄金向量由 analysis/scripts/gen_poke_vectors.py 独立生成（手写 varint，
+    // 不引用 oicq/Dart）。常量：UID=3499239040 GID=763829581 SELF=2089495846
+    // APK_VER=4.1.0.4050。
+    const uid = 3499239040;
+    const gid = 763829581;
+    const self = 2089495846;
+    const ver = '4.1.0.4050';
+
+    final gp = Qq8Msg.buildGroupPokeBody(uid: uid, gid: gid);
+    check('群戳体逐字节 = 黄金向量（{1: uid, 2: gid}）',
+        _hexOf(gp) == '0880cdc8840d10cdba9cec02', _hexOf(gp));
+
+    final fp = Qq8Msg.buildFriendPokeBody(selfUin: self, peerUin: uid);
+    check('私聊戳体逐字节 = 黄金向量（{1: 对方, 5: 对方}）',
+        _hexOf(fp) == '0880cdc8840d2880cdc8840d', _hexOf(fp));
+
+    final fps = Qq8Msg.buildFriendPokeBody(selfUin: self, peerUin: uid, self: true);
+    check('戳自己时字段 1 = 自己（{1: 我, 5: 对方}）',
+        _hexOf(fps) == '08a6daace4072880cdc8840d', _hexOf(fps));
+
+    final wrap = Qq8Msg.buildOidbWrapper(
+      type1: Qq8Msg.pokeType1, type2: Qq8Msg.pokeType2, body: gp, apkVersion: ver);
+    check('OIDB 外壳逐字节 = 黄金向量',
+        _hexOf(wrap) ==
+            '08d31d10011800220c0880cdc8840d10cdba9cec023212616e64726f696420342e312e302e34303530',
+        _hexOf(wrap));
+    final wm = Qq8Pb.decode(wrap);
+    check('外壳：type1=0xed3、type2=1、字段 4 就是 body、字段 6 = android <ver>',
+        Qq8Pb.intAt(wm, 1) == 0xed3 &&
+            Qq8Pb.intAt(wm, 2) == 1 &&
+            _hexOf(Qq8Pb.bytesAt(wm, 4)!) == _hexOf(gp) &&
+            Qq8Pb.textAt(wm, 6) == 'android $ver',
+        'type1=${Qq8Pb.intAt(wm, 1)} type2=${Qq8Pb.intAt(wm, 2)}');
+
+    final okDirect = Qq8Msg.parsePokeResponse(Qq8Pb.encode(<int, Object?>{3: 0}));
+    check('应答 {3:0} → ok（参考实现判据 [3] === 0）', okDirect.ok && okDirect.code == 0,
+        'code=${okDirect.code}');
+    final failDirect = Qq8Msg.parsePokeResponse(Qq8Pb.encode(<int, Object?>{3: 5}));
+    check('应答 {3:5} → 不 ok，且带出 5', !failDirect.ok && failDirect.code == 5,
+        'code=${failDirect.code}');
+    final okInner = Qq8Msg.parsePokeResponse(
+        Qq8Pb.encode(<int, Object?>{4: Qq8Pb.encode(<int, Object?>{1: 0})}));
+    check('应答 {4:{1:0}} 也认（OIDB 另一种形态）', okInner.ok && okInner.code == 0,
+        'code=${okInner.code}');
+    final empty = Qq8Msg.parsePokeResponse(Uint8List(0));
+    check('空应答 → 不判成功（code == null）', !empty.ok && empty.code == null);
+  }
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

@@ -719,6 +719,36 @@ void main() {
       expect(find.byKey(const ValueKey('action-reveal')), findsNothing);
     });
 
+    testWidgets('戳一戳：给了回调才出现；点了回调一次', (tester) async {
+      var poked = 0;
+      await tester.pumpWidget(MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          body: MessageActionsSheet(
+            message: _msg('1', '戳你一下', time: day2),
+            onCopy: () {},
+            onPoke: () => poked++,
+          ),
+        ),
+      ));
+      expect(find.byKey(const ValueKey('action-poke')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('action-poke')));
+      await tester.pumpAndSettle();
+      expect(poked, 1);
+    });
+
+    testWidgets('后端不支持（没给回调）：不出现 戳一戳', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          body: MessageActionsSheet(
+            message: _msg('1', '别人发的', time: day2),
+            onCopy: () {},
+          ),
+        ),
+      ));
+      expect(find.byKey(const ValueKey('action-poke')), findsNothing);
+    });
     testWidgets('预览显示消息文本（空文本回落占位文案）', (tester) async {
       await tester.pumpWidget(MaterialApp(
         theme: buildTelegramTheme(),

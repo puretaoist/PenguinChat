@@ -610,6 +610,86 @@ abstract final class Qq8Msg {
   }
 
   // -------------------------------------------------------------------------
+  // 戳一戳（`OidbSvc.0xed3`）
+  // -------------------------------------------------------------------------
+
+  /// 戳一戳命令字。**群**与**私聊**是同一个命令，只是 body 字段不同
+  /// （参考实现 `lib/member.ts:189-196` 群、`lib/friend.ts:388-396` 好友）。
+  static const String pokeCmd = 'OidbSvc.0xed3';
+
+  /// OIDB 命令字里藏的 (type1, type2)：`0xed3` → (3795, 1)。
+  static const int pokeType1 = 0xed3;
+  static const int pokeType2 = 1;
+
+  /// 群戳一戳请求体（参考实现 `member.ts:190-193`）：
+  /// `{1: uid, 2: gid}`（`uid` 就是对方 uin，`gid` 是群号）。
+  ///
+  /// 注意这**不是**完整报文：OIDB 外面还要套一层
+  /// `{1: type1, 2: type2, 3: 0, 4: body, 6: 'android <ver>'}`，
+  /// 见 [buildOidbWrapper]。
+  static Uint8List buildGroupPokeBody({required int uid, required int gid}) =>
+      Qq8Pb.encode(<int, Object?>{
+        1: uid & 0xFFFFFFFF,
+        2: gid & 0xFFFFFFFF,
+      });
+
+  /// 私聊戳一戳请求体（参考实现 `friend.ts:389-393`）：
+  /// `{1: self ? 我的uin : 对方uin, 5: 对方uin}`。
+  ///
+  /// `self=true` 是「戳自己」（参考实现的彩蛋），默认戳对方。
+  static Uint8List buildFriendPokeBody({
+    required int selfUin,
+    required int peerUin,
+    bool self = false,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        1: (self ? selfUin : peerUin) & 0xFFFFFFFF,
+        5: peerUin & 0xFFFFFFFF,
+      });
+
+  /// OIDB 统一外壳（参考实现 `client.ts:584-598` 的 `sendOidb`）。
+  ///
+  /// 之前项目里的 OIDB（`0x480` 心跳、`0x88d_0` 群水位）都是手写这一层的，
+  /// 这里把它抽出来：`{1: type1, 2: type2, 3: 0, 4: body, 6: 'android <ver>'}`。
+  /// 字段 5 参考实现不发。
+  static Uint8List buildOidbWrapper({
+    required int type1,
+    required int type2,
+    required Uint8List body,
+    required String apkVersion,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        1: type1,
+        2: type2,
+        3: 0,
+        4: body,
+        6: 'android $apkVersion',
+      });
+
+  /// 解析戳一戳应答。
+  ///
+  /// **判据来自参考实现**：`pb.decode(payload)[3] === 0`（member.ts:195 /
+  /// friend.ts:395）。但 OIDB 应答有两种常见形态（`0x88d_0` 是
+  /// `[4][1][3]`，戳一戳参考实现读 `[3]`），所以这里按「先 [3] 再 [4] 里层」
+  /// 的顺序取值，取到第一个 int 当返回码；都取不到就返回 `code == null`
+  /// 且 `ok == false`，**不猜成功**。
+  static ({bool ok, int? code}) parsePokeResponse(Uint8List payload) {
+    int? code;
+    final top = Qq8Pb.decode(payload);
+    final direct = Qq8Pb.intAt(top, 3);
+    if (direct != null) {
+      code = direct;
+    } else {
+      final inner = Qq8Pb.bytesAt(top, 4);
+      if (inner != null) {
+        final m = Qq8Pb.decode(inner);
+        code = Qq8Pb.intAt(m, 1) ?? Qq8Pb.intAt(m, 3);
+      }
+    }
+    return (ok: code == 0, code: code);
+  }
+
+  // -------------------------------------------------------------------------
   // 已读上报（`PbMessageSvc.PbMsgReadedReport`）
   // -------------------------------------------------------------------------
 

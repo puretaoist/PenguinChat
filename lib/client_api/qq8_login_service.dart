@@ -1791,6 +1791,38 @@ class Qq8LoginService {
     return r;
   }
 
+  /// 戳一戳。**需已上线**。
+  ///
+  /// [gid] 为 null 表示私聊（只有 [peerUin] 有意义），否则是群。
+  /// 群/私聊同一个命令字 `OidbSvc.0xed3`，只是 body 不同
+  /// （参考实现 `lib/member.ts:189-196` 与 `lib/friend.ts:388-396`）。
+  ///
+  /// 判据见 `Qq8Msg.parsePokeResponse`（参考实现看应答 `[3] === 0`）。
+  Future<({bool ok, int? code})> sendPoke({
+    required int peerUin,
+    int? gid,
+  }) async {
+    final s = _requireOnline();
+    final selfUin = snapshot.uin;
+    if (selfUin == null) throw Qq8LoginException('还没上线，不知道自己的 uin');
+    final inner = gid == null
+        ? Qq8Msg.buildFriendPokeBody(selfUin: selfUin, peerUin: peerUin)
+        : Qq8Msg.buildGroupPokeBody(uid: peerUin, gid: gid);
+    final frame = await s.sendUni(
+      Qq8Msg.pokeCmd,
+      Qq8Msg.buildOidbWrapper(
+        type1: Qq8Msg.pokeType1,
+        type2: Qq8Msg.pokeType2,
+        body: inner,
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: timeout,
+    );
+    final r = Qq8Msg.parsePokeResponse(frame.payload);
+    _log.i('戳一戳 peer=$peerUin gid=$gid code=${r.code} ok=${r.ok}');
+    return r;
+  }
+
   /// 私聊已读上报（告诉服务端"这个会话读到 [lastReadTime]"）。**需已上线**。
   Future<void> reportC2cRead({
     required int peerUin,

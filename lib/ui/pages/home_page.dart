@@ -655,6 +655,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     final session = ref.read(sessionProvider);
     final canRecall =
         m.outgoing && !m.isRecalled && (session?.supports('recall') ?? false);
+    // 戳一戳：对面发的消息才能戳（要拿对方 uin）；后端得承认这个能力。
+    final canPoke = !m.outgoing &&
+        m.senderId.isNotEmpty &&
+        (session?.supports('poke') ?? false);
     await MessageActionsSheet.show(
       context,
       message: m,
@@ -667,12 +671,26 @@ class _HomePageState extends ConsumerState<HomePage> {
       onReveal: () => store?.revealMessage(chatId, m.id),
       onReply: () => setState(() => _replyTarget = m),
       onRecall: () => _recall(store, chatId, m.id),
+      onPoke: canPoke ? () => _poke(m) : null,
       onDelete: () => _deleteMessage(store, chatId, m),
       onForward: () => _forwardMessages(chatId, <String>[m.id]),
       onSelect: () => setState(() => _selected.add(m.id)),
     );
   }
 
+  /// 戳一戳这条消息的发送者（群戳对方 uin，私聊戳会话对端）。
+  Future<void> _poke(ChatMessage m) async {
+    final session = ref.read(sessionProvider);
+    if (session == null) return;
+    try {
+      await session.sendPoke(m.chatId, m.senderId);
+      if (mounted) _toast('已戳一戳');
+    } on SessionException catch (e) {
+      if (mounted) _toast('戳一戳失败：${e.message}');
+    } on Object catch (e) {
+      if (mounted) _toast('戳一戳失败：$e');
+    }
+  }
   /// 转发：先挑目标会话，再交给 store（只重发内容，发不了的会抛异常）。
   Future<void> _forwardMessages(String fromChatId, List<String> ids) async {
     final store = ref.read(chatStoreProvider);

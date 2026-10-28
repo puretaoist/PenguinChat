@@ -109,6 +109,7 @@ class Qq8SessionAdapter implements Session {
     'send_message',
     'recall', // 撤回自己发的消息（私聊 / 单包群消息）
     'set_message_read', // 已读上报（chat_store 问的就是这个能力名）
+    'poke', // 戳一戳（群/私聊同一个 OIDB 命令 0xed3）
   };
 
   /// 建连 = 用本地票据登录并上线。**认证类动作（口令/滑块/扫码）走服务本身**。
@@ -450,9 +451,27 @@ class Qq8SessionAdapter implements Session {
     await service.reportGroupRead(gid: key.id!, lastReadSeq: m.seq);
   }
 
+  /// 戳一戳：群聊走 `{1: 对方uin, 2: 群号}`，私聊走 `{1: 对方uin, 5: 对方uin}`
+  /// （参考实现 `lib/member.ts:189-196` / `lib/friend.ts:388-396`）。
   @override
-  Future<void> sendPoke(String chatId, String userId) =>
-      throw const SessionException('协议线暂不支持戳一戳');
+  Future<void> sendPoke(String chatId, String userId) async {
+    _requireReady();
+    final key = Chat.parseKey(chatId);
+    if (key == null || key.id == null) {
+      throw SessionException('会话 ID 不合法：$chatId');
+    }
+    final peer = int.tryParse(userId);
+    if (peer == null || peer <= 0) {
+      throw SessionException('戳一戳要对方的 uin（数字），拿到的是：$userId');
+    }
+    final r = await service.sendPoke(
+      peerUin: peer,
+      gid: key.type == ChatType.group ? key.id : null,
+    );
+    if (!r.ok) {
+      throw SessionException('戳一戳失败：服务端返回 ${r.code ?? '未知码'}');
+    }
+  }
 
   // ------------------------------------------------------------------
   // 内部：状态与事件映射

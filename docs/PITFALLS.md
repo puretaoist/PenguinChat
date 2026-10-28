@@ -3286,3 +3286,72 @@ reserver = {1: 0}
 **边界**：真机未验证（设备此时未连接）。结构按参考实现逐字段对齐，且分片撤回
 只影响 `pktNum > 1` 的群消息，单包路径字节未变（有 `pktNum=1` 等价的断言守着）。
 
+
+---
+
+## C58 戳一戳：一个 OIDB 命令，两种 body，外壳别再手写
+
+**背景**：`Session.sendPoke` 之前是硬抛 `SessionException('协议线暂不支持戳一戳')`，
+`supports('poke')` 也不在能力表里。UI 其实早就认识这个元素（
+`lib/ui/widgets/message_content.dart:158` 的 `case PokeSegment()` 显示 `[戳一戳]`），
+收到的戳一戳也能解析（`lib/kernel/wlogin8/qq8_elem.dart:689-694`，Elem 126）。
+也就是「能看不能发」。
+
+**协议（参考实现）**：
+
+| 语义 | body | 出处 |
+| --- | --- | --- |
+| 群戳 | `{1: 对方uin, 2: 群号}` | `analysis/_ref/oicq-src/lib/member.ts:189-196` |
+| 私聊戳 | `{1: 对方uin, 5: 对方uin}`（`self=true` 时 `{1: 我的uin, 5: 对方uin}`） | `lib/friend.ts:388-396` |
+| 命令字 | 都是 `OidbSvc.0xed3` | 同上 |
+| 成功判据 | `pb.decode(payload)[3] === 0` | 同上 |
+
+**关键：OIDB 外壳**（`lib/client.ts:584-598` 的 `sendOidb`）——
+命令字里的 `0xed3` 要拆成 `(type1, type2)` 填进外壳，`body` 放字段 4：
+
+```
+{1: type1(=0xed3=3795), 2: type2(=1), 3: 0, 4: body, 6: "android <apk.ver>"}
+```
+
+项目里以前是**每处手写**这层（`0x480` 心跳在 `qq8_session.uniHeartbeat`、
+`0x88d_0` 群水位在 `qq8_login_service.dart:1598-1610`），这回抽成了
+`Qq8Msg.buildOidbWrapper({type1, type2, body, apkVersion})`。之前那次「第一版直接
+把内层 body 发出去，服务端回了个空壳」的老坑，就是因为漏了这层。
+
+**应答解析的坑**：参考实现读 `[3]`，但本项目实测过的另一种 OIDB（`0x88d_0`）是
+`[4][1][3]` 三层。所以 `parsePokeResponse` 按「先取 `[3]` 的 int，没有再钻 `[4]` 里层
+取 `1` 或 `3`」的顺序，两处都取不到就返回 `code == null` 且 `ok == false`——
+**不猜成功**。真机没验证前，宁可报「未知码」也不要把失败说成成功。
+
+**改动清单**：
+
+- `lib/kernel/wlogin8/qq8_msg.dart`：`pokeCmd` / `pokeType1` / `pokeType2` /
+  `buildGroupPokeBody` / `buildFriendPokeBody` / `buildOidbWrapper` / `parsePokeResponse`。
+- `lib/client_api/qq8_login_service.dart`：`sendPoke({required int peerUin, int? gid})`
+  （`gid == null` 走私聊体），返回 `({bool ok, int? code})`。
+- `lib/client_api/qq8_session_adapter.dart`：`sendPoke` 从「抛异常」改成真的发；
+  `_capabilities` 加 `'poke'`；userId 不是数字/≤0 时本地就拒（`uin` 字样给用户看）。
+- `lib/ui/widgets/message_actions.dart`：新增可选 `onPoke`，有回调才显示
+  `action-poke`（`Icons.touch_app_outlined`，「戳一戳」）。
+- `lib/ui/pages/home_page.dart`：长按菜单里 `canPoke = !m.outgoing && senderId 非空 &&
+  session.supports('poke')`，`_poke(m)` 调 `session.sendPoke(m.chatId, m.senderId)`，
+  成功 `_toast('已戳一戳')`、失败把 `SessionException.message` 原样弹出。
+
+**验证**：`analysis/scripts/gen_poke_vectors.py` 是独立第二实现（手写 varint，不引用
+oicq/Dart），黄金向量：
+
+```
+groupPokeBody      = 0880cdc8840d10cdba9cec02
+friendPokeBody     = 0880cdc8840d2880cdc8840d
+friendPokeSelf     = 08a6daace4072880cdc8840d
+oidbWrapper(group) = 08d31d10011800220c0880cdc8840d10cdba9cec023212616e64726f696420342e312e302e34303530
+```
+
+（常量：UID=3499239040 GID=763829581 SELF=2089495846 APK_VER=4.1.0.4050）
+`tool/qq8_msg_selftest.dart` 10 项逐字节比对 + 4 组应答解析（69→78 项）；
+`tool/qq8_session_adapter_selftest.dart` 群戳发一个包、坏 userId 本地拒（77→80 项）；
+`test/message_bubble_test.dart` 两条 widget 用例（有回调出现/无回调不出现）。
+
+**边界**：真机未验证（设备离线）。私聊戳的 body 用了参考实现 `friend.ts` 的
+`{1: 对方, 5: 对方}`，与群戳的 `{1: 对方, 2: 群号}` 字段号不同，**不要合并**。
+

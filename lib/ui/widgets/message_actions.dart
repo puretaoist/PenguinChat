@@ -35,6 +35,9 @@ class MessageActionsSheet extends StatelessWidget {
   /// 转发到别的会话（只重发内容，见 ChatStore.forwardMessages）。
   final VoidCallback? onForward;
 
+  /// 戳一戳对方（后端支持 `poke` 且这条是对面发的时才给回调）。
+  final VoidCallback? onPoke;
+
   /// 进入多选模式（TG 长按菜单里的 Select）。
   final VoidCallback? onSelect;
 
@@ -49,6 +52,7 @@ class MessageActionsSheet extends StatelessWidget {
     this.onDelete,
     this.onForward,
     this.onSelect,
+    this.onPoke,
   });
 
   /// 弹出菜单（调用方负责判断 [canRecall] 与提供回调）。
@@ -63,6 +67,7 @@ class MessageActionsSheet extends StatelessWidget {
     VoidCallback? onDelete,
     VoidCallback? onForward,
     VoidCallback? onSelect,
+    VoidCallback? onPoke,
   }) =>
       showModalBottomSheet<void>(
         context: context,
@@ -77,6 +82,7 @@ class MessageActionsSheet extends StatelessWidget {
           onDelete: onDelete,
           onForward: onForward,
           onSelect: onSelect,
+          onPoke: onPoke,
         ),
       );
 
@@ -117,6 +123,14 @@ class MessageActionsSheet extends StatelessWidget {
             onTap: onCopy,
             context: context,
           ),
+          if (onPoke != null)
+            _action(
+              key: const ValueKey('action-poke'),
+              icon: Icons.touch_app_outlined,
+              label: '戳一戳',
+              onTap: onPoke,
+              context: context,
+            ),
           _action(
             key: const ValueKey('action-forward'),
             icon: Icons.forward,
