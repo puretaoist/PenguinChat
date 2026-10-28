@@ -195,17 +195,33 @@ Future<void> main(List<String> argv) async {
   // c() 解密失败时静默回退为「密文原样切尾 16B」（oicq_request.java c() 的 bArrDecrypt==null 分支）。
   // 我们没有 t10c key ⇒ 直接采用密文回退形态：0x106 = enA1[:-16]，tgtgt = enA1[-16:]。
   final useA1 = args.containsKey('a1-login');
+  // 子命令 15：A1 + noPicSig 走 wtlogin.exchange_emp（官方 request/z.java）。
+  // 与 --a1-login 读同一份 json，但子命令=15、命令字=exchange_emp、TLV 表用
+  // Qq8A1ExchangeTlvOrder。dry-run 出包即可；真发闸门与 --a1-login 并列放行。
+  final useA1Exchange = args.containsKey('a1-exchange');
+  // 官方 WtloginHelper.java:690-697（exchange A2 from A1 分支）把 `_en_A1`
+  // **整块**塞进 0x106：`tlv_t106Var.set_data(bArr2, bArr2.length)`，
+  // 既不截断也不解密（GetA1ByAccount 就是 `return _en_A1.clone()`）。
+  // 我方早前按 oicq 的 `a1.slice(0,-16)` 截掉尾 16B，属未取证形态；
+  // `--a1-full` 做 A/B：0x106 发完整 en_a1。
+  final a1Full = args.containsKey('a1-full');
+  final a1TgtgtD2Key = args.containsKey('a1-tgtgt-d2key');
   final ksidNameOverride = args['ksid-name'];
   final ssoVerOverride = int.tryParse(args['ssover'] ?? '');
   Map<String, dynamic>? a1Data;
-  if (useA1) {
+  if (useA1 || useA1Exchange) {
     final a1Path = args['a1-file'];
     if (a1Path == null || a1Path.isEmpty) {
-      errOut('✗ --a1-login 必须配 --a1-file=<json（含 en_a1 / no_pic_sig hex）>');
+      errOut('✗ --a1-login / --a1-exchange 必须配 --a1-file=<json（含 en_a1 / no_pic_sig hex）>');
     }
     a1Data = jsonDecode(File(a1Path!).readAsStringSync()) as Map<String, dynamic>;
     if ((a1Data['en_a1'] as String?) == null || (a1Data['en_a1'] as String).isEmpty) {
       errOut('✗ --a1-file 里没有 en_a1 字段');
+    }
+    if (useA1Exchange &&
+        ((a1Data['no_pic_sig'] as String?) == null ||
+            (a1Data['no_pic_sig'] as String).isEmpty)) {
+      errOut('✗ --a1-exchange 需要 --a1-file 里的 no_pic_sig 字段');
     }
   }
 
@@ -265,7 +281,7 @@ Future<void> main(List<String> argv) async {
     out('模式: **真实发送**');
   }
   out(
-    '登录方式: ${_modeLabel(useSlider: useSlider, useSendSms: useSendSms, useSubmitSms: useSubmitSms, useDeviceUnlock: useDeviceUnlock, useToken: useToken, useQrcode: args.containsKey('qrcode'), usePhone: args.containsKey('phone') || args.containsKey('phone-code'))}',
+    '登录方式: ${_modeLabel(useSlider: useSlider, useSendSms: useSendSms, useSubmitSms: useSubmitSms, useDeviceUnlock: useDeviceUnlock, useToken: useToken, useA1Exchange: useA1Exchange, useQrcode: args.containsKey('qrcode'), usePhone: args.containsKey('phone') || args.containsKey('phone-code'))}',
   );
   out('日志目录: ${logDir.path}');
   out('');
@@ -515,18 +531,20 @@ Future<void> main(List<String> argv) async {
       : kOicqPasswordTlvOrder;
   final order = useSlider
       ? sliderOrder
-      : (useToken
+      : useToken
           ? qq8ExchangeEmpTlvOrder
-          : (useA1
-              ? qq8PasswordTlvOrderFor(profile.apk)
-              : (tlvSet == 'oicq'
-                  ? oicqPasswordOrder()
-                  : qq8PasswordTlvOrderFor(profile.apk))));
+          : useA1Exchange
+              ? Qq8A1ExchangeTlvOrder
+              : useA1
+                  ? qq8PasswordTlvOrderFor(profile.apk)
+                  : tlvSet == 'oicq'
+                      ? oicqPasswordOrder()
+                      : qq8PasswordTlvOrderFor(profile.apk);
 
   out('--- 客户端档案 ---');
   out('  ${profile.describe()}');
   out(
-    '  TLV 清单: ${useSlider ? "滑验证提交（${sliderOrder.length} 项：${sliderOrder.map((t) => '0x${t.toRadixString(16)}').join(' ')}）" : (useToken ? "exchange_emp（16 项）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项"))}',
+    '  TLV 清单: ${useSlider ? "滑验证提交（${sliderOrder.length} 项：${sliderOrder.map((t) => '0x${t.toRadixString(16)}').join(' ')}）" : (useToken ? "exchange_emp（16 项）" : (useA1Exchange ? "子命令 15 A1 exchange（${order.length} 项：${order.map((t) => '0x${t.toRadixString(16)}').join(' ')}）" : (tlvSet == "oicq" ? "oicq 24 项（实验）" : "官方超集 ${profile.apk.loginTlvOrder.length} 项")))}',
   );
   if (profile.unverified.isNotEmpty) {
     out('  ⚠ 未核实字段: ${profile.unverified.join(', ')}');
@@ -757,9 +775,17 @@ Future<void> main(List<String> argv) async {
   if (useToken) {
     device = device.withTgtgt(md5Bytes(token!.d2key));
   }
-  if (useA1) {
+  if (useA1 || useA1Exchange) {
     final enA1 = _hex(a1Data!['en_a1'] as String);
-    device = device.withTgtgt(enA1.sublist(enA1.length - 16));
+    // 官方 A1 分支（WtloginHelper.java:690-697）把 0x144 的 tgtgt 取自
+    // `t.b(uin)._tgtgt_key`，与票据链同一来源（= MD5(d2key)），
+    // 而不是 oicq 口径的 en_a1 尾 16 字节。`--a1-tgtgt-d2key` 做 A/B。
+    final d2keyHex = a1Data['d2key'] as String?;
+    device = device.withTgtgt(
+      (a1TgtgtD2Key && d2keyHex != null && d2keyHex.isNotEmpty)
+          ? md5Bytes(_hex(d2keyHex))
+          : enA1.sublist(enA1.length - 16),
+    );
   }
   // ---------- 会话（ECDH / sessionId / randomKey / seqId）----------
   //
@@ -877,7 +903,7 @@ Future<void> main(List<String> argv) async {
     t104: sliderSalt, // 验证分支要带上一条响应下发的盐；其余场景为空
     t174: verifyToken, // 短信流程（8/7）要回带的二次验证令牌
     tgt: useToken ? token!.tgt : Uint8List(0),
-    srmToken: useA1 ? _hex(a1Data!['no_pic_sig'] as String) : Uint8List(0),
+    srmToken: (useA1 || useA1Exchange) ? _hex(a1Data!['no_pic_sig'] as String) : Uint8List(0),
     // 挑战带 0x546 时，提交要回 0x547（本地算出的防刷应答）；没有就不带
     t547: sliderPowHex == null ? null : _hex(sliderPowHex),
     t548: selfT548,
@@ -891,13 +917,15 @@ Future<void> main(List<String> argv) async {
     },
     t544SubCmd: useSlider
         ? Qq8SubCmd.slider
-        : (useSubmitSms
+        : useSubmitSms
             ? Qq8SubCmd.submitSms
-            : (useSendSms
+            : useSendSms
                 ? Qq8SubCmd.sendSms
-                : (useToken
+                : useToken
                     ? Qq8SubCmd.tokenControl
-                    : Qq8SubCmd.password))),
+                    : useA1Exchange
+                        ? Qq8SubCmd.a1Exchange
+                        : Qq8SubCmd.password,
     // deterministic 时 curr 钉死，保证包可复现
     t544Curr: deterministic ? 1700000000000 : null,
     // 0x525 内嵌 0x536：null ⇒ TLV 层退回官方空形态 `01 00`
@@ -929,7 +957,18 @@ Future<void> main(List<String> argv) async {
                   ? Qq8LoginBody.buildDeviceUnlock(tlvCtx)
                   : (useToken
                       ? Qq8LoginBody.buildToken(tlvCtx, d2: token!.d2)
-                      : (useA1
+                      : (useA1Exchange
+                          ? Qq8LoginBody.buildA1Exchange(
+                              tlvCtx,
+                              a1: a1Full
+                                  ? _hex(a1Data!['en_a1'] as String)
+                                  : _hex(a1Data!['en_a1'] as String).sublist(
+                                      0,
+                                      _hex(a1Data['en_a1'] as String).length -
+                                          16),
+                              noPicSig: _hex(a1Data['no_pic_sig'] as String),
+                            )
+                          : (useA1
                           ? Qq8LoginBody.build(
                               tlvCtx,
                               Qq8SubCmd.password,
@@ -958,7 +997,7 @@ Future<void> main(List<String> argv) async {
                               ? const <int, List<Object?>>{}
                               : <int, List<Object?>>{
                                   0x545: <Object?>[qimei],
-                                }))))));
+                                })))))));
 
   // token 续期的票据要贯穿三层：SSO 信封的 tgt/d2（sig）、body 的 0x143（d2）。
   Qq8SigInfo? tokenSig;
@@ -990,7 +1029,7 @@ Future<void> main(List<String> argv) async {
   final oicqPacket = Qq8Sso.buildOicqPacket(ssoCtx, body);
   final loginPacket = Qq8Sso.buildLoginPacket(
     ssoCtx,
-    useToken ? qq8ExchangeEmpCmd : qq8LoginCmd,
+    (useToken || useA1Exchange) ? qq8ExchangeEmpCmd : qq8LoginCmd,
     oicqPacket,
     Qq8LoginType.login,
   );
@@ -1040,7 +1079,7 @@ Future<void> main(List<String> argv) async {
   }
   out('  ✓ 显式确认已给出');
 
-  if (!useToken && !useSlider && !useA1 && passwordMd5 == null) {
+  if (!useToken && !useSlider && !useA1 && !useA1Exchange && passwordMd5 == null) {
     out('  ✗ 未提供口令，无法真发（设 QQ_LIVE_PWD 或 --pwd-md5）');
     await _finish(logDir, args);
     exitCode = 2;
@@ -1722,6 +1761,7 @@ String _subCmdName(int v) => switch (v) {
       Qq8SubCmd.submitSms => '提交短信验证码',
       Qq8SubCmd.sendSms => '请求下发短信',
       Qq8SubCmd.token => 'token 登录',
+      Qq8SubCmd.a1Exchange => 'A1 快速登录（exchange_emp）',
       Qq8SubCmd.device => '设备锁',
       17 => '手机号短信：检查',
       19 => '手机号短信：下发/刷新验证码',
@@ -1735,6 +1775,7 @@ String _modeLabel({
   required bool useSubmitSms,
   required bool useDeviceUnlock,
   required bool useToken,
+  bool useA1Exchange = false,
   bool useQrcode = false,
   bool usePhone = false,
 }) {
@@ -1745,6 +1786,7 @@ String _modeLabel({
   if (useSubmitSms) return '提交短信码（子命令 7）';
   if (useDeviceUnlock) return '设备锁解锁（子命令 20）';
   if (useToken) return 'token 续期（子命令 11）';
+  if (useA1Exchange) return 'A1 快速登录（子命令 15，wtlogin.exchange_emp）';
   return '密码登录（子命令 9）';
 }
 

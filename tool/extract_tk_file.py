@@ -625,9 +625,12 @@ def main():
         "sig_key": _hex(_pick(f, "_sKey")),
         "ticket_key": _hex(_pick(f, "_wtST", "_st", "_stKey")),
         "srm_token": _hex(_pick(f, "_srmToken")),
+        "en_a1": _hex(_pick(f, "_en_A1")),
+        "no_pic_sig": _hex(_pick(f, "_noPicSig")),
     }
     print("\n--- 提取结果 ---")
-    hex_keys = ("tgt", "d2", "d2key", "sig_key", "ticket_key", "srm_token")
+    hex_keys = ("tgt", "d2", "d2key", "sig_key", "ticket_key", "srm_token",
+                "en_a1", "no_pic_sig")
     for k, v in out.items():
         if k in hex_keys:
             if v:

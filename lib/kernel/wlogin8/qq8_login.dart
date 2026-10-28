@@ -94,6 +94,19 @@ abstract final class Qq8SubCmd {
   /// 签名原文末 4 字节。
   static const int tokenControl = 10;
   static const int device = 20;
+
+  /// 子命令 15：A1 + noPicSig 免密快速登录。
+  ///
+  /// **它与 [token] 走同一个后端命令 wtlogin.exchange_emp，不是
+  /// wtlogin.login**。官方 analysis/_decompiled/jadx-main/sources/oicq/
+  /// wlogin_sdk/request/z.java 构造器（:6-13）写死：
+  ///
+  ///     this.t = 2064; this.u = 15; this.v = "wtlogin.exchange_emp";
+  ///
+  /// 这条链对 uid=3499239040 是**服务端正常处理**的（同票据链回 type=15/16，
+  /// 而不是密码链/手机号链的 45/243 准入拒绝），因此是本项目里唯一可能绕过
+  /// 该账号 45/243 拦阻的原生子命令。组包见 [Qq8LoginBody.buildA1Exchange]。
+  static const int a1Exchange = 15;
 }
 
 /// 登录响应第 3 字节的类型（官方 `oicq_request.c()` 里的 `iB`，
@@ -539,6 +552,39 @@ abstract final class Qq8LoginBody {
         },
       );
 
+  /// 子命令 15：A1 + noPicSig 免密快速登录（命令字 wtlogin.exchange_emp）。
+  ///
+  /// 与 [buildToken]（子命令 11）共用同一个后端命令，但 body 里带的是
+  /// A1（0x106）与 noPicSig（0x16A），不需要 d2/tgt。官方 request/z.java 的
+  /// arraycopy 顺序见 [Qq8A1ExchangeTlvOrder]。
+  ///
+  /// [a1] 是 0x106 的 body（官方 tlv_t106.set_data(bArr2) 的原样字节，即
+  /// c(en_a1) 的产物；没有 t10c key 时取 en_a1[:-16] 的密文回退形态），
+  /// [noPicSig] 是 0x16A 的 body。二者为空会抛 [Qq8LoginException]
+  /// （官方同样拒发空料，见 z.java 的 bArrC==null -> -1014）。
+  static Uint8List buildA1Exchange(
+    Qq8TlvContext ctx, {
+    required Uint8List a1,
+    required Uint8List noPicSig,
+  }) {
+    if (a1.isEmpty || noPicSig.isEmpty) {
+      throw Qq8LoginException(
+          '子命令 15 缺少 A1/noPicSig（a1=${a1.length}B / noPicSig=${noPicSig.length}B）');
+    }
+    return build(
+      ctx,
+      Qq8SubCmd.a1Exchange,
+      Qq8A1ExchangeTlvOrder,
+      // 0x16A 的 guard 看条件对象里的 t16a；0x194 跟设备 IMSI 走（官方
+      // guard 看 t.L=MD5(IMSI)，设备无 IMSI 就整条不发）。
+      cond: Qq8LoginConditions(t16a: noPicSig, imsiMd5: ctx.device.imsi),
+      args: <int, List<Object?>>{
+        0x106: <Object?>[a1],
+        0x16A: <Object?>[noPicSig],
+      },
+    );
+  }
+
   /// 滑动验证码提交（子命令 2，命令字 `wtlogin.login`）的便捷入口。
   ///
   /// 流程：密码登录被要求验证（响应 `type == 2` + TLV `0x192` 是验证地址）
@@ -743,6 +789,27 @@ abstract final class Qq8LoginBody {
     );
   }
 }
+
+/// 子命令 15（A1 + noPicSig，wtlogin.exchange_emp）的 TLV 顺序。
+///
+/// 直接对应官方 request/z.java 私有方法 a(...) 里 System.arraycopy 的顺序
+/// （:290-358 / :410-480）。官方 31 项全写，由各 TLV 的 guard 决定实际
+/// 进包（0x112 仅非 uin 账号、0x166 仅 flags&128、0x545 仅拿到 QIMEI、
+/// 0x400 仅已有 DA1 票据等）。逐项映射：
+///
+/// 0x18(固定) 0x01(固定/设备) 0x106(A1) 0x116 0x100 0x107 0x108(ksid)
+/// 0x144 0x142 0x112(可选) 0x145 0x166(可选) 0x16A(noPicSig) 0x154 0x141
+/// 0x08 0x511(可选) 0x147 0x172(可选) 0x177 0x400(可选) 0x187 0x188
+/// 0x194(可选) 0x201(可选) 0x202(可选) 0x516(固定) 0x521(固定)
+/// 0x525(可选) 0x544(设备) 0x545(可选,QIMEI)
+// ignore: constant_identifier_names
+const List<int> Qq8A1ExchangeTlvOrder = <int>[
+  0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x108,
+  0x144, 0x142, 0x112, 0x145, 0x166, 0x16A, 0x154,
+  0x141, 0x08, 0x511, 0x147, 0x172, 0x177, 0x400,
+  0x187, 0x188, 0x194, 0x201, 0x202, 0x516, 0x521,
+  0x525, 0x544, 0x545,
+];
 
 /// 二维码扫码登录的 TLV 清单（子命令 9）。
 ///

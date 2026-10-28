@@ -2844,3 +2844,84 @@ Qq8LoginException: 请求下发短信缺少盐或令牌（ctx.t104 / ctx.t174 �
 「版本过低」不是判据；`0x508` 只是把**账号风险状态**伪装成"版本/客户端问题"的话术通道。
 至此密码（9）、手机号（17/19/18）、滑块（2）、短信（8）四条 `wtlogin.login` 路径对该账号全封，
 只有 `exchange_emp`（票据链）正常——那才是唯一可用的原生入口。
+
+---
+
+## C48. 子命令 15 = A1 快速登录，走的是 exchange_emp 而不是 wtlogin.login
+
+**代码事实**（官方 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java）：
+
+- 构造器（:6-13）写死 this.t = 2064；this.u = 15；this.v = "wtlogin.exchange_emp"；
+  加密方式 this.y = EncryptionMethod.EM_ST（无 ST key 时 a(...) 自动降级 EM_ECDH）。
+- body 里 tlv_t106.set_data(bArr2) 装 A1、tlv_t16a 装 noPicSig（bArr3）。
+- 私有 a(...) 的 System.arraycopy 顺序（:290-358 / :410-480）共 31 项，按此顺序：
+  0x18 0x01 0x106 0x116 0x100 0x107 0x108 0x144 0x142 0x112 0x145 0x166
+  0x16A 0x154 0x141 0x08 0x511 0x147 0x172 0x177 0x400 0x187 0x188 0x194
+  0x201 0x202 0x516 0x521 0x525 0x544 0x545（由各 TLV 的 guard 决定实际进包）。
+- 结尾 return a(a(bArr19, this.u /*=15*/, i18), this.y, this.A, this.B)：
+  即「(子命令 15, body) 再套 ST/ECDH 信封」，与子命令 11 票据链是同一个后端命令。
+
+**推论（仅代码事实，不夸张）**：对本账号（uin=3499239040）实测密码链返回 45、
+手机号链返回 243，都是 wtlogin.login 系列上的账号级准入拒绝；而 wtlogin.exchange_emp
+（票据链）对该账号能正常回 type=15/16。子命令 15 是**唯一一个**把「A1 + noPicSig
+免密登录」放在 exchange_emp 上的原生入口，因此它是目前唯一可能不被 45/243 拦的
+原生子命令。**这只是组包层面的可能性，尚未 --send 真发验证，不保证服务端不会另起
+一道门。**
+
+实现落点：Qq8SubCmd.a1Exchange = 15、常量表 Qq8A1ExchangeTlvOrder（上面 31 项）、
+Qq8LoginBody.buildA1Exchange(ctx, a1:, noPicSig:)（lib/kernel/wlogin8/qq8_login.dart）；
+命令行 tool/qq8_live_smoke.dart --a1-exchange --a1-file=<json>（子命令 15 +
+cmd=wtlogin.exchange_emp）。dry-run 已出包：子命令 15、24 项（31 项 guard 滤掉 7 项）、
+body 1160B、OICQ 信封 1294B、登录信封 1479B。
+
+**真发实证（2026-10-28 13:20 与 13:31，小号 uin=3499239040，8.2.11 档案 + identity-25091RP04C）**：
+
+1. `--send --a1-exchange`（0x106 = en_a1[:-16]，136B，A1 材料取 10-24 tk_file slot16）
+   → 发送 1484B，响应 284B，cmd=`wtlogin.exchange_emp`，**type=16**，
+   TLV 0x130 14B / 0x146 99B / 0x508 34B，文案「[登录失败] 你的用户身份已失效…」。
+   ⇒ 服务端**正常解析并处理**了本条报文（不是 45，也不是 243）。门是开的。
+2. `--send --a1-exchange --a1-full`（0x106 = 完整 en_a1，152B；依据官方
+   WtloginHelper.java:690-697 `tlv_t106Var.set_data(bArr2, bArr2.length)`，
+   GetA1ByAccount 就是 `return _en_A1.clone()`，**既不截断也不解密**）
+   → 发送 1500B，响应 236B，**type=1**，0x146 66B + 0x508 34B，
+   文案「[登录失败] 账号或密码错误，请重新输入。」（A1 凭证本身不被认可）
+3. TIM 4.1.0 A1（en_a1 176B / no_pic_sig 88B，tim/tk_file-20261027-1213，identity-tim）
+   + `--a1-full` + `--profile=tim4.1.0` → 发送 1524B，响应 252B，**type=1**（同上文案）。
+
+**结论**：
+- `wtlogin.exchange_emp`（子命令 15）对该账号**没有** 45/243 准入门 —— 三次真发全部
+  是「正常业务拒绝」（16=身份失效 / 1=凭证不认），说明风险门只装在 `wtlogin.login` 上。
+- 0x106 的正确形态是**完整 `_en_A1`**（152B），不是 oicq 口径的 `[:-16]`（136B）：
+  截尾得到 16「身份失效」，完整得到 1「凭证不认」，两者是不同分支，后者才真正进入了
+  A1 校验逻辑。`--a1-full` 开关保留做 A/B。
+- 剩下的失败原因是 **A1 过期/不配套**（QQ 料 3–4 天前、TIM 料 25 小时前），
+  不是协议形态问题：_en_A1 是不透明块，用固定 key `%4;7t>;28<fc.5*6`、tgtgt、d2key、
+  sig_key、tgt/d2 前后 16B 全部 TEA 解不开（qqTeaDecrypt 一律尾部校验失败）⇒
+  它就是服务端下发的线上密文原样回传。
+- 下一步唯一动作：让**官方 TIM/QQ 现在就登录一次小号**，立刻（分钟级）从 tk_file 取
+  slot16 的 en_a1 重跑子命令 15；A1 新鲜时这条链理论上能直接换到 D2/票据，全程不碰
+  `wtlogin.login`。
+
+**2026-10-28 13:35–13:50 进一步实证（真机已接入，官方 TIM 今天刚登过小号）**：
+
+- **官方 TIM 于今天 11:03 成功登录小号 3499239040**（设备 HA2CSJR5 上 /data/data/com.tencent.tim/databases/tk_file mtime=11:03，
+  内含 tgt 72B / d2 88B / d2key 58447b7e2e7e3838722d655d3f342578 / en_a1 176B / no_pic_sig 88B）。
+  ⇒ **账号没有被封禁**：同一个号，TIM（基于 9.0.75）能登，我方 8.2.11/8.9.50/9.3.60/TIM 四套档案的 `wtlogin.login` 密码链一律 45。
+  45 因此是「客户端证明（attestation）不足」的判定，不是账号级拉黑。
+- 用**今天 11:03 的新鲜 TIM 票据**跑票据链（子命令 11 / exchange_emp，profile=tim4.1.0 + identity-tim）
+  → **type=16**「你的用户身份已失效」，与 10-27 旧票同结果 ⇒ 不是票据过期，而是该号+该证明组合被服务端判『身份失效』。
+- 用今天的新鲜 TIM A1 跑子命令 15（`--a1-full`，0x106=176B）→ **type=1**「账号或密码错误」（与 10-24/25 旧 A1 同结果）
+  ⇒ A1 本身不是问题，缺的是**同类客户端证明**。
+- `_en_A1` 用固定 key `%4;7t>;28<fc.5*6`、tgtgt、en_a1 尾 16B、d2key、MD5(d2key)、sig_key、tgt/d2 前后 16B
+  全部 TEA 解不开（qqTeaDecrypt 一律尾部校验失败）⇒ 它是服务端下发的**不透明线上密文**，原样回传即可，不需要本地解密。
+- 官方 QQ 8.2.11 今天 09:09 也尝试过登录小号，tk_file 里只留下 appid=1600000226 的空壳记录（无 _D2、无 A1）
+  ⇒ 官方 QQ 8.2.11 本体对该号同样登不进去（与用户口头说法一致）。
+
+**工具改动**（本轮）：`tool/qq8_live_smoke.dart` 新增 `--a1-full`（0x106 发完整 _en_A1）与
+`--a1-tgtgt-d2key`（0x144/envelope 的 tgtgt 改用 MD5(d2key)，对齐官方 `t.b(uin)._tgtgt_key`）；
+`tool/extract_tk_file.py` 新增导出 `en_a1` / `no_pic_sig` 两个字段（此前只导 tgt/d2）。
+
+**结论与下一步**：既然 TIM 能登而我们的四套档案都不能，剩下唯一的技术缺口就是
+**0x544/0x553 的真实客户端证明**（TIM 走 `QSec → Dandelion.fly → native energy`，实现落在
+设备上的 libfekit.so 7545324B / libQSec.so 29176B / libwtecdh.so 18184B）。真机已接入，
+可以把这几个 .so 打进我方 APK 用 JNI 调同一入口，验证 native 是否校验 APK 签名（同类 shim 的最小实验）。
