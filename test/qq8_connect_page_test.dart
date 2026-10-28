@@ -322,7 +322,8 @@ void main() {
       expect(find.byKey(const ValueKey('qq8-rejected-code')), findsOneWidget);
       expect(find.text('服务端返回 type=45'), findsOneWidget);
       expect(find.textContaining('原地重试不会变'), findsOneWidget);
-      expect(find.textContaining('OneBot'), findsOneWidget);
+      // 替代路径：这条线是原生实现，不再引导用户去 OneBot（m16818 已否决那条路）。
+      expect(find.textContaining('换账号 / 设备'), findsOneWidget);
     });
 
     testWidgets('busy 时按钮禁用并显示进度条', (tester) async {
