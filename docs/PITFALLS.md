@@ -3083,3 +3083,18 @@ public byte[] getFeKitAttach(Context context, String str, String str2, String st
 - 实测（15:22 从真机现取 tk_file，5 分钟内真发，`--mainsigmap=34607328`）：**仍 type=16**，0x146 99B + 0x508 34B「你的用户身份已失效」。
 - 对照：大号 2089495846 的 QQ 票（tgt 72 / d2 88 / d2key 16 / sig_key 10，与 TIM 票长度完全一致）走同一条 token 链曾 **type=0 成功** ⇒ 管线本身没问题，差异只剩票的签发侧（TIM 域）。
 - 注意 oicq 语义：`case 16` 客户端要 **清 local sig**；同一张票被告知失效后再重试仍是 16，所以「用同一张票反复试」永远得 16，不能据此判断票据链通不通。
+
+## C52 (2026-10-28) 「版本过低 type=45」真因：我们自己多发的 0x548 自构造 PoW
+
+**结论修正（推翻 C47/C50 的「账号级风控、客户端无解」）**
+
+- 现象：小号 3499239040 走密码链一律 type=45（0x146 + 0x508，话术「版本过低／禁止登录」）；四套档案（8.2.11 / 8.9.50 / 9.3.60 / tim4.1.0）、两套身份（QQ / TIM）、版本字节四组覆盖、0x545 两值、mainSigMap 回带、换集群、native 92B 真签 —— 全部仍是 45。
+- **真因**：`tool/qq8_live_smoke.dart` 在 `isPasswordLogin && apk.ssoVer > 12` 时**自构造** 0x548（`qq8BuildClientPow548()`，484 字节）。官方 TIM 4.1.0 的密码首登包里**没有 0x548**：TIM 侧实测 oicq 包总长 **1038 字节**；我方带 0x548 的 body 是 **1558 字节**，去掉后 1070 字节。
+- 证据（2026-10-28 16:43，同一分钟／同账号／同身份 identity-tim／同 tim4.1.0 档案／同全零口令 MD5）：加 `--no-pow` 去掉 0x548 → **type=2（需要滑动验证码）**，响应 716 字节，TLV 0x104 44B / 0x192 181B / 0x546 346B，ti.qq.com 滑块 URL 正常下发；不再出现 45。
+- 交叉验证（B 路线）：把 TIM 官方 24 dex + native 装进我方 APK，用 TIM 自己的 `WtloginHelper.GetStWithPasswd` 走同一账号 → 也是 **type=2**（`get_response_body cmd=0x810 subCmd=0x9 type:2 ret:0x2`），进一步证明 45 与账号无关。
+- 教训：`ssoVer > 12 就该补 0x548` 这条推断来自 oicq 维护版实现，**服务端不认自造值**，且失败码伪装成「版本过低」。判断「官方发不发某 TLV」只能用官方包总长/字段实测，不能用第三方库推断。
+- 新增开关：`--no-pow`（`final noPow = args.containsKey('no-pow');`，与 `selfT548` 的条件 `&& !noPow`）。**密码链默认应不带 0x548**，建议后续直接把自造分支删掉、只保留 native PoW 透传。
+
+### 工具教训（本轮真踩）
+
+`tools.read` 默认 **limit=2000 行**；用它读完整大文件再 `write` 回写会把文件**截断**（本轮把 `tool/qq8_live_smoke.dart` 从 2197 行写成 1162 行，靠 `git checkout --` 恢复）。改文件一律用 `edit`（定点替换），不要 read-all + write。

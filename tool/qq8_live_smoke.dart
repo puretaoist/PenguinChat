@@ -889,8 +889,9 @@ Future<void> main(List<String> argv) async {
       !useSendSms &&
       !useSubmitSms &&
       !useDeviceUnlock;
+  final noPow = args.containsKey('no-pow');
   final Uint8List? selfT548 =
-      (isPasswordLogin && profile.apk.ssoVer > 12)
+      (isPasswordLogin && profile.apk.ssoVer > 12 && !noPow)
           ? qq8BuildClientPow548().body
           : null;
   if (selfT548 != null) {
