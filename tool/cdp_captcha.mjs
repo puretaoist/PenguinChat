@@ -17,6 +17,21 @@
 //   - 模板字符串里嵌 JS 会吞反斜杠，统一用 String.fromCharCode(34) 代表引号。
 
 const mode = process.argv[2] || 'get';
+const fs = await import('node:fs');
+if (mode === 'ticket') {
+  // 从 adb 拉下来的 files/js_msgs.txt 里取最后一张票（内容是双重转义 JSON）
+  const raw = fs.readFileSync(process.argv[3] || 'tmp_jsmsgs.txt', 'utf8');
+  const tk = [...raw.matchAll(/\\"ticket\\":\\"([^"\\]+)/g)].map(m => m[1]);
+  const rs = [...raw.matchAll(/\\"randstr\\":\\"([^"\\]*)/g)].map(m => m[1]);
+  const t = tk.length ? tk[tk.length - 1] : '';
+  const rnd = rs.length ? rs[rs.length - 1] : '';
+  if (!t) { console.log('NO_TICKET'); process.exit(1); }
+  fs.writeFileSync('tmp_tk.txt', t);
+  fs.writeFileSync('tmp_randstr.txt', rnd);
+  console.log('TICKET len=' + t.length + ' head=' + t.slice(0, 12) + ' randstr=' + rnd + ' -> tmp_tk.txt');
+  process.exit(0);
+}
+
 const list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
 const page = list.find(x => x.type === 'page');
 if (!page) { console.log('NO_PAGE'); process.exit(1); }

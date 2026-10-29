@@ -3733,3 +3733,5 @@ App 自动 subCmd=2 提交。⇒ 之前"卡在滑块/等用户拉条"的判断�
 **API 坑：** `Qq8TlvContext` 的 `tgt` 与 `srmToken` 是 **required**。构造滑块/二次提交用的 ctx 时必须显式写 `tgt: Uint8List(0), srmToken: Uint8List(0)`，否则 `dart analyze` 直接报 missing_required_argument。
 
 **运维坑：** 后台任务不要写 `| tail -40`，管道会把输出缓冲到进程结束，`job_output` 会长时间只有 "running"，误以为卡死。
+
+**一键跑法：** `bash scripts/slider_round.sh --uin <号> --md5 <口令MD5> [--nx 0.176 --ny 0.3125]` —— 首发→出验证地址→WebView 打开→CDP 读题(fix/click)→从 `files/js_msgs.txt` 提票（`node tool/cdp_captcha.mjs ticket`）→ 同连接提交→打印结果。不给坐标时只读题存图（`tmp_capimg.bin`），人看图后再带坐标重跑。
