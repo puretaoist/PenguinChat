@@ -866,6 +866,10 @@ Future<void> main(List<String> argv) async {
     exit(2);
   }
   final t544SignHex = args['t544-sign'];
+  // 交票子命令 2 的 0x544 盐与登录子命令 9 不同（qsign /energy 的
+  // salt 里 sub = data.substring(4).toInt(16)），所以必须单独要一份签；
+  // 不给就退回登录那份（旧行为，服务端会把签判成不适配）。
+  final t544SignSliderHex = args['t544-sign-slider'];
   if (t544Mode == 'native' &&
       (t544SignHex == null || t544SignHex.isEmpty)) {
     errOut('✗ --t544=native 需要 --t544-sign=<hex>');
@@ -1247,7 +1251,9 @@ Future<void> main(List<String> argv) async {
             'native' => Qq8T544Mode.native,
             _ => Qq8T544Mode.officialDegraded,
           },
-          t544NativeBody: t544SignHex == null ? null : _hex(t544SignHex),
+          t544NativeBody: (t544SignSliderHex ?? t544SignHex) == null
+              ? null
+              : _hex((t544SignSliderHex ?? t544SignHex)!),
           t544SubCmd: Qq8SubCmd.slider,
           t544Curr: deterministic ? 1700000000000 : null,
           protocolDet: protocolDet,

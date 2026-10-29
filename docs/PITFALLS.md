@@ -3798,3 +3798,38 @@ dart tool/qq8_live_smoke.dart --uin=<新号> --pwd-md5=<MD5> --identity=analysis
 **注意**：注意验证码会话的 `ua=` 参数是 base64 的 `navigator.userAgent`，在 PC Edge 里解就是在 Windows UA 下解，与 Android 侧登录包天然不一致——这是「为什么今天必 237」的最经济解释，也是上表第一步要改的因。
 
 **待用资产**：`analysis/_ref/official-logs/identity-25091RP04C.json`（Redmi 真机，含 ksid）、`analysis/_ref/official-logs/tim/identity-tim.json`；`tool/slider_pc.mjs`（open/text/get/fix/clickxy/btn/shot/ticket）、`tool/slider_pc_session.mjs`（常驻 CDP 录制 cap_union_new_verify 响应体 → 写 ticket/randstr）。
+
+---
+
+## C70 「45」是自造的：交票复用登录子命令的 0x544 签（2026-10-29）
+
+**症状链**（同一个新号、同一设备身份 identity-25091RP04C、同一张 214 字符真票）：
+
+| 交票时用的 0x544 | 首包 | 交票结果 |
+|---|---|---|
+| 登录子命令 9 的签（qsign /energy?...&data=810_9） | type=2 | **45 禁止登录** |
+| 子命令 2 的签（/energy?...&data=810_2&mode=v2，新增 --t544-sign-slider） | type=2 | **237 WrongTicket** |
+| 退化形态（8.2.11 档案 4 个零字节） | type=2 | 45 |
+| websig 票（无真签） | type=2 | 237 |
+
+⇒ **45 不是「账号准入」，是我们把「登录子命令 9」的签名塞进了「交票子命令 2」的包**。服务端读到 sub 不一致的 0x544，判「客户端不可信」，回 45（文案「版本过低/下载最新版QQ」只是盾牌）。此前所有「45 无解」的结论都因此站不住：那批实验交票包用的都是登录那把签。
+
+**qsign 的 salt 布局（CrackerCat/unidbg-fetch-qsign 的 src/main/kotlin/moe/fuqiuluo/api/Energy.kt，v2 分支逐字节）**：
+
+```
+salt = u32(0) || u16(16) || guid(16B) || u16(len(version)) || version || u32(sub) || u32(0)
+sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d -> 13, _f -> 15
+```
+
+- `/energy` 的 mode 由 data 自动决定：810_9/810_a/810_d/810_f → v2，810_7/810_24/810_25 → v1，812_a → v3，812_5 → v4；**810_2 不在表里，必须显式 &mode=v2**，否则 failure(-3)。
+- version 参数就是 Qq8ApkProfile.sdkver（8.9.50 = 6.0.0.2535）。此前脚本写成 6.0.0.2534，与档案差一位，等于又自造了个不存在的 sdk 版本。
+- /custom_energy?salt=<hex>&data=<模块号> 可绕过自动布局自给 salt；/sign 才是 0x553（需 native 与 O3 握手，未走通）。
+- 同一 salt 上的签名是**确定性**的（同一秒内连续两次返回完全相同的 82 hex），可离线比对。
+
+**落地的改动**（tool/qq8_live_smoke.dart）：新增 --t544-sign-slider=<hex>，同连接交票的 Qq8TlvContext.t544NativeBody 优先用它，缺省才退回 --t544-sign。dart analyze tool/qq8_live_smoke.dart → No issues found。
+
+**237 仍未解开，但性质变了**：真签 + 真票 → 237（WrongTicket）说明「票与声明不匹配」，不再是被判客户端不可信。下轮干净口径必须是**一趟真点出来、且浏览器 profile 无缓存验证状态**的票：本次页面一打开就显示「验证成功！」，ticket 与当前 cap_cd/sid 不是一套，这是 237 最可疑的来源。开窗前应换全新 --user-data-dir。
+
+**两条工具坑**：
+- taskkill //F //IM msedge.exe 之后旧调试实例可能仍占着 127.0.0.1:9333，Helium 于是**绑不上调试端口**（窗口起得来但 CDP 连的是 Edge 里另一份验证码会话，票必然对不上）。开窗前先 `netstat -ano | grep :9333`，再 `curl /json/version` 看 Browser 是不是期望的那个。
+- 本机默认浏览器是 **Helium**（HKCU\...\UrlAssociations\https\UserChoice = HeliumHTM.X7GQDGQQFPS5BHX2723B2PJYZ4），可执行文件 `C:/Users/Administrator/Helium_0.15.1.1_2026-08-01/Helium/chrome.exe`，Chromium 151，--remote-debugging-port 与 --user-agent 都正常。用户不喜欢 Edge，以后开窗口默认用 Helium。
