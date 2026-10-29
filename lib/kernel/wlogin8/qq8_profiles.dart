@@ -154,6 +154,19 @@ class Qq8ClientProfile {
         apk: apk.withDeviceToken(on),
         unverified: unverified,
       );
+
+  /// 复制一份档案，只换 [Qq8ApkInfo]（用于注入 0x553 等实验性字段）。
+  Qq8ClientProfile withApk(Qq8ApkInfo newApk) => Qq8ClientProfile(
+        label: label,
+        versionName: versionName,
+        versionCode: versionCode,
+        appSettingParams: appSettingParams,
+        channelOverride: channelOverride,
+        beaconAppKey: beaconAppKey,
+        qua: qua,
+        apk: newApk,
+        unverified: unverified,
+      );
 }
 
 /// QQ 8.2.11（Play 版）—— 无 fekit，链路最简单。

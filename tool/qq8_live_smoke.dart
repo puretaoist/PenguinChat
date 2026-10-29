@@ -516,7 +516,14 @@ Future<void> main(List<String> argv) async {
 
   // ---------- 档案 ----------
   final profileName = args['profile'] ?? 'default';
-  final profile = _pickProfile(profileName);
+  final t553Hex = args['t553'];
+  var profile = _pickProfile(profileName);
+  if (t553Hex != null && t553Hex.isNotEmpty) {
+    // 把外部 FEKit attach（TLV 0x553）注入当前档案；顺序表会自动追加 0x553。
+    final had = _pickProfile(profileName).apk.tlv553DegradedBody != null;
+    profile = profile.withApk(profile.apk.withT553(_hex(t553Hex)));
+    out("  0x553 注入: ${_hex(t553Hex).length} 字节（原档案${had ? '有降级体' : '不发'}）");
+  }
 
   // 本次实际使用的 TLV 清单：token 路径用 exchange_emp 清单；
   // 密码路径默认官方超集，`--tlv-set=oicq` 时换成参考实现的 24 项清单；

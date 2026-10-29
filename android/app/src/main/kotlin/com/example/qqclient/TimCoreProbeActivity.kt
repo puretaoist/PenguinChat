@@ -161,6 +161,10 @@ class TimCoreProbeActivity : android.app.Activity() {
             Thread { loginProbe() }.start()
             return
         }
+        if (mode0 == "fekitattach") {
+            Thread { fekitAttachDump() }.start()
+            return
+        }
         if (mode0 == "helperapi") {
             helperApi()
             return
@@ -756,6 +760,60 @@ class TimCoreProbeActivity : android.app.Activity() {
             val c = t.cause
             if (c != null) log("stack: " + Log.getStackTraceString(c).take(3000))
         }
+    }
+
+    /**
+     * 直接向 TIM 的 QSec 要 FEKit attach（TLV 0x553 的 body）。
+     *
+     * 用处：0x553 是 9.3.60/TIM 密码包里多出来的唯一一条 TLV，body 来自
+     * native libfekit；我们在 Dart 里造不出来，只能从这里取真值，再喂给
+     * `tool/qq8_live_smoke.dart --t553=<hex>` 做 A/B。
+     *
+     * 用法：am start -n <pkg>/com.example.qqclient.TimCoreProbeActivity
+     *        --es only fekitattach --es uin <uin>
+     * 产物：files/fekit-9.hex / fekit-2.hex / fekit-a.hex / fekit-f.hex + logcat。
+     */
+    private fun fekitAttachDump() {
+        log("=== fekitattach start")
+        loadLib("c++_shared")
+        loadLib("QSec")
+        loadLib("fekit")
+        // native 侧要用 BaseApplication 这个静态 context，先造一个（同 run()）
+        try {
+            val baCls = Class.forName("com.tencent.qphone.base.util.BaseApplication")
+            val ba = baCls.getDeclaredConstructor().newInstance()
+            val attach = android.content.ContextWrapper::class.java
+                .getDeclaredMethod("attachBaseContext", Context::class.java)
+            attach.isAccessible = true
+            attach.invoke(ba, applicationContext)
+            val f = baCls.getDeclaredField("context")
+            f.isAccessible = true
+            f.set(null, ba)
+            log("BaseApplication ready for fekit")
+        } catch (t: Throwable) {
+            log("BaseApplication FAIL" + short(t))
+        }
+        val uin = intent?.getStringExtra("uin") ?: ""
+        log("uin=" + uin)
+        val qsecCls = Class.forName("com.tencent.mobileqq.qsec.qsecurity.QSec")
+        val qsec = qsecCls.getMethod("getInstance").invoke(null)
+        val m = qsecCls.getMethod(
+            "getFeKitAttach",
+            Context::class.java, String::class.java, String::class.java, String::class.java,
+        )
+        for (sub in listOf("0x9", "0x2", "0xA", "0xF")) {
+            try {
+                val b = m.invoke(qsec, applicationContext, uin, "0x810", sub) as? ByteArray
+                val hex = b?.joinToString("") { String.format("%02x", it) } ?: ""
+                log("FEKIT sub=" + sub + " len=" + (b?.size ?: -1) + " hex=" + hex)
+                File(filesDir, "fekit-" + sub.removePrefix("0x") + ".hex").writeText(hex)
+            } catch (t: Throwable) {
+                log("FEKIT sub=" + sub + " FAIL" + short(t))
+                val c = t.cause
+                if (c != null) log("stack: " + Log.getStackTraceString(c).take(2000))
+            }
+        }
+        log(">>> fekitattach done")
     }
 
     private fun helperApi() {

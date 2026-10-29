@@ -373,6 +373,11 @@ List<int> qq8PasswordTlvOrderFor(Qq8ApkInfo apk) {
   return <int>[
     ...apk.loginTlvOrder,
     if (apk.ssoVer > 12) 0x542,
+    // 9.3.60 `request/l.java` 的密码顺序表末尾就是
+    // `tlv_t553.CMD_553`（`getFeKitAttach(ctx, uin, "0x810", "0x9")`）；
+    // TIM 同构（`request/j.java` 同样以 553 结尾）。8.2.11 / 8.9.50
+    // 的顺序表里没有它，档案字段为 null 时自然不发。
+    if (apk.tlv553DegradedBody != null) 0x553,
   ];
 }
 
@@ -591,6 +596,34 @@ class Qq8ApkInfo {
         tlv553DegradedBody: tlv553DegradedBody,
         qimeiMode: qimeiMode,
         uinDeviceToken: on,
+      );
+
+  /// 复制一份，只改 TLV `0x553`（FEKit attach）的 body。
+  ///
+  /// `null` = 该档案不发 0x553；非 null 时顺序表会自动追加 0x553
+  /// （见 [qq8SliderTlvOrderFor] / [qq8PasswordTlvOrderFor]）。用于把
+  /// 新版客户端真实 `getFeKitAttach` 的输出喂进 8.2.11 档案做 A/B。
+  Qq8ApkInfo withT553(List<int>? body) => Qq8ApkInfo(
+        id: id,
+        ver: ver,
+        sdkver: sdkver,
+        appid: appid,
+        subid: subid,
+        miscBitmap: miscBitmap,
+        mainSigMap: mainSigMap,
+        buildtime: buildtime,
+        sign: sign,
+        name: name,
+        ksidName: ksidName,
+        useReserveFields: useReserveFields,
+        reserveIncludesQimei36: reserveIncludesQimei36,
+        subSigMap: subSigMap,
+        ssoVer: ssoVer,
+        loginTlvOrder: loginTlvOrder,
+        tlv544DegradedBody: tlv544DegradedBody,
+        tlv553DegradedBody: body,
+        qimeiMode: qimeiMode,
+        uinDeviceToken: uinDeviceToken,
       );
 }
 
