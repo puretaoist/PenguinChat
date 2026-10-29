@@ -3752,3 +3752,16 @@ App 自动 subCmd=2 提交。⇒ 之前"卡在滑块/等用户拉条"的判断�
 **教训**：TLV 的"实参"必须顺着调用点读一遍。只读 `tlv_t544.java` 只能知道形状（`i + 6 + 2 + i2 + 4`），不知道 `t.A` 是谁传的；把「某个 static 字段的初始值」当成「线上恒值」，是本项目第二次犯同类错（第一次是 0x100 的 `t.w`）。
 
 **已落地**：`_t544SaltOfficial` 改用 `ctx.device.guid`；新增测试钩子 `qq8T544SaltOfficialForTest` + `tool/qq8_tlv_selftest.dart` 的逐字节布局断言（uin / guid 长度与内容 / sdk 串 / subcmd / 总长 38B）；`vectors/t544.json` 的 `official-pwd-8211` 与生成器 `analysis/scripts/gen_t544_assets.mts` 同步更正，并在 `_layouts` 里注明 official 条目的 signHex 只是回归锁（官方是 native 签名，无 JS oracle）。
+
+## C68 code 45 是账号级风控标记，会把账号烧掉；口令链必须默认关闭
+
+**2026-10-29 事故。** 小号 3499239040 被官方判定「存在安全风险」，要求用最新手机 QQ 登录并按其提示回复账号使用情况——这已经不是我们客户端上的 `type=45`，而是账号被升级处置。
+
+外部资料（详见 `docs/RESEARCH-code45.md`）把 45 拆成三种成因，其中一条正是「**签名服务器未生效的登录错误**」。我们长期在口令链上发 **4 个零字节的 0x544**（以及早前 oicq 的纯 JS 老算法），正好落在这一类：服务端把「没有有效设备签名的口令登录」当 BOT 嫌疑，累积到阈值就标 45。新号用同一份 8.2.11 档案仍能拿到 `type=2` ⇒ 协议本身没被封，封的是**账号**。
+
+**代码约束（已落地）**：新增 `lib/kernel/safety/login_policy.dart` 的 `Qq8LoginPolicy`，`allowUnattestedPasswordLogin` 默认 `false`；`lib/client_api/qq8_login_service.dart` 的 `_login()` 在 `token == null`（口令链，含手机号验证登录）时先过闸门，被拦就 emit `failed` + `Qq8LoginPolicy.blockedMessage`（文案点明 code 45 与「改用票据续期」）。**票据续期（token != null）不受限**。自测在 `tool/safety_selftest.dart` 的「[闸门] 无真签禁止口令登录」段（6 条）。
+
+**纪律**：
+- 实验账号只能是**一次性新号**，并且只在具备真签能力（官方 native 出 0x544）时才跑口令链；一个号出现 45 立即停手，不要换档案再试。
+- 真实账号（尤其主号）**永远不要**走口令链。
+- 每次实验前先清「登录设备管理」（手机官方 QQ → 头像 → 设置 → 账号安全 → 登录设备管理 → 删掉其它设备），这是社区唯一给出的「可能救回已标账号」的账号级操作。

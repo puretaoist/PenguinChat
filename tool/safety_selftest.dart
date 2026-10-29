@@ -15,6 +15,7 @@ import 'dart:io';
 
 import '../lib/kernel/safety/attempt_limiter.dart';
 import '../lib/kernel/safety/environment_probe.dart';
+import '../lib/kernel/safety/login_policy.dart';
 import '../lib/kernel/safety/safety_gate.dart';
 
 int _passed = 0;
@@ -662,6 +663,27 @@ Future<void> main() async {
           loA.path);
       check('不同日志目录映射到同一个限流文件', loA.path == loB.path, loA.path);
       check('声明版本非空', kConsentVersion.isNotEmpty);
+    }
+
+    // ---------------------------------------------------------------
+    // 闸门：没有官方 native 真签时，口令链默认必须被拦。
+    //
+    // 2026-10-29 事故：小号被「无底线测试」打成安全风险，官方要求用最新
+    // 手机 QQ 复核。根因就是长期用无效签名跑口令链。产品侧不能再允许。
+    print('\n[闸门] 无真签禁止口令登录');
+    {
+      Qq8LoginPolicy.resetForTest();
+      check('默认禁止口令登录', Qq8LoginPolicy.passwordLoginBlocked);
+      check('默认文案点明 code 45',
+          Qq8LoginPolicy.blockedMessage.contains('code 45'));
+      check('默认文案给出替代路径（票据）',
+          Qq8LoginPolicy.blockedMessage.contains('票据'));
+      check('默认文案不指导下一次重试',
+          !Qq8LoginPolicy.blockedMessage.contains('重试'));
+      Qq8LoginPolicy.allowUnattestedPasswordLogin = true;
+      check('显式放行后不再拦', !Qq8LoginPolicy.passwordLoginBlocked);
+      Qq8LoginPolicy.resetForTest();
+      check('resetForTest 恢复默认', Qq8LoginPolicy.passwordLoginBlocked);
     }
   } finally {
     try {

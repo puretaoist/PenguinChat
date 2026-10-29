@@ -49,6 +49,7 @@ import 'dart:typed_data';
 import '../infra/log/logger.dart';
 import '../kernel/crypto/digest.dart';
 import '../kernel/crypto/ecdh.dart';
+import '../kernel/safety/login_policy.dart';
 import '../kernel/safety/safety_gate.dart';
 import '../kernel/wlogin8/qq8_config.dart';
 import '../kernel/wlogin8/qq8_device.dart';
@@ -597,6 +598,17 @@ class Qq8LoginService {
     Qq8TokenData? token,
     bool smsLogin = false,
   }) async {
+    // 闸门：口令链（token == null，含手机号验证登录）没有官方 native 真签时默认禁止。
+    // 理由见 lib/kernel/safety/login_policy.dart 与 docs/RESEARCH-code45.md。
+    // 票据续期（token != null）不受影响。
+    if (token == null && Qq8LoginPolicy.passwordLoginBlocked) {
+      _emit(Qq8LoginSnapshot(
+        stage: Qq8LoginStage.failed,
+        uin: uin,
+        error: Qq8LoginPolicy.blockedMessage,
+      ));
+      return;
+    }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     try {
       // 一次登录流程内的固定材料：设备按 uin 派生（同一账号恒定同一台设备），
