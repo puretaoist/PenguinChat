@@ -3709,3 +3709,27 @@ App 自动 subCmd=2 提交。⇒ 之前"卡在滑块/等用户拉条"的判断�
 - 若官方栈通到 type=0 ⇒ 差异在字节，回头用官方包做逐字节 diff，目标明确；
 - 若官方栈也 235/45 ⇒ 服务端已对该设备/代际关门，客户端无解，止损。
 
+
+## C65 验证码（点选/滑块）自动化：只能走 WebView CDP，且必须"手动喂图"
+
+**结论：腾讯 tc-captcha 的点选题可以用 adb + CDP 全自动解开，但三个坑必须先处理，否则"点了没反应"。**
+
+1. **题干只能从 `document.body.textContent` 读**。`#tc-instruction-text` 多数情况下不存在（render 出来的只有 canvas/img），照 selector 抓会一直是 null，误判成"题干缺失"。
+2. **验证码在跨域 iframe `https://captcha.gtimg.com` 里，是独立的 executionContext**。只对顶层 `https://ti.qq.com` 的 ctx 执行 JS 看不到 `.tc-imgarea`；必须 `Runtime.enable` 后按 `context.origin` 挑 ctx 再 `Runtime.evaluate({contextId})`。
+3. **widget 自己那张 `<img>` 常年加载失败**（页面显示"图片加载失败，请点击刷新"），失败态会挂一个 `.tc-cover.tc-fail` 覆盖层，把 `Input.dispatchMouseEvent` 全吃掉 ⇒ 表现为"点准了但页面纹丝不动、题干还是同一句"。但同一个图片 URL 在 iframe 内 `fetch()` 是 200/20KB，**网络没问题，只是 img 元素自己失败**。解法：fetch 成 dataURL → `d.style.backgroundImage='url("+dataURL+")'`、`backgroundSize='100% 100%'` → 把 `.tc-cover.tc-fail` 和 `.tc-fail-text` 设 `display:none`，之后再点就落到 tile 上。
+
+其它事实：
+- 题目图是**一张 672x480 的 2 行 3 列合成图**，作为 `.tc-bg-img` 的 background-image，URL 形如 `https://t.captcha.qq.com/cap_union_new_getcapbysig?img_index=4&image=…&sess=…`。所以"选第几个图"= 归一化坐标点击。
+- 点击坐标 = `area.x + nx*area.w`, `area.y + ny*area.h`（`.tc-imgarea` 的 getBoundingClientRect）；确定键是 `.tc-verify-button` 中心。
+- 工具已落地：`tool/cdp_captcha.mjs`（模式 `get`/`fix`/`click nx ny`/`text`，node 22 直跑无依赖）。
+- 前置：探针 Activity 里 `WebView.setWebContentsDebuggingEnabled(true)`（已加在 `TimCoreProbeActivity.submitWithUrl()`），再 `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`。
+- 编码坑：在 TS/Dart 模板字符串里嵌 JS 时会吞反斜杠，写正则 `/url\("(.*?)"\)/` 会变 null。统一用 `String.fromCharCode(34)` 代表引号最稳。
+
+## C66 滑块提交必须"同连接"，且 Qq8TlvContext 的 tgt/srmToken 是必填
+
+**假设（未完全证伪）：挑战会话绑在 MSF 长连接上。** 官方/icqq 都是复用同一条 TCP 提交 0x193 票；我们的 CLI 每次命令重建连接，同一分钟同一张票交上去是 237(WrongTicket)/ret=6。已实现 `--slider-wait=<file> --slider-wait-secs=<n>`：首发拿到 type=2 后**不关 socket**，把验证 URL 写到 `<file>.url` 等外部把票写进 `<file>`，拿到立刻在同一连接上发子命令 2。
+- 实测：`netstat` 确认到 `182.50.15.44:8080` 的 TCP 在等待期间一直 ESTABLISHED ⇒ 长连接可维持，机制没问题；当轮只是没等到票（外部没解开验证码），未取得判据。
+
+**API 坑：** `Qq8TlvContext` 的 `tgt` 与 `srmToken` 是 **required**。构造滑块/二次提交用的 ctx 时必须显式写 `tgt: Uint8List(0), srmToken: Uint8List(0)`，否则 `dart analyze` 直接报 missing_required_argument。
+
+**运维坑：** 后台任务不要写 `| tail -40`，管道会把输出缓冲到进程结束，`job_output` 会长时间只有 "running"，误以为卡死。

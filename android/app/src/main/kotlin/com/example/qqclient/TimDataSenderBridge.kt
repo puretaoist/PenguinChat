@@ -31,6 +31,7 @@ object TimDataSenderBridge {
     /** 调试用：把最后一次请求/响应整包 hex 落到这个路径。 */
     @JvmStatic
     var dumpFile: String? = null
+    var respDir: String? = null
 
     /** 0 = 原样发（TIM 交给我们的字节）；1 = 外面再套一层 Dart 侧「登录信封」。 */
     @JvmStatic
@@ -289,9 +290,8 @@ object TimDataSenderBridge {
         } catch (t: Throwable) { Log.e(TAG, "dump fail", t) }
         Thread {
             try {
-                val s = Socket()
-                s.connect(InetSocketAddress(h, p), 10000)
-                s.soTimeout = if (timeout > 0) timeout * 1000 else 20000
+                synchronized(lock) {
+                val s = ensureSocket(h, p, if (timeout > 0) timeout * 1000 else 20000)
                 val out = when (wrapMode) {
                     1 -> wrapLogin(payload, u, 2)
                     2 -> wrapFull(payload, u, 1)
@@ -315,21 +315,53 @@ object TimDataSenderBridge {
                 if (total < 5 || total > (4 shl 20)) throw IOException("bad frame " + total)
                 val body = ByteArray(total - 4)
                 readFully(ins, body)
-                try { s.close() } catch (e: Throwable) {}
-                Log.i(TAG, "resp len=" + body.size + " head=" + hex(body, 32))
+                Log.i(TAG, "resp len=" + body.size + " head=" + hex(body, 32) + " (conn kept)");
                 val payloadIn = when (stripOuter) {
                     1 -> stripLogin(body)
                     2 -> unwrapToOicq(body)
                     else -> body
                 }
                 Log.i(TAG, "deliver uin=" + u + " cmd=" + cmd + " len=" + payloadIn.size + " head=" + hex(payloadIn, 16))
+                try {
+                    val d = respDir
+                    if (d != null) {
+                        val f = java.io.File(d, "tim_resp_" + cmd.replace('|', '_') + ".bin")
+                        f.writeBytes(payloadIn)
+                        Log.i(TAG, "resp dumped to " + f.absolutePath + " len=" + payloadIn.size)
+                    }
+                } catch (e: Throwable) { Log.e(TAG, "dump resp fail " + e) }
                 cb?.onReceiveData(u, cmd, payloadIn)
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "send fail: " + Log.getStackTraceString(t))
+                closeSocket()
                 try { cb?.onReceiveFail(u, cmd, -1000) } catch (e: Throwable) {}
             }
         }.start()
         return 1
+    }
+
+    private val lock = Any()
+    private var sock: Socket? = null
+
+    @Synchronized
+    private fun closeSocket() {
+        try { sock?.close() } catch (e: Throwable) {}
+        sock = null
+    }
+
+    private fun ensureSocket(h: String, p: Int, soTimeoutMs: Int): Socket {
+        var s = sock
+        if (s == null || s.isClosed || !s.isConnected) {
+            s = Socket()
+            s.connect(InetSocketAddress(h, p), 10000)
+            sock = s
+            Log.i(TAG, "new socket to " + h + ":" + p)
+        } else {
+            Log.i(TAG, "reuse socket")
+        }
+        s.soTimeout = soTimeoutMs
+        return s
     }
 
     private fun readFully(ins: InputStream, buf: ByteArray) {

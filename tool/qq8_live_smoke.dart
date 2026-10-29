@@ -1176,6 +1176,90 @@ Future<void> main(List<String> argv) async {
     out('  SSO: seq=${sso.seq} cmd=${sso.cmd} '
         '外壳flag=${sso.flag} 负载=${sso.payload.length} 字节');
     resp = Qq8LoginResponse.parse(sso.payload, ecdh.shareKey);
+
+    // ---- 同连接滑块提交（实验）：保持这条 TCP 不断，等外部把票写进文件后
+    // 在**同一个 MSF 连接**上提交子命令 2。官方/icqq 都是长连接复用；我们的
+    // 一次性 CLI 每次重连，服务端可能因此认不出是同一个挑战会话（237/6）。
+    final rr = resp;
+    final waitFile = args['slider-wait'];
+    if (waitFile != null && waitFile.isNotEmpty && rr.needsSlider) {
+      final waitSecs = int.tryParse(args['slider-wait-secs'] ?? '') ?? 240;
+      final tf = File(waitFile);
+      final uf = File('$waitFile.url');
+      uf.writeAsStringSync(rr.sliderUrl ?? '');
+      out('  [同连接] 验证地址已写入 ${uf.path}');
+      out('  [同连接] 等待票据文件 ${tf.path}（最多 ${waitSecs}s）…');
+      String? tk;
+      final dl = DateTime.now().add(Duration(seconds: waitSecs));
+      while (DateTime.now().isBefore(dl)) {
+        if (tf.existsSync()) {
+          final s = tf.readAsStringSync().trim();
+          if (s.isNotEmpty) { tk = s; break; }
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+      if (tk == null) {
+        out('  [同连接] ✗ 等到超时也没有票');
+      } else {
+        out('  [同连接] 收到票 ${tk.length} 字符，立即在同一条连接上提交');
+        final salt2 = rr.tlvs[0x104] ?? Uint8List(0);
+        Uint8List? pow2;
+        final p546 = rr.tlvs[0x546];
+        if (p546 != null && p546.isNotEmpty) {
+          final ans = qq8SolvePow(p546);
+          if (ans != null) pow2 = Uint8List.fromList(ans.body);
+        }
+        final form2 = (args['slider-form'] ?? 'websig') == 'picture'
+            ? Qq8SliderTicketForm.picture
+            : Qq8SliderTicketForm.websig;
+        final sign2 = rr.t105Sign ?? Uint8List(0);
+        final ctx2 = Qq8TlvContext(
+          uin: uin,
+          apk: profile.apk,
+          device: device,
+          passwordMd5: passwordMd5 ?? Uint8List(16),
+          seqId: sessionSeq,
+          ksid: _ksid(device),
+          t104: salt2,
+          t174: verifyToken,
+          tgt: Uint8List(0),
+          srmToken: Uint8List(0),
+          t547: pow2,
+          t544Mode: switch (t544Mode) {
+            'oicq' => Qq8T544Mode.oicq,
+            'oicq-salt' => Qq8T544Mode.officialSalt,
+            'native' => Qq8T544Mode.native,
+            _ => Qq8T544Mode.officialDegraded,
+          },
+          t544NativeBody: t544SignHex == null ? null : _hex(t544SignHex),
+          t544SubCmd: Qq8SubCmd.slider,
+          t544Curr: deterministic ? 1700000000000 : null,
+          protocolDet: protocolDet,
+          da2BitActive: false,
+          msfSsoSeq: sessionSeq,
+          ssoVerOverride: ssoVerOverride,
+          mainSigMapOverride: mainSigMapOverride,
+        );
+        final body2 = Qq8LoginBody.buildSlider(ctx2, ticket: tk, form: form2, pictureSign: sign2);
+        final pkt2 = Qq8Sso.buildLoginPacket(
+          ssoCtx,
+          qq8LoginCmd,
+          Qq8Sso.buildOicqPacket(ssoCtx, body2),
+          Qq8LoginType.login,
+        );
+        out('  [同连接] 提交包 ${pkt2.length} 字节（${body2.length} 字节 body，'
+            'TLV ${qq8SliderTlvOrderFor(profile.apk, form: form2).length} 项）');
+        final frame2 = await tran.send(pkt2);
+        out('  [同连接] 响应 ${frame2.length} 字节');
+        final sso2 = qq8UnwrapRecv(frame2);
+        final r2 = Qq8LoginResponse.parse(sso2.payload, ecdh.shareKey);
+        out('');
+        out('  [同连接] === type = ${r2.type}  (${_typeMeaning(r2.type)}) ===');
+        final t146 = r2.tlvs[0x146];
+        if (t146 != null) out('  [同连接] 0x146: ${String.fromCharCodes(t146.where((b) => b >= 32 && b < 127))}');
+      }
+    }
+
   } on Object catch (e, st) {
     failure = e;
     _log.e('登录失败', error: e, stack: st);

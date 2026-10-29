@@ -77,6 +77,8 @@ ui2.txt
 
 # 逆向调试的一次性探针（不进主树；结论已写进 docs/PITFALLS.md）
 /tool/tmp/
+# 根目录一次性实验产物（抓图/截图/临时脚本），结论一律进 docs/PITFALLS.md
+/tmp_*
 
 # 第三方 IDE 生成的计划文档（不属于本仓库内容）
 /.trae/

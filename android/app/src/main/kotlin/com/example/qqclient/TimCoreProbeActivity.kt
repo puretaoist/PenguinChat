@@ -127,7 +127,15 @@ class TimCoreProbeActivity : android.app.Activity() {
             // adb 触发模式：自动跑一次
             Thread {
                 try {
-                    if (mode0 == "login") loginProbe() else run()
+                    if (mode0 == "login") loginProbe()
+                    else if (mode0 == "web") {
+                        runOnUiThread {
+                            val f = File(filesDir, "web-url.txt")
+                            val u = if (f.exists()) f.readText().trim() else (intent?.getStringExtra("url") ?: "")
+                            log(">>> web mode url=" + u.take(120))
+                            if (u.isNotEmpty()) submitWithUrl(u)
+                        }
+                    } else run()
                 } catch (t: Throwable) {
                     log("FATAL" + Log.getStackTraceString(t))
                 }
@@ -343,7 +351,10 @@ class TimCoreProbeActivity : android.app.Activity() {
                 ticketSeq++
                 log(">>> JS ticket#" + ticketSeq + " len=" + lastTicket.length + " head=" + lastTicket.take(12) + " tail=" + lastTicket.takeLast(8) + " randstr=" + lastRandstr)
                 val manual = (intent?.getIntExtra("manual", 0) ?: 0) != 0
-                if (manual) {
+                val noSubmit = (intent?.getIntExtra("nosubmit", 0) ?: 0) != 0
+                if (noSubmit) {
+                    log(">>> harvest-only 票已记录，不提交 len=" + lastTicket.length)
+                } else if (manual) {
                     Thread {
                         Thread.sleep(2000)
                         val t2 = lastTicket
@@ -366,6 +377,7 @@ class TimCoreProbeActivity : android.app.Activity() {
 
     private fun submitWithUrl(url: String) {
         try {
+            try { android.webkit.WebView.setWebContentsDebuggingEnabled(true) } catch (e: Throwable) { log("devtools ERR " + e) }
             val wv = android.webkit.WebView(this)
             val st = wv.settings
             st.userAgentString = "Mozilla/5.0 (Linux; Android 13; HA2CSJR5 Build/TKQ1.221114.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/116.0.0.0 Mobile Safari/537.36"
@@ -447,6 +459,11 @@ class TimCoreProbeActivity : android.app.Activity() {
         } catch (t: Throwable) { log("webview FAIL" + short(t)) }
     }
 
+    // 账号与口令 MD5 一律由 adb 传入（--es uin / --es md5），默认留空：
+    // 凭据不写进仓库（AGENTS.md「不提交任何凭据」）。
+    private val uinArg: String get() = intent?.getStringExtra("uin") ?: ""
+    private val md5Arg: String get() = intent?.getStringExtra("md5") ?: ""
+
     private fun errMsgOf(): String {
         return try {
             val uCls9 = Class.forName("oicq.wlogin_sdk.request.u")
@@ -508,10 +525,10 @@ class TimCoreProbeActivity : android.app.Activity() {
                 val tb = tk.toByteArray(Charsets.UTF_8)
                 if (m5 != null) {
                     m5.isAccessible = true
-                    ret = m5.invoke(h, "3499239040", tb, sig, emptyArray<ByteArray>(), 1) as Int
+                    ret = m5.invoke(h, uinArg, tb, sig, emptyArray<ByteArray>(), 1) as Int
                 } else if (m3 != null) {
                     m3.isAccessible = true
-                    ret = m3.invoke(h, "3499239040", tb, sig) as Int
+                    ret = m3.invoke(h, uinArg, tb, sig) as Int
                 } else { log("no CheckPictureAndGetSt"); return }
                 log(">>> attempt#" + n + " [" + vname + "] len=" + tb.size + " ret=" + ret + " resp=" + (if (rf.exists()) rf.length() else -1) + "(before " + before + ")" + errMsgOf())
                 if (ret == 0) { log("*** 官方栈提交成功 ret=0 ***"); break }
@@ -658,7 +675,7 @@ class TimCoreProbeActivity : android.app.Activity() {
             }
             log("syncMethod=" + (m?.toString() ?: "null"))
             m?.isAccessible = true
-            val args = arrayOf<Any?>("3499239040", 16L, 16724722, 1L, null, true, "00000000000000000000000000000000", sig, null, false, 1)
+            val args = arrayOf<Any?>(uinArg, 16L, 16724722, 1L, null, true, md5Arg, sig, null, false, 1)
             log("invoke sync GetStWithPasswd ...")
             val ret = m!!.invoke(h, *args) as Int
             log("ret(sync)=" + ret)
