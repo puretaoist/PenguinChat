@@ -14,6 +14,7 @@
 /// ```
 library;
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -547,6 +548,60 @@ void testT544Modes() {
   } else {
     bad('两种 salt 布局的签名', '竟完全相同——salt 没生效');
   }
+
+  // 4) 官方 salt 的**逐字节布局**（2026-10-29 修正：t.A 不是空，是 16B guid）。
+  //    出处 tlv_type/tlv_t544.java + request/k.java:378（实参）+
+  //    request/t.java:284（A = guid.clone()）。
+  final ctx = _t544Ctx(Qq8T544Mode.officialSalt);
+  final salt = qq8T544SaltOfficialForTest(ctx, t544SubCmd: 9);
+  final sdkVer = ctx.apk.sdkver;
+  final sdkBytes = utf8.encode(sdkVer);
+  final wantLen = 4 + 2 + ctx.device.guid.length + 2 + sdkBytes.length + 4;
+  final dv = ByteData.sublistView(salt);
+  final gotUin = dv.getUint32(0);
+  var off = 4;
+  final gotGuidLen = dv.getUint16(off);
+  off += 2;
+  final gotGuid = salt.sublist(off, off + gotGuidLen);
+  off += gotGuidLen;
+  final gotSdkLen = dv.getUint16(off);
+  off += 2;
+  final gotSdk = utf8.decode(salt.sublist(off, off + gotSdkLen));
+  off += gotSdkLen;
+  final gotSub = dv.getUint32(off);
+  off += 4;
+  final saltLen = salt.length;
+  final saltHex = toHex(salt);
+  final guidHex = toHex(ctx.device.guid);
+  final gotGuidHex = toHex(gotGuid);
+  final ctxUin = ctx.uin;
+  if (saltLen == wantLen) {
+    ok('0x544 官方 salt 总长 = $wantLen', 'uin=$gotUin sdk=$gotSdk sub=$gotSub');
+  } else {
+    bad('0x544 官方 salt 总长', '期望 $wantLen 实际 $saltLen');
+  }
+  if (gotUin == ctxUin) {
+    ok('0x544 官方 salt 头部 = u32(uin)', toHex(salt.sublist(0, 4)));
+  } else {
+    bad('0x544 官方 salt 头部', '期望 $ctxUin 实际 $gotUin');
+  }
+  if (gotGuidLen == 16 && gotGuidHex == guidHex) {
+    ok('0x544 官方 salt 中段 = t.A = 16B guid', gotGuidHex);
+  } else {
+    bad('0x544 官方 salt 中段',
+        'len=$gotGuidLen guid=$gotGuidHex（期望 16B $guidHex）');
+  }
+  if (gotSdk == sdkVer && gotSdkLen == sdkBytes.length) {
+    ok('0x544 官方 salt sdk 串 = QSec SDK_VERSION', sdkVer);
+  } else {
+    bad('0x544 官方 salt sdk 串', '期望 "$sdkVer" 实际 "$gotSdk"');
+  }
+  if (gotSub == 9 && off == saltLen) {
+    ok('0x544 官方 salt 尾部 = u32(subcmd) 且无多余字节');
+  } else {
+    bad('0x544 官方 salt 尾部', 'sub=$gotSub 消耗=$off 总长=$saltLen');
+  }
+  stdout.writeln('  官方 salt = $saltHex');
 }
 
 void testVectors() {

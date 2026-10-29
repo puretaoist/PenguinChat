@@ -820,17 +820,42 @@ Uint8List _t544SaltOicq(
 
 /// 官方布局的 0x544 salt（`tlv_t544.java` 交给 `ByteData.getCode` 的 `bArr3`）。
 ///
-/// 布局 `u32 uin ‖ u16 len(t.A) ‖ t.A ‖ u16 len(sdk) ‖ sdk ‖ u32 subcmd`。
-/// `t.A` 是官方在 `T.SingleTon` 里维护的可选附加块——**首登时为空**（长度 0），
-/// 所以这里留空；若日后真机抓到非空样本，再加 ctx 字段承载。
+/// 布局 `u32 uin ‖ u16 len(t.A) ‖ t.A ‖ u16 len(sdk) ‖ sdk ‖ u32 subcmd`
+/// （`tlv_type/tlv_t544.java` 的 `new byte[i + 6 + 2 + i2 + 4]` +
+/// `int32_to_buf(bArr3, 0, (int) j)` + `int16_to_buf(bArr3, 4, i)` +
+/// `arraycopy(bArr, 0, bArr3, 6, i)` + `int16_to_buf(bArr3, i + 6, i2)` +
+/// sdk bytes + `int32_to_buf(…, i3)`）。
+///
+/// 两个**实参**出处（2026-10-29 从反编译树逐字节定死，此前这里是错的）：
+/// - `t.A` = **16 字节 GUID**，不是空。`request/k.java:378` 把
+///   `oicq.wlogin_sdk.request.t.A` 三个参数一起传进来（`t.A.length` /
+///   `t.A` / `util.SDK_VERSION`）；而 `request/t.java:284` 是
+///   `A = (byte[]) bArr.clone();`，该 `bArr` 在 `:255-272` 分支里只可能是
+///   `guidFromFile` 或 `bArrGenerateGuid`（都是 16B guid）。`:24` 的
+///   `new byte[0]` 只是静态初始值。
+/// - `sdk` = `util.SDK_VERSION`，是**QSec 签名 SDK 版本串**，不是 QQ 版本号：
+///   8.2.11 `"6.0.0.2423"`（jadx-main tools/util.java:69）、8.9.50
+///   `"6.0.0.2535"`（jadx8950 同文件 :108）、9.3.60 `"6.0.0.2591"`、
+///   TIM 4.1.0 `"6.0.0.2563"`。我方 `Qq8ApkProfile.sdkver` 存的正是这串
+///   常数，所以这里直接用 `ctx.apk.sdkver` 是对的。
 Uint8List _t544SaltOfficial(Qq8TlvContext ctx, {required int t544SubCmd}) {
   final w = ByteWriter();
   w.u32(ctx.uin);
-  _writeU16Prefixed(w, Uint8List(0)); // t.A：首登为空
+  _writeU16Prefixed(w, ctx.device.guid); // t.A = guid（t.java:284）
   _writeU16Prefixed(w, Uint8List.fromList(utf8.encode(ctx.apk.sdkver)));
   w.u32(t544SubCmd);
   return w.build();
 }
+
+/// 测试专用：把官方布局的 0x544 salt 暴露给 selftest 做逐字节断言。
+///
+/// 生产路径只有 [Qq8Tlv.body] 的 `case 0x544` 会用 [_t544SaltOfficial]，
+/// 而签名后无法反推 salt；没有这个钩子就只能断言长度，断言不了布局。
+Uint8List qq8T544SaltOfficialForTest(
+  Qq8TlvContext ctx, {
+  required int t544SubCmd,
+}) =>
+    _t544SaltOfficial(ctx, t544SubCmd: t544SubCmd);
 
 /// u16 长度前缀 + 内容（TLV 头同款；oicq `writeTlv` / 官方 `make_byte`）。
 void _writeU16Prefixed(ByteWriter w, List<int> body) {

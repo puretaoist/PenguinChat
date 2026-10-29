@@ -3735,3 +3735,20 @@ App 自动 subCmd=2 提交。⇒ 之前"卡在滑块/等用户拉条"的判断�
 **运维坑：** 后台任务不要写 `| tail -40`，管道会把输出缓冲到进程结束，`job_output` 会长时间只有 "running"，误以为卡死。
 
 **一键跑法：** `bash scripts/slider_round.sh --uin <号> --md5 <口令MD5> [--nx 0.176 --ny 0.3125]` —— 首发→出验证地址→WebView 打开→CDP 读题(fix/click)→从 `files/js_msgs.txt` 提票（`node tool/cdp_captcha.mjs ticket`）→ 同连接提交→打印结果。不给坐标时只读题存图（`tmp_capimg.bin`），人看图后再带坐标重跑。
+
+## C67 0x544 官方 salt 的 t.A 就是 guid（不是空），sdk 串是 QSec SDK_VERSION 常数
+
+**2026-10-29 更正一处长期错误。** 我们 `lib/kernel/wlogin8/qq8_tlv.dart` 的 `_t544SaltOfficial` 原来写 `u16(0)` 当 `t.A`（注释还写着"首登为空"），属于凭空假设，没有任何证据支撑。反编译树里的实参是明确的：
+
+- `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/k.java:378`
+  `get_tlv_544(this.a, j3, oicq.wlogin_sdk.request.t.A.length, oicq.wlogin_sdk.request.t.A, oicq.wlogin_sdk.tools.util.SDK_VERSION.length(), oicq.wlogin_sdk.tools.util.SDK_VERSION, this.u)`
+- `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/t.java:24` 只是 `public static byte[] A = new byte[0];` 的静态初值，同一文件 `:284` 就把它覆盖成 `A = (byte[]) bArr.clone();`，而该 `bArr` 在 `:255-272` 的分支里只可能是 `guidFromFile` 或 `bArrGenerateGuid`（都是 16B guid）。
+- `oicq/wlogin_sdk/tools/util.java:69` `public static final String SDK_VERSION = "6.0.0.2423";` —— 这串是 **QSec 签名 SDK 版本**，不是 QQ 版本号。
+
+⇒ 8.2.11 的 salt = `u32(uin) ‖ u16(16) ‖ guid ‖ u16(len(sdk)) ‖ sdk ‖ u32(subcmd)`，实长 38B（我们原来发 22B）。各代际 sdk 串：8.2.11 `6.0.0.2423`（jadx-main util.java:69）/ 8.9.50 `6.0.0.2535`（jadx8950 util.java:108）/ 9.3.60 `6.0.0.2591` / TIM 4.1.0 `6.0.0.2563`。我们的 `Qq8ApkProfile.sdkver` 存的正是这串常数，所以那部分一直是对的。
+
+**同族差异（TIM 4.1.0）**：`tim-classes19.dex/sources/oicq/wlogin_sdk/tlv_type/tlv_t544.java` 的 `get_tlv_544(long, String module, int sub)` 用 `int64_to_buf`（**u64 uin，8 字节**）且第二段是 `u.D`，module 传 `"810_" + hex(subcmd)`（密码登录 `"810_9"`、子命令 10 `"810_a"`、15 `"810_f"`、7 `"810_7"`、37 `"810_25"`；0x553 attach 用 `("0x810", "0x9")`）。真签 = `QSec.getInstance().getLiteSign(module, bArr)` → `Dandelion.getInstance().fly`（native）。
+
+**教训**：TLV 的"实参"必须顺着调用点读一遍。只读 `tlv_t544.java` 只能知道形状（`i + 6 + 2 + i2 + 4`），不知道 `t.A` 是谁传的；把「某个 static 字段的初始值」当成「线上恒值」，是本项目第二次犯同类错（第一次是 0x100 的 `t.w`）。
+
+**已落地**：`_t544SaltOfficial` 改用 `ctx.device.guid`；新增测试钩子 `qq8T544SaltOfficialForTest` + `tool/qq8_tlv_selftest.dart` 的逐字节布局断言（uin / guid 长度与内容 / sdk 串 / subcmd / 总长 38B）；`vectors/t544.json` 的 `official-pwd-8211` 与生成器 `analysis/scripts/gen_t544_assets.mts` 同步更正，并在 `_layouts` 里注明 official 条目的 signHex 只是回归锁（官方是 native 签名，无 JS oracle）。
