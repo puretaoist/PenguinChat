@@ -3765,3 +3765,36 @@ App 自动 subCmd=2 提交。⇒ 之前"卡在滑块/等用户拉条"的判断�
 - 实验账号只能是**一次性新号**，并且只在具备真签能力（官方 native 出 0x544）时才跑口令链；一个号出现 45 立即停手，不要换档案再试。
 - 真实账号（尤其主号）**永远不要**走口令链。
 - 每次实验前先清「登录设备管理」（手机官方 QQ → 头像 → 设置 → 账号安全 → 登录设备管理 → 删掉其它设备），这是社区唯一给出的「可能救回已标账号」的账号级操作。
+
+
+## C69 交票这一步有成功样本可对：10-24 的 type=0 日志把变量收窄到「只剩设备身份」
+
+**2026-10-29 复盘。** 一直在争「票要同连接交 / 要不要 0x553 / 包形态对不对」，其实仓库里就有一次**把票交成功**的完整现场：`analysis/_ref/qqclient-dev-20261024b.log`。
+
+- :100 / :105 验证页 URL 同样带 `&uin=0` ⇒ **uin=0 是服务端正常形态**，不是"uin 没带上"。
+- :117-118 票来自验证页 `postMessage` 的 **type:34**（202 字符，randstr `@j6N`），与我们今天用 CDP 从 `cap_union_new_verify` 响应里抓的是同一张票。
+- :120-123 关键三行：
+  ```
+  09:30:03.683 [连接] 已建立 msfwifi.3g.qq.com:8080
+  09:30:03.686 发登录包 subCmd=2 TLV=5项 0x193,0x8,0x104,0x116,0x547
+  09:30:04.157 登录响应 type=0 0x119,0x161
+  ```
+  ⇒ **0.5 秒登录成功，而且是一条全新 TCP 连接**（票到手后才建的连接）。
+- 当时的设备身份（:164-167）：`androidId=95bdb705c3163b0d, mac=02:00:00:00:00:00, qimei=36字符`，来源标注 `本机采集`。
+
+**因此两条假设被反证**：①"必须同连接提交"——当年是新建连接交的票；②"包形态/0x553 不对"——当年就是 `0x193,0x8,0x104,0x116,0x547` 五项、无 0x553，官方 `request/n.java` 也是恒 5 项（`return b(bArr11, this.u, 5)`，`t.K` 决定 t193/t2 二选一）。
+
+**与今天唯一已知差异：设备身份。** `tool/qq8_live_smoke.dart` 不带 `--identity` 时是 **"按 uin 派生"的合成身份**（`qq8-run-*.log` 明确打印 `设备: 按 uin 派生（同账号恒定同一套）`），当年那次是**真机采集**。这解释了为什么今天真票 + 真盐 + 正确五项仍然 237（WrongTicket）：票不是"错"，是这张票与登录包声明的设备对不上号。
+
+**明天（下次真机/账号窗口）第一件事，1 次成本：**
+```
+# 1) Edge 用与身份匹配的 Android WebView UA 起（已就绪的口径）
+--user-agent="Mozilla/5.0 (Linux; Android 16; 25091RP04C Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/140.0.0.0 Mobile Safari/537.36"
+# 2) 登录侧带真机身份
+dart tool/qq8_live_smoke.dart --uin=<新号> --pwd-md5=<MD5> --identity=analysis/_ref/official-logs/identity-25091RP04C.json --slider-wait=tmp/tk.txt --send
+```
+判读：票提交后回到 **type=0** ⇒ 突破口成立，身份是唯一闸门；仍是 **237** ⇒ 票还绑了别的维度（会话 IP / cap_cd 绑定 / 账号维度注册），需要另找锚点。
+
+**注意**：注意验证码会话的 `ua=` 参数是 base64 的 `navigator.userAgent`，在 PC Edge 里解就是在 Windows UA 下解，与 Android 侧登录包天然不一致——这是「为什么今天必 237」的最经济解释，也是上表第一步要改的因。
+
+**待用资产**：`analysis/_ref/official-logs/identity-25091RP04C.json`（Redmi 真机，含 ksid）、`analysis/_ref/official-logs/tim/identity-tim.json`；`tool/slider_pc.mjs`（open/text/get/fix/clickxy/btn/shot/ticket）、`tool/slider_pc_session.mjs`（常驻 CDP 录制 cap_union_new_verify 响应体 → 写 ticket/randstr）。

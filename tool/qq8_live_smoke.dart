@@ -1201,7 +1201,23 @@ Future<void> main(List<String> argv) async {
       if (tk == null) {
         out('  [同连接] ✗ 等到超时也没有票');
       } else {
-        out('  [同连接] 收到票 ${tk.length} 字符，立即在同一条连接上提交');
+        out('  [同连接] 收到票 ${tk.length} 字符');
+        final sliderMode = args['slider-mode'] ?? 'submit';
+        if (sliderMode == 'relogin') {
+          // 官方语义（oicq listeners.ts:139）：「收到登录保护……访问URL完成验证后
+          // 调用 login() 可直接登录」——登录保护类挑战根本不提交票，只重新登录。
+          out('  [同连接] 模式=relogin：不提交票，改为重发同一条密码登录包');
+          final f3 = await tran.send(loginPacket);
+          out('  [同连接] 重发响应 ${f3.length} 字节');
+          final s3 = qq8UnwrapRecv(f3, d2key: useToken ? token?.d2key : null);
+          final r3 = Qq8LoginResponse.parse(s3.payload, ecdh.shareKey);
+          out('');
+          out('  [同连接] === 重发 type = ${r3.type}  (${_typeMeaning(r3.type)}) ===');
+          final t146b = r3.tlvs[0x146];
+          if (t146b != null) {
+            out('  [同连接] 0x146: ${String.fromCharCodes(t146b.where((b) => b >= 32 && b < 127))}');
+          }
+        } else {
         final salt2 = rr.tlvs[0x104] ?? Uint8List(0);
         Uint8List? pow2;
         final p546 = rr.tlvs[0x546];
@@ -1257,6 +1273,7 @@ Future<void> main(List<String> argv) async {
         out('  [同连接] === type = ${r2.type}  (${_typeMeaning(r2.type)}) ===');
         final t146 = r2.tlvs[0x146];
         if (t146 != null) out('  [同连接] 0x146: ${String.fromCharCodes(t146.where((b) => b >= 32 && b < 127))}');
+        }
       }
     }
 
