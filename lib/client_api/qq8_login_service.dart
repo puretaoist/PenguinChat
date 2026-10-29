@@ -601,6 +601,9 @@ class Qq8LoginService {
     // 闸门：口令链（token == null，含手机号验证登录）没有官方 native 真签时默认禁止。
     // 理由见 lib/kernel/safety/login_policy.dart 与 docs/RESEARCH-code45.md。
     // 票据续期（token != null）不受影响。
+    // 组包用的是纯 Dart 真签（`_tlvCtx` 恒为 Qq8T544Mode.oicq），如实上报给闸门；
+    // 只有退回官方降级体（4 个零字节）时闸门才会重新拦下口令链。
+    Qq8LoginPolicy.deviceSignatureAvailable = true;
     if (token == null && Qq8LoginPolicy.passwordLoginBlocked) {
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.failed,

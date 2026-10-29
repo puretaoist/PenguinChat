@@ -19,8 +19,17 @@ class Qq8LoginPolicy {
   /// 只应由调试工具在显式开关下置 true；App 内不要改。
   static bool allowUnattestedPasswordLogin = false;
 
+  /// 当前口令链是否**真的带了签**（由登录服务在组包前如实上报）。
+  ///
+  /// 2026-10-29 实测：纯 Dart 的 oicq 布局真签（`Qq8T544Mode.oicq`，39 字节）
+  /// 首包直接过闸 → `type=2`（正常要滑块）；同一账号把 0x544 换成官方降级体
+  /// （4 个零字节）→ `type=45`。所以「有签」不再等于「必须有 native」，
+  /// 闸门按这个事实放行，而退回降级体时仍然拦。
+  static bool deviceSignatureAvailable = false;
+
   /// 口令链是否被本闸门拦下。
-  static bool get passwordLoginBlocked => !allowUnattestedPasswordLogin;
+  static bool get passwordLoginBlocked =>
+      !(allowUnattestedPasswordLogin || deviceSignatureAvailable);
 
   /// 被拦时给用户的文案（不要含账号/口令等敏感信息）。
   static const String blockedMessage =
@@ -31,5 +40,6 @@ class Qq8LoginPolicy {
   /// 仅供自测：恢复到默认值。
   static void resetForTest() {
     allowUnattestedPasswordLogin = false;
+    deviceSignatureAvailable = false;
   }
 }
