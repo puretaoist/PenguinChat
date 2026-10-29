@@ -693,7 +693,10 @@ class Qq8LoginService {
       // 叠位只发生在密码首包 `GetStWithPasswd`（`:1415-1418`）。
       // 故这条包的 0x116 发 `0x08F7FF7C`（150470524）。
       final ctx = _tlvCtx(uin,
-          passwordMd5: null, token: null, da2BitActive: false);
+          passwordMd5: null,
+          token: null,
+          da2BitActive: false,
+          t544SubCmd: Qq8SubCmd.slider);
       final body = Qq8LoginBody.buildSlider(ctx, ticket: ticket);
       await _sendLoginBody(uin, ctx, body);
     } on Object catch (e, st) {
@@ -712,7 +715,8 @@ class Qq8LoginService {
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     try {
-      final ctx = _tlvCtx(uin, passwordMd5: null, token: null);
+      final ctx = _tlvCtx(uin,
+          passwordMd5: null, token: null, t544SubCmd: Qq8SubCmd.sendSms);
       await _sendLoginBody(uin, ctx, Qq8LoginBody.buildSendSms(ctx));
     } on Object catch (e, st) {
       _fail('请求短信验证码失败', e, st);
@@ -729,7 +733,8 @@ class Qq8LoginService {
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     try {
-      final ctx = _tlvCtx(uin, passwordMd5: null, token: null);
+      final ctx = _tlvCtx(uin,
+          passwordMd5: null, token: null, t544SubCmd: Qq8SubCmd.submitSms);
       await _sendLoginBody(
           uin, ctx, Qq8LoginBody.buildSubmitSms(ctx, code: code));
     } on Object catch (e, st) {
@@ -2940,6 +2945,10 @@ class Qq8LoginService {
     required Qq8TokenData? token,
     bool smsLogin = false,
     bool da2BitActive = true,
+    // 0x544 的签要区分「这条请求是哪个子命令」（salt 里含子命令号）。
+    // 登录 = 9、滑块提交 = 2、发短信 = 8、交短信码 = 7。
+    // 复用同一个签会让服务端读到 sub 不一致的 0x544 → type=45（PITFALLS C70）。
+    int t544SubCmd = 9,
   }) {
     final device = _device!;
     return Qq8TlvContext(
@@ -2969,6 +2978,10 @@ class Qq8LoginService {
       tgt: token?.tgt ?? Uint8List(0),
       srmToken: Uint8List(0),
       t547: _t547,
+      // 0x544：纯 Dart 真签（oicq 布局）。2026-10-29 实测：39 字节纯算法签
+      // 首包直接过闸 → type=2（不再 45），不需要 libfekit/qsign。
+      t544Mode: Qq8T544Mode.oicq,
+      t544SubCmd: t544SubCmd,
       // 0x548 官方只有一条路径：服务端在 0x547/0x546 里下发挑战，客户端解完
       // 放进 t.an（pow/b.java:65）才会带。我们自己造一份 PoW 是维护版 oicq 的
       // 土办法，官方包里从来没有（TIM 密码首登 body 1038B，不含 0x548）。
