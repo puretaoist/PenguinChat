@@ -75,6 +75,25 @@ class Qq8TokenData {
   /// 旧票据文件没有 `a1` 键 → 读成空（向后兼容，不报错）。
   final Uint8List a1;
 
+  /// 这张票**首次**成功登录的时刻（毫秒）。续期不改它。
+  final int? issuedAtMs;
+
+  /// 最近一次**续期成功**的时刻（毫秒）；从未续期为 null。
+  final int? renewedAtMs;
+
+  /// 服务端明确给出的到期时刻（毫秒）。**拿不到就是 null，不许拿 savedAt 推算**。
+  final int? expireAtMs;
+
+  /// 响应 0x130 里服务端给的时间（毫秒），用来估本地时钟偏差。
+  final int? serverTimeMs;
+
+  /// 响应 0x138 原文 hex：只作诊断留证，**不参与任何判定**（各项时长的语义未证实）。
+  final String? lifetimeTlvHex;
+
+  /// 服务端判定这张票失效的时刻（毫秒）+ 当时的返回码（16/155）。
+  final int? invalidatedAtMs;
+  final int? invalidatedType;
+
   Qq8TokenData({
     required this.uin,
     required this.savedAt,
@@ -85,11 +104,82 @@ class Qq8TokenData {
     required this.ticketKey,
     required this.srmToken,
     Uint8List? a1,
+    this.issuedAtMs,
+    this.renewedAtMs,
+    this.expireAtMs,
+    this.serverTimeMs,
+    this.lifetimeTlvHex,
+    this.invalidatedAtMs,
+    this.invalidatedType,
   }) : a1 = a1 ?? Uint8List(0);
 
   bool get usable => d2.isNotEmpty && d2key.isNotEmpty;
 
-  static Qq8TokenData fromSigBundle(int uin, Qq8SigBundle b) => Qq8TokenData(
+  /// 服务端是否已经判过这张票失效（冷启动别白试）。
+  bool get invalidated => invalidatedAtMs != null;
+
+  /// 复制并覆盖部分字段。**传 null 表示保持原值**——不引入哨兵值。
+  Qq8TokenData copyWith({
+    String? savedAt,
+    Uint8List? tgt,
+    Uint8List? d2,
+    Uint8List? d2key,
+    Uint8List? sigKey,
+    Uint8List? ticketKey,
+    Uint8List? srmToken,
+    Uint8List? a1,
+    int? issuedAtMs,
+    int? renewedAtMs,
+    int? expireAtMs,
+    int? serverTimeMs,
+    String? lifetimeTlvHex,
+    int? invalidatedAtMs,
+    int? invalidatedType,
+  }) =>
+      Qq8TokenData(
+        uin: uin,
+        savedAt: savedAt ?? this.savedAt,
+        tgt: tgt ?? this.tgt,
+        d2: d2 ?? this.d2,
+        d2key: d2key ?? this.d2key,
+        sigKey: sigKey ?? this.sigKey,
+        ticketKey: ticketKey ?? this.ticketKey,
+        srmToken: srmToken ?? this.srmToken,
+        a1: a1 ?? this.a1,
+        issuedAtMs: issuedAtMs ?? this.issuedAtMs,
+        renewedAtMs: renewedAtMs ?? this.renewedAtMs,
+        expireAtMs: expireAtMs ?? this.expireAtMs,
+        serverTimeMs: serverTimeMs ?? this.serverTimeMs,
+        lifetimeTlvHex: lifetimeTlvHex ?? this.lifetimeTlvHex,
+        invalidatedAtMs: invalidatedAtMs ?? this.invalidatedAtMs,
+        invalidatedType: invalidatedType ?? this.invalidatedType,
+      );
+
+  /// 这张票现在还能用吗。**纯函数**（时间由调用方给，便于自测）。
+  ///
+  /// 原则：只认服务端明确告诉我们的东西。没给到期时间就是 [Qq8TokenValidity.unknown]，
+  /// 而 unknown **仍然要去试**——服务端才是最终裁决者，本地不许猜 TTL。
+  Qq8TokenValidity evaluateValidity(DateTime now) {
+    if (invalidated) return Qq8TokenValidity.invalidated;
+    final expire = expireAtMs;
+    if (expire != null) {
+      final nowMs = now.millisecondsSinceEpoch;
+      if (nowMs >= expire) return Qq8TokenValidity.expired;
+      const soon = 30 * 60 * 1000;
+      if (expire - nowMs <= soon) return Qq8TokenValidity.expiringSoon;
+      return Qq8TokenValidity.valid;
+    }
+    return Qq8TokenValidity.unknown;
+  }
+
+  static Qq8TokenData fromSigBundle(
+    int uin,
+    Qq8SigBundle b, {
+    int? issuedAtMs,
+    int? serverTimeMs,
+    String? lifetimeTlvHex,
+  }) =>
+      Qq8TokenData(
         uin: uin,
         savedAt: DateTime.now().toIso8601String(),
         tgt: b.tgt ?? Uint8List(0),
@@ -99,6 +189,9 @@ class Qq8TokenData {
         ticketKey: b.ticketKey ?? Uint8List(0),
         srmToken: b.srmToken ?? Uint8List(0),
         a1: b.t106 ?? Uint8List(0),
+        issuedAtMs: issuedAtMs,
+        serverTimeMs: serverTimeMs,
+        lifetimeTlvHex: lifetimeTlvHex,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -111,6 +204,13 @@ class Qq8TokenData {
         'ticket_key': _plainHex(ticketKey),
         'srm_token': _plainHex(srmToken),
         'a1': _plainHex(a1),
+        if (issuedAtMs != null) 'issued_at_ms': issuedAtMs,
+        if (renewedAtMs != null) 'renewed_at_ms': renewedAtMs,
+        if (expireAtMs != null) 'expire_at_ms': expireAtMs,
+        if (serverTimeMs != null) 'server_time_ms': serverTimeMs,
+        if (lifetimeTlvHex != null) 'lifetime_tlv': lifetimeTlvHex,
+        if (invalidatedAtMs != null) 'invalidated_at_ms': invalidatedAtMs,
+        if (invalidatedType != null) 'invalidated_type': invalidatedType,
       };
 
   static Qq8TokenData fromJson(Map<String, dynamic> j) {
@@ -122,6 +222,16 @@ class Qq8TokenData {
       return _hex(v);
     }
 
+    /// 宽松读取：键缺失或类型不对一律 → null（旧文件必须仍能读）。
+    int? intField(String k) {
+      final v = j[k];
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return null;
+    }
+
+    final lifetime = j['lifetime_tlv'];
+
     return Qq8TokenData(
       uin: uin,
       savedAt: '${j['saved_at'] ?? '?'}',
@@ -132,8 +242,33 @@ class Qq8TokenData {
       ticketKey: hexField('ticket_key'),
       srmToken: hexField('srm_token'),
       a1: hexField('a1'),
+      issuedAtMs: intField('issued_at_ms'),
+      renewedAtMs: intField('renewed_at_ms'),
+      expireAtMs: intField('expire_at_ms'),
+      serverTimeMs: intField('server_time_ms'),
+      lifetimeTlvHex: lifetime is String && lifetime.isNotEmpty ? lifetime : null,
+      invalidatedAtMs: intField('invalidated_at_ms'),
+      invalidatedType: intField('invalidated_type'),
     );
   }
+}
+
+/// 票据可用性结论（见 [Qq8TokenData.evaluateValidity]）。
+enum Qq8TokenValidity {
+  /// 服务端已判失效（16/155）：不要再发。
+  invalidated,
+
+  /// 服务端给过到期时间且已过：不要再发。
+  expired,
+
+  /// 30 分钟内到期：可以发，但日志要提示。
+  expiringSoon,
+
+  /// 有到期时间且还早。
+  valid,
+
+  /// 服务端没给到期时间：**照常尝试**，服务端会裁决。
+  unknown,
 }
 
 /// 文件版票据存储：`<dir>/qq8-token-<uin>.json`，**明文**（只适合开发/自测）。

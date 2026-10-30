@@ -3966,3 +3966,25 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 - `Qq8LoginStage` 是 enum 且多处 `switch` 穷举：加成员后 `dart analyze lib tool` 会一次找全所有缺 arm 的地方（这是好事，别用 `default` 糊过去）。
 
 **WorkBuddy 派发教训**：会话的 system 提示里若写着「只允许修改 tool/，不得改 lib/」（那是上一阶段写自测的纪律），模型会**严格遵守并拒绝改 lib**，只交补丁方案。换阶段必须显式改写 system 里的授权段（列出可改的 lib 白名单 + 声明旧纪律作废），否则白跑一轮。
+
+## C80 票据有效期：只记录服务端给的事实，绝不本地猜 TTL（2026-10-30，P3）
+
+**问题**：票据（tgt/d2/d2key）有寿命，但官方从没在协议里给一个统一 TTL 常量。`lib/client_api/qq8_token_store.dart` 原来只有 `savedAt`，可用判据仅「d2/d2key 非空」⇒ 一张**已被服务端判死的票**会被反复拿去登录，每次都白等十几秒再吃一个 16/155，冷启动体验是「每次开机都要等超时」。
+
+**取证边界（别越界）**：官方 `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/tlv_type/tlv_t138.java:13-20` 只下发「时长项」（u32 count + 每项 10 字节，`:24-84` 读 chg_time），`request/oicq_request.java:1689-1723` 按版本给默认值 —— 这只证明「服务端下发的时长被读取」，**没有**证明本地据此过期；`request/WtloginHelper.java:850-926` 的 GetTicket 只检查 `Ticket._expire_time`。所以本地**不许**自己算一个「票活 3 天」之类的常量。
+
+**改法**：
+- `Qq8TokenData` 新增 7 个**可选**字段：`issuedAtMs / renewedAtMs / expireAtMs / serverTimeMs / lifetimeTlvHex / invalidatedAtMs / invalidatedType`；`bool get invalidated => invalidatedAtMs != null;`。
+- `evaluateValidity(DateTime now)` 顺序固定：invalidated → expired(`now >= expireAtMs`) → expiringSoon(≤30min) → valid → **unknown(`expireAtMs == null`)**。**unknown 必须照常尝试**——服务端才是裁决者；只有「服务端明确说过失效」（16/155）才允许跳过。
+- `static int? _serverTimeMsFrom(Qq8LoginResponse)` 读 0x130（`length>=6` 时 offset 2 起 u32 秒 ×1000），失败返回 null，**不许拿本机时间冒充服务端时间**。
+- 保存点用**新建** `Qq8TokenData` 而不是 `old.copyWith(...)`：续期成功就等于「换了一张新票」，继承旧票的 `invalidatedAtMs` 会让新票一出生就是死的。续期时 `issuedAtMs` 沿用旧票、`renewedAtMs = now`（靠 `bool _loginIsRenewal = token != null` 区分）。
+- 服务端判 16/155 时把已存的票 `old.copyWith(invalidatedAtMs: now, invalidatedType: type)` 存回（**不删文件**，留作诊断，重登成功会被覆盖）。
+- `lib/client_api/qq8_providers.dart` 的 `autoLoginIfSaved` 先逐票 `evaluateValidity` 过滤掉 invalidated/expired，再在剩下的里按 `lastModified` 挑最新；全被过滤时直接 emit `sessionExpired`（「上次登录已失效，请重新登录一次」）并 **return，一个包都不发**。
+
+**坑**：
+- `copyWith` 用 **「传 null = 保持原值」** 语义（不引入 sentinel 对象）。好处是「只标记失效、不动时间戳」一行就能写；代价是**无法用它把字段清空** —— 真要清空就新建对象。改这个语义会静默破坏标记逻辑。
+- 新增字段必须**全部可选且默认 null**，否则旧票据文件（没有这些键）会让启动直接崩；`fromJson` 要能扛住人工改坏的值（`expire_at_ms: "abc"` → null，不抛）。
+- 自测里 `FileQq8TokenStore.load` 是 **async** 的，`void main()` 里直接写 `back?.invalidated` 会报 `The getter 'invalidated' isn't defined for the type 'Future<Qq8TokenData?>'` —— 改 `Future<void> main() async` + `await`。
+- `Qq8SigBundle`（`lib/kernel/wlogin8/qq8_login.dart:1300`）的 `all` 是 **required** 命名参数，测 `fromSigBundle` 时要给 `all: <int, Uint8List>{}`。
+
+**验收**：`tool/token_validity_selftest.dart` 35 项（五分支 / copyWith 保原值 / JSON 往返 / 旧文件与脏值 / fromSigBundle 可选参数 / 文件往返）；`tool/qq8_login_service_selftest.dart` 4c 段追加「票据被标记 invalidated + `invalidatedType==16`」，新增 4d 段断言「已标失效的票 `loginWithToken` **一个包都不发**（`scripted.sent.isEmpty`）且 stage == sessionExpired」。全量：analyze lib 干净、49 个 selftest 全绿、flutter test 194 全过。

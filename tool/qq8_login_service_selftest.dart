@@ -815,8 +815,21 @@ Future<void> main() async {
           _payload(
               Qq8LoginResultType.type16TokenExpired, <int, List<int>>{0x146: msg})),
     ]);
+    // 预置一张"本来还能用"的票：服务端判失效后，本地要把它标记掉，
+    // 下次冷启动别再拿这张票去撞墙。
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: _hex('a2' * 64),
+        d2key: _hex('a3' * 16),
+        sigKey: _hex('a4' * 48),
+        ticketKey: _hex('a5' * 16),
+        srmToken: _hex('a6' * 56),
+      );
     final svc = Qq8LoginService(
-      tokenStore: _MemStore(),
+      tokenStore: store,
       deviceBuilder: _fixtureDevice,
       ecdhBuilder: () => _fixedEcdh,
       transportBuilder: () => scripted,
@@ -832,6 +845,54 @@ Future<void> main() async {
         '${svc.snapshot.resultType}');
     check('文案仍是服务端原话（含「重新登录」）',
         (svc.snapshot.error ?? '').contains('重新登录'), '${svc.snapshot.error}');
+    // 本地要把这张票标记成失效，否则下次冷启动还会拿它去撞同一堵墙
+    check('票据被标记 invalidated', store.data?.invalidated == true);
+    check('invalidatedType 记下服务端返回码',
+        store.data?.invalidatedType == Qq8LoginResultType.type16TokenExpired,
+        '${store.data?.invalidatedType}');
+    check('标记后 evaluateValidity = invalidated（冷启动会跳过）',
+        store.data!.evaluateValidity(DateTime(2026, 10, 30)) ==
+            Qq8TokenValidity.invalidated);
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('4d. 已标失效的票据：loginWithToken 不发包，直接要求重新登录');
+  {
+    // 这是 P3 的意义所在：服务端已经明确说过"这张票废了"，本地就别再发一次
+    // 无意义的包（既浪费一次风控计数，也让用户白等十几秒超时）。
+    final scripted = Qq8ScriptedTransport(<Uint8List>[]);
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: _hex('a2' * 64),
+        d2key: _hex('a3' * 16),
+        sigKey: _hex('a4' * 48),
+        ticketKey: _hex('a5' * 16),
+        srmToken: _hex('a6' * 56),
+        invalidatedAtMs: 1761800000000,
+        invalidatedType: 155,
+      );
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithToken(uin: 10001);
+    check('一个包都没发（scripted.sent 为空）', scripted.sent.isEmpty,
+        '${scripted.sent.length}');
+    check('stage = sessionExpired', svc.snapshot.stage == Qq8LoginStage.sessionExpired,
+        svc.snapshot.stage.name);
+    check('resultType 沿用票据记录的失效码', svc.snapshot.resultType == 155,
+        '${svc.snapshot.resultType}');
+    check('文案提示重新登录', (svc.snapshot.error ?? '').contains('重新登录'),
+        '${svc.snapshot.error}');
     await svc.close();
   }
 

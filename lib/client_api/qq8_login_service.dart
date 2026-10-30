@@ -371,6 +371,10 @@ class Qq8LoginService {
   Qq8Session? _session;
   Qq8SigBundle? _sig;
 
+  /// 本次登录是不是**续期**（`loginWithToken` 进来的）。只用于区分
+  /// 「首次登录」与「续期」两套时间戳，成功保存票据后立刻清掉。
+  bool _loginIsRenewal = false;
+
   /// 增量拉消息的游标（`PbGetMsgResp.sync_cookie`，服务端靠它算增量）。
   Uint8List? _syncCookie;
   /// 每个群「已收到的最大消息 seq」。
@@ -605,6 +609,24 @@ class Qq8LoginService {
       ));
       return;
     }
+    // **本地已知不可用就别发包**：服务端已判失效 / 服务端给过的到期时间已过。
+    // 反过来，没给到期时间（unknown）必须照常尝试——服务端才是最终裁决者，
+    // 本地绝不猜 TTL。
+    final v = token.evaluateValidity(DateTime.now());
+    if (v == Qq8TokenValidity.invalidated || v == Qq8TokenValidity.expired) {
+      _log.w('票据不可用（$v），不发包，直接让用户重新登录');
+      _emit(Qq8LoginSnapshot(
+        stage: Qq8LoginStage.sessionExpired,
+        uin: uin,
+        error: '上次登录已失效（票据过期或被服务端作废），请重新登录',
+        resultType: token.invalidatedType,
+      ));
+      return;
+    }
+    if (v == Qq8TokenValidity.expiringSoon) _log.i('票据将在 30 分钟内到期，仍尝试续期');
+    if (v == Qq8TokenValidity.unknown) {
+      _log.i('服务端未给到期时间，照常尝试续期（由服务端裁决）');
+    }
     await _login(uin: uin, passwordMd5: null, token: token);
   }
 
@@ -629,6 +651,7 @@ class Qq8LoginService {
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
+    _loginIsRenewal = token != null;
     try {
       // 一次登录流程内的固定材料：设备按 uin 派生（同一账号恒定同一台设备），
       // ECDH / 会话标识 / 随机密钥都只生成一次，验证分支复用同一套。
@@ -3315,6 +3338,31 @@ class Qq8LoginService {
         stage: Qq8LoginStage.failed, uin: _snapshot.uin, error: text.trim()));
   }
 
+  /// 从响应 0x130 读服务端时间（毫秒）。body 长度不足 6 或解析失败都返回 null。
+  ///
+  /// 结构：offset 0 的 u16 是标志/长度前缀，**offset 2 起是 u32 秒**。
+  /// 只用来估本地时钟偏差，**绝不**据此推算票据到期时间。
+  static int? _serverTimeMsFrom(Qq8LoginResponse r) {
+    try {
+      final b = r.tlvs[0x130];
+      if (b == null || b.length < 6) return null;
+      final secs = (b[2] << 24) | (b[3] << 16) | (b[4] << 8) | b[5];
+      return secs * 1000;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 小写 hex；空或 null 返回 null。
+  static String? _hexOrNull(Uint8List? b) {
+    if (b == null || b.isEmpty) return null;
+    final sb = StringBuffer();
+    for (final v in b) {
+      sb.write(v.toRadixString(16).padLeft(2, '0'));
+    }
+    return sb.toString();
+  }
+
   Future<void> _handleResponse(int uin, Qq8LoginResponse r,
       {_SmsStep? smsStep}) async {
     if (smsStep != null) {
@@ -3332,7 +3380,28 @@ class Qq8LoginService {
       }
       final bundle = Qq8SigBundle.parse(t119, _device!.tgtgt);
       _sig = bundle;
-      await tokenStore.save(Qq8TokenData.fromSigBundle(uin, bundle));
+      // 票据落盘：**新建**一份，而不是 copyWith 旧票——重新登录就该把上一次的
+      // invalidated 结论洗白（copyWith 传 null 表示"保持原值"，洗不掉）。
+      //
+      // 时间戳只记服务端明确给的东西：0x130 是服务端时间（用于估时钟偏差），
+      // 0x138 只留原文 hex 作诊断，**不参与任何判定**（各项时长语义未证实）。
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final serverTimeMs = _serverTimeMsFrom(r);
+      final lifetimeHex = _hexOrNull(r.tlvs[0x138]);
+      // 续期要沿用这张票**首次**成功登录的时间，所以得读一遍旧票。
+      int? issuedAtMs = nowMs;
+      if (_loginIsRenewal) {
+        final old = await tokenStore.load(uin);
+        issuedAtMs = old?.issuedAtMs ?? nowMs;
+      }
+      await tokenStore.save(Qq8TokenData.fromSigBundle(
+        uin,
+        bundle,
+        issuedAtMs: issuedAtMs,
+        serverTimeMs: serverTimeMs,
+        lifetimeTlvHex: lifetimeHex,
+      ).copyWith(renewedAtMs: _loginIsRenewal ? nowMs : null));
+      _loginIsRenewal = false;
       // 服务端下发的「本次登录出口」记录（0x537）→ 交给上层落进 pd2.dat，
       // 下次登录的 0x525/0x536 就能带上真实历史（官方 oicq_request.java:1632
       // 在**同一步**调 ProtocolDet.setLoginExtraData）。记录失败不影响登录。
@@ -3490,6 +3559,9 @@ class Qq8LoginService {
     // 不原地重试（failed 靠改参数可以重试），但对用户说的话完全不同，所以按
     // 阶段分开（唯一判据见 [qq8StageForResultType]）。
     final stage = qq8StageForResultType(r.type);
+    // 走到这里说明这次是**发包**了（准入/凭证结论都来自服务端应答），
+    // 续期标志用完即清，绝不能让下一次登录误用。
+    _loginIsRenewal = false;
     if (stage == Qq8LoginStage.rejected) {
       final why = msg == null ? '无文案' : msg.$1;
       _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试；'
@@ -3498,6 +3570,20 @@ class Qq8LoginService {
           '0x544/0x553）两种情况，但两次档案不同，尚未做干净单变量 A/B。');
     } else if (stage == Qq8LoginStage.sessionExpired) {
       _log.w('凭证失效 type=${r.type} 停止重试，等待用户重新登录');
+      // 服务端**已经判过**这张票失效：记下来，冷启动别白试一次。
+      // 只标记，不删文件——留作诊断，重新登录成功会被新票覆盖。
+      try {
+        final old = await tokenStore.load(uin);
+        if (old != null) {
+          await tokenStore.save(old.copyWith(
+            invalidatedAtMs: DateTime.now().millisecondsSinceEpoch,
+            invalidatedType: r.type,
+          ));
+          _log.w('票据已标记失效（type=${r.type}），冷启动将跳过它');
+        }
+      } catch (e) {
+        _log.w('标记票据失效失败（不影响本次结论）', error: e);
+      }
     }
     _emit(Qq8LoginSnapshot(
       stage: stage,

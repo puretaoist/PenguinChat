@@ -608,9 +608,40 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     try {
       final uins = await service.tokenStore.listUins();
       if (uins.isEmpty) return;
-      var best = uins.last;
-      var bestTime = DateTime(1970);
+      // 先按「服务端已知不可用」过滤，再按最近用过的挑。**不删票据文件**：
+      // 留作诊断，重新登录成功会被新票覆盖。
+      //
+      // 只跳过 invalidated / expired —— unknown（服务端没给到期时间）必须照常
+      // 尝试，服务端才是最终裁决者。
+      final usable = <int>[];
+      var skippedExpired = 0;
       for (final u in uins) {
+        final t = await service.tokenStore.load(u);
+        if (t == null) continue;
+        final v = t.evaluateValidity(DateTime.now());
+        if (v == Qq8TokenValidity.invalidated || v == Qq8TokenValidity.expired) {
+          skippedExpired++;
+          log?.call('w',
+              '启动自动登录跳过 $u：票据不可用（$v${t.invalidatedType == null ? '' : '，type=${t.invalidatedType}'}）');
+          continue;
+        }
+        usable.add(u);
+      }
+      if (usable.isEmpty) {
+        // 有票但全都被判过失效：直接告诉 UI「重新登录一次」，别再发包。
+        log?.call('w', '启动自动登录跳过：$skippedExpired 个账号的票据都已失效');
+        if (_alive) {
+          _snap = const Qq8LoginSnapshot(
+            stage: Qq8LoginStage.sessionExpired,
+            error: '上次登录已失效，请重新登录一次',
+          );
+          _emit();
+        }
+        return;
+      }
+      var best = usable.last;
+      var bestTime = DateTime(1970);
+      for (final u in usable) {
         final t = await service.tokenStore.lastModified(u);
         if (t != null && t.isAfter(bestTime)) {
           bestTime = t;
