@@ -8,15 +8,16 @@
 /// * 删除——**仅本地**（TG 的 Delete for me）：对面不知道，和撤回是两件事；
 /// * 转发——重发内容到别的会话（图片/语音等要先做上传，暂不支持）；
 /// * 多选——进入多选模式，批量复制/删除/转发。
-
+///
 /// 拆成"哑弹层"（消息 + 回调）是为了能离线测：每个状态下该出现/不该出现
-/// 哪个动作，是这类菜单最容易出错的地方。
+/// 哪个动作，是这类菜单最容易出错的地方。版面统一由 [ActionSheet] 画。
 library;
 
 import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
+import 'action_sheet.dart';
 
 class MessageActionsSheet extends StatelessWidget {
   final ChatMessage message;
@@ -32,7 +33,7 @@ class MessageActionsSheet extends StatelessWidget {
   /// 删除**本机**这条记录（TG 的 Delete for me；要让对方也看不到得用撤回）。
   final VoidCallback? onDelete;
 
-  /// 转发到别的会话（只重发内容，见 ChatStore.forwardMessages）。
+  /// 转发到别的会话（只重发内容，见 `ChatStore.forwardMessages`）。
   final VoidCallback? onForward;
 
   /// 戳一戳对方（后端支持 `poke` 且这条是对面发的时才给回调）。
@@ -69,10 +70,11 @@ class MessageActionsSheet extends StatelessWidget {
     VoidCallback? onSelect,
     VoidCallback? onPoke,
   }) =>
-      showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: TelegramColors.bgSidebar,
-        builder: (_) => MessageActionsSheet(
+      ActionSheet.show(
+        context,
+        preview: _preview(message),
+        items: _items(
+          context,
           message: message,
           canRecall: canRecall,
           onCopy: onCopy,
@@ -86,122 +88,128 @@ class MessageActionsSheet extends StatelessWidget {
         ),
       );
 
-  @override
-  Widget build(BuildContext context) {
-    final showReveal = message.isRecalled && !message.revealed;
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+  /// 顶部预览：让人确认点的是哪条（左侧一条强调色竖线，同 TG 的引用块）。
+  static Widget _preview(ChatMessage message) => Row(
         children: <Widget>[
-          // 预览：让人确认点的是哪条
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                message.text.isEmpty ? message.displayText : message.text,
-                key: const ValueKey('actions-preview'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    color: TelegramColors.textSecondary, fontSize: 13),
+          Container(
+            width: 3,
+            height: 34,
+            decoration: BoxDecoration(
+              color: TelegramColors.accent,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message.text.isEmpty ? message.displayText : message.text,
+              key: const ValueKey('actions-preview'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: TelegramColors.textPrimary,
+                fontSize: 15,
+                height: 1.25,
               ),
             ),
           ),
-          Divider(height: 1, color: TelegramColors.divider),
-          _action(
-            key: const ValueKey('action-reply'),
-            icon: Icons.reply,
-            label: '回复',
-            onTap: onReply,
-            context: context,
-          ),
-          _action(
-            key: const ValueKey('action-copy'),
-            icon: Icons.copy_outlined,
-            label: '复制',
-            onTap: onCopy,
-            context: context,
-          ),
-          if (onPoke != null)
-            _action(
-              key: const ValueKey('action-poke'),
-              icon: Icons.touch_app_outlined,
-              label: '戳一戳',
-              onTap: onPoke,
-              context: context,
-            ),
-          _action(
-            key: const ValueKey('action-forward'),
-            icon: Icons.forward,
-            label: '转发',
-            onTap: onForward,
-            context: context,
-          ),
-          _action(
-            key: const ValueKey('action-select'),
-            icon: Icons.check_circle_outline,
-            label: '多选',
-            onTap: onSelect,
-            context: context,
-          ),
-          if (showReveal)
-            _action(
-              key: const ValueKey('action-reveal'),
-              icon: Icons.visibility_outlined,
-              label: '查看原文',
-              onTap: onReveal,
-              context: context,
-            ),
-          if (canRecall)
-            _action(
-              key: const ValueKey('action-recall'),
-              icon: Icons.undo,
-              label: '撤回',
-              danger: true,
-              onTap: onRecall,
-              context: context,
-            ),
-          _action(
-            key: const ValueKey('action-delete'),
-            icon: Icons.delete_outline,
-            label: '删除（仅本地）',
-            danger: true,
-            onTap: onDelete,
-            context: context,
-          ),
-          _action(
-            key: const ValueKey('action-cancel'),
-            icon: Icons.close,
-            label: '取消',
-            onTap: () => Navigator.of(context).pop(),
-            context: context,
-          ),
         ],
+      );
+
+  static List<ActionSheetItem> _items(
+    BuildContext context, {
+    required ChatMessage message,
+    required bool canRecall,
+    VoidCallback? onCopy,
+    VoidCallback? onReply,
+    VoidCallback? onRecall,
+    VoidCallback? onReveal,
+    VoidCallback? onDelete,
+    VoidCallback? onForward,
+    VoidCallback? onSelect,
+    VoidCallback? onPoke,
+  }) {
+    final showReveal = message.isRecalled && !message.revealed;
+    return <ActionSheetItem>[
+      ActionSheetItem(
+        key: const ValueKey('action-reply'),
+        icon: Icons.reply,
+        label: '回复',
+        onTap: onReply,
       ),
-    );
+      ActionSheetItem(
+        key: const ValueKey('action-copy'),
+        icon: Icons.copy_outlined,
+        label: '复制',
+        onTap: onCopy,
+      ),
+      if (onPoke != null)
+        ActionSheetItem(
+          key: const ValueKey('action-poke'),
+          icon: Icons.touch_app_outlined,
+          label: '戳一戳',
+          onTap: onPoke,
+        ),
+      ActionSheetItem(
+        key: const ValueKey('action-forward'),
+        icon: Icons.forward,
+        label: '转发',
+        onTap: onForward,
+      ),
+      ActionSheetItem(
+        key: const ValueKey('action-select'),
+        icon: Icons.check_circle_outline,
+        label: '多选',
+        onTap: onSelect,
+      ),
+      if (showReveal)
+        ActionSheetItem(
+          key: const ValueKey('action-reveal'),
+          icon: Icons.visibility_outlined,
+          label: '查看原文',
+          onTap: onReveal,
+        ),
+      if (canRecall)
+        ActionSheetItem(
+          key: const ValueKey('action-recall'),
+          icon: Icons.undo,
+          label: '撤回',
+          danger: true,
+          onTap: onRecall,
+        ),
+      ActionSheetItem(
+        key: const ValueKey('action-delete'),
+        icon: Icons.delete_outline,
+        label: '删除（仅本地）',
+        danger: true,
+        onTap: onDelete,
+      ),
+      ActionSheetItem(
+        key: const ValueKey('action-cancel'),
+        icon: Icons.close,
+        label: '取消',
+        onTap: () {},
+      ),
+    ];
   }
 
-  Widget _action({
-    required Key key,
-    required IconData icon,
-    required String label,
-    required BuildContext context,
-    VoidCallback? onTap,
-    bool danger = false,
-  }) {
-    final color = danger ? TelegramColors.danger : TelegramColors.textPrimary;
-    return ListTile(
-      key: key,
-      dense: true,
-      leading: Icon(icon, size: 20, color: color),
-      title: Text(label, style: TextStyle(color: color, fontSize: 15)),
-      onTap: onTap == null
-          ? null
-          : () {
-              Navigator.of(context).pop();
-              onTap();
-            },
+  @override
+  Widget build(BuildContext context) {
+    return ActionSheet(
+      preview: _preview(message),
+      items: _items(
+        context,
+        message: message,
+        canRecall: canRecall,
+        onCopy: onCopy,
+        onReply: onReply,
+        onRecall: onRecall,
+        onReveal: onReveal,
+        onDelete: onDelete,
+        onForward: onForward,
+        onSelect: onSelect,
+        onPoke: onPoke,
+      ),
     );
   }
 }

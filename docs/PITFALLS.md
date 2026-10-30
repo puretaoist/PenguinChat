@@ -3893,3 +3893,12 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 3. **新增金样测试** `test/chat_list_panel_test.dart`（8 个用例 + `test/goldens/chat_list_panel.png`）：补上此前完全没覆盖的会话侧栏外观/几何——标题 17 / 摘要 16 / 时间 12、未读徽章 22dp 高 & minWidth 22 & 字号 12 w700、未读行标题 w700 & 已读行 w500、分隔线数量（4 行 ⇒ 3 条、最后一行无线）、归档会话不进主列表、草稿前缀、选中行文字翻白。全部用 `tester.widget<Text>(…).style` 断言，不靠肉眼。
 
 **验证**：`flutter test test/` → **173 全过**（原 165 + 新增 8）；金样 `chat_pane{,_light}.png`、`search_page.png`、`chat_list_panel.png` 全部重出；`dart analyze lib` 无 issue。
+## C75 两个长按菜单统一成 TG 版面（`action_sheet.dart`）（2026-10-30）
+
+**问题**：`message_actions.dart` 与 `chat_actions.dart` 是两份几乎一样的代码（顶部预览 + 分隔线 + 一长串 `dense: true` 的 `ListTile`），行高/字号停在 Flutter 默认（标题 15dp、图标 20dp），和 TG 的底部动作弹层差一档；两份实现还会各自漂移。
+
+**做法**：新增 `lib/ui/widgets/action_sheet.dart`——`ActionSheetItem{key,icon,label,danger,onTap}` + `ActionSheet{preview,items}` + `ActionSheet.show(context, preview:, items:)`（内部 `showModalBottomSheet(backgroundColor: Colors.transparent)`，圆角由组件自己画）。版面：顶部圆角 12、`bgSidebar` 底、预览区 `16,14,16,12`、动作行 **48dp 高 / 图标 24 / 文字 16 / 左右 16**、危险项 `danger` 色、**末尾「取消」前一条分隔线**（用 `i == items.length - 1` 判，所以两个菜单的「取消」必须放最后一项）。两个菜单改为只提供 item 列表，键名（`action-*` / `chat-action-*`）与文案全部不变，因此原有 12 个菜单用例一行没改就全过。
+
+**新增金样** `test/action_sheet_test.dart`（5 用例 + `test/goldens/action_sheet_message.png` / `action_sheet_chat.png`）：断言动作行 48 高 / 图标 24 / 文字 16、危险项颜色、预览带强调色竖线。
+
+**验证**：`flutter test test/` → **178 全过**；`dart analyze lib test` 只剩 1 条先存在的 info（`test/message_bubble_test.dart:1266`）。
