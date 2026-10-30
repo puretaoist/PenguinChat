@@ -185,6 +185,6 @@ P1审查通过后依次派发P2、P3、P4；协议证据不足先提交缺口表
 | P1 账号数据隔离 | `aa247f8` | AccountScope + AttachCoordinator + 每账号数据根；account_isolation 44 / account_scope 21 / attach_coordinator 76 项通过 |
 | P2 凭证失效 vs 准入拒绝 | `7a3e798` | 新增 `Qq8LoginStage.sessionExpired`、`qq8StageForResultType`、`resetForRelogin`、`SessionExpiredException`、登录页「登录已过期」case；PITFALLS C79 |
 | P3 逐票据生命周期（有效期只记录服务端事实） | 本次提交 | `Qq8TokenData` 7 个可选元数据字段 + `evaluateValidity`（unknown 照常尝试）+ 服务端判 16/155 时本地标记失效 + 冷启动过滤；`tool/token_validity_selftest.dart` 35 项、服务自测 4c/4d 段；49 selftest + flutter 194 全绿；PITFALLS C80 |
-| P4 恢复分支编排 | 未派发 | 待 P3 审查通过 |
+| P4 免密恢复编排 | 本次提交 | `recovery_planner.dart`（纯函数 `planNext`：d2Key→a2Key→a1NoPicSig→a2Only，network/challenge 优先停，永不返回密码）+ `recovery_coordinator.dart`（单飞 + 最多 4 次有界）；票据加 `a2Key`/`noPicSig` 可选字段；`loginWithToken` 走 planner、`autoLoginIfSaved` 单飞并打预演日志。**诚实边界：`usable` 要求 d2+d2key 非空 ⇒ 现只有 d2Key 分支真能走，其余三条 live=unavailable、未接线、不降级成密码。** `tool/recovery_planner_selftest.dart` 45 项 + 服务自测 4e 段；PITFALLS C81 |
 
 **P3 的边界声明**：本轮只做「不猜 TTL、只记录服务端明确事实、被明确判死后不再白撞」。真正的续期分支编排（D2/KEY、A2/A2KEY、A1/noPicSig、A2-only 的实测可用性矩阵）属于 P4，且各分支的 live 状态目前一律为 **unavailable（无真机/未获授权）**，不得报成已验证。

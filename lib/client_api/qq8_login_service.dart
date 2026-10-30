@@ -76,6 +76,7 @@ import '../kernel/wlogin8/qq8_sso.dart';
 import '../kernel/wlogin8/qq8_tlv.dart';
 import '../kernel/wlogin8/qq8_tran.dart';
 import 'qq8_token_store.dart';
+import 'recovery_planner.dart';
 
 export 'qq8_token_store.dart';
 
@@ -626,6 +627,58 @@ class Qq8LoginService {
     if (v == Qq8TokenValidity.expiringSoon) _log.i('票据将在 30 分钟内到期，仍尝试续期');
     if (v == Qq8TokenValidity.unknown) {
       _log.i('服务端未给到期时间，照常尝试续期（由服务端裁决）');
+    }
+    // ---- 免密恢复编排（P4）---------------------------------------------
+    // 闸门之后，由纯函数 planner 决定"这次用哪份材料"。**失败一次就停**：
+    // 本方法只跑一次 packet，不在这里循环重试（有界重试是
+    // `Qq8RecoveryCoordinator.runBounded` 的职责，由上层调用）。所以 tried
+    // 恒为空、networkError/challengeActive 都交给上层判断。
+    //
+    // 关键纪律：**永不静默退回密码**。密码不是免密材料，没经用户授权不许再发。
+    final avail = Qq8RecoveryAvailability.fromToken(token);
+    final decision = planNext(
+      a: avail,
+      tried: const <Qq8RecoveryMaterial>{},
+      networkError: false,
+      challengeActive: false,
+    );
+    if (decision is Qq8RecoveryStop) {
+      _log.w('免密恢复停止 code=${decision.code}（${decision.message}）'
+          '材料=$avail');
+      _emit(Qq8LoginSnapshot(
+        stage: Qq8LoginStage.sessionExpired,
+        uin: uin,
+        error: '登录凭证不足，请重新登录一次',
+        resultType: token.invalidatedType,
+      ));
+      return;
+    }
+    final material = (decision as Qq8RecoveryAttempt).material;
+    _log.i('免密恢复选择材料=$material（${decision.why}）');
+    switch (material) {
+      case Qq8RecoveryMaterial.d2Key:
+        // 已接线：`_login` 里 tgtgt = MD5(token.d2key)（见 :666）。
+        break;
+      case Qq8RecoveryMaterial.a2Key:
+      case Qq8RecoveryMaterial.a1NoPicSig:
+      case Qq8RecoveryMaterial.a2Only:
+        // ⚠️ **未接线，live = unavailable**。
+        // - a2Key：需要把 a2Key 塞进 tgtgt 而不是 MD5(d2key)，`Qq8Device.withTgtgt`
+        //   的语义与官方 `WtloginHelper.java:699` 的显式 key 路径尚未逐字节核对；
+        // - a1NoPicSig：组包在 kernel 侧已有（`lib/kernel/wlogin8/qq8_login.dart:591
+        //   Qq8LoginBody.buildA1Exchange`，子命令 15），但**未逐字节核对、也未接线**；
+        //   这条路径会自增服务端 A1 version，没有真机证据前不接；
+        // - a2Only：无 key 时 tgtgt 该填什么（空 / 全零）官方未在证据里给死。
+        // 因此这里**明确停**，绝不降级成 d2key 或密码，也不假装已实现。
+        _log.w('免密恢复分支 $material 未接线（live=unavailable），'
+            '不发包，请用户重新登录一次');
+        _emit(Qq8LoginSnapshot(
+          stage: Qq8LoginStage.sessionExpired,
+          uin: uin,
+          error: '登录凭证不足，请重新登录一次',
+          resultType: token.invalidatedType,
+        ));
+        return;
     }
     await _login(uin: uin, passwordMd5: null, token: token);
   }

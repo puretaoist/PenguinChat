@@ -63,6 +63,8 @@ import 'chat_store.dart';
 import 'qq8_device_store.dart';
 import 'qq8_login_service.dart';
 import 'qq8_session_adapter.dart';
+import 'recovery_coordinator.dart';
+import 'recovery_planner.dart';
 import 'session.dart';
 import 'session_providers.dart'
     show
@@ -573,6 +575,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     unawaited(_cooldownReady.then((_) => autoLoginIfSaved()));
   }
 
+  /// 单飞壳：冷启动时多处（构造期、页面 initState、连接回调）可能同时触发，
+  /// 只跑一次；后来者直接拿到 null（不抛、不重复发包）。
+  final Qq8RecoveryCoordinator _autoLoginCoordinator =
+      Qq8RecoveryCoordinator();
+
   /// 启动自动登录：票据目录里有号就挑「文件最新修改的那个」用票据续期上线。
   ///
   /// - 装新包 / 杀进程重开后不再走一遍密码→滑块→短信；
@@ -581,7 +588,22 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   /// - 但**准入拒绝（rejected）不再自动登录**：服务端已给出「这个账号/这一代
   ///   客户端不许进」的结论，自动再问一遍只是白耗尝试次数（真机 2026-10-27
   ///   连吃三记 type=16）。这种情况停在 rejected 让用户看见，等人决定换线。
+  /// 单飞入口：并发的第二处调用立刻返回 null（不抛、不重复发同一张票）。
   Future<void> autoLoginIfSaved() async {
+    await _cooldownReady;
+    // 用 `bool` 当哨兵：`runSingleFlight<T>` 返回 `Future<T?>`，T 取 void 时
+    // 结果无法参与判断（void 值不可用）。true = 本次真的跑了，null = 单飞命中。
+    final ran = await _autoLoginCoordinator.runSingleFlight<bool>(() async {
+      await _autoLoginBody();
+      return true;
+    });
+    if (ran == null) {
+      log?.call('i', '启动自动登录未执行（单飞命中 / 无事可做）');
+    }
+  }
+
+  /// [autoLoginIfSaved] 的主体（已被单飞壳包住，同一时刻只有一个执行者）。
+  Future<void> _autoLoginBody() async {
     await _cooldownReady;
     // ⚠️ Qq8ConnectStatus 没重写 ==（引用比较），必须比 stage 而不是比实例
     if (state.stage != Qq8LoginStage.idle || _busy) return;
@@ -656,7 +678,24 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
             '${(left.inSeconds / 60).ceil()} 分钟）');
         return;
       }
-      log?.call('i', '启动自动登录：用保存的票据登录 $best');
+      // planner 的决策先进日志：出问题时第一句要看的就是"它选了哪份材料、
+      // 为什么 / 为什么停"。这里只**预演**（tried 空、无网络/验证标志），
+      // 真正的分支选择在 `loginWithToken` 里做——两处用的是同一个纯函数。
+      final chosen = await service.tokenStore.load(best);
+      final avail = Qq8RecoveryAvailability.fromToken(chosen);
+      switch (planNext(
+        a: avail,
+        tried: const <Qq8RecoveryMaterial>{},
+        networkError: false,
+        challengeActive: false,
+      )) {
+        case Qq8RecoveryStop(:final code, :final message):
+          log?.call(
+              'w', '启动自动登录：planner 停 code=$code（$message）材料=$avail');
+        case Qq8RecoveryAttempt(:final material, :final why):
+          log?.call(
+              'i', '启动自动登录：planner 选材料=$material（$why）材料=$avail');
+      }
       await loginWithToken(best);
     } on Object catch (e) {
       log?.call('w', '启动自动登录失败（忽略，等手动登录）', e);

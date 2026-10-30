@@ -75,6 +75,17 @@ class Qq8TokenData {
   /// 旧票据文件没有 `a1` 键 → 读成空（向后兼容，不报错）。
   final Uint8List a1;
 
+  /// 续期材料 A2KEY（官方 `WtloginHelper.java:607-755` 的 A2+A2KEY 分支）。
+  ///
+  /// **默认 null**：旧票据文件没有这个键，读出来就是 null，行为不变。
+  /// 存下来不等于会用它发包——用不用由 `recovery_planner.dart` 决策。
+  final Uint8List? a2Key;
+
+  /// 快速重登材料 noPicSig（配合 A1 走子命令 15，`request.z(u=15)`）。
+  ///
+  /// **默认 null**：同上，旧文件照旧能读。
+  final Uint8List? noPicSig;
+
   /// 这张票**首次**成功登录的时刻（毫秒）。续期不改它。
   final int? issuedAtMs;
 
@@ -104,6 +115,8 @@ class Qq8TokenData {
     required this.ticketKey,
     required this.srmToken,
     Uint8List? a1,
+    this.a2Key,
+    this.noPicSig,
     this.issuedAtMs,
     this.renewedAtMs,
     this.expireAtMs,
@@ -128,6 +141,8 @@ class Qq8TokenData {
     Uint8List? ticketKey,
     Uint8List? srmToken,
     Uint8List? a1,
+    Uint8List? a2Key,
+    Uint8List? noPicSig,
     int? issuedAtMs,
     int? renewedAtMs,
     int? expireAtMs,
@@ -146,6 +161,8 @@ class Qq8TokenData {
         ticketKey: ticketKey ?? this.ticketKey,
         srmToken: srmToken ?? this.srmToken,
         a1: a1 ?? this.a1,
+        a2Key: a2Key ?? this.a2Key,
+        noPicSig: noPicSig ?? this.noPicSig,
         issuedAtMs: issuedAtMs ?? this.issuedAtMs,
         renewedAtMs: renewedAtMs ?? this.renewedAtMs,
         expireAtMs: expireAtMs ?? this.expireAtMs,
@@ -204,6 +221,9 @@ class Qq8TokenData {
         'ticket_key': _plainHex(ticketKey),
         'srm_token': _plainHex(srmToken),
         'a1': _plainHex(a1),
+        if (a2Key != null && a2Key!.isNotEmpty) 'a2_key': _plainHex(a2Key!),
+        if (noPicSig != null && noPicSig!.isNotEmpty)
+          'no_pic_sig': _plainHex(noPicSig!),
         if (issuedAtMs != null) 'issued_at_ms': issuedAtMs,
         if (renewedAtMs != null) 'renewed_at_ms': renewedAtMs,
         if (expireAtMs != null) 'expire_at_ms': expireAtMs,
@@ -232,6 +252,18 @@ class Qq8TokenData {
 
     final lifetime = j['lifetime_tlv'];
 
+    /// 宽松读取可选 hex：缺键 / 空串 / 脏值 → null（旧文件与坏文件都别抛）。
+    Uint8List? nullableHexField(String k) {
+      final v = j[k];
+      if (v is! String || v.isEmpty) return null;
+      try {
+        final b = _hex(v);
+        return b.isEmpty ? null : b;
+      } on Object {
+        return null;
+      }
+    }
+
     return Qq8TokenData(
       uin: uin,
       savedAt: '${j['saved_at'] ?? '?'}',
@@ -242,6 +274,8 @@ class Qq8TokenData {
       ticketKey: hexField('ticket_key'),
       srmToken: hexField('srm_token'),
       a1: hexField('a1'),
+      a2Key: nullableHexField('a2_key'),
+      noPicSig: nullableHexField('no_pic_sig'),
       issuedAtMs: intField('issued_at_ms'),
       renewedAtMs: intField('renewed_at_ms'),
       expireAtMs: intField('expire_at_ms'),

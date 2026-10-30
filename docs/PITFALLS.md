@@ -3988,3 +3988,23 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 - `Qq8SigBundle`（`lib/kernel/wlogin8/qq8_login.dart:1300`）的 `all` 是 **required** 命名参数，测 `fromSigBundle` 时要给 `all: <int, Uint8List>{}`。
 
 **验收**：`tool/token_validity_selftest.dart` 35 项（五分支 / copyWith 保原值 / JSON 往返 / 旧文件与脏值 / fromSigBundle 可选参数 / 文件往返）；`tool/qq8_login_service_selftest.dart` 4c 段追加「票据被标记 invalidated + `invalidatedType==16`」，新增 4d 段断言「已标失效的票 `loginWithToken` **一个包都不发**（`scripted.sent.isEmpty`）且 stage == sessionExpired」。全量：analyze lib 干净、49 个 selftest 全绿、flutter test 194 全过。
+
+## C81 免密恢复编排：planner 先立骨架，别把『结构』说成『能力』（2026-10-30，P4）
+
+**做了什么**：把『用哪份材料续期』从散落的条件判断抽成一个纯函数，并给重试加边界。
+- `lib/client_api/recovery_planner.dart`：`enum Qq8RecoveryMaterial { d2Key, a2Key, a1NoPicSig, a2Only }` + `Qq8RecoveryAvailability.fromToken(Qq8TokenData?)` + `sealed Qq8RecoveryDecision`（`Qq8RecoveryAttempt{material,attempt,why}` / `Qq8RecoveryStop{code,message}`）+ `planNext({a, tried, networkError, challengeActive})`。顺序写死在 `qq8RecoveryOrderedMaterials` 一处；`networkError -> Stop('network')`、`challengeActive -> Stop('challenge')`、都没材料 `Stop('exhausted')`；**永不返回密码分支**（密码不是免密材料）。
+- `lib/client_api/recovery_coordinator.dart`：`runSingleFlight<T>()`（并发第二个调用立刻返回 null）+ `runBounded<T>()`（最多 `maxAttempts=4`，失败间隔 `delay` 可注入 `sleeper`）。
+- `loginWithToken` 里 planner 放在有效期闸门之后；`autoLoginIfSaved` 先用 planner 打一条**预演**日志（选了哪份材料、为什么停），再发真包。
+
+**最重要的一条真相（必须如实上报，别包装成『免密恢复已实现』）**：`Qq8TokenData.usable` 是 `d2.isNotEmpty && d2key.isNotEmpty`，而 `d2Key` 材料的判据正是 **A2 + D2KEY 同时有** ⇒ **只要能过 usable 闸门，planner 一定选 d2Key**。因此：
+- `a2Key / a1NoPicSig / a2Only` 三个分支在 `loginWithToken` 里**当前走不到**（它们只会出现在『材料不足』的票上，而那种票先被 usable 闸门以 `没有可用的票据（先做一次口令登录）` 挡掉）；
+- planner 的 `Stop('exhausted')` 分支同理是防御性代码；
+- 结论：P4 交付的是**骨架 + 诚实的分支矩阵**，不是『三条备用材料都通了』。要真的走 A1/noPicSig，得先放宽 usable 语义（并把子命令 15 组包逐字节核对）——那是独立的一次改动，别顺手改。
+
+**坑**：
+- `runSingleFlight<T>` 返回 `Future<T?>`：T 取 `void` 时**无法判断到底跑没跑**（analyze 报 `use_of_void_result`）。用 `runSingleFlight<bool>(() async { ...; return true; })` + `ran == null` 表示『单飞命中』。
+- `runBounded` 的 `delay` 默认 800ms，测试若不注入 `sleeper` 会**真的睡**（4 次就是 2.4s，且会掩盖时序 bug）。单飞测试用 `Completer` 卡住 body，才能稳定观察『第二个调用立刻返回 null』与 `busy`。
+- 实施模型的工具 allowlist 里没有 `lib/kernel/...`，它就把『`Qq8LoginBody.buildA1Exchange`』写成『kernel 侧尚不存在/未核对』——**事实错误**（实际在 `lib/kernel/wlogin8/qq8_login.dart:591`）。跨层引用必须在 allowlist 里放行，或由策划方逐条核对注释。
+- 用 TS 数组拼 Dart 源码时，**双引号字符串里不能再出现未转义的双引号**（报 `Expected ',', got 'ident'`）；Dart 注释里的英文引号一律换「」。
+
+**验收**：`tool/recovery_planner_selftest.dart` 45 项（顺序常量 / 两种 Stop 及优先级 / 逐级降级 / d2 空但 d2key 非空不算可用 / 纯函数性 / 单飞三个并发断言 / 有界 3 组含抛异常吞掉 / 票据新字段 JSON 往返与旧文件兼容与脏值）；`tool/qq8_login_service_selftest.dart` 新增 4e 段两组：**d2Key 路径真的发一个包**、**材料不足一个包都不发且不退回密码**。

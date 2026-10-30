@@ -897,6 +897,73 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
+  section('4e. P4 边界：planner 只有 d2Key 这条真能走；材料不足时停在闸门，绝不退回密码');
+  {
+    // 事实：`Qq8TokenData.usable` 要求 d2 与 d2key 都非空，而 d2Key 材料的判据正是
+    // 「A2+D2KEY 都有」⇒ 只要能过 usable 闸门，planner 一定选 d2Key。因此
+    // a2Key / a1NoPicSig / a2Only 三个分支目前**走不到**（live=unavailable 的另一面）。
+    // 这里把这条边界钉住：能走的那条真的发了一个包；走不到的不会偷偷降级成密码。
+    final scripted = Qq8ScriptedTransport(<Uint8List>[]);
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: _hex('a2' * 64),
+        d2key: _hex('a3' * 16),
+        sigKey: _hex('a4' * 48),
+        ticketKey: _hex('a5' * 16),
+        srmToken: _hex('a6' * 56),
+      );
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithToken(uin: 10001);
+    check('d2Key 路径真的发了一个包（不是空转）', scripted.sent.length == 1,
+        '${scripted.sent.length}');
+    await svc.close();
+  }
+  {
+    // 只有 A2KEY、没有 A2/D2KEY：过不了 usable 闸门 → 一个包都不发。
+    // 关键是**不退回密码**：sent 必须为空，且文案只让用户重新登录。
+    final scripted = Qq8ScriptedTransport(<Uint8List>[]);
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: Uint8List(0),
+        d2key: Uint8List(0),
+        sigKey: _hex('a4' * 48),
+        ticketKey: _hex('a5' * 16),
+        srmToken: _hex('a6' * 56),
+        a2Key: _hex('a7' * 16),
+      );
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithToken(uin: 10001);
+    check('材料不足：一个包都不发', scripted.sent.isEmpty, '${scripted.sent.length}');
+    check('明确失败并提到票据（不静默退回密码）',
+        svc.snapshot.stage == Qq8LoginStage.failed &&
+            (svc.snapshot.error ?? '').contains('票据'),
+        '${svc.snapshot.stage.name} / ${svc.snapshot.error}');
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
   section('5. token 登录：没有票据时要明确失败');
   {
     final svc = Qq8LoginService(
