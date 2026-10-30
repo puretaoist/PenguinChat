@@ -3946,3 +3946,23 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 
 **坑**：`ListView(children: [...])` 的子项也是**懒构建**的——屏幕外的 `gset-mute-all-on` 在测试里 `findsNothing`；要用 `tester.drag(find.byType(ListView), const Offset(0,-400))` 滚下去（`scrollUntilVisible` 会因为页面里有多个 `Scrollable` 抛 `Bad state: Too many elements`）。
 
+
+## C79 「凭证失效」与「准入拒绝」必须分成两个 stage（2026-10-30，P2）
+
+**问题**：`Qq8LoginResultType.isServerRejected` 原来把 45（版本过低）、235（验证后判版本）、155（太久没操作）、16（票据失效）塞进同一个布尔，上游只有 `rejected` 一个 stage。后果是**票过期被当成账号被风控**：UI 显示「服务端拒绝登录 / 请等 30 分钟或换账号」，`_recordCooldown` 还会给票过期记 30 分钟冷却。用户拿到的建议是错的（换号换设备），而真正该做的是**重新登录一次**。
+
+**改法（判据只允许写在一处）**：
+- `lib/kernel/wlogin8/qq8_login.dart`：`isServerRejected` 收窄为 **45 / 235 / 243**（新增 `insecureEnvironment = 243`）；新增 `isSessionExpired(16|155)` 与 `isNonRetryable = 两者之并`。**不要在别处再写数字比较**。
+- `lib/client_api/qq8_login_service.dart`：新增 `Qq8LoginStage.sessionExpired` 与**唯一映射函数** `Qq8LoginStage qq8StageForResultType(int type)`；`_markAuthLost` 的 emit 从 `failed` 改为 `sessionExpired`（authDead 系列 = 凭证问题，不是参数问题）；断线恢复的停止条件改为 `rejected || sessionExpired`。
+- `lib/client_api/qq8_providers.dart`：`_isRiskRejection` 改为委托 `Qq8LoginResultType.isServerRejected`（**别再写 45/235/243 字面量**）；`stateLabel` 加 `sessionExpired => '登录已过期'`；`autoLoginIfSaved` 早退同时拦 `sessionExpired`（票过期时自动登录只会再吃一次 16）；新增 `resetForRelogin()`（回 idle、**保留 uin**、不发包、**不清冷却**）。
+- `lib/client_api/qq8_session_adapter.dart`：新增 `SessionExpiredException(message, resultType)`（与 `AccessRejectedException` 字段一致、语义不同）；`_mapStage` 里 `sessionExpired => disconnected`。
+- `lib/ui/pages/qq8_connect_page.dart`：`Qq8ConnectView` 新增 `onRelogin`；新 case 在 `rejected` **之前**（switch 顺序别搞反，否则被 rejected 吃掉），文案只给「重新登录一次即可继续」+ 一个 `qq8-relogin` 按钮，**绝不能出现「换账号」「版本过低」**。
+
+**验收**：`tool/qq8_login_service_selftest.dart` 4c 段用脚本化 type=16 回包断言 `stage == sessionExpired`（不是 rejected/failed）；`test/qq8_connect_page_test.dart` 断言「登录已过期」在场、「服务端拒绝登录」缺席、`qq8-relogin` 回调触发。全部离线，不发真包。
+
+**坑**：
+- 给 `qq8_providers.dart` 加 `Qq8LoginResultType` 判据后要**补 `import '../kernel/wlogin8/qq8_login.dart'`**——它原来只经 `qq8_login_service.dart` 间接可见，Dart 不认传递导入（症状：`error - Undefined name 'Qq8LoginResultType'`）。
+- 旧自测里 `isServerRejected(155) / (16) 为真` 的断言会**随语义收窄而失败**，必须同步改成新语义，别直接删断言。
+- `Qq8LoginStage` 是 enum 且多处 `switch` 穷举：加成员后 `dart analyze lib tool` 会一次找全所有缺 arm 的地方（这是好事，别用 `default` 糊过去）。
+
+**WorkBuddy 派发教训**：会话的 system 提示里若写着「只允许修改 tool/，不得改 lib/」（那是上一阶段写自测的纪律），模型会**严格遵守并拒绝改 lib**，只交补丁方案。换阶段必须显式改写 system 里的授权段（列出可改的 lib 白名单 + 声明旧纪律作废），否则白跑一轮。

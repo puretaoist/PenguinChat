@@ -770,15 +770,68 @@ Future<void> main() async {
     check('错误文案仍是服务端原话（可读）',
         (svc.snapshot.error ?? '').contains('版本过低'), '${svc.snapshot.error}');
 
-    // 分类判据本身：三条准入码都算拒绝，普通失败码不算。
-    check('isServerRejected(45/155/16) 为真',
+    // 分类判据本身：准入拒绝只含风控类；凭证失效另算，别塞进同一个布尔。
+    check('isServerRejected 只含 45/235/243',
         Qq8LoginResultType.isServerRejected(45) &&
-            Qq8LoginResultType.isServerRejected(155) &&
-            Qq8LoginResultType.isServerRejected(16));
+            Qq8LoginResultType.isServerRejected(235) &&
+            Qq8LoginResultType.isServerRejected(243) &&
+            !Qq8LoginResultType.isServerRejected(155) &&
+            !Qq8LoginResultType.isServerRejected(16));
+    check('isSessionExpired 只含 16/155（换张票就能继续）',
+        Qq8LoginResultType.isSessionExpired(16) &&
+            Qq8LoginResultType.isSessionExpired(155) &&
+            !Qq8LoginResultType.isSessionExpired(45));
+    check('isNonRetryable = 准入 ∪ 凭证失效',
+        Qq8LoginResultType.isNonRetryable(45) &&
+            Qq8LoginResultType.isNonRetryable(16) &&
+            !Qq8LoginResultType.isNonRetryable(Qq8LoginResultType.slider));
     check('isServerRejected(2/204/0) 为假（滑块/设备锁是能继续走的）',
         !Qq8LoginResultType.isServerRejected(Qq8LoginResultType.slider) &&
             !Qq8LoginResultType.isServerRejected(Qq8LoginResultType.deviceLock) &&
             !Qq8LoginResultType.isServerRejected(Qq8LoginResultType.success));
+    // 映射函数是**唯一判据出处**：UI / provider / adapter 都靠它，别处不许再写数字。
+    check('qq8StageForResultType：45→rejected / 16→sessionExpired / 2→failed',
+        qq8StageForResultType(45) == Qq8LoginStage.rejected &&
+            qq8StageForResultType(16) == Qq8LoginStage.sessionExpired &&
+            qq8StageForResultType(Qq8LoginResultType.slider) ==
+                Qq8LoginStage.failed);
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('4c. 凭证失效（type=16）：停在 sessionExpired，不是准入拒绝');
+  {
+    // 票过期与账号风险无关：换一张票就能继续。如果这里落到 rejected，
+    // UI 会劝用户「换账号 / 等 30 分钟」，还会进风控冷却——两件事都错。
+    final msg = (ByteWriter()
+          ..u32(0)
+          ..bytes16(utf8.encode('登录失败'))
+          ..bytes16(utf8.encode('登录状态已失效，请重新登录'))
+        ).build();
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      _frame(
+          1,
+          'wtlogin.login',
+          _payload(
+              Qq8LoginResultType.type16TokenExpired, <int, List<int>>{0x146: msg})),
+    ]);
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore(),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithPassword(uin: 10001, password: 'hunter2');
+    check('停在 sessionExpired（不是 rejected / failed）',
+        svc.snapshot.stage == Qq8LoginStage.sessionExpired,
+        svc.snapshot.stage.name);
+    check('带回返回码 16', svc.snapshot.resultType == 16,
+        '${svc.snapshot.resultType}');
+    check('文案仍是服务端原话（含「重新登录」）',
+        (svc.snapshot.error ?? '').contains('重新登录'), '${svc.snapshot.error}');
     await svc.close();
   }
 

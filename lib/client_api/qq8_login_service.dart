@@ -115,8 +115,8 @@ enum Qq8LoginStage {
   /// 失败：原因在 [Qq8LoginSnapshot.error]（可直接显示给用户）。
   failed,
 
-  /// **服务端准入拒绝**（`type=45` 版本过低 / `type=155` 太久没操作 /
-  /// `type=16` 身份已失效）。
+  /// **服务端准入拒绝**（`type=45` 版本过低 / `type=235` 验证通过后判版本 /
+  /// `type=243` 不安全环境）。
   ///
   /// 与 [failed] 分开的理由是**后续动作不同**：
   ///
@@ -125,10 +125,26 @@ enum Qq8LoginStage {
   ///   结论，原地重发只会再问一遍同一句拒绝（真机 2026-10-27：自动重连
   ///   三次连吃三记 `type=16`）。上游必须**停止自动重试**，
   ///   改用「换线（OneBot）/ 换设备 / 换账号」这类不同层级的动作。
+  ///   凭证失效请用 [sessionExpired]——它只需要重新登录，不应劝用户换号。
   ///
   /// 判据收在 [Qq8LoginResultType.isServerRejected]，不要在别处再写一遍
   /// 数字比较——这类返回码以后还会加。
   rejected,
+
+  /// 凭证/身份失效（type=16 / 155 / authDead 系列）。与 [rejected] 的区别：
+  /// 换一张票就能继续，**不要**给用户「账号被风控」的暗示，也不要冷却。
+  sessionExpired,
+}
+
+/// 返回码 → 登录阶段。这是**唯一判据出处**，UI/provider/adapter 都调它。
+Qq8LoginStage qq8StageForResultType(int type) {
+  if (Qq8LoginResultType.isSessionExpired(type)) {
+    return Qq8LoginStage.sessionExpired;
+  }
+  if (Qq8LoginResultType.isServerRejected(type)) {
+    return Qq8LoginStage.rejected;
+  }
+  return Qq8LoginStage.failed;
 }
 
 /// 未上线就想发消息等业务请求。
@@ -3469,20 +3485,22 @@ class Qq8LoginService {
     final text = msg == null
         ? '登录未通过（服务端返回 type=${r.type}）'
         : '${msg.$1}：${msg.$2}';
-    // 45 / 155 / 16 是**服务端对这个账号的准入结论**，不是这次组包写错了。
-    // 区别在后续动作：failed 靠改参数可以重试，rejected 重试只会把同一句拒绝
-    // 再问一遍（真机 2026-10-27：自动重连三次连吃三记 type=16）。这一步分开，
-    // 上游的 reconnect / 自动登录 / UI 才有依据停手。
-    final rejected = Qq8LoginResultType.isServerRejected(r.type);
-    if (rejected) {
+    // 45 / 235 / 243 是**服务端对这个账号的准入结论**，不是这次组包写错了；
+    // 16 / 155 则是**凭证时效**——换一张票就能继续，跟账号风险无关。两者都
+    // 不原地重试（failed 靠改参数可以重试），但对用户说的话完全不同，所以按
+    // 阶段分开（唯一判据见 [qq8StageForResultType]）。
+    final stage = qq8StageForResultType(r.type);
+    if (stage == Qq8LoginStage.rejected) {
       final why = msg == null ? '无文案' : msg.$1;
       _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试；'
           '连续重试只会让账号风险更高，请等待一段时间后再试一次。'
           '注：2026-10-28 21:25 真机见到 235（验证通过后）与 45（提交包多带 '
           '0x544/0x553）两种情况，但两次档案不同，尚未做干净单变量 A/B。');
+    } else if (stage == Qq8LoginStage.sessionExpired) {
+      _log.w('凭证失效 type=${r.type} 停止重试，等待用户重新登录');
     }
     _emit(Qq8LoginSnapshot(
-      stage: rejected ? Qq8LoginStage.rejected : Qq8LoginStage.failed,
+      stage: stage,
       uin: uin,
       error: text.trim(),
       resultType: r.type,
@@ -3721,9 +3739,9 @@ class Qq8LoginService {
     _pullTimer = null;
     _session?.stopHeartbeat();
     _emit(Qq8LoginSnapshot(
-      stage: Qq8LoginStage.failed,
+      stage: Qq8LoginStage.sessionExpired,
       uin: _snapshot.uin,
-      error: '登录状态已失效（服务端 retcode=${e.retcode}），请重新登录',
+      error: '登录凭证已失效，请重新登录',
     ));
     return true;
   }
@@ -3838,9 +3856,15 @@ class Qq8LoginService {
         // 给账号再添三条可疑记录。这种拒绝是服务端对「这个账号 + 这一代客户端」
         // 的结论。而且连打会让账号风险升级（真机 2026-10-28：静默 40 分钟后
         // type=2，被连续尝试 5 次后同一参数立刻变 type=45），所以要停手。
-        // 所以直接退出，把 _snapshot 停在 rejected 让 UI 说清楚。
-        if (_snapshot.stage == Qq8LoginStage.rejected) {
-          _log.w('断线恢复遇到服务端准入拒绝（type=${_snapshot.resultType}），停止重试');
+        // 所以直接退出，把 _snapshot 停在 rejected / sessionExpired 让 UI 说清楚。
+        if (_snapshot.stage == Qq8LoginStage.rejected ||
+            _snapshot.stage == Qq8LoginStage.sessionExpired) {
+          if (_snapshot.stage == Qq8LoginStage.sessionExpired) {
+            _log.w('断线恢复遇到凭证失效（type=${_snapshot.resultType}），'
+                '凭证失效，停止重试，等用户重登');
+          } else {
+            _log.w('断线恢复遇到服务端准入拒绝（type=${_snapshot.resultType}），停止重试');
+          }
           return;
         }
         _log.w('断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试');

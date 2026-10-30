@@ -178,11 +178,11 @@ abstract final class Qq8LoginResultType {
   /// 大得多：它证明验证环节是通的。处理原则同 45 —— 不原地重试。
   static const int forbiddenVersion = 235;
 
-  /// **服务端准入拒绝**：155（太久没有操作 / 请重新登录）。
+  /// **凭证时效类**：155（太久没有操作 / 请重新登录）。
   ///
   /// 只在扫码链出现过（我方 8.2.11 + 扫码）。它同样不是"重发一次就好"
   /// 的瞬态错误——S_BABYLH_EXPIRED 常量其实是 116，155 不在官方 SDK
-  /// 常量表里，属服务端自定的准入码。
+  /// 常量表里，属凭证时效类：重新登录即可。
   static const int sessionTooOld = 155;
 
   /// 16：服务端要求清票据重新登录（官方 oicq_request.java case 15/16
@@ -194,14 +194,26 @@ abstract final class Qq8LoginResultType {
   /// 不要在同一个布尔里塞两种意思。
   static const int type16TokenExpired = 16;
 
-  /// 判定「服务端准入拒绝」——这一类**不要原地重试**。
+  /// 不安全环境（手机号链 243）：与 45/235 同属准入类，重试只会加重风险。
+  static const int insecureEnvironment = 243;
+
+  /// 判定「服务端准入拒绝」——这一类**不要原地重试**，且应进风控冷却。
   ///
-  /// 真机 2026-10-27：票据续期反复吃 type=16，自动重连三次全是同一句拒绝。
+  /// 只含**风控/准入**结论（45 / 235 / 243）。凭证失效（16 / 155）不属于这里：
+  /// 那种情况换一张票就能继续，见 [isSessionExpired]。
   static bool isServerRejected(int type) =>
       type == forbiddenLogin ||
       type == forbiddenVersion ||
-      type == sessionTooOld ||
-      type == type16TokenExpired;
+      type == insecureEnvironment;
+
+  /// 凭证/身份失效（16 清票重登、155 太久没操作）：**重登一次就能继续**，
+  /// 不是账号风险结论，因此**不进风控冷却**。
+  static bool isSessionExpired(int type) =>
+      type == type16TokenExpired || type == sessionTooOld;
+
+  /// 不可原地重试：准入拒绝与凭证失效都算，但两者对用户说的话不同。
+  static bool isNonRetryable(int type) =>
+      isServerRejected(type) || isSessionExpired(type);
 }
 
 /// 登录 TLV 的准入条件。

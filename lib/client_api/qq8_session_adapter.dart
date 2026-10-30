@@ -42,6 +42,26 @@ import 'qq8_login_service.dart';
 import 'segment.dart';
 import 'session.dart';
 
+/// 登录凭证已失效（`type=16` / `155` / authDead 系列）。
+///
+/// 与 [AccessRejectedException] 的区别是**对用户说的话**：凭证失效只需要重新
+/// 登录一次就能继续，不是「这个账号在当前客户端代际不许进」的结论，因此
+/// 不应劝用户换号，也不该进风控冷却。字段与 [AccessRejectedException] 一致，
+/// 上游可以按类型分别提示。
+class SessionExpiredException implements Exception {
+  /// 已转成给人看的话（服务端文案优先）。
+  final String message;
+
+  /// 服务端返回码（`16` / `155` …）；拿不到时为 null。
+  final int? resultType;
+
+  const SessionExpiredException(this.message, [this.resultType]);
+
+  @override
+  String toString() =>
+      'SessionExpiredException: $message${resultType == null ? '' : ' (type=$resultType)'}';
+}
+
 /// 协议线（wlogin8）的 [Session] 实现。
 class Qq8SessionAdapter implements Session {
   /// 被桥接的服务实例（登录/扫码/发消息/拉取都在它上面）。
@@ -574,15 +594,20 @@ class Qq8SessionAdapter implements Session {
     if (_state != before) {
       _emit(SessionStateChanged(_state, reason: s.error));
     }
-    // failed 与 rejected 都往事件流报一条 [SessionFailure]（UI 要能弹一句人话），
-    // 但错误对象带的信息不同：rejected 额外挂 resultType，让上游能区分
-    // 「参数写错了，改一改再试」和「服务端不放这个账号进，别试了」。
-    if ((s.stage == Qq8LoginStage.failed || s.stage == Qq8LoginStage.rejected) &&
+    // failed 与 rejected / sessionExpired 都往事件流报一条 [SessionFailure]（UI 要能
+    // 弹一句人话），但错误对象带的信息不同：rejected 额外挂 resultType，让上游能
+    // 区分「参数写错了，改一改再试」和「服务端不放这个账号进，别试了」；
+    // sessionExpired 则意味着「换张票就能继续」，不要暗示账号被风控。
+    if ((s.stage == Qq8LoginStage.failed ||
+            s.stage == Qq8LoginStage.rejected ||
+            s.stage == Qq8LoginStage.sessionExpired) &&
         s.error != null) {
       _emit(SessionFailure(
-        s.stage == Qq8LoginStage.rejected
-            ? AccessRejectedException(s.error!, s.resultType)
-            : StateError(s.error!),
+        s.stage == Qq8LoginStage.sessionExpired
+            ? SessionExpiredException(s.error!, s.resultType)
+            : s.stage == Qq8LoginStage.rejected
+                ? AccessRejectedException(s.error!, s.resultType)
+                : StateError(s.error!),
         null,
       ));
     }
@@ -730,6 +755,7 @@ class Qq8SessionAdapter implements Session {
         // 服务端已经明确不放行，停在 connecting 会让上游以为「还在连、等着就好」，
         // 顺手就把它当可重试状态再推一轮。
         Qq8LoginStage.rejected => SessionState.disconnected,
+      Qq8LoginStage.sessionExpired => SessionState.disconnected,
         _ => SessionState.connecting,
       };
 

@@ -96,6 +96,8 @@ class Qq8ConnectPage extends ConsumerWidget {
         onFetchQrcode: c.fetchQrcode,
         onPollQrcode: c.pollQrcode,
         onOpenBrowser: (url) => _openVerifyPage(context, ref, url),
+        // 凭证失效时唯一的动作：退回 idle 等用户重新登录（不发包，不清冷却）。
+        onRelogin: c.resetForRelogin,
         // 客户端档案可切换（研究线需要按档对照服务端裁决，见 qq8ProfileProvider）。
         profileKey: qq8ProfileKeyOf(ref.watch(qq8ProfileProvider)),
         profileKeys: qq8ClientProfiles.keys.toList(),
@@ -166,6 +168,7 @@ class Qq8ConnectView extends StatefulWidget {
     this.onProfileChanged,
     this.onEnterApp,
     this.onExportLog,
+    this.onRelogin,
   });
 
   final Qq8ConnectStatus status;
@@ -204,6 +207,10 @@ class Qq8ConnectView extends StatefulWidget {
 
   /// 导出日志（生成报告 → 系统分享面板）。
   final VoidCallback? onExportLog;
+
+  /// 「重新登录」：凭证失效（[Qq8LoginStage.sessionExpired]）时给用户的唯一动作。
+  /// null 表示不可用（哑视图/测试）。
+  final VoidCallback? onRelogin;
 
   @override
   State<Qq8ConnectView> createState() => _Qq8ConnectViewState();
@@ -635,6 +642,31 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
             key: const ValueKey('qq8-enter'),
             onPressed: widget.onEnterApp,
             child: const Text('进入聊天'),
+          ),
+        ];
+      case Qq8LoginStage.sessionExpired:
+        // 凭证失效：**只需要重新登录一次**。这里绝不能借用 rejected 那套文案，
+        // 否则用户会以为账号被风控、跑去换号换设备，而其实票据换了就好。
+        return <Widget>[
+          const SizedBox(height: 12),
+          if (s.error != null)
+            Text(s.error!,
+                key: const ValueKey('qq8-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          if (s.resultType != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text('服务端返回 type=${s.resultType}',
+                key: const ValueKey('qq8-expired-code')),
+          ],
+          const SizedBox(height: 8),
+          const Text('这个账号的登录凭证已失效（票据过期或身份失效），重新登录一次即可继续，'
+              '不影响本地聊天记录。',
+              key: ValueKey('qq8-expired-hint')),
+          const SizedBox(height: 8),
+          FilledButton(
+            key: const ValueKey('qq8-relogin'),
+            onPressed: _busy ? null : widget.onRelogin,
+            child: const Text('重新登录'),
           ),
         ];
       case Qq8LoginStage.rejected:

@@ -50,6 +50,7 @@ import '../infra/device/device_info.dart';
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
 import '../kernel/wlogin8/qq8_device.dart';
+import '../kernel/wlogin8/qq8_login.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
 import '../kernel/wlogin8/qq8_protocol_det.dart';
 import '../kernel/wlogin8/qq8_push.dart';
@@ -512,6 +513,7 @@ class Qq8ConnectStatus {
         // 「服务端不放这个账号进，重试没用」。用同一句「登录失败」会让用户
         // 一直点重试，点到把尝试次数耗光。
         Qq8LoginStage.rejected => '服务端拒绝登录',
+        Qq8LoginStage.sessionExpired => '登录已过期',
       };
 }
 
@@ -592,8 +594,15 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     // 真正要杜绝的是「一次运行里反复试」（reconnect 三轮、用户点重试）。
     // 用户手动点「登录」会走 loginWithPassword/loginWithToken（不受这里拦），
     // 那是**人的决定**，不是我们替他反复试探服务端。
-    if (service.snapshot.stage == Qq8LoginStage.rejected) {
-      log?.call('w', '上次登录被服务端拒绝（type=${service.snapshot.resultType}），跳过自动登录');
+    if (service.snapshot.stage == Qq8LoginStage.rejected ||
+        service.snapshot.stage == Qq8LoginStage.sessionExpired) {
+      if (service.snapshot.stage == Qq8LoginStage.sessionExpired) {
+        log?.call('w',
+            '上次登录凭证失效（type=${service.snapshot.resultType}），跳过自动登录，等用户重新登录');
+      } else {
+        log?.call('w',
+            '上次登录被服务端拒绝（type=${service.snapshot.resultType}），跳过自动登录');
+      }
       return;
     }
     try {
@@ -674,7 +683,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   /// 服务端风控/准入拒绝：45（首发即拒）、235（验证通过后判版本/设备）、
   /// 243（手机号链不安全）。这三类重试只会加重账号风险，一律进冷却。
   static bool _isRiskRejection(int? type) =>
-      type == 45 || type == 235 || type == 243;
+      type != null && Qq8LoginResultType.isServerRejected(type);
 
   /// 冷却记录的加载 Future（构造时启动，见构造器里的说明）。
   Future<void> _cooldownReady = Future<void>.value();
@@ -768,6 +777,14 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   /// 上线后的数据层（未上线为 null）。
   ChatStore? get store => _backend?.store;
+
+  /// 用户点「重新登录」：把状态退回 idle（**保留 uin**），不发任何网络请求。
+  /// 冷却不清（风控冷却与票无关），也不改票据文件。
+  void resetForRelogin() {
+    if (!_alive) return;
+    _snap = Qq8LoginSnapshot(stage: Qq8LoginStage.idle, uin: _snap.uin);
+    _emit();
+  }
 
   /// 口令登录（口令只在本进程内转 MD5，不落盘）。
   ///

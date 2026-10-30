@@ -326,6 +326,33 @@ void main() {
       expect(find.textContaining('换账号 / 设备'), findsOneWidget);
     });
 
+    testWidgets('凭证失效：说「登录已过期」并给「重新登录」，不得提风控/换号', (tester) async {
+      var relogin = 0;
+      await tester.pumpWidget(_wrapView(Qq8ConnectView(
+        status: const Qq8ConnectStatus(
+          stage: Qq8LoginStage.sessionExpired,
+          resultType: 16,
+          error: '登录凭证已失效，请重新登录',
+        ),
+        onRelogin: () => relogin++,
+      )));
+      // 状态标签必须和 rejected 分开：这是票过期，不是账号被风控。
+      expect(find.text('登录已过期'), findsOneWidget);
+      expect(find.text('服务端拒绝登录'), findsNothing);
+      expect(find.byKey(const ValueKey('qq8-rejected-code')), findsNothing);
+      // 返回码与说明在场上。
+      expect(find.byKey(const ValueKey('qq8-expired-code')), findsOneWidget);
+      expect(find.text('服务端返回 type=16'), findsOneWidget);
+      expect(find.byKey(const ValueKey('qq8-expired-hint')), findsOneWidget);
+      expect(find.textContaining('重新登录一次即可继续'), findsOneWidget);
+      // 关键：不能劝用户换号/换设备——那是 rejected 的话术。
+      expect(find.textContaining('换账号'), findsNothing);
+      expect(find.textContaining('版本过低'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('qq8-relogin')));
+      await tester.pump();
+      expect(relogin, 1, reason: '按钮要接上 resetForRelogin');
+    });
+
     testWidgets('busy 时按钮禁用并显示进度条', (tester) async {
       await tester.pumpWidget(_wrapView(Qq8ConnectView(
         status: const Qq8ConnectStatus(
