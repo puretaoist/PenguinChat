@@ -195,8 +195,10 @@ class TelegramMetrics {
   static const inputRadius = 20.0;
 
   /// 日期分隔胶囊的圆角与字号。
+  /// 字号 14：TG 的日期与服务消息共用 chat_actionTextPaint，
+  /// 取值 dp(max(16, fontSize) - 2) = 14（ui/ActionBar/Theme.java:8414）。
   static const dateChipRadius = 12.0;
-  static const fontDateChip = 12.0;
+  static const fontDateChip = 14.0;
 
   static const fontBody = 16.0;
   static const fontTimestamp = 12.0;

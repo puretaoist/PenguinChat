@@ -1501,6 +1501,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                       onRetry:
                                           m.isFailed ? () => _retry(m.id) : null,
                                       showSenderName: item.showSenderName,
+                                      avatarVisible: item.showAvatar,
                                       highlighted:
                                           m.atMe || m.replyToId != null,
                                       onReveal: m.isRecalled
@@ -1648,7 +1649,8 @@ class _HomePageState extends ConsumerState<HomePage> {
           GestureDetector(
             key: const ValueKey('open-members'),
             onTap: chat.isGroup ? () => _openMembers(chat) : null,
-            child: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 40),
+            // TG 头部头像 42dp：ChatAvatarContainer.java:265 setRoundRadius(dp(21)) 即 42。
+            child: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 42),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1660,10 +1662,13 @@ class _HomePageState extends ConsumerState<HomePage> {
                   chat.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  // 标题 18dp 粗体：TG ChatAvatarContainer.java:282
+                  // titleTextView.setTextSize(18)（SimpleTextView 的参数就是 dp，
+                  // 见 ui/ActionBar/SimpleTextView.java:198-199）。
                   style: TextStyle(
                     color: TelegramColors.textPrimary,
-                    fontSize: TelegramMetrics.fontTitle,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 Text(
@@ -1674,7 +1679,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                     color: chat.online
                         ? TelegramColors.online
                         : TelegramColors.textSecondary,
-                    fontSize: 12,
+                    // 副标题 14dp：ChatAvatarContainer.java:307 subtitleTextView.setTextSize(14)。
+                    fontSize: 14,
                   ),
                 ),
               ],

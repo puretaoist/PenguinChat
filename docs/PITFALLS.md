@@ -3865,7 +3865,17 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 2. 发送者名 / 引用条 / 正文 / 「已撤回·内容已保留」这四类子项**必须放进同一个 `crossAxisAlignment: start` 的内层 Column** —— 谁最宽谁定气泡宽度，其余子项自然左对齐；以前发送者名单独挂在最外层，它那个 Align 一撑就把整条撑满了；
 3. 时间戳如果仍要独立一行（`!_inlineMeta` 的情况），就放在**内层 Column 之外**，靠外层的 `CrossAxisAlignment.end` 贴右 —— 这样它不会参与定宽。
 
-**顺带**：气泡最大宽度仍是 `LayoutBuilder` 里的 `屏宽 × 0.78`（`ConstrainedBox(maxWidth:)`），长消息照旧换行；图片/卡片这类块级段自己带固定宽度（240dp），气泡跟着它变宽。
+**顺带**：气泡最大宽度改按 TG 的算法收（见 C73 的宽度一条），长消息照旧换行；图片/卡片这类块级段自己带固定宽度（240dp），气泡跟着它变宽。
 
 **验证**：金样重出后 crop 出来逐条看几何（中文缺字体是方框，只能看边缘）。判据：气泡右边缘紧贴最后一行时间戳之后，而不是贴到列表右边界。
 
+## C73 其余前端几何对齐 TG（2026-10-30）
+
+按 telegram-src 逐条核对后改了四处，全部有行号出处（`telegram-src/TelegramAndroid/TMessagesProj/src/main/java/org/telegram/`）：
+
+1. **聊天气泡最大宽度**：TG `messenger/MessageObject.java:8527-8531` —— `maxWidth = generatedWithMinSize - dp(80)`，再在 `needDrawAvatarInternal() && !isOutOwner()` 时 `- dp(52)`。原实现是「可用宽 × 0.78」，在窄屏偏宽 18dp 左右。现在 `lib/ui/widgets/message_bubble.dart` 新增 `final bool avatarVisible`（由 `home_page.dart` 传 `item.showAvatar`），LayoutBuilder 里 `avail = constraints.maxWidth - chrome - 20 - (avatarVisible ? 52 : 0)`；那 20 是因为组件拿到的 constraints 已经扣掉了 44dp 头像槽（80 - 44 - 16 = 20）。**以后改宽度别再退回 0.78 的魔数**。
+2. **聊天页头部**（`lib/ui/pages/home_page.dart` `_buildHeader`）：标题 17→**18 粗体**、副标题 12→**14**、头像 40→**42**。出处 `ui/Components/ChatAvatarContainer.java:282` `titleTextView.setTextSize(18)`、`:307` `subtitleTextView.setTextSize(14)`、`:265` `avatarImageView.setRoundRadius(dp(21))`。注意 `SimpleTextView.setTextSize(int sizeInDp)` 的参数**就是 dp**（`ui/ActionBar/SimpleTextView.java:198-199`），不要当 px。列表里的 `TelegramMetrics.fontTitle`(17) 是会话行的，别混用。
+3. **未读分隔条**（`UnreadDivider`）：整格高 **40**、色带高 **27 距顶 7**、文案 **14 粗体**居中、右侧下箭头 **18 号右边距 10**。出处 `ui/Cells/ChatUnreadCell.java:73`（`makeMeasureSpec(dp(40), EXACTLY)`）、`:39`（`createFrame(MATCH_PARENT, 27, TOP, 0, 7, 0, 0)`）、`:49-52`（`setTextSize(DIP, 14)` + bold + 左右 32 边距）、`:41-45`（`ic_ab_new`，右侧 margin 10）。色带来自 `newmsg_divider`（一张 9-patch 纯色图，靠 `PorterDuff.MULTIPLY` 染色）⇒ 用 `accent.withValues(alpha:0.18)` + 圆角 4 代替即可。
+4. **日期胶囊字号** 12→**14**：TG 日期与服务消息共用 `chat_actionTextPaint`，`ui/ActionBar/Theme.java:8414` 是 `setTextSize(dp(max(16, SharedConfig.fontSize) - 2))` = 14。
+
+**验证**：`flutter test test/` 165 全过；金样重出（气泡更窄、未读条更高）；`dart analyze lib` 无 issue；44 个 selftest 2523 项全过。**金样不含头部/会话列表**，那两处只能靠 home_page 的 widget 测试兜住（不能视为视觉已验收）。

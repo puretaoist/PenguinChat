@@ -37,6 +37,11 @@ class MessageBubble extends StatelessWidget {
   /// 是否被 @（或回复到我）：左侧画一条 accent 竖线。
   final bool highlighted;
 
+  /// 这一行左侧是否画了头像。TG 的可用气泡宽度在画头像时会再扣 52dp
+  /// （`messenger/MessageObject.java:8527-8531`：`parentWidth - dp(80)`，
+  /// 再在 `needDrawAvatarInternal() && !isOutOwner()` 时 `- dp(52)`）。
+  final bool avatarVisible;
+
   /// 已撤回消息的「查看」入口（揭示原文）。为 null 表示不提供。
   final VoidCallback? onReveal;
 
@@ -56,6 +61,7 @@ class MessageBubble extends StatelessWidget {
     this.onRetry,
     this.showSenderName = true,
     this.highlighted = false,
+    this.avatarVisible = false,
     this.onReveal,
     this.localMedia,
     this.onOpenFile,
@@ -73,7 +79,13 @@ class MessageBubble extends StatelessWidget {
         // 还要扣掉同一行里的兄弟：外层 Padding 的 8x2，以及高亮竖条（3 宽 + 4 外边距）。
         // 不扣的话 Row 会溢出——widget 测试在 800px 宽的窗口下抓到了这 16px。
         final chrome = 16.0 + (highlighted ? 7.0 : 0.0);
-        final avail = math.max(constraints.maxWidth - chrome, 0.0);
+        // 宽度按 TG 的算法收：父宽 -80，画头像的那一侧再 -52
+        // （messenger/MessageObject.java:8527-8531）。本组件拿到的
+        // constraints 已经扣掉了头像槽（44dp），所以这里只补 20（= 80 - 44 - 16
+        // 里的差值）与头像那 52。短屏上比以前窄 18dp 左右，正是 TG 的留白。
+        final avatarInset = avatarVisible ? 52.0 : 0.0;
+        final avail =
+            math.max(constraints.maxWidth - chrome - 20 - avatarInset, 0.0);
         final maxWidth =
             constraints.maxWidth.isFinite ? math.min(mediaLimit, avail) : mediaLimit;
         return _build(context, maxWidth);
@@ -355,26 +367,46 @@ class UnreadDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 几何照 TG 的 ChatUnreadCell：
+    // - 整个 cell 高 40（ChatUnreadCell.java:73 `makeMeasureSpec(dp(40), EXACTLY)`）
+    // - 色带 newmsg_divider 高 27、距顶 7（:39 `createFrame(MATCH_PARENT, 27, TOP, 0, 7, 0, 0)`）
+    // - 文案 14 号粗体、居中、左右各 32 边距（:49-52）
+    // - 右侧下箭头 ic_ab_new、右边距 10（:41-45）
     final accent = TelegramColors.accent;
-    return Container(
-      height: 28,
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      color: accent.withValues(alpha: 0.18),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Row(
+    return SizedBox(
+      height: 40,
+      child: Stack(
         children: [
-          Expanded(
-            child: Text(
-              '未读消息',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: accent,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+          Positioned(
+            top: 7,
+            left: 0,
+            right: 0,
+            height: 27,
+            child: Container(
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(4),
               ),
             ),
           ),
-          Icon(Icons.arrow_downward, size: 16, color: accent),
+          Center(
+            child: Text(
+              '未读消息',
+              style: TextStyle(
+                color: accent,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Positioned(
+            right: 10,
+            top: 7,
+            height: 27,
+            child: Center(
+              child: Icon(Icons.arrow_downward, size: 18, color: accent),
+            ),
+          ),
         ],
       ),
     );
