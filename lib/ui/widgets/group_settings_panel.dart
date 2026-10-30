@@ -107,7 +107,8 @@ class _GroupSettingsPanelState extends State<GroupSettingsPanel> {
                           key: const ValueKey('gset-title'),
                           style: TextStyle(
                               color: TelegramColors.textPrimary,
-                              fontSize: TelegramMetrics.fontTitle,
+                              // 与 settings_page 页头一致：20dp（ActionBar.java:654）
+                              fontSize: 20,
                               fontWeight: FontWeight.w600)),
                       const SizedBox(height: 2),
                       Text(widget.title,
@@ -115,7 +116,7 @@ class _GroupSettingsPanelState extends State<GroupSettingsPanel> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                               color: TelegramColors.textSecondary,
-                              fontSize: 12.5)),
+                              fontSize: 13)),
                     ],
                   ),
                 ),
@@ -130,77 +131,84 @@ class _GroupSettingsPanelState extends State<GroupSettingsPanel> {
           Divider(height: 1, color: TelegramColors.divider),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+              padding: EdgeInsets.zero,
               children: <Widget>[
-                _label('群名'),
-                TextField(
-                  key: const ValueKey('gset-name'),
-                  controller: _nameCtl,
-                  decoration: const InputDecoration(hintText: '新的群名'),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    key: const ValueKey('gset-name-ok'),
-                    onPressed: widget.onRename == null || _busy
-                        ? null
-                        : () => _run(
-                            () => widget.onRename!(_nameCtl.text.trim()),
-                            '群名已改'),
-                    child: const Text('保存群名'),
+                // 分组标题走 TG GraySectionCell 的版式：
+                // ui/Cells/GraySectionCell.java:40 layerHeight=32、:57 字 14、
+                // :54 key_graySection 底色、:61 左右各 padding(默认 16)。
+                _section('群名'),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                  child: TextField(
+                    key: const ValueKey('gset-name'),
+                    controller: _nameCtl,
+                    style: TextStyle(
+                        fontSize: 16, color: TelegramColors.textPrimary),
+                    decoration: _fieldDecoration('新的群名'),
                   ),
                 ),
-                const SizedBox(height: 12),
-                _label('群公告（简易版，纯文本）'),
-                TextField(
-                  key: const ValueKey('gset-announce'),
-                  controller: _annCtl,
-                  maxLines: 4,
-                  decoration: const InputDecoration(hintText: '要告诉全群的话'),
+                _actionRow(
+                  key: 'gset-name-ok',
+                  label: '保存群名',
+                  onTap: widget.onRename == null || _busy
+                      ? null
+                      : () => _run(
+                          () => widget.onRename!(_nameCtl.text.trim()), '群名已改'),
                 ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    key: const ValueKey('gset-announce-ok'),
-                    onPressed: widget.onAnnounce == null || _busy
-                        ? null
-                        : () => _run(
-                            () => widget.onAnnounce!(_annCtl.text.trim()),
-                            '公告已发'),
-                    child: const Text('发布公告'),
+                _section('群公告（简易版，纯文本）'),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                  child: TextField(
+                    key: const ValueKey('gset-announce'),
+                    controller: _annCtl,
+                    maxLines: 4,
+                    style: TextStyle(
+                        fontSize: 16, color: TelegramColors.textPrimary),
+                    decoration: _fieldDecoration('要告诉全群的话'),
                   ),
                 ),
-                const SizedBox(height: 16),
-                _label('全员禁言'),
-                Text(
-                  '拿不到当前状态（群详情接口还没接），所以给两个明确按钮。',
-                  style:
-                      TextStyle(color: TelegramColors.textMuted, fontSize: 12),
+                _actionRow(
+                  key: 'gset-announce-ok',
+                  label: '发布公告',
+                  onTap: widget.onAnnounce == null || _busy
+                      ? null
+                      : () => _run(() => widget.onAnnounce!(_annCtl.text.trim()),
+                          '公告已发'),
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  children: <Widget>[
-                    OutlinedButton(
-                      key: const ValueKey('gset-mute-all-on'),
-                      onPressed: widget.onWholeMute == null || _busy
-                          ? null
-                          : () => _run(
-                              () => widget.onWholeMute!(true), '已开启全员禁言'),
-                      child: const Text('开启'),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton(
-                      key: const ValueKey('gset-mute-all-off'),
-                      onPressed: widget.onWholeMute == null || _busy
-                          ? null
-                          : () => _run(
-                              () => widget.onWholeMute!(false), '已解除全员禁言'),
-                      child: const Text('解除'),
-                    ),
-                  ],
+                _section('全员禁言'),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                  child: Text(
+                    '拿不到当前状态（群详情接口还没接），所以给两个明确按钮。',
+                    style: TextStyle(
+                        color: TelegramColors.textMuted, fontSize: 13),
+                  ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                  child: Row(
+                    children: <Widget>[
+                      OutlinedButton(
+                        key: const ValueKey('gset-mute-all-on'),
+                        onPressed: widget.onWholeMute == null || _busy
+                            ? null
+                            : () => _run(() => widget.onWholeMute!(true),
+                                '已开启全员禁言'),
+                        child: const Text('开启'),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton(
+                        key: const ValueKey('gset-mute-all-off'),
+                        onPressed: widget.onWholeMute == null || _busy
+                            ? null
+                            : () => _run(() => widget.onWholeMute!(false),
+                                '已解除全员禁言'),
+                        child: const Text('解除'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
               ],
             ),
           ),
@@ -209,12 +217,62 @@ class _GroupSettingsPanelState extends State<GroupSettingsPanel> {
     );
   }
 
-  Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+  /// TG `GraySectionCell` 版式的分组标题（32 高、14 w700、灰底、左右 16）。
+  Widget _section(String text) => Container(
+        height: 32,
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 8),
+        color: TelegramColors.bgHover,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        alignment: Alignment.centerLeft,
         child: Text(text,
             style: TextStyle(
-                color: TelegramColors.textPrimary,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w600)),
+                color: TelegramColors.textMuted,
+                fontSize: 14,
+                fontWeight: FontWeight.w700)),
       );
+
+  /// 输入框：TG 设置页那种"灰底无边框"胶囊（暗色 bgHover / 圆角 10）。
+  InputDecoration _fieldDecoration(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: TelegramColors.textMuted, fontSize: 16),
+        filled: true,
+        fillColor: TelegramColors.bgHover,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: TelegramColors.accent, width: 1.5),
+        ),
+      );
+
+  /// 右对齐的动作按钮（TG 设置页的"保存"就是这个位置/颜色）。
+  Widget _actionRow(
+      {required String key, required String label, VoidCallback? onTap}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: TextButton(
+          key: ValueKey(key),
+          onPressed: onTap,
+          child: Text(label,
+              style: TextStyle(
+                  color: onTap == null
+                      ? TelegramColors.textMuted
+                      : TelegramColors.accent,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+        ),
+      ),
+    );
+  }
 }

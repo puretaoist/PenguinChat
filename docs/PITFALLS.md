@@ -3934,3 +3934,15 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 **坑（通用，重要）**：颜色是**全局单例** `TelegramColors.use(...)`，`buildTelegramTheme(dark: false)` **不会**改它——所以测试里只传 light 主题，widget 读出来的仍是暗色调色板，金样永远是暗的（我第一版 `chat_header_private_light.png` 就是暗底）。正确写法：pump 前 `TelegramColors.use(dark ? TelegramPalette.dark : TelegramPalette.light);`，并 `addTearDown(() => TelegramColors.use(TelegramPalette.dark));`。写任何亮色金样都要这样。
 **另一个环境坑**：`import '../../client_api/models.dart'` 不存在，`Chat` 在 `lib/client_api/objects.dart`。
 
+
+## C78 群设置面板对齐 TG 设置页版式（2026-10-30）
+
+**做了什么**：`lib/ui/widgets/group_settings_panel.dart` 从"表单 + 13.5 粗体小标签"改成 TG 设置页的版式：
+- 页头标题 `gset-title` 字号 `TelegramMetrics.fontTitle`(17) → **20**（与 `settings_page` 一致，`ui/ActionBar/ActionBar.java:654`），副标题 13。
+- 分组标题换成 `_section(text)`：**高 32、灰底 `TelegramColors.bgHover`、左右 padding 16、字号 14 w700 `textMuted`**，出处 `ui/Cells/GraySectionCell.java:40 layerHeight=32`、`:57 setTextSize(14)`、`:54 key_graySection`、`:61 LayoutHelper padding`。注意 `Container` 还带 `margin: EdgeInsets.only(top:8)`，所以测试里量到的高度是 **40**（32+8），不是 32。
+- 两个输入框改"灰底无边框胶囊"：`_fieldDecoration`（`filled: true`、`fillColor: bgHover`、圆角 10、`isDense`、`contentPadding 14/12`、focused 边框 accent 1.5），正文 16。
+- 动作按钮统一走 `_actionRow(key,label,onTap)`：右对齐 `TextButton`、14 w600、可用时 accent 色、禁用时 textMuted。键名 `gset-name-ok`/`gset-announce-ok`/`gset-mute-all-{on,off}` 全部保留（`test/message_bubble_test.dart` 里原有 11 处引用没改）。
+- 新增 `test/group_settings_test.dart`（3 用例 + `goldens/group_settings.png` 360x620）：标题 20、分组标题 14 w700 且外框 40、输入框 filled/bgHover、点保存群名回调、三个按钮存在、金样。
+
+**坑**：`ListView(children: [...])` 的子项也是**懒构建**的——屏幕外的 `gset-mute-all-on` 在测试里 `findsNothing`；要用 `tester.drag(find.byType(ListView), const Offset(0,-400))` 滚下去（`scrollUntilVisible` 会因为页面里有多个 `Scrollable` 抛 `Bad state: Too many elements`）。
+
