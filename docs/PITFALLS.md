@@ -3925,3 +3925,12 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 **踩坑（重要，通用）**：`tools.read` 是**按输出预算截断**的，`limit: 2000` 只是上限——`home_page.dart`（1740 行）实际只回来 1330 行。我当时拿截断后的字符串做 `slice(0,i)+新块+slice(j)` 再整文件 `write`，**尾部 410 行被静默删掉**，`dart analyze` 报了 4 个 `undefined_method` + `Expected to find '}'`。以后整文件重写必须**分块读**（`offset` 每 400 行一次、拼起来，再用 `wc -l` 对照），或者只做 `edit` 不做整文件写。
 
 **验证**：`flutter test test/` → **184 全过**（178 + 新增 6）；`dart analyze lib test` 只剩 1 条先存在的 info；金样三张已逐张看几何（中文在测试环境是方框，只看边缘与行高）。
+## C77 聊天页头部抽成 `ChatHeader` + 亮色金样必须自己切调色板（2026-10-30）
+
+**做了什么**：`lib/ui/pages/home_page.dart` 的 `_buildHeader`（原来 100 行内联 Container）抽成 `lib/ui/widgets/chat_header.dart` 的 `ChatHeader`（哑视图）：`ChatHeader({required Chat chat, VoidCallback? onBack, VoidCallback? onOpenMembers, VoidCallback? onOpenGroupFiles, VoidCallback? onOpenGroupSettings, VoidCallback? onOpenSettings})`。`home_page._buildHeader` 现在只做「多选模式换工具条」判断 + 传回调；键名 `open-members`/`group-menu`/`group-menu-{files,settings,members}` 全部保留，新增 `chat-header-title`/`chat-header-subtitle`/`chat-header-settings`。
+- 几何出处（`ui/Components/ChatAvatarContainer.java`）：高度 56（`TelegramMetrics.headerHeight`）、头像 42（`:265 setRoundRadius(dp(21))`）、标题 18 粗体（`:282 setTextSize(18)`；`SimpleTextView` 参数即 dp，见 `ui/ActionBar/SimpleTextView.java:198-199`）、副标题 14（`:307`）、右侧图标 22。
+- 新增 `test/chat_header_test.dart`（6 用例 + `goldens/chat_header_group.png` / `chat_header_private_light.png`，360x120）：尺寸 56、标题 18 w700、副标题 14、头像 42、私聊显示「在线/离线」且无群菜单、群菜单三项回调、返回键只在给 onBack 时出现。
+
+**坑（通用，重要）**：颜色是**全局单例** `TelegramColors.use(...)`，`buildTelegramTheme(dark: false)` **不会**改它——所以测试里只传 light 主题，widget 读出来的仍是暗色调色板，金样永远是暗的（我第一版 `chat_header_private_light.png` 就是暗底）。正确写法：pump 前 `TelegramColors.use(dark ? TelegramPalette.dark : TelegramPalette.light);`，并 `addTearDown(() => TelegramColors.use(TelegramPalette.dark));`。写任何亮色金样都要这样。
+**另一个环境坑**：`import '../../client_api/models.dart'` 不存在，`Chat` 在 `lib/client_api/objects.dart`。
+

@@ -43,6 +43,7 @@ import '../widgets/group_members_panel.dart';
 import '../widgets/group_settings_panel.dart';
 import '../widgets/action_sheet.dart';
 import '../widgets/telegram_list_item.dart';
+import '../widgets/chat_header.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
 import '../widgets/chat_input_bar.dart';
@@ -1620,108 +1621,14 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget _buildHeader(Chat chat, VoidCallback? onBack) {
     // 多选模式：把头换成工具条（已选 N 条 + 复制/转发/删除/退出）
     if (_selecting) return _buildSelectionBar(chat);
-    return Container(
-      height: TelegramMetrics.headerHeight,
-      color: TelegramColors.bgHeader,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          if (onBack != null)
-            IconButton(
-              onPressed: onBack,
-              icon: Icon(
-                Icons.arrow_back,
-                color: TelegramColors.textSecondary,
-              ),
-            ),
-          GestureDetector(
-            key: const ValueKey('open-members'),
-            onTap: chat.isGroup ? () => _openMembers(chat) : null,
-            // TG 头部头像 42dp：ChatAvatarContainer.java:265 setRoundRadius(dp(21)) 即 42。
-            child: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 42),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  chat.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  // 标题 18dp 粗体：TG ChatAvatarContainer.java:282
-                  // titleTextView.setTextSize(18)（SimpleTextView 的参数就是 dp，
-                  // 见 ui/ActionBar/SimpleTextView.java:198-199）。
-                  style: TextStyle(
-                    color: TelegramColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  chat.isGroup
-                      ? '群聊 · ${chat.memberCount} 人'
-                      : (chat.online ? '在线' : '离线'),
-                  style: TextStyle(
-                    color: chat.online
-                        ? TelegramColors.online
-                        : TelegramColors.textSecondary,
-                    // 副标题 14dp：ChatAvatarContainer.java:307 subtitleTextView.setTextSize(14)。
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (chat.isGroup)
-            PopupMenuButton<String>(
-              key: const ValueKey('group-menu'),
-              tooltip: '群工具',
-              icon: Icon(
-                Icons.folder_outlined,
-                color: TelegramColors.textSecondary,
-                size: 22,
-              ),
-              onSelected: (String value) {
-                switch (value) {
-                  case 'files':
-                    unawaited(_openGroupFiles(chat));
-                  case 'settings':
-                    unawaited(_openGroupSettings(chat));
-                  case 'members':
-                    unawaited(_openMembers(chat));
-                }
-              },
-              itemBuilder: (_) => const <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  key: ValueKey('group-menu-files'),
-                  value: 'files',
-                  child: Text('群文件'),
-                ),
-                PopupMenuItem<String>(
-                  key: ValueKey('group-menu-settings'),
-                  value: 'settings',
-                  child: Text('群设置'),
-                ),
-                PopupMenuItem<String>(
-                  key: ValueKey('group-menu-members'),
-                  value: 'members',
-                  child: Text('群成员'),
-                ),
-              ],
-            ),
-          IconButton(
-            onPressed: _openSettings,
-            icon: Icon(
-              Icons.settings,
-              color: TelegramColors.textSecondary,
-              size: 22,
-            ),
-            tooltip: '设置',
-          ),
-        ],
-      ),
+    // 头部抽成公共组件（lib/ui/widgets/chat_header.dart），几何见 ChatAvatarContainer.java
+    return ChatHeader(
+      chat: chat,
+      onBack: onBack,
+      onOpenMembers: () => unawaited(_openMembers(chat)),
+      onOpenGroupFiles: () => unawaited(_openGroupFiles(chat)),
+      onOpenGroupSettings: () => unawaited(_openGroupSettings(chat)),
+      onOpenSettings: _openSettings,
     );
   }
 
