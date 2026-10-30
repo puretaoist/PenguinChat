@@ -3833,3 +3833,24 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 **两条工具坑**：
 - taskkill //F //IM msedge.exe 之后旧调试实例可能仍占着 127.0.0.1:9333，Helium 于是**绑不上调试端口**（窗口起得来但 CDP 连的是 Edge 里另一份验证码会话，票必然对不上）。开窗前先 `netstat -ano | grep :9333`，再 `curl /json/version` 看 Browser 是不是期望的那个。
 - 本机默认浏览器是 **Helium**（HKCU\...\UrlAssociations\https\UserChoice = HeliumHTM.X7GQDGQQFPS5BHX2723B2PJYZ4），可执行文件 `C:/Users/Administrator/Helium_0.15.1.1_2026-08-01/Helium/chrome.exe`，Chromium 151，--remote-debugging-port 与 --user-agent 都正常。用户不喜欢 Edge，以后开窗口默认用 Helium。
+
+## C71 气泡时间戳内联会让正文变成 Text.rich（2026-10-30）
+
+**背景**：前端按 TG 对齐（用户 m32543）。TG 把时间画在气泡**最后一行的右侧**，不是独立一行 —— 出处 `telegram-src/.../ui/Cells/ChatMessageCell.java:6337`（`layoutWidth - dp(bubbleRadius>=10?27.3f:25.3f)`）与 `:7381`（`backgroundWidth += timeWidth + dp(12)`）。我方原来是 Column 里 `SizedBox(height:2) + _metaRow`，短消息右侧一片空白、气泡偏高。
+
+**做法**：`lib/ui/widgets/message_bubble.dart` 给 `MessageContent` 传 `trailing: _inlineMeta ? _metaInline(isOut) : null`；`_metaInline` 返回 `WidgetSpan(alignment: PlaceholderAlignment.bottom, child: Padding(left:8, top:2, Row[时间, 双勾]))`（与 TG 一致，只有最后一行扣掉时间宽度，长消息不浪费列宽）。`_inlineMeta` 在「失败可重试 / 撤回收起未揭示 / 含块级段（图片·语音·视频·文件·卡片）」时为 false，退回独立一行。`lib/ui/widgets/message_content.dart` 因此新增 `InlineSpan? trailing` 与 `static bool hasBlockSegments(ChatMessage)`。
+
+**坑（会持续咬人）**：一旦末尾挂了 WidgetSpan，纯文本消息也会渲染成 `Text.rich`，而 `Text.rich` 的 `data` 是 null、`toPlainText()` 里 WidgetSpan 占一个 U+FFFC 占位符。于是：
+- `find.text('正文')` **匹不到**（按 `Text.data` 等值匹配）；
+- `find.text('正文', findRichText: true)` 也匹不到（plainText 变成 "正文\uFFFC"，等值不等）；
+- 只有 `find.textContaining('正文', findRichText: true)` 能匹到。
+
+本轮因此改了 `test/home_page_test.dart` 里 8 处 `matching: find.text('…')` → `find.textContaining('…', findRichText: true)`，以及 `test/message_bubble_test.dart` 的「原始内容」「这句是回复」两处。**以后写断言凡是查气泡正文，一律 textContaining + findRichText: true。**
+
+**顺带的四处对齐**（同一提交）：
+- 输入框 1–6 行自适应（TG `ChatActivityEnterView.java:5812` `setMaxLines(6)`）：`minLines:1, maxLines:6, keyboardType: multiline, textInputAction: send`，字号统一 `TelegramMetrics.fontBody`=16。
+- 会话列表字号对齐 TG：标题 17（未读时 w700）、摘要 16、草稿 16、时间 12；未读徽章 22dp（minWidth 22 / height 22 / radius 11 / padding h7）。
+- `telegram_theme.dart` 的 `splashFactory: NoSplash` → `InkRipple.splashFactory`（原先全 App 点击零反馈，像卡死）+ `hoverColor: p.bgHover`。
+
+**验证口径**：`flutter test test/` 全绿（165 用例）；金样 `test/goldens/chat_pane{,_light}.png` 已 `--update-goldens` 重出。注意金样里的中文因缺字体渲染成方框，只能看几何（时间是否贴在最后一行）。
+

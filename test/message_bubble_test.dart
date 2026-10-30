@@ -186,7 +186,7 @@ void main() {
             replyPreview: '被引用的那句', replyToId: '99'),
       )));
       expect(find.text('被引用的那句'), findsOneWidget);
-      expect(find.text('这句是回复'), findsOneWidget);
+      expect(find.textContaining('这句是回复', findRichText: true), findsOneWidget);
     });
 
     testWidgets('发送失败：红字重试入口 + 文本仍在', (tester) async {
@@ -232,7 +232,7 @@ void main() {
       await tester.pumpWidget(_wrap(MessageBubble(
         message: _msg('1', '原始内容', time: day2, recalled: true, revealed: true),
       )));
-      expect(find.text('原始内容'), findsOneWidget);
+      expect(find.textContaining('原始内容', findRichText: true), findsOneWidget);
       expect(find.byKey(const ValueKey('msg-recalled-note')), findsOneWidget);
       expect(find.byKey(const ValueKey('msg-reveal')), findsNothing);
     });
@@ -520,7 +520,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('被引用的原话'), findsOneWidget);
-      expect(find.text('这句是回复'), findsOneWidget);
+      expect(find.textContaining('这句是回复', findRichText: true), findsOneWidget);
     });
   });
 

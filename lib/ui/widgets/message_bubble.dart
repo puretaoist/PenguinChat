@@ -175,6 +175,7 @@ class MessageBubble extends StatelessWidget {
                       isOut: isOut,
                       localMedia: localMedia,
                       onOpenFile: onOpenFile,
+                      trailing: _inlineMeta ? _metaInline(isOut) : null,
                     ),
                     if (message.deleted)
                       Text(
@@ -190,8 +191,9 @@ class MessageBubble extends StatelessWidget {
                   ],
                 ),
               ),
-            const SizedBox(height: 2),
-            _metaRow(isOut),
+            // 时间/状态能贴正文就贴（TG 的排法，见 [_inlineMeta]），贴不了
+            // 才单独占一行——否则每个气泡都白多出一行高度，短消息看着特别空。
+            if (!_inlineMeta) ...[const SizedBox(height: 2), _metaRow(isOut)],
           ],
         ),
       ),
@@ -240,6 +242,58 @@ class MessageBubble extends StatelessWidget {
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(color: quoteColor, fontSize: 13),
+      ),
+    );
+  }
+
+  /// 时间/送达状态能不能排进最后一行正文。
+  ///
+  /// 三种例外要单独占一行：
+  /// * 发送失败——那行是**可点的**「点此重试」，挤进正文里点不准；
+  /// * 未揭示的撤回——内容那行本身就是「已撤回 + 查看」的行内结构；
+  /// * 有块级段（图片/语音/文件/卡片）——行内尾巴会被块级内容顶到下一行。
+  bool get _inlineMeta =>
+      !(message.isFailed && onRetry != null) &&
+      !(message.isRecalled && !message.revealed) &&
+      !MessageContent.hasBlockSegments(message);
+
+  /// 贴在最后一行正文末尾的时间（自己气泡再加送达对勾）。
+  ///
+  /// 用 WidgetSpan 塞进文本流里（`PlaceholderAlignment.bottom` 让它贴着行底，
+  /// 不参与基线——Row 没有基线，用 baseline 对齐会断言失败）。
+  InlineSpan _metaInline(bool isOut) {
+    final timeColor =
+        isOut ? TelegramColors.bubbleOutTime : TelegramColors.textSecondary;
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.bottom,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 8, top: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              formatTime(message.time),
+              style: TextStyle(
+                color: timeColor,
+                fontSize: TelegramMetrics.fontTimestamp,
+              ),
+            ),
+            if (isOut) ...[
+              const SizedBox(width: 4),
+              Icon(
+                message.isFailed
+                    ? Icons.error_outline
+                    : message.isSending
+                        ? Icons.schedule
+                        : Icons.done_all,
+                size: 14,
+                color: message.isFailed
+                    ? TelegramColors.danger
+                    : TelegramColors.bubbleOutTime,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

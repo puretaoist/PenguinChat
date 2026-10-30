@@ -48,6 +48,9 @@ class ChatInputBar extends StatelessWidget {
           children: [
             if (replyTarget != null) _replyStrip(replyTarget!),
             Row(
+              // 输入框长高时（最多 6 行）图标与发送键贴着底边——同 TG：
+              // 键盘弹起、正文变高时按钮不跟着浮到中间。
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 // 📎 发本地图片：上传链路（探图 → PicUp → highway）在适配器里，
                 // 这里只问路径
@@ -100,9 +103,17 @@ class ChatInputBar extends StatelessWidget {
                       controller: controller,
                       enabled: enabled,
                       onSubmitted: (_) => onSend(),
+                      // 输入框随内容长高，最多 6 行后内部滚动——TG 的
+                      // `ChatActivityEnterView.java:5812` 就是
+                      // `messageEditText.setMaxLines(6)`。单行的话长文本会被挤成
+                      // 横向滚动，手机上改起来非常难受。
+                      minLines: 1,
+                      maxLines: 6,
+                      keyboardType: TextInputType.multiline,
+                      textInputAction: TextInputAction.send,
                       style: TextStyle(
                         color: TelegramColors.textPrimary,
-                        fontSize: 14,
+                        fontSize: TelegramMetrics.fontBody,
                       ),
                       decoration: InputDecoration(
                         // 提示里带一句 `/微笑`：QQ 表情是打字发的（官方客户端同款约定），

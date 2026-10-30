@@ -41,12 +41,19 @@ class MessageContent extends StatelessWidget {
   /// 当前后端是不是协议线、也不知道该存到哪。上层接进来才有点击行为。
   final void Function(FileSegment segment)? onOpenFile;
 
+  /// 追加在**最后一行正文末尾**的行内元素（TG 就是这么排时间的：
+  /// `ChatMessageCell.java:7381` `backgroundWidth += timeWidth + dp(12)`，
+  /// 时间不单独占一行）。只有纯行内内容用得上——有图片/文件这类块级段时
+  /// 气泡另起一行画时间（贴在图右下角会被图盖住）。
+  final InlineSpan? trailing;
+
   const MessageContent({
     super.key,
     required this.message,
     required this.isOut,
     this.localMedia,
     this.onOpenFile,
+    this.trailing,
   });
 
   @override
@@ -67,14 +74,24 @@ class MessageContent extends StatelessWidget {
     var plain = true;
     void flush() {
       if (spans.isEmpty) return;
-      if (plain && spans.length == 1 && spans.first is TextSpan) {
+      final tail = trailing;
+      if (tail == null &&
+          plain &&
+          spans.length == 1 &&
+          spans.first is TextSpan) {
         blocks.add(Text((spans.first as TextSpan).text ?? '',
             style: _base.copyWith(color: bodyColor)));
       } else {
         // children 要传**副本**：下面会 clear() 复用这个列表，
         // 传引用的话刚建好的 TextSpan 会被清空（踩过一次）。
         blocks.add(Text.rich(
-          TextSpan(style: _base, children: List<InlineSpan>.of(spans)),
+          TextSpan(style: _base, children: [
+            ...List<InlineSpan>.of(spans),
+            // 时间/对勾贴着最后一行正文：空间不够时整块折行，不会压到文字上。
+            // 注意 ?? 这里用的是 null-aware element（Dart 3.8 的 `?tail`），
+            // 没有尾巴时等于什么都没加。
+            ?tail,
+          ]),
         ));
       }
       spans.clear();
@@ -213,8 +230,28 @@ class MessageContent extends StatelessWidget {
   Color _linkColor() =>
       isOut ? TelegramColors.bubbleOutText : TelegramColors.accent;
 
-  Widget _text(String text, Color color) =>
-      Text(text, style: _base.copyWith(color: color));
+  Widget _text(String text, Color color) {
+    final style = _base.copyWith(color: color);
+    final tail = trailing;
+    // 纯文本消息（segments 为空、正文在 message.text 里）也要能贴时间。
+    if (tail == null) return Text(text, style: style);
+    return Text.rich(TextSpan(style: style, children: [
+      TextSpan(text: text),
+      tail,
+    ]));
+  }
+
+  /// 这条消息里有没有块级段（图片 / 语音 / 视频 / 文件 / 卡片）。
+  ///
+  /// 有的话气泡的"最后一行"不是文本行，时间得单独占一行——否则会贴到块级
+  /// 内容（比如图片）的右下角，被图盖住或悬在图片外面。
+  static bool hasBlockSegments(ChatMessage message) => message.segments.any((s) =>
+      s is ImageSegment ||
+      s is RecordSegment ||
+      s is VideoSegment ||
+      s is FileSegment ||
+      s is XmlSegment ||
+      s is JsonSegment);
 }
 
 /// 语音 / 视频 / 文件 / 卡片这类"块级但没图可画"的消息：图标 + 标题 + 副信息。

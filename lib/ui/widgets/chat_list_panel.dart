@@ -345,10 +345,15 @@ class ChatListPanel extends StatelessWidget {
                           chat.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
+                          // TG `DialogCell` 的会话名是 dp(17)（Theme.java:7897
+                          // 附近的 dialogs_namePaint），有未读时加粗。我们原来写
+                          // 14.5，整列看起来比 TG 小一号。
                           style: TextStyle(
                             color: titleColor,
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w600,
+                            fontSize: 17,
+                            fontWeight: chat.unreadCount > 0
+                                ? FontWeight.w700
+                                : FontWeight.w500,
                           ),
                         ),
                       ),
@@ -364,13 +369,15 @@ class ChatListPanel extends StatelessWidget {
                           TextSpan(
                             text: '草稿: ',
                             style: TextStyle(
-                              color: selected ? Colors.white : TelegramColors.danger,
-                              fontSize: 13,
+                              color: selected
+                                  ? Colors.white
+                                  : TelegramColors.danger,
+                              fontSize: 16,
                             ),
                           ),
                           TextSpan(
                             text: chat.draft.replaceAll('\n', ' '),
-                            style: TextStyle(color: subColor, fontSize: 13),
+                            style: TextStyle(color: subColor, fontSize: 16),
                           ),
                         ],
                       ),
@@ -382,10 +389,8 @@ class ChatListPanel extends StatelessWidget {
                       chat.lastMessage,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: subColor,
-                        fontSize: 13,
-                      ),
+                      // 摘要 dp(16)：TG 的 dialogs_messagePaint。
+                      style: TextStyle(color: subColor, fontSize: 16),
                     ),
                 ],
               ),
@@ -404,19 +409,21 @@ class ChatListPanel extends StatelessWidget {
                 const SizedBox(height: 6),
                 if (chat.unreadCount > 0)
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
+                    // TG 的未读数是个 22dp 高的胶囊（`dialogs_unreadCounterDrawable`
+                    // 的 setSize(dp(22)...)），两位数以上自动加宽，圆角 = 高度一半。
+                    constraints: const BoxConstraints(minWidth: 22),
+                    height: 22,
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.symmetric(horizontal: 7),
                     decoration: BoxDecoration(
                       // 选中行整行就是强调色，徽章再刷同色等于看不见——
                       // 翻成白底 + 强调色字（TG 选中会话的未读徽章就是这样）。
                       color: selected
                           ? Colors.white
                           : chat.muted
-                              ? TelegramColors.textMuted
-                              : TelegramColors.badge,
-                      borderRadius: BorderRadius.circular(10),
+                          ? TelegramColors.textMuted
+                          : TelegramColors.badge,
+                      borderRadius: BorderRadius.circular(11),
                     ),
                     child: Text(
                       '${chat.unreadCount}',
@@ -424,8 +431,9 @@ class ChatListPanel extends StatelessWidget {
                         color: selected
                             ? TelegramColors.bgSelected
                             : Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                        // TG 的未读数文字是 dp(12) 加粗（22dp 胶囊里就是这么排的）。
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),

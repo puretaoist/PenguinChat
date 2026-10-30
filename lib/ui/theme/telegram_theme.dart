@@ -29,6 +29,7 @@ class TelegramPalette {
   final Color bgSelected;
   final Color bubbleOut;
   final Color bubbleIn;
+
   /// 自己气泡上的正文/次要元素：暗色是白字压紫色，亮色是黑字压浅绿。
   final Color bubbleOutText;
   final Color bubbleOutTime;
@@ -175,8 +176,10 @@ class TelegramMetrics {
   /// 会话行高度（现行版列表行更高、头像更大）。
   static const chatRowHeight = 70.0;
   static const avatarSize = 52.0;
+
   /// 会话列表：头像左内边距（TG `Cells/DialogCell.java:170` `avatarStart = 11`）。
   static const chatRowPadding = 11.0;
+
   /// 会话列表：头像右边缘到文字区的间距（TG `DialogCell.java:171`
   /// `messagePaddingStart = 72`，72 - 11 - 52 = 9）。
   static const chatAvatarGap = 9.0;
@@ -220,6 +223,9 @@ ThemeData buildTelegramTheme({bool dark = true}) {
             error: p.danger,
           ),
     fontFamily: 'Roboto',
-    splashFactory: NoSplash.splashFactory,
+    // TG 的列表行/按钮都有水波纹（RecyclerListView 的 SelectableBackground）。
+    // 之前是 NoSplash，整个 App 点下去毫无反馈，像卡住了一样。
+    splashFactory: InkRipple.splashFactory,
+    hoverColor: p.bgHover,
   );
 }

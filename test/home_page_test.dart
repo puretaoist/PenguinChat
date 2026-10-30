@@ -298,7 +298,7 @@ void main() {
 
     await tester.longPress(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('要转发的原话'),
+      matching: find.textContaining('要转发的原话', findRichText: true),
     ));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('action-forward')), findsOneWidget);
@@ -347,7 +347,7 @@ void main() {
     // 长按第一条 → 多选
     await tester.longPress(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('第一条'),
+      matching: find.textContaining('第一条', findRichText: true),
     ));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('action-select')));
@@ -361,7 +361,7 @@ void main() {
     // 再点第二条
     await tester.tap(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('第二条'),
+      matching: find.textContaining('第二条', findRichText: true),
     ));
     await tester.pumpAndSettle();
     expect(find.text('已选 2 条'), findsOneWidget);
@@ -401,14 +401,14 @@ void main() {
 
     await tester.longPress(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('甲'),
+      matching: find.textContaining('甲', findRichText: true),
     ));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('action-select')));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('乙'),
+      matching: find.textContaining('乙', findRichText: true),
     ));
     await tester.pumpAndSettle();
 
@@ -442,7 +442,7 @@ void main() {
 
     await tester.longPress(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('要合并的'),
+      matching: find.textContaining('要合并的', findRichText: true),
     ));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('action-select')));
@@ -482,13 +482,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.descendant(
-          of: find.byType(MessageBubble), matching: find.text('这条要删掉')),
+          of: find.byType(MessageBubble), matching: find.textContaining('这条要删掉', findRichText: true)),
       findsOneWidget,
     );
 
     await tester.longPress(find.descendant(
       of: find.byType(MessageBubble),
-      matching: find.text('这条要删掉'),
+      matching: find.textContaining('这条要删掉', findRichText: true),
     ));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('action-delete')));
@@ -499,7 +499,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(store.messagesOf('private_20002'), isEmpty);
-    expect(find.text('这条要删掉'), findsNothing);
+    expect(find.textContaining('这条要删掉', findRichText: true), findsNothing);
     expect(store.chatOf('private_20002'), isNotNull,
         reason: '删消息不该把会话也删掉');
     await _teardownStore(tester);
