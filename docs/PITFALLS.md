@@ -4031,3 +4031,34 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 
 **验收**：`tool/qq8_login_selftest.dart` 新增【2c2】段（0x106/0x16A 逐字节原样、31 项顺序子序列、空料抛异常、4 条命令字映射）→ 189 项全过；`tool/qq8_login_service_selftest.dart` 新增【4f】段（真的发了 2 个包 / diagTag=a1 / 尾部 tgtgt 解开 0x119 后 online / 新票 d2 落盘 / 材料不足不发包）→ 113 项全过。
 
+## C83 A2+A2KEY 免密分支：A2 是 TGT 不是 D2（2026-10-30，P6）
+
+**做了什么**：把 planner 里一直是「明确停 + live=unavailable」的 `a2Key` 分支接到真发包（子命令 11，3 元组形态）。
+
+**官方依据（逐行核对）**：`analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/WtloginHelper.java:607-690` 的 `GetStWithoutPasswd` 是**三条并列分支**，按传进来的数组长度/首字节分派：
+- 4 元组 A2/D2/KEY（`bArr2[0][0]==1`）：`tVarA.b = MD5.toMD5Byte(bArr2[3])` ⇒ tgtgt = **MD5(D2Key)**，请求体带 0x143。
+- 3 元组 A2/A2KEY（`bArr2[0][0]==2`）：`tVarA.b = bArr2[2]` ⇒ tgtgt = **A2KEY 原样、不做 MD5**，且 `d2` 实参传 **null** ⇒ 请求体**不带 0x143**。
+- 只有 A1/noPicSig：走 `request/z.java`（子命令 15，见 C82）。
+
+**A2KEY 从哪来（本轮实证，不是推测）**：A2KEY = 官方 `WloginSigInfo._TGTKey`（`sharemem/WloginSigInfo.java:265` `this._TGTKey = (byte[]) bArr2.clone()`，`bArr= _TGT`、`bArr2 = _TGTKey`），线上对应 0x119 明文里的 **TLV 0x10d**（`oicq_request.java` 把 `tlv_t10a`/`tlv_t10d` 一起交给 `put_siginfo`）。给 `tool/extract_tk_file.py` 加 `"a2_key": _hex(_pick(f, "_TGTKey"))` 后跑 `analysis/_ref/official-logs/qq8211/tk_file-20261022`（uin 2089495846）实测：**a2_key 16B = 5974725b4954235138375d7e4878762c…，d2key 16B = 6545337d…，两者不同值** ⇒ 这份材料真实存在且能和 D2Key 区分，分支可离线实现。
+
+**本轮最值钱的坑：A2 ≠ D2（P4 的语义错误，被测试逼出来）**
+- `recovery_planner.dart` 原写 `hasA2: _nonEmpty(t.d2)` —— 把 A2 当成了 `d2`(0x143)。**A2 是 TGT（0x10a）**，`d2` 是另一份材料。
+- 症状：构造「只有 tgt + a2Key、没有 d2/d2key」的票时，planner 判 `hasA2=false` ⇒ 一路走到 `Stop('exhausted')` ⇒ `sessionExpired`、**一个包都不发**（4g 首跑 4 条断言全红，就是它暴露的）。
+- 修法：`hasA2: _nonEmpty(t.tgt)`；新增 `hasD2`（`d2` 非空）；`d2Key => hasA2 && hasD2 && hasD2Key`（4 元组要三样齐）；`a2Key => hasA2 && hasA2Key`（3 元组只要两样）；`a2Only => hasA2`。
+- 教训：**「A2」这个名字在官方语境里指 TGT**，不要按字段名直觉把它映射到 `d2`。凡是 planner/available 的判据，都要回官方那三种形态的**实参列表**去对，而不是对本地字段名。
+
+**其余必修点**：
+1. `buildToken` 的 `d2` 必须改成可空：`{Uint8List? d2}` + `args: { if (d2 != null) 0x143: [d2] }`，`cond: Qq8LoginConditions(d2: d2)`。**d2 非空时逐字节行为不变**（有专门断言钉住）。
+2. a2Key 分支**必须同时把 token 传进 `_login`**（只为拿 `ctx.tgt` 即 A2、以及 SSO 信封的 sig），但 body 里**必须写死 `d2: null`**，不能写 `token?.d2` —— 后者会同时「用 A2KEY 派生 tgtgt」又「带 0x143」，变成官方根本不存在的第三种形态。
+3. 空 `a2Key`（0 字节）要有最后一层防线：不组包、不降级成口令链。但注意 planner 的 `hasA2Key` 本身要求非空 ⇒ 这条只在直接调 `_login(a2Key: 空)` 时才会命中，属防御性代码。
+4. `Qq8TokenData.recoveryUsable` 要加 `|| (a2Key?.isNotEmpty ?? false)`，否则入口闸门先把它挡掉（planner 选得出来也发不出去）。**`usable` 仍不动**（`d2`+`d2key`）。
+
+**离线怎么证明 tgtgt 真用了 A2KEY**：脚本传输的 `_successFrame(1, key: a2Key)` 是「用 A2KEY 加密 0x119」的假回包 —— 服务若没把 tgtgt 换成 A2KEY 原样，0x119 必然解不开、不可能 online。这比「在明文里搜字节」可靠（登录包的命令字在 SSO 信封内、被 ECDH shareKey 的 TEA 加密，明文搜不到，见 C82）。
+
+**实施协作坑**：WorkBuddy（`workbuddy/deepseek-v4.1-flash`，经 Magpie `http://127.0.0.1:3425/v1/chat/completions` + 函数调用）第一轮 **edit_source 连续 3 次 old_string 未找到**，原因是它把中文文档注释行也塞进 old_string。把精确的纯代码行（含缩进）直接贴给它后一次成功。⇒ 派活给实施模型时，**锚点要由策划方给到字符级**，别指望它自己对齐空白。
+
+**诚实边界（必须如实上报）**：`a2Key` 分支**只做过脚本传输离线自测，从未真实发到服务器**（live=unavailable）；`a2Only` 仍是「明确停」——它要求「只有 A2、没有任何 key」，此时 `recoveryUsable` 为假，实际连入口闸门都过不去，因此**产品路径上不可达**（4e 段有一条断言钉住「一个包都不发、不退回密码」）。三条已接线分支（d2Key / A1 / a2Key）中，只有 d2Key 有历史真机成功证据。
+
+**验收**：`tool/qq8_login_selftest.dart` 新增【2c1】段（d2=null 时 0x143 整条不发、0x10a 仍进包、d2 非空时逐字节不变）→ 192 项；`tool/token_validity_selftest.dart` 新增【8】段（0x10d→a2Key、recoveryUsable、JSON 往返、旧文件缺键为 null）→ 42 项；`tool/qq8_login_service_selftest.dart` 新增【4g】段（真发包 / diagTag=token / A2KEY 解开 0x119 后 online / 新票落盘）+ 4e 第二块改写 → 118 项；`tool/recovery_planner_selftest.dart` 新增 4 条 A2 语义断言 → 50 项。全量 50 个 selftest 全绿 + flutter test 194 全过。
+

@@ -138,7 +138,11 @@ class Qq8TokenData {
   /// 能不能在**不要口令**的前提下尝试恢复：D2 链（子命令 11）或 A1 对
   /// （子命令 15）任一条材料齐备即可。只用于"要不要发包"这道闸门，
   /// 具体走哪条仍由 `recovery_planner.dart` 决定。
-  bool get recoveryUsable => usable || hasA1Pair;
+  // A2KEY 那条材料的全部家当就是 tgt + a2Key（没有 d2/d2key）。不把它算进来，
+  // `loginWithToken` 的入口闸门会直接把它挡在门外（planner 选得出来也发不出去）。
+  // 依据：WtloginHelper.java:607-690 的 3 元组形态 —— 只给 A2 与 A2KEY 就够发。
+  bool get recoveryUsable =>
+      usable || hasA1Pair || (a2Key?.isNotEmpty ?? false);
 
   /// 服务端是否已经判过这张票失效（冷启动别白试）。
   bool get invalidated => invalidatedAtMs != null;
@@ -218,6 +222,11 @@ class Qq8TokenData {
         ticketKey: b.ticketKey ?? Uint8List(0),
         srmToken: b.srmToken ?? Uint8List(0),
         a1: b.t106 ?? Uint8List(0),
+        // A2KEY = 0x119 明文里的 TLV 0x10d（官方 tk_file 的 WloginSigInfo._TGTKey）。
+        // 依据：WtloginHelper.java:607-690 的 A2+A2KEY 3 元组分支把第二个参数
+        // 原样当 tgtgt 用（不做 MD5）；oicq_request.java 把 tlv_t10a/tlv_t10d
+        // 一起 put_siginfo（TGT / TGTKey）。空值不落盘（语义 = 没有这份材料）。
+        a2Key: (b.t10d != null && b.t10d!.isNotEmpty) ? b.t10d : null,
         issuedAtMs: issuedAtMs,
         serverTimeMs: serverTimeMs,
         lifetimeTlvHex: lifetimeTlvHex,

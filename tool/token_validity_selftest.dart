@@ -210,6 +210,35 @@ Future<void> main() async {
     }
   }
 
+  // ---------------------------------------------------------------
+  stdout.writeln('\n[8] A2KEY（0x10d）落进票据：fromSigBundle / JSON 往返 / 旧文件兼容');
+  {
+    final key = _b(16, 0x7c);
+    final b = Qq8SigBundle(all: const <int, Uint8List>{}, t10d: key);
+    final t = Qq8TokenData.fromSigBundle(10001, b);
+    check('fromSigBundle 把 0x10d 存成 a2Key',
+        t.a2Key != null && t.a2Key!.join(',') == key.join(','),
+        'len=${t.a2Key?.length}');
+    check('a2Key 非空 ⇒ recoveryUsable（没有 d2/d2key 也能过入口闸门）',
+        t.recoveryUsable == true);
+    // 0x10d 缺失（老版本回包）⇒ null，语义是「没有这份材料」
+    final none = Qq8TokenData.fromSigBundle(
+        10001, Qq8SigBundle(all: const <int, Uint8List>{}));
+    check('没有 0x10d 时 a2Key 为 null', none.a2Key == null);
+    check('既无 d2/d2key 也无 a1/a2key ⇒ 不可恢复', none.recoveryUsable == false);
+
+    // JSON 往返
+    final json = t.toJson();
+    check('toJson 写出 a2_key', json['a2_key'] != null);
+    final back = Qq8TokenData.fromJson(json);
+    check('JSON 往返后 a2Key 一致',
+        back.a2Key != null && back.a2Key!.join(',') == key.join(','));
+    // 旧文件：没有 a2_key 键 → null（不能抛）
+    final old = Map<String, Object?>.from(json)..remove('a2_key');
+    check('旧文件缺 a2_key 键时读成 null',
+        Qq8TokenData.fromJson(old).a2Key == null);
+  }
+
   stdout.writeln('\n==============================================================');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

@@ -48,8 +48,18 @@ enum Qq8RecoveryMaterial {
 /// "手上到底有什么"——从票据里读出来的**纯快照**（不判有效期，那是
 /// `Qq8TokenData.evaluateValidity` 的事，调用方自己先过闸门）。
 class Qq8RecoveryAvailability {
-  /// A2（`d2`）非空。
+  /// A2 非空。**A2 是 `_TGT`（0x119 里的 `0x10a`，即票据里的 `tgt`），
+  /// 不是 `d2`**——`d2`（`0x143`）是另一份材料，见 [hasD2]。
+  ///
+  /// 依据 `WtloginHelper.java:607-690`：4 元组形态要 A2+D2+KEY 三样齐，
+  /// 3 元组形态要 A2+A2KEY 两样齐；两种形态的第一个参数都是 A2（TGT）。
+  /// 2026-11 修正：此前本字段读的是 `t.d2`，把 A2 与 D2 混成一物，
+  /// 会让「只有 d2 没有 tgt」的票被误判成可以发 3 元组形态。
   final bool hasA2;
+
+  /// D2（`d2`，`0x143`）非空。只有 4 元组形态（A2+D2+KEY，子命令 11 带
+  /// `0x143`）需要它；3 元组形态（A2+A2KEY）不带 `0x143`，因此不要求它。
+  final bool hasD2;
 
   /// D2KEY 非空。
   final bool hasD2Key;
@@ -65,6 +75,7 @@ class Qq8RecoveryAvailability {
 
   const Qq8RecoveryAvailability({
     this.hasA2 = false,
+    this.hasD2 = false,
     this.hasD2Key = false,
     this.hasA2Key = false,
     this.hasA1 = false,
@@ -75,7 +86,9 @@ class Qq8RecoveryAvailability {
   factory Qq8RecoveryAvailability.fromToken(Qq8TokenData? t) {
     if (t == null) return const Qq8RecoveryAvailability();
     return Qq8RecoveryAvailability(
-      hasA2: _nonEmpty(t.d2),
+      // A2 = _TGT = 0x10a（`t.tgt`）；D2 = 0x143（`t.d2`）。两者是不同材料。
+      hasA2: _nonEmpty(t.tgt),
+      hasD2: _nonEmpty(t.d2),
       hasD2Key: _nonEmpty(t.d2key),
       hasA2Key: _nonEmpty(t.a2Key),
       hasA1: _nonEmpty(t.a1),
@@ -87,15 +100,17 @@ class Qq8RecoveryAvailability {
 
   /// 该材料是否"手上真有"。
   bool has(Qq8RecoveryMaterial m) => switch (m) {
-        Qq8RecoveryMaterial.d2Key => hasA2 && hasD2Key,
+        // 4 元组：A2+D2+KEY 三样齐（WtloginHelper.java:607-690），body 带 0x143。
+        Qq8RecoveryMaterial.d2Key => hasA2 && hasD2 && hasD2Key,
+        // 3 元组：A2+A2KEY 两样齐，body 不带 0x143（故不要求 hasD2）。
         Qq8RecoveryMaterial.a2Key => hasA2 && hasA2Key,
         Qq8RecoveryMaterial.a1NoPicSig => hasA1 && hasNoPicSig,
         Qq8RecoveryMaterial.a2Only => hasA2,
       };
 
   @override
-  String toString() => 'Qq8RecoveryAvailability(a2=$hasA2, d2key=$hasD2Key, '
-      'a2key=$hasA2Key, a1=$hasA1, noPicSig=$hasNoPicSig)';
+  String toString() => 'Qq8RecoveryAvailability(a2=$hasA2, d2=$hasD2, '
+      'd2key=$hasD2Key, a2key=$hasA2Key, a1=$hasA1, noPicSig=$hasNoPicSig)';
 }
 
 /// 规划结果：要么"再试一次（用某材料）"，要么"停"。

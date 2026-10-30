@@ -134,8 +134,13 @@ Future<void> main() async {
       _mat(_plan(a1Only)) == Qq8RecoveryMaterial.a1NoPicSig);
   final a1WithoutSig = Qq8RecoveryAvailability.fromToken(
       _token(d2: false, d2key: false, a1: true));
-  check('有 A1 但没 noPicSig -> 不可用（exhausted）',
-      _code(_plan(a1WithoutSig)) == 'exhausted');
+  // A1 缺 noPicSig ⇒ a1NoPicSig 不可用；但 tgt（A2）在，所以退到 a2Only
+  // （a2Only 只要求有 A2；能不能真发由 loginWithToken 的入口闸门管）。
+  check('有 A1 但没 noPicSig -> 不走 a1NoPicSig，退到 a2Only',
+      _plan(a1WithoutSig) is Qq8RecoveryAttempt &&
+          _mat(_plan(a1WithoutSig)) == Qq8RecoveryMaterial.a2Only);
+  check('A1 缺 noPicSig 时 a1NoPicSig 明确不可用',
+      !a1WithoutSig.has(Qq8RecoveryMaterial.a1NoPicSig));
   final onlyA2 = Qq8RecoveryAvailability.fromToken(_token(d2: true, d2key: false));
   check('只有 A2 -> a2Only', _mat(_plan(onlyA2)) == Qq8RecoveryMaterial.a2Only);
   final nothing = Qq8RecoveryAvailability.fromToken(null);
@@ -146,6 +151,26 @@ Future<void> main() async {
   check('d2 空但 d2key 非空 -> d2Key 不可用（需同时有）',
       !Qq8RecoveryAvailability.fromToken(_token(d2: false, d2key: true))
           .has(Qq8RecoveryMaterial.d2Key));
+  // A2 = _TGT（0x10a），不是 d2 —— 2026-11 语义修正后的边界
+  final a2keyOnly = Qq8RecoveryAvailability.fromToken(
+      _token(d2: false, d2key: false, a2key: true));
+  check('只有 A2+A2KEY（无 d2/d2key）-> a2Key',
+      _mat(_plan(a2keyOnly)) == Qq8RecoveryMaterial.a2Key);
+  check('A2KEY 材料不要求 hasD2', a2keyOnly.has(Qq8RecoveryMaterial.a2Key));
+  check('tgt 非空即 hasA2（与 d2 无关）',
+      Qq8RecoveryAvailability.fromToken(_token(d2: false, d2key: false)).hasA2);
+  final noTgt = Qq8RecoveryAvailability.fromToken(Qq8TokenData(
+    uin: 10001,
+    savedAt: 'test',
+    tgt: Uint8List(0),
+    d2: _b(64),
+    d2key: _b(16),
+    sigKey: _b(16),
+    ticketKey: _b(16),
+    srmToken: _b(16),
+  ));
+  check('没有 tgt（A2）时即使有 d2/d2key 也不算任何可恢复材料',
+      !noTgt.has(Qq8RecoveryMaterial.d2Key) && !noTgt.hasA2);
 
   stdout.writeln('[5] 纯函数性：同输入同输出');
   final r1 = _plan(onlyD2key);

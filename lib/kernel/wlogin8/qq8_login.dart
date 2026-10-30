@@ -567,14 +567,26 @@ abstract final class Qq8LoginBody {
   /// [d2] 来自上次登录成功时响应 `0x119` 票据块里的 `0x143`（见
   /// [Qq8SigBundle.d2]）；tgt 由 `ctx.tgt` 提供。这条路径**不需要密码**，
   /// 是"票据续期"的低风险登录形态。
-  static Uint8List buildToken(Qq8TlvContext ctx, {required Uint8List d2}) =>
+  ///
+  /// ## d2 可为 null：官方 3 元组形态
+  ///
+  /// `WtloginHelper.java:607-690` 的 `GetStWithoutPasswd` 并列两种落在本函数
+  /// （子命令 11）的形态：
+  /// * 4 元组 A2/D2/KEY：`tVarA.b = MD5.toMD5Byte(bArr2[3])`，d2 **非空** ⇒
+  ///   请求体带 `0x143`。即 [d2] != null 的情形（与改造前逐字节一致）；
+  /// * 3 元组 A2/A2KEY：`tVarA.b = bArr2[2]`（A2KEY 原样、不做 MD5），d2 参数
+  ///   **传 null** ⇒ 请求体不带 `0x143`。即 [d2] == null 的情形，tgtgt 由调用方
+  ///   直接用 A2KEY 装上，本函数不派生。
+  static Uint8List buildToken(Qq8TlvContext ctx, {Uint8List? d2}) =>
       build(
         ctx,
         Qq8SubCmd.token,
         qq8ExchangeEmpTlvOrder,
         cond: Qq8LoginConditions(d2: d2),
         args: <int, List<Object?>>{
-          0x143: <Object?>[d2],
+          // 4 元组形态（A2+D2+KEY）才写 0x143；3 元组形态（A2+A2KEY）官方
+          // d2 参数传 null ⇒ 请求体整条不带 0x143（WtloginHelper.java:607-690）。
+          if (d2 != null) 0x143: <Object?>[d2],
         },
       );
 
@@ -1311,6 +1323,19 @@ class Qq8SigBundle {
   final Uint8List? t11a;
   final Uint8List? t512;
 
+  /// A2KEY（0x119 明文里的 TLV `0x10d`，即官方 tk_file 的
+  /// `WloginSigInfo._TGTKey`）。
+  ///
+  /// **用途**：免密恢复的 A2+A2KEY 分支（`WtloginHelper.java:607-690` 的 3 元组
+  /// 形态）直接把它原样当 tgtgt（`tVarA.b = bArr2[2]`，**不做 MD5**），body 不带
+  /// `0x143`。它与 [d2key]（0x305）是**两个不同的值**，不可互相替代。
+  ///
+  /// **来源依据**：`oicq_request.java` 成功分支解出 0x119 后，把 `tlv_t10a` 与
+  /// `tlv_t10d` 一起交给 `put_siginfo`（第一个参数是 TGT，第二个是 TGTKey）——
+  /// 与实测 tk_file 里 `_TGTKey` 为 16 字节、非空、且不等于 D2Key 吻合。
+  /// 取不到（老版本回包不带）时为 null，语义等同「没有 A2KEY 材料」。
+  final Uint8List? t10d;
+
   /// 解密后的全部 TLV（排查用）。
   final Map<int, Uint8List> all;
 
@@ -1328,6 +1353,7 @@ class Qq8SigBundle {
     this.deviceToken,
     this.t11a,
     this.t512,
+    this.t10d,
   });
 
   /// 用 [tgtgtKey] 解开 `0x119` 并抽出票据。
@@ -1356,6 +1382,8 @@ class Qq8SigBundle {
       deviceToken: tlvs[0x322],
       t11a: tlvs[0x11a],
       t512: tlvs[0x512],
+      // A2KEY：官方 put_siginfo 的第二个参数（TGTKey），与 0x10a(TGT) 一起给。
+      t10d: tlvs[0x10d],
     );
   }
 }

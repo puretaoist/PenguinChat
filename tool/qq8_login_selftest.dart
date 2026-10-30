@@ -456,6 +456,36 @@ Future<void> main() async {
     );
   }
 
+  // -- 2c1. A2+A2KEY 3 元组：buildToken 的 d2 可为 null（不带 0x143）------
+  //
+  // 依据 WtloginHelper.java:607-690：3 元组形态 d2 实参为 null ⇒ 请求体不带
+  // 0x143；tgtgt 由调用方用 A2KEY 原样装上（kernel 不派生）。
+  stdout.writeln('\n【2c1】A2+A2KEY 3 元组 body（d2 可为 null）');
+  {
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final body = Qq8LoginBody.buildToken(ctx, d2: null);
+    final tlvs = qq8ReadTlv(body, offset: 4);
+    check(
+      'A2KEY：d2 为 null 时 0x143 整条不发',
+      !tlvs.containsKey(0x143),
+      'len=${tlvs[0x143]?.length}',
+    );
+    check(
+      'A2KEY：A2（0x10a）仍然进包',
+      tlvs[0x10A] != null && tlvs[0x10A]!.join(',') == ctx.tgt.join(','),
+      'len=${tlvs[0x10A]?.length}',
+    );
+    // 4 元组形态不能被这次改造带偏：d2 非空时仍与旧行为逐字节一致
+    final d2 = _hex('d2d2d2d2');
+    final body4 = Qq8LoginBody.buildToken(ctx, d2: d2);
+    final tlvs4 = qq8ReadTlv(body4, offset: 4);
+    check(
+      'A2KEY：d2 非空时 0x143 照旧 = d2 本体（改造不影响 4 元组）',
+      tlvs4[0x143] != null && tlvs4[0x143]!.join(',') == d2.join(','),
+      'len=${tlvs4[0x143]?.length}',
+    );
+  }
+
   // -- 2c2. A1 + noPicSig（子命令 15，wtlogin.exchange_emp）--------------
   //
   // 依据 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java：

@@ -676,11 +676,25 @@ class Qq8LoginService {
         );
         return;
       case Qq8RecoveryMaterial.a2Key:
+        // 已接线：3 元组 A2+A2KEY（`WtloginHelper.java:607-690`）。tgtgt 直接用
+        // A2KEY 原样（`tVarA.b = bArr2[2]`，不做 MD5），body 走子命令 11 且不带
+        // 0x143；A2KEY 来自 0x119 明文 TLV 0x10d（官方 tk_file 的 _TGTKey）。
+        // **live 未验证**（离线实现，没有真机证据）。失败按现有失败分支收尾，
+        // 不降级成 d2Key、更不降级成密码。
+        //
+        // 为什么把 token 也传进去：3 元组的第一个参数 A2 就是 body 的 `0x10a`
+        // （本仓 `Qq8TokenData.tgt`）。不传 token，`ctx.tgt` 会是空 → 等于材料
+        // 不足还硬发包。传 token 只取 tgt 与 SSO 信封 sig，**不进 body 的
+        // 0x143**（见 `_login` 里 a2Key 分支显式 `d2: null`）。
+        await _login(
+          uin: uin,
+          passwordMd5: null,
+          a2Key: token.a2Key,
+          token: token,
+        );
+        return;
       case Qq8RecoveryMaterial.a2Only:
-        // 仍未接线，live = unavailable：
-        // - a2Key：需要把 a2Key 塞进 tgtgt 而不是 MD5(d2key)，`Qq8Device.withTgtgt`
-        //   的语义与官方 `WtloginHelper.java:699` 的显式 key 路径尚未逐字节核对；
-        // - a2Only：无 key 时 tgtgt 该填什么（空 / 全零）官方未在证据里给死。
+        // a2Only：无 key 时 tgtgt 该填什么（空 / 全零）官方未在证据里给死。
         // 因此这里**明确停**，绝不降级成 d2key 或密码，也不假装已实现。
         _log.w('免密恢复分支 $material 未接线（live=unavailable），'
             '不发包，请用户重新登录一次');
@@ -703,6 +717,9 @@ class Qq8LoginService {
     // 不再走 token/password 两条。
     Uint8List? a1,
     Uint8List? noPicSig,
+    // A2KEY 那条恢复分支（官方 3 元组 A2+A2KEY）：给出它就把它**原样**当 tgtgt
+    // （不做 MD5），body 不带 0x143。见下方 withTgtgt / buildToken 两处注释。
+    Uint8List? a2Key,
     bool smsLogin = false,
   }) async {
     // 闸门：口令链（token == null 且没有 A1，含手机号验证登录）没有官方 native
@@ -713,7 +730,10 @@ class Qq8LoginService {
     // 组包用的是纯 Dart 真签（`_tlvCtx` 恒为 Qq8T544Mode.oicq），如实上报给闸门；
     // 只有退回官方降级体（4 个零字节）时闸门才会重新拦下口令链。
     Qq8LoginPolicy.deviceSignatureAvailable = true;
-    if (token == null && a1 == null && Qq8LoginPolicy.passwordLoginBlocked) {
+    if (token == null &&
+        a1 == null &&
+        a2Key == null &&
+        Qq8LoginPolicy.passwordLoginBlocked) {
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.failed,
         uin: uin,
@@ -722,7 +742,19 @@ class Qq8LoginService {
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
-    _loginIsRenewal = token != null || a1 != null;
+    _loginIsRenewal = token != null || a1 != null || a2Key != null;
+    // 材料不足**不硬发**：空 A2KEY 既装不上 tgtgt，又不该退到口令链去发一个
+    // 全零口令包（那就等于静默降级成密码登录）。planner 侧 `hasA2Key` 已保证
+    // 非空，这里只是最后一层防线，直接报"凭证不足"让用户重登。
+    if (a2Key != null && a2Key.isEmpty) {
+      _log.w('A2KEY 为空（0 字节），不组包、不降级成口令链，请用户重新登录一次');
+      _emit(Qq8LoginSnapshot(
+        stage: Qq8LoginStage.sessionExpired,
+        uin: uin,
+        error: '登录凭证不足，请重新登录一次',
+      ));
+      return;
+    }
     try {
       // 一次登录流程内的固定材料：设备按 uin 派生（同一账号恒定同一台设备），
       // ECDH / 会话标识 / 随机密钥都只生成一次，验证分支复用同一套。
@@ -732,7 +764,14 @@ class Qq8LoginService {
       // 官方整条流程只有一个设备身份，中途换设备是多余的风控信号。
       if (!smsLogin) {
         _device = (deviceBuilder ?? Qq8Device.generate)(uin);
-        if (token != null) {
+        if (a2Key != null && a2Key.isNotEmpty) {
+          // A2KEY 分支的约定：tgtgt **就是 A2KEY 原样**，不做任何派生。
+          // 依据 `WtloginHelper.java:607-690` 的 3 元组形态 `tVarA.b = bArr2[2]`
+          // （对比 4 元组的 `MD5.toMD5Byte(bArr2[3])`）；A2KEY 来自 0x119 明文里的
+          // TLV `0x10d`（官方 tk_file 的 `WloginSigInfo._TGTKey`）。
+          // 响应 0x119 就是用这个密钥加密的，`Qq8SigBundle.parse` 拿依赖它解开。
+          _device = _device!.withTgtgt(a2Key);
+        } else if (token != null) {
           // token 路径的约定：tgtgt = MD5(d2key)（没有密码就派生不出新的）
           _device = _device!.withTgtgt(md5Bytes(token.d2key));
         } else if (a1 != null) {
@@ -766,7 +805,14 @@ class Qq8LoginService {
       // QIMEI：优先用手工/身份文件注入的值；没有才去灯塔取号（只取一次）。
       // 取号失败不阻断登录——官方取不到 0x545 就整条不发（`k.java` case 1349）。
       final effectiveQimei = await _resolveQimei();
-      final body = a1 != null
+      final body = a2Key != null
+          // A2+A2KEY 3 元组形态（`WtloginHelper.java:607-690`）：tgtgt 已经在上面
+          // 用 A2KEY 原样装上，body 走子命令 11 但**不带 0x143**（官方该形态的 d2
+          // 实参就是 null）。所以这里传 `d2: null`，**不用** `token?.d2`——
+          // token 带进来只为提供 A2（body 的 0x10a）与 SSO 信封，把 d2 写进 body
+          // 就变成官方没有的第三种形态（A2KEY 派生 + 又发 0x143）。
+          ? Qq8LoginBody.buildToken(ctx, d2: null)
+          : a1 != null
           // 子命令 15：0x106 塞 A1 密文（0x119 里的 0x106 是 en_A1），0x16A 塞
           // noPicSig，两者都是原样字节（`request/z.java` 的 set_data / get_tlv_16a）。
           // A1 带得比 16B 长时去掉尾部 16B（tgtgt）：官方 exchange_emp 原样塞密文，

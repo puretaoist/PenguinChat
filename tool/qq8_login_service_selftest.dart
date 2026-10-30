@@ -901,9 +901,9 @@ Future<void> main() async {
   section('4e. P4 边界：planner 只有 d2Key 这条真能走；材料不足时停在闸门，绝不退回密码');
   {
     // 事实：`Qq8TokenData.usable` 要求 d2 与 d2key 都非空，而 d2Key 材料的判据正是
-    // 「A2+D2KEY 都有」⇒ 只要能过 usable 闸门，planner 一定选 d2Key。因此
-    // a2Key / a1NoPicSig / a2Only 三个分支目前**走不到**（live=unavailable 的另一面）。
-    // 这里把这条边界钉住：能走的那条真的发了一个包；走不到的不会偷偷降级成密码。
+    // 「A2+D2KEY 都有」⇒ 只要能过 usable 闸门，planner 一定选 d2Key。
+    // 这里把这条边界钉住：能走的那条真的发了一个包。
+    // （4f 的 A1 与 4g 的 A2KEY 是后来接上的另两条，见各自段落。）
     final scripted = Qq8ScriptedTransport(<Uint8List>[]);
     final store = _MemStore()
       ..data = Qq8TokenData(
@@ -931,8 +931,8 @@ Future<void> main() async {
     await svc.close();
   }
   {
-    // 只有 A2KEY、没有 A2/D2KEY：过不了 usable 闸门 → 一个包都不发。
-    // 关键是**不退回密码**：sent 必须为空，且文案只让用户重新登录。
+    // 只有 A2（tgt）没有任何 key：planner 只剩 a2Only，而 recoveryUsable 为假
+    // ⇒ 入口闸门就挡住，一个包都不发。关键是**不退回密码**。
     final scripted = Qq8ScriptedTransport(<Uint8List>[]);
     final store = _MemStore()
       ..data = Qq8TokenData(
@@ -944,7 +944,6 @@ Future<void> main() async {
         sigKey: _hex('a4' * 48),
         ticketKey: _hex('a5' * 16),
         srmToken: _hex('a6' * 56),
-        a2Key: _hex('a7' * 16),
       );
     final svc = Qq8LoginService(
       tokenStore: store,
@@ -956,7 +955,8 @@ Future<void> main() async {
       timeout: const Duration(seconds: 5),
     );
     await svc.loginWithToken(uin: 10001);
-    check('材料不足：一个包都不发', scripted.sent.isEmpty, '${scripted.sent.length}');
+    check('只有 A2、没有任何 key：一个包都不发', scripted.sent.isEmpty,
+        '${scripted.sent.length}');
     check('明确失败并提到票据（不静默退回密码）',
         svc.snapshot.stage == Qq8LoginStage.failed &&
             (svc.snapshot.error ?? '').contains('票据'),
@@ -1023,6 +1023,83 @@ Future<void> main() async {
     check('A1：上线后新票已落盘（0x143 → d2 非空）',
         store.data != null && store.data!.d2.isNotEmpty,
         '');
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('4g. P6：A2+A2KEY（3 元组）真能发出去，tgtgt 直接取 A2KEY 原样');
+  {
+    // 依据 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/WtloginHelper.java:607-690：
+    // A2/A2KEY 3 元组形态把 A2KEY **原样**当 tgtgt（`tVarA.b = bArr2[2]`，不做 MD5），
+    // 且 d2 实参为 null ⇒ 请求体不带 0x143。
+    // 这里用「0x119 票据块用 A2KEY 加密」的假响应来钉住注入：如果服务没有把
+    // tgtgt 换成 A2KEY 原样，0x119 就解不开、登录不可能上线。
+    final a2Key = Uint8List.fromList(List<int>.filled(16, 0x7c));
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: a2Key),
+      _registerFrame(1),
+    ]);
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: Uint8List(0),
+        d2key: Uint8List(0),
+        sigKey: Uint8List(0),
+        ticketKey: Uint8List(0),
+        srmToken: Uint8List(0),
+        a2Key: a2Key,
+      );
+    final diagTags = <String>[];
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    svc.onDiagnostic = (tag, frame, parsed) => diagTags.add(tag);
+    await svc.loginWithToken(uin: 10001);
+
+    check('A2KEY：真的发了包（不是空转）', scripted.sent.isNotEmpty,
+        scripted.sent.length.toString());
+    check('A2KEY：诊断标签是 token（子命令 11，不是 login）',
+        diagTags.contains('token') && !diagTags.contains('login'),
+        diagTags.join(','));
+    check('A2KEY：tgtgt = A2KEY 原样，0x119 解得开、登录后在线',
+        svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+    check('A2KEY：上线后新票已落盘（0x143 → d2 非空）',
+        store.data != null && store.data!.d2.isNotEmpty, '');
+    await svc.close();
+  }
+  {
+    // 没有任何可续期材料（tgt 有、key 全无）：入口闸门就挡住，不组包、不降级成口令链。
+    final scripted = Qq8ScriptedTransport(<Uint8List>[]);
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: Uint8List(0),
+        d2key: Uint8List(0),
+        sigKey: Uint8List(0),
+        ticketKey: Uint8List(0),
+        srmToken: Uint8List(0),
+      );
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await svc.loginWithToken(uin: 10001);
+    check('无可续期材料：一个包都不发', scripted.sent.isEmpty, '${scripted.sent.length}');
     await svc.close();
   }
 

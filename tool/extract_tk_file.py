@@ -620,6 +620,7 @@ def main():
         "uin": uin,
         "saved_at": "extracted-from-tk_file",
         "tgt": _hex(_pick(f, "_TGT")),
+        "a2_key": _hex(_pick(f, "_TGTKey")),
         "d2": _hex(_pick(f, "_D2")),
         "d2key": _hex(_pick(f, "_D2Key")),
         "sig_key": _hex(_pick(f, "_sKey")),
@@ -629,8 +630,8 @@ def main():
         "no_pic_sig": _hex(_pick(f, "_noPicSig")),
     }
     print("\n--- 提取结果 ---")
-    hex_keys = ("tgt", "d2", "d2key", "sig_key", "ticket_key", "srm_token",
-                "en_a1", "no_pic_sig")
+    hex_keys = ("tgt", "a2_key", "d2", "d2key", "sig_key", "ticket_key",
+                "srm_token", "en_a1", "no_pic_sig")
     for k, v in out.items():
         if k in hex_keys:
             if v:
