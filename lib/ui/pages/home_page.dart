@@ -41,6 +41,8 @@ import '../widgets/forward_picker.dart';
 import '../widgets/group_files_panel.dart';
 import '../widgets/group_members_panel.dart';
 import '../widgets/group_settings_panel.dart';
+import '../widgets/action_sheet.dart';
+import '../widgets/telegram_list_item.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
 import '../widgets/chat_input_bar.dart';
@@ -607,36 +609,32 @@ class _HomePageState extends ConsumerState<HomePage> {
                 itemCount: archived.length,
                 itemBuilder: (_, i) {
                   final chat = archived[i];
-                  return ListTile(
-                    key: ValueKey('archived-${chat.id}'),
-                    dense: true,
-                    leading: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 34),
-                    title: Text(
-                      chat.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: TelegramColors.textPrimary,
-                        fontSize: 14.5,
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      // 归档列表也走 DialogCell 几何（70 / 52 / 17 / 16 / 分隔线 72）
+                      TgChatRow(
+                        key: ValueKey('archived-${chat.id}'),
+                        leading: TelegramAvatar(
+                            name: chat.title, url: chat.avatarUrl, size: 52),
+                        title: chat.title,
+                        subtitle: chat.lastMessage,
+                        onTap: () {
+                          Navigator.of(sheetCtx).pop();
+                          _openChat(chat);
+                        },
+                        onLongPress: () {
+                          Navigator.of(sheetCtx).pop();
+                          unawaited(store?.setChatArchived(chat.id, false));
+                        },
                       ),
-                    ),
-                    subtitle: Text(
-                      chat.lastMessage,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: TelegramColors.textSecondary,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                    onTap: () {
-                      Navigator.of(sheetCtx).pop();
-                      _openChat(chat);
-                    },
-                    onLongPress: () {
-                      Navigator.of(sheetCtx).pop();
-                      unawaited(store?.setChatArchived(chat.id, false));
-                    },
+                      if (i != archived.length - 1)
+                        Container(
+                          height: 1,
+                          margin: const EdgeInsets.only(left: 72),
+                          color: TelegramColors.divider,
+                        ),
+                    ],
                   );
                 },
               ),
@@ -997,65 +995,55 @@ class _HomePageState extends ConsumerState<HomePage> {
     final gid = chat.rawId;
     if (gid == null) return;
     final isOwner = chat.ownerUin != 0 && m.uin == chat.ownerUin;
-    final choice = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: TelegramColors.bgSidebar,
-      builder: (BuildContext ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  m.displayName,
-                  key: const ValueKey('member-menu-title'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      color: TelegramColors.textPrimary,
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
-            ListTile(
-              key: const ValueKey('member-menu-mute'),
-              leading: Icon(Icons.volume_off_outlined,
-                  color: TelegramColors.textSecondary),
-              title: const Text('禁言 10 分钟'),
-              onTap: () => Navigator.of(ctx).pop('mute'),
-            ),
-            ListTile(
-              key: const ValueKey('member-menu-unmute'),
-              leading: Icon(Icons.volume_up_outlined,
-                  color: TelegramColors.textSecondary),
-              title: const Text('解除禁言'),
-              onTap: () => Navigator.of(ctx).pop('unmute'),
-            ),
-            if (!isOwner)
-              ListTile(
-                key: const ValueKey('member-menu-admin'),
-                leading: Icon(Icons.shield_outlined,
-                    color: TelegramColors.textSecondary),
-                title: Text(m.admin ? '取消管理员' : '设为管理员'),
-                onTap: () => Navigator.of(ctx).pop('admin'),
-              ),
-            if (!isOwner)
-              ListTile(
-                key: const ValueKey('member-menu-kick'),
-                leading: Icon(Icons.person_remove_outlined,
-                    color: TelegramColors.danger),
-                title: Text('踢出群聊',
-                    style: TextStyle(color: TelegramColors.danger)),
-                onTap: () => Navigator.of(ctx).pop('kick'),
-              ),
-            const SizedBox(height: 6),
-          ],
-        ),
+    String? choice;
+    await ActionSheet.show(
+      context,
+      preview: Text(
+        m.displayName,
+        key: const ValueKey('member-menu-title'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+            color: TelegramColors.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w600),
       ),
+      items: <ActionSheetItem>[
+        ActionSheetItem(
+          key: const ValueKey('member-menu-mute'),
+          icon: Icons.volume_off_outlined,
+          label: '禁言 10 分钟',
+          onTap: () => choice = 'mute',
+        ),
+        ActionSheetItem(
+          key: const ValueKey('member-menu-unmute'),
+          icon: Icons.volume_up_outlined,
+          label: '解除禁言',
+          onTap: () => choice = 'unmute',
+        ),
+        if (!isOwner)
+          ActionSheetItem(
+            key: const ValueKey('member-menu-admin'),
+            icon: Icons.shield_outlined,
+            label: m.admin ? '取消管理员' : '设为管理员',
+            onTap: () => choice = 'admin',
+          ),
+        if (!isOwner)
+          ActionSheetItem(
+            key: const ValueKey('member-menu-kick'),
+            icon: Icons.person_remove_outlined,
+            label: '踢出群聊',
+            danger: true,
+            onTap: () => choice = 'kick',
+          ),
+        ActionSheetItem(
+          key: const ValueKey('member-menu-cancel'),
+          icon: Icons.close,
+          label: '取消',
+        ),
+      ],
     );
+    if (choice == null || !mounted) return;
     if (choice == null || !mounted) return;
     final svc = ref.read(qq8LoginServiceProvider);
     if (!svc.isOnline) {

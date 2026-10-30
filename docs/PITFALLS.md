@@ -3902,3 +3902,26 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 **新增金样** `test/action_sheet_test.dart`（5 用例 + `test/goldens/action_sheet_message.png` / `action_sheet_chat.png`）：断言动作行 48 高 / 图标 24 / 文字 16、危险项颜色、预览带强调色竖线。
 
 **验证**：`flutter test test/` → **178 全过**；`dart analyze lib test` 只剩 1 条先存在的 info（`test/message_bubble_test.dart:1266`）。
+
+## C76 群成员 / 群文件 / 转发三处列表行对齐 TG + `TgUserRow`/`TgFileRow`/`TgChatRow`（2026-10-30）
+
+**问题**：`group_members_panel`、`group_files_panel`、`forward_picker` 三处还在用 Flutter 默认 `ListTile`（行高 56~72 不等、标题 14/14.5、副标题 12、无分隔线），和会话列表/搜索页的 DialogCell 几何完全不是一路；同一个 App 里三套行。
+
+**做法**：`lib/ui/widgets/telegram_list_item.dart` 新增三个哑行组件，调用方只给数据 + trailing（键名全部不变，所以原有 12 个用例一行没改）：
+
+1. `TgUserRow` ← `ui/Cells/UserCell.java`：行高 **58**（`:497` callCellStyle?56:58）、头像 **46** 左距 **7**（`:182` `setRoundRadius(dp(24))` / `:183` `createFrame(46,46,…,7+padding,6)`）、名字 **16 w600** 从 x=**64** 起（`:189`/`:191`，7+46+11=64）、状态 **15**（`:197`/`:199` top 32）。用于群成员行。
+2. `TgFileRow` ← `ui/Cells/SharedDocumentCell.java`：行高 **64**（`:615`）、左侧 **42** 圆形图标槽（`:280` `createCircleDrawableWithIcon(dp(42))`，目录用 accent 15% 底）、文字从 x=**72** 起（`:543`/`:588`，16+42+14=72）、文件名 **16**（`:163`）、副标题 **13**（`:198`）。用于群文件行。
+3. `TgChatRow` ← `ui/Cells/DialogCell.java`：`minHeight 70`（`:172` heightDefault）、头像 52、左右 padding 11、文字从 72 起（`:171` messagePaddingStart）、标题 **17 w500**（`:1252`）、摘要 **16**（`:1254`）。用于转发目标行；`chat_list_panel`/`search_page` 那两处结构带选中态/徽章，暂不强行合并。
+
+分隔线一律由**调用方**在 `itemBuilder` 里插（`Column(mainAxisSize.min,[row, if(i!=last) Container(height:1, margin: EdgeInsets.only(left:64 或 72), color: divider)])`）——行组件保持纯展示，和 C74 的会话列表画法一致：成员行从 **64** 起、文件/转发行从 **72** 起、最后一行不画。
+
+**另外三处**：
+- `settings_page.dart` 页头「设置」17 → **20**（`ui/ActionBar/ActionBar.java:654`：非平板竖屏 `titleTextView.setTextSize(20)`，横屏 18、glassMode 17；副标题 `:1449/:1458` 14~16）。
+- `home_page.dart` 的群成员操作菜单（`_memberMenu`）从手写 `showModalBottomSheet + 4 个 ListTile` 改成 `ActionSheet.show`（见 C75），键名 `member-menu-title/mute/unmute/admin/kick` 不变，新增 `member-menu-cancel`；用 `String? choice` 在回调里记选择，`if (choice == null || !mounted) return;` 之后逻辑完全没动。
+- `home_page.dart` 的「已归档」弹层（`_openArchiveSheet`）里 `dense: true` 的 `ListTile` 换成 `TgChatRow`（因此 `TgChatRow` 加了可选 `onLongPress`，长按取消归档的行为与键名 `archived-<id>` 都不变），行间插 72 起的分隔线。**至此 `lib/ui` 里只剩 `connect_page` / `real_server_panel` 的表单开关还是 `SwitchListTile`/`CheckboxListTile`（表单控件不是列表行，不用改）**。
+
+**新增金样** `test/rows_test.dart`（6 用例 + `goldens/group_members_panel.png` / `group_files_panel.png` / `forward_picker.png`）：断言三处行高 58/64/70、字号 16/15、16/13、17/16、分隔线 margin left 64/72 的数量。
+
+**踩坑（重要，通用）**：`tools.read` 是**按输出预算截断**的，`limit: 2000` 只是上限——`home_page.dart`（1740 行）实际只回来 1330 行。我当时拿截断后的字符串做 `slice(0,i)+新块+slice(j)` 再整文件 `write`，**尾部 410 行被静默删掉**，`dart analyze` 报了 4 个 `undefined_method` + `Expected to find '}'`。以后整文件重写必须**分块读**（`offset` 每 400 行一次、拼起来，再用 `wc -l` 对照），或者只做 `edit` 不做整文件写。
+
+**验证**：`flutter test test/` → **184 全过**（178 + 新增 6）；`dart analyze lib test` 只剩 1 条先存在的 info；金样三张已逐张看几何（中文在测试环境是方框，只看边缘与行高）。

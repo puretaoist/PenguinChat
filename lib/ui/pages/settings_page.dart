@@ -64,9 +64,10 @@ class SettingsPage extends ConsumerWidget {
                 ),
                 Text(
                   '设置',
+                  // ActionBar.java:654：手机竖屏页面标题 20dp
                   style: TextStyle(
                     color: TelegramColors.textPrimary,
-                    fontSize: TelegramMetrics.fontTitle,
+                    fontSize: 20,
                     fontWeight: FontWeight.w600,
                   ),
                 ),

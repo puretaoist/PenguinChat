@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
 import 'telegram_avatar.dart';
+import 'telegram_list_item.dart';
 
 class ForwardPickerSheet extends StatelessWidget {
   /// 候选会话（调用方已排好序；当前会话也会在里面——TG 也允许转发给自己）。
@@ -86,30 +87,28 @@ class ForwardPickerSheet extends StatelessWidget {
                     itemCount: chats.length,
                     itemBuilder: (_, i) {
                       final chat = chats[i];
-                      return ListTile(
-                        key: ValueKey('forward-to-${chat.id}'),
-                        dense: true,
-                        leading: TelegramAvatar(name: chat.title, size: 36),
-                        title: Text(
-                          chat.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: TelegramColors.textPrimary,
-                            fontSize: 14.5,
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          TgChatRow(
+                            key: ValueKey('forward-to-${chat.id}'),
+                            leading:
+                                TelegramAvatar(name: chat.title, size: 52),
+                            title: chat.title,
+                            subtitle: chat.isGroup ? '群聊' : '私聊',
+                            onTap: () {
+                              Navigator.of(context).pop();
+                              onPick(chat);
+                            },
                           ),
-                        ),
-                        subtitle: Text(
-                          chat.isGroup ? '群聊' : '私聊',
-                          style: TextStyle(
-                            color: TelegramColors.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(context).pop();
-                          onPick(chat);
-                        },
+                          // DialogCell 的 needDivider：从 messagePaddingStart 72 起
+                          if (i != chats.length - 1)
+                            Container(
+                              height: 1,
+                              margin: const EdgeInsets.only(left: 72),
+                              color: TelegramColors.divider,
+                            ),
+                        ],
                       );
                     },
                   ),

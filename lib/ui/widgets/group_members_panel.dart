@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import '../../kernel/wlogin8/qq8_list.dart';
 import '../theme/telegram_theme.dart';
 import 'telegram_avatar.dart';
+import 'telegram_list_item.dart';
 
 class GroupMembersPanel extends StatefulWidget {
   /// 群名（标题栏）。
@@ -181,7 +182,19 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
       itemCount: members.length,
-      itemBuilder: (_, i) => _row(members[i]),
+      itemBuilder: (_, i) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _row(members[i]),
+          // UserCell 的 needDivider：从文字起点（64）画到右缘，最后一行不画
+          if (i != members.length - 1)
+            Container(
+              height: 1,
+              margin: const EdgeInsets.only(left: 64),
+              color: TelegramColors.divider,
+            ),
+        ],
+      ),
     );
   }
 
@@ -189,19 +202,14 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
     final isOwner = widget.ownerUin != 0 && m.uin == widget.ownerUin;
     final subtitle = StringBuffer('${m.uin} · ${m.genderLabel}');
     if (m.title.isNotEmpty) subtitle.write(' · ${m.title}');
-    return ListTile(
+    return TgUserRow(
       key: ValueKey('member-${m.uin}'),
-      leading: TelegramAvatar(name: m.displayName, size: 40),
-      title: Text(m.displayName,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style:
-              TextStyle(color: TelegramColors.textPrimary, fontSize: 14)),
-      subtitle: Text(subtitle.toString(),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style:
-              TextStyle(color: TelegramColors.textMuted, fontSize: 12)),
+      leading: TelegramAvatar(name: m.displayName, size: 46),
+      title: m.displayName,
+      subtitle: subtitle.toString(),
+      onTap: widget.onMemberMenu == null
+          ? null
+          : () => widget.onMemberMenu!(m),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
