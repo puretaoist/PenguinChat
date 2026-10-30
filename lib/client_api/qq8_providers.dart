@@ -56,6 +56,8 @@ import '../kernel/wlogin8/qq8_push.dart';
 import '../kernel/wlogin8/qq8_qimei.dart';
 import '../kernel/wlogin8/qq8_recv.dart';
 import '../kernel/wlogin8/qq8_tran.dart';
+import 'account_scope.dart';
+import 'attach_coordinator.dart';
 import 'chat_store.dart';
 import 'qq8_device_store.dart';
 import 'qq8_login_service.dart';
@@ -513,6 +515,37 @@ class Qq8ConnectStatus {
       };
 }
 
+/// 一次 attach 建出来的**一对**资源。
+///
+/// 为什么成对：`ChatStore.dispose()` 会 flush `chats.json` / `media_index.json`，
+/// `Qq8SessionAdapter.dispose()` 会关事件流。两者都属于这一次 attach，
+/// 必须同时释放——只释放其中一个，另一个会继续往同一个账号根上写。
+///
+/// [release] 幂等且 try/finally 成对：store 抛异常也要关 adapter。
+class _Qq8BackendPair {
+  _Qq8BackendPair({
+    required this.uin,
+    required this.adapter,
+    required this.store,
+  });
+
+  final int uin;
+  final Qq8SessionAdapter adapter;
+  final ChatStore store;
+
+  bool _released = false;
+
+  Future<void> release() async {
+    if (_released) return;
+    _released = true;
+    try {
+      await store.dispose();
+    } finally {
+      await adapter.dispose();
+    }
+  }
+}
+
 /// 协议线的连接控制器：把 [Qq8LoginService] 的多步认证搬给 UI。
 ///
 /// 与 OneBot 那条（`ConnectionController`）的区别：协议线登录是**多步交互**
@@ -701,18 +734,40 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     final left = until.difference(DateTime.now());
     return left.isNegative ? null : left;
   }
-  Qq8SessionAdapter? _adapter;
-  ChatStore? _store;
+  // ------------------------------------------------------------------
+  // 后端所有权（P1 账号隔离）
+  // ------------------------------------------------------------------
+
+  /// 账号/会话代 → 「该发布什么 / 该释放什么」的状态机（见 attach_coordinator.dart）。
+  ///
+  /// 这里**不再**用 `_adapter != null` / `_attaching` / `_attachedUin` 那几个
+  /// 散落字段做判断：它们挡不住「切号被旧 attach 卡住」也挡不住「旧结论被当新
+  /// 结论发布」这两类错（理由见协调器文件头）。
+  final AttachCoordinator<_Qq8BackendPair> _coordinator =
+      AttachCoordinator<_Qq8BackendPair>();
+
+  /// 每账号清理屏障：同一个 uin 的「释放旧资源」与「bootstrap 新资源」按链
+  /// 串行，不同 uin 各走一条链、互不阻塞。
+  final AccountCleanupBarrier _cleanup = AccountCleanupBarrier();
+
+  /// 已发布的一对后端（与协调器里登记的是同一个对象）。
+  _Qq8BackendPair? _backend;
+
+  /// shutdown 已开始：**同步**置位，任何 await 的续体都要靠它刹车。
+  bool _closed = false;
+
+  /// shutdown 的 Future（重复调用返回同一份）。
+  Future<void>? _shutdown;
 
   /// 当前状态（`StateNotifier.state` 是 protected，这里开个公开读口，
   /// 给"直接持有控制器"的调用方与测试用；provider 消费方 watch 即可）。
   Qq8ConnectStatus get status => state;
 
-  /// 上线后的 Session（未上线为 null）。
-  Session? get session => _adapter;
+  /// 上线后的 Session（未上线为 null）——只暴露**已发布**的那一对。
+  Session? get session => _backend?.adapter;
 
   /// 上线后的数据层（未上线为 null）。
-  ChatStore? get store => _store;
+  ChatStore? get store => _backend?.store;
 
   /// 口令登录（口令只在本进程内转 MD5，不落盘）。
   ///
@@ -721,6 +776,8 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   /// 从 type=2（能过滑块）掉到 type=45（连滑块都不给）。
   Future<void> loginWithPassword(int uin, String password) async {
     await _cooldownReady;
+    // await 之后必须重查：等冷却记录读盘期间控制器可能已经 dispose。
+    if (!_alive) return;
     final left = _activeCooldown(uin);
     if (left != null) {
       final mins = (left.inSeconds / 60).ceil();
@@ -776,24 +833,53 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   /// 断开并回到未连接（票据保留，下次可 [loginWithToken]）。
   Future<void> disconnect() async {
+    if (_closed) return;
     await _teardown();
+    if (!_alive) return; // 释放期间可能被 shutdown：不再发动作
     await service.close();
+    if (!_alive) return;
     _snap = const Qq8LoginSnapshot(stage: Qq8LoginStage.idle);
+    // service.close() 自己会发 idle 快照；这里显式再推进一次协调器，
+    // 保证「主动断开 = 什么都不想要」（旧后端已在 _teardown 里释放）。
+    _syncBackend();
     _emit();
   }
 
-  /// provider 释放时调用（不抛异常）。
-  Future<void> shutdown() async {
-    try {
-      await _sub?.cancel();
-      await _teardown();
-    } catch (e) {
-      log?.call('warn', '释放协议线资源时出错', e);
+  /// provider 释放时调用（不抛异常、可重复调用）。
+  ///
+  /// 关键在**同步**：先把 `_closed` 置位、把已发布的后端从协调器上摘下来并
+  /// 通知 UI，再 await 取消订阅 / 释放资源。这样 `bootstrap()`、`loginXxx()`
+  /// 任何正在 await 的续体在恢复时第一眼就能看到 `_closed`，不会再发登录包，
+  /// 也不会把结果发布出去。
+  Future<void> shutdown() {
+    final running = _shutdown;
+    if (running != null) return running; // 幂等
+
+    _closed = true;
+    final retired = _coordinator.close();
+
+    Future<void> work() async {
+      try {
+        await _sub?.cancel();
+        _sub = null;
+        final pair = _backend;
+        _backend = null;
+        onBackendChanged?.call(null, null);
+        if (pair != null) await _cleanup.run(pair.uin, pair.release);
+        if (retired != null && !identical(retired, pair)) {
+          onBackendChanged?.call(null, null);
+          await _cleanup.run(retired.uin, retired.release);
+        }
+      } catch (e) {
+        log?.call('warn', '释放协议线资源时出错', e);
+      }
     }
+
+    return _shutdown = work();
   }
 
   Future<void> _run(Future<void> Function() action) async {
-    if (_busy) return;
+    if (_closed || _busy) return;
     _busy = true;
     _emit();
     try {
@@ -803,11 +889,16 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       log?.call('warn', '协议线动作失败', e);
     } finally {
       _busy = false;
+      // await 之后可能已 shutdown：_onSnapshot 自己会拦住，这里不重复判断，
+      // 但要保证不会因为 service.snapshot 抛出而漏掉 _emit。
       _onSnapshot(service.snapshot);
     }
   }
 
   void _onSnapshot(Qq8LoginSnapshot s) {
+    // shutdown 之后，迟到的状态流不得再改状态、建后端或发动作。
+    if (_closed) return;
+    final prevStage = _snap.stage;
     _snap = s;
     // 上线 = 这个账号现在放行了，冷却作废。
     if (s.stage == Qq8LoginStage.online) {
@@ -819,62 +910,156 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
         _isRiskRejection(s.resultType)) {
       unawaited(_recordCooldown(s.uin!, s.resultType!));
     }
-    if (s.stage == Qq8LoginStage.online && _adapter == null) {
-      unawaited(_attach());
+
+    // 「进入 online」这个**跃迁**才代表一次可用会话：
+    // 同号重连时服务会新建一个 Qq8Session（旧会话的票据/心跳都作废），
+    // 所以每次跃迁都要推进世代——否则上一轮还在 bootstrap 的 attach
+    // 会拿旧会话的结论发布，等于把一个已经死掉的会话挂到 UI 上。
+    if (s.stage == Qq8LoginStage.online &&
+        prevStage != Qq8LoginStage.online) {
+      _onlineEpoch++;
     }
+
+    // 目标/会话代的变化全部交给协调器判定（切号、同号重连、断线、退出）。
+    // 它同步给出「要释放谁 / 要启动什么」，异步部分只负责执行。
+    _syncBackend();
     _emit();
   }
 
-  /// 上线后：套适配器 + 建数据层（幂等）。
+  /// 控制器还活着？（`mounted` + 未 shutdown）——所有 await 之后都要重查。
+  bool get _alive => mounted && !_closed;
+
+  /// 目标（账号 / 在线会话代）变了之后，**同步**推进协调器，异步只负责执行。
   ///
-  /// ⚠️ 只看 `_adapter != null` **挡不住并发**：`await store.bootstrap()` 里面会
-  /// 走 `refreshChats() → listChats() → 好友列表 + 群列表`，这几步都是异步的。
-  /// 期间只要 `_onSnapshot` 再被调一次（心跳、QueryHB、任何 `_emit` 都会发状态流），
-  /// `_adapter` 还是 null，就会再进一次 `_attach()`。
+  /// 规则全在 [AttachCoordinator] 里（切号、同号重连、断线保留、永久关闭），
+  /// 这里只做三件事：把快照翻成「意图」、撤销交还的旧资源、按计划启动一轮。
   ///
-  /// 真机 2026-10-25 12:23:06 日志里「好友列表：7/7 人」「群列表：7/7 个群」
-  /// 各打两遍、`协议线已上线` 也两遍，就是两个 `_attach` 并发跑出来的：
-  /// 多出一整轮好友/群/unreadseq 请求，两个 ChatStore 还会抢同一个
-  /// `chats.json` 与 `media_index.json`。
+  /// 同步性是硬要求：切号时必须**在同一同步段里**收回旧号的展示
+  /// （`onBackendChanged(null, null)`），否则 UI 会短暂把旧号的会话挂在
+  /// 新号下面。真正耗时的释放（dispose / flush）排到清理链上异步做。
   ///
-  /// 所以用 [_attaching] 把「正在建」也挡住，而不是只看「建好了没」。
-  Future<void> _attach() async {
-    if (!mounted || _adapter != null || _attaching) return;
-    _attaching = true;
-    try {
-      await _attachInner();
-    } finally {
-      _attaching = false;
+  /// pending bootstrap 切号也一样：协调器的世代随目标变化 +1，旧一轮的结论
+  /// 会被作废，新一轮**不会被旧一轮挡住**（这是 `_attaching` 布尔做不到的）。
+  void _syncBackend() {
+    if (_closed) return;
+    final s = _snap;
+    final rawUin = s.uin;
+    // uin 为 0 / 越界时按「什么都不想要」处理：0 在协议里是「还不知道是谁」，
+    // 也拼不进账号路径（见 account_scope.dart），更不能拿来建 ChatStore。
+    final uin = (rawUin != null && AccountScope.isValidUin(rawUin))
+        ? rawUin
+        : null;
+    final online = uin != null && s.stage == Qq8LoginStage.online;
+    final update = _coordinator.update(
+      uin: uin,
+      epoch: online ? _onlineEpoch : null,
+    );
+
+    final retired = update.retired;
+    if (retired != null) {
+      unawaited(_retire(retired).catchError((Object e) {
+        log?.call('warn', '释放旧后端失败（uin=${retired.uin}）', e);
+      }));
+    }
+    final plan = update.plan;
+    if (plan != null) {
+      unawaited(_attach(plan).catchError((Object e) {
+        log?.call('warn', '建立后端失败（uin=${plan.uin}）', e);
+      }));
     }
   }
 
-  bool _attaching = false;
+  /// 撤销一个已发布的后端：**先清 UI，再排进清理链 await dispose**。
+  ///
+  /// 顺序不能反：`ChatStore.dispose()` 会 flush `chats.json` /
+  /// `media_index.json`，那是 IO；先 await 再清引用的话，这段时间 UI 仍能读到
+  /// 旧号的 store（切号瞬间串号）。同理 store 抛异常也要关 adapter（在
+  /// [_Qq8BackendPair.release] 里 try/finally）。
+  Future<void> _retire(_Qq8BackendPair pair) {
+    if (identical(_backend, pair)) _backend = null;
+    onBackendChanged?.call(null, null);
+    return _cleanup.run(pair.uin, pair.release);
+  }
 
-  Future<void> _attachInner() async {
+  /// 启动一轮 attach：**整段（构建 + bootstrap）都排在该账号的清理链上**。
+  Future<void> _attach(AttachPlan plan) =>
+      _cleanup.run(plan.uin, () => _attachInner(plan));
+
+  /// 在线世代：每次进入 online 跃迁 +1（同号重连 = 新会话 = 新世代）。
+  int _onlineEpoch = 0;
+
+  Future<void> _attachInner(AttachPlan plan) async {
+    if (!_alive) return;
+    final uin = plan.uin;
+
     final adapter = Qq8SessionAdapter(
       service: service,
-      uin: _snap.uin,
+      uin: uin,
       onLog: (level, message, [detail]) => log?.call(level, message, detail),
     );
-    final store = ChatStore(
-      session: adapter,
-      dataDir: dataDir,
-      mediaFetcher: mediaFetcher,
-    );
-    await store.bootstrap();
-    _adapter = adapter;
-    _store = store;
+
+    // 账号数据根：`<dataDir>/accounts/<uin>`。ChatStore 的一切落盘
+    // （chats.json / chats/*.jsonl / media/ / media_index.json）都在这下面，
+    // 所以同 chatId 的两个账号物理上不可能是同一个文件。
+    final AccountScope scope;
+    final ChatStore store;
+    try {
+      scope = AccountScope.of(dataDir, uin);
+      store = ChatStore(
+        session: adapter,
+        dataDir: scope.root,
+        mediaFetcher: mediaFetcher,
+      );
+    } on Object {
+      await adapter.dispose();
+      rethrow;
+    }
+
+    try {
+      // bootstrap 失败也要把这一对释放掉：否则 adapter 的事件流还开着、
+      // 半建的 store 还握着同一个数据根，下一代建起来就成两个写者。
+      await store.bootstrap();
+    } on Object catch (e) {
+      log?.call('warn', '账号数据层启动失败（uin=$uin），释放半成品', e);
+      _coordinator.fail(plan);
+      await _Qq8BackendPair(uin: uin, adapter: adapter, store: store).release();
+      return;
+    }
+
+    // ---- 发布前的检查：这一轮还算不算数（世代未变且未关闭）----
+    final pair = _Qq8BackendPair(uin: uin, adapter: adapter, store: store);
+    if (_closed || !_coordinator.complete(plan, pair)) {
+      log?.call('info', '过时的后端结果丢弃（uin=$uin gen=${plan.gen} '
+          'epoch=${plan.epoch}）');
+      await pair.release();
+      return;
+    }
+
+    _backend = pair;
+    // bootstrap 期间可能已经被 shutdown：不发布、不发事件。
+    if (!_alive) {
+      _backend = null;
+      await pair.release();
+      return;
+    }
     onBackendChanged?.call(adapter, store);
-    log?.call('info', '协议线已上线 uin=${_snap.uin}，会话数=${store.chats.length}');
+    log?.call('info', '协议线已上线 uin=$uin 数据根=${scope.root.path} '
+        '会话数=${store.chats.length}');
     _emit();
   }
 
+  /// 拆掉已发布的后端（主动断开 / shutdown）。
+  ///
+  /// 先同步清引用 + 通知 UI，再把释放排进该账号的清理链。
   Future<void> _teardown() async {
-    await _store?.dispose();
-    await _adapter?.dispose();
-    _store = null;
-    _adapter = null;
+    final pair = _backend;
+    _backend = null;
     onBackendChanged?.call(null, null);
+    if (pair != null) {
+      await _cleanup.run(pair.uin, pair.release);
+    }
+    // 同号重连时**保留**已发布资源（离线仍可看记录）；这里只兜住关闭路径：
+    // 协调器交还的任何资源都在 _syncBackend / shutdown 里释放。
   }
 
   void _emit() {
