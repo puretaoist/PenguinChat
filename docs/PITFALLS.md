@@ -3854,3 +3854,18 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 
 **验证口径**：`flutter test test/` 全绿（165 用例）；金样 `test/goldens/chat_pane{,_light}.png` 已 `--update-goldens` 重出。注意金样里的中文因缺字体渲染成方框，只能看几何（时间是否贴在最后一行）。
 
+## C72 气泡宽度被 Align 撑满（2026-10-30）
+
+**症状**：气泡永远整条拉满可用宽度，短消息右边一大片同色空白 —— 而 TG/官方客户端的气泡宽度是随正文收缩的（用户 m32543 原话：「气泡长度不对吧，原版气泡可以随信息文字长度调节」）。
+
+**根因**：`lib/ui/widgets/message_bubble.dart` 里所有 `Align(alignment: Alignment.centerLeft, child: ...)` 都**没给 widthFactor**。Flutter 的 `Align` 在 widthFactor 为 null 时会**撑满父约束**（它只对齐 child，自己拿走全部宽度），于是 Column 的宽度 = 最大约束 = 气泡满宽；再叠加 Column 的 `crossAxisAlignment: CrossAxisAlignment.end`，矮小的子项（发送者名、正文）就被顶到右边。
+
+**三条一起改才有效**（少一条都还是满宽）：
+1. 每个 Align 都加 `widthFactor: 1`（hug child）；
+2. 发送者名 / 引用条 / 正文 / 「已撤回·内容已保留」这四类子项**必须放进同一个 `crossAxisAlignment: start` 的内层 Column** —— 谁最宽谁定气泡宽度，其余子项自然左对齐；以前发送者名单独挂在最外层，它那个 Align 一撑就把整条撑满了；
+3. 时间戳如果仍要独立一行（`!_inlineMeta` 的情况），就放在**内层 Column 之外**，靠外层的 `CrossAxisAlignment.end` 贴右 —— 这样它不会参与定宽。
+
+**顺带**：气泡最大宽度仍是 `LayoutBuilder` 里的 `屏宽 × 0.78`（`ConstrainedBox(maxWidth:)`），长消息照旧换行；图片/卡片这类块级段自己带固定宽度（240dp），气泡跟着它变宽。
+
+**验证**：金样重出后 crop 出来逐条看几何（中文缺字体是方框，只能看边缘）。判据：气泡右边缘紧贴最后一行时间戳之后，而不是贴到列表右边界。
+

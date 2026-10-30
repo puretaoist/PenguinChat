@@ -106,67 +106,66 @@ class MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (!isOut && showSenderName && message.senderName.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    message.senderName,
-                    style: TextStyle(
-                      color: TelegramColors.accent,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            if (message.replyPreview != null && message.replyPreview!.isNotEmpty)
-              _replyQuote(isOut),
-            if (message.isRecalled && !message.revealed)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      message.displayText,
-                      style: TextStyle(
-                        color: isOut
-                            ? TelegramColors.bubbleOutTime
-                            : TelegramColors.textSecondary,
-                        fontStyle: FontStyle.italic,
-                        fontSize: TelegramMetrics.fontBody,
-                        height: 1.35,
-                      ),
-                    ),
-                    if (onReveal != null) ...[
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        key: const ValueKey('msg-reveal'),
-                        onTap: onReveal,
-                        child: Text(
-                          '查看',
-                          style: TextStyle(
-                            color: isOut
-                                ? TelegramColors.bubbleOutText
-                                : TelegramColors.accent,
-                            fontSize: TelegramMetrics.fontTimestamp + 1,
-                            fontWeight: FontWeight.w600,
-                          ),
+            // 气泡宽度必须由「最宽的子项」决定（TG 的气泡随正文收缩）。
+            // 关键：Align 默认撑满父宽，所以这层给 widthFactor: 1 让它 hug；
+            // 发送者名/引用/正文/撤回行全部塞进同一个 start 对齐的内层 Column，
+            // 这样谁最宽谁定宽度，其余子项都跟着 hug，不会被顶到右边。
+            Align(
+              alignment: Alignment.centerLeft,
+              widthFactor: 1,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!isOut && showSenderName && message.senderName.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        message.senderName,
+                        style: TextStyle(
+                          color: TelegramColors.accent,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ],
-                  ],
-                ),
-              )
-            else
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+                    ),
+                  if (message.replyPreview != null && message.replyPreview!.isNotEmpty)
+                    _replyQuote(isOut),
+                  if (message.isRecalled && !message.revealed)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          message.displayText,
+                          style: TextStyle(
+                            color: isOut
+                                ? TelegramColors.bubbleOutTime
+                                : TelegramColors.textSecondary,
+                            fontStyle: FontStyle.italic,
+                            fontSize: TelegramMetrics.fontBody,
+                            height: 1.35,
+                          ),
+                        ),
+                        if (onReveal != null) ...[
+                          const SizedBox(width: 6),
+                          GestureDetector(
+                            key: const ValueKey('msg-reveal'),
+                            onTap: onReveal,
+                            child: Text(
+                              '查看',
+                              style: TextStyle(
+                                color: isOut
+                                    ? TelegramColors.bubbleOutText
+                                    : TelegramColors.accent,
+                                fontSize: TelegramMetrics.fontTimestamp + 1,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    )
+                  else ...[
                     // 正文交给 MessageContent：文本/表情/@ 行内排，图片单独成块。
                     // 揭示后的撤回消息也走这里——反撤回要能看到**原样**的内容，
                     // 包括图片；"已撤回 · 内容已保留"那行注释负责说明它是被撤回的。
@@ -189,8 +188,9 @@ class MessageBubble extends StatelessWidget {
                         ),
                       ),
                   ],
-                ),
+                ],
               ),
+            ),
             // 时间/状态能贴正文就贴（TG 的排法，见 [_inlineMeta]），贴不了
             // 才单独占一行——否则每个气泡都白多出一行高度，短消息看着特别空。
             if (!_inlineMeta) ...[const SizedBox(height: 2), _metaRow(isOut)],
