@@ -3878,4 +3878,18 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 3. **未读分隔条**（`UnreadDivider`）：整格高 **40**、色带高 **27 距顶 7**、文案 **14 粗体**居中、右侧下箭头 **18 号右边距 10**。出处 `ui/Cells/ChatUnreadCell.java:73`（`makeMeasureSpec(dp(40), EXACTLY)`）、`:39`（`createFrame(MATCH_PARENT, 27, TOP, 0, 7, 0, 0)`）、`:49-52`（`setTextSize(DIP, 14)` + bold + 左右 32 边距）、`:41-45`（`ic_ab_new`，右侧 margin 10）。色带来自 `newmsg_divider`（一张 9-patch 纯色图，靠 `PorterDuff.MULTIPLY` 染色）⇒ 用 `accent.withValues(alpha:0.18)` + 圆角 4 代替即可。
 4. **日期胶囊字号** 12→**14**：TG 日期与服务消息共用 `chat_actionTextPaint`，`ui/ActionBar/Theme.java:8414` 是 `setTextSize(dp(max(16, SharedConfig.fontSize) - 2))` = 14。
 
-**验证**：`flutter test test/` 165 全过；金样重出（气泡更窄、未读条更高）；`dart analyze lib` 无 issue；44 个 selftest 2523 项全过。**金样不含头部/会话列表**，那两处只能靠 home_page 的 widget 测试兜住（不能视为视觉已验收）。
+**验证**：`flutter test test/` 165 全过；金样重出（气泡更窄、未读条更高）；`dart analyze lib` 无 issue；44 个 selftest 2523 项全过。**金样不含聊天页头部**（会话列表已在 C74 补上 `chat_list_panel.png`），头部只能靠 home_page 的 widget 测试兜住（不能视为视觉已验收）。
+
+## C74 搜索页与会话列表的 TG 对齐 + 补会话侧栏金样（2026-10-30）
+
+三处改动，全部有行号出处（`telegram-src/TelegramAndroid/TMessagesProj/src/main/java/org/telegram/`）：
+
+1. **会话列表行间分隔线**（`lib/ui/widgets/chat_list_panel.dart` 的 `ListView.builder`）：TG `Cells/DialogCell` 的 `needDivider` 画法——1px、从文字起点 `messagePaddingStart = 72`（= 11 + 52 + 9）画到右缘、**最后一行不画**。实现放在 `itemBuilder` 里 `Column(mainAxisSize.min, [row, if (i != total-1) Container(height:1, margin: EdgeInsets.only(left:72), color: divider)])`。归档入口行也是 DialogCell，所以它下面同样有线。
+2. **搜索页整体重做**（`lib/ui/pages/search_page.dart`）：
+   - 顶部不再是 `AppBar` 标题，而是**胶囊搜索框**（高 38、`bgHover` 底、`inputRadius` 圆角、放大镜 18、内部清除按钮 `Icons.cancel`）+ 右侧 **「取消」纯文字按钮**（`TextButton`，accent 色，16dp）。
+   - 结果行改回 `Cells/DialogCell.java:170-172` 的几何：`minHeight 70`、头像 52、左右 padding 11、文字从 72 起、标题 `fontTitle`(17) w500、摘要 `fontBody`(16)，行间同一条 72 起的 1px 分隔线；**原来的 `ListTile(dense: true)` 全部删掉**（dense ListTile 行高约 48、字号 14.5/12.5，和 TG 差两档）。
+   - 分组标题改 `Cells/GraySectionCell`：高 **32**（`layerHeight`）、底色 `key_graySection`（这里用 `bgHover`）、文字 **14 粗体** `textMuted`、左右 padding **16**（`GraySectionCell.java:40/50/57`）。
+   - 消息结果行：标题=消息正文（空则「（无文字）」）、副标题=`会话名 · 时间`。
+3. **新增金样测试** `test/chat_list_panel_test.dart`（8 个用例 + `test/goldens/chat_list_panel.png`）：补上此前完全没覆盖的会话侧栏外观/几何——标题 17 / 摘要 16 / 时间 12、未读徽章 22dp 高 & minWidth 22 & 字号 12 w700、未读行标题 w700 & 已读行 w500、分隔线数量（4 行 ⇒ 3 条、最后一行无线）、归档会话不进主列表、草稿前缀、选中行文字翻白。全部用 `tester.widget<Text>(…).style` 断言，不靠肉眼。
+
+**验证**：`flutter test test/` → **173 全过**（原 165 + 新增 8）；金样 `chat_pane{,_light}.png`、`search_page.png`、`chat_list_panel.png` 全部重出；`dart analyze lib` 无 issue。

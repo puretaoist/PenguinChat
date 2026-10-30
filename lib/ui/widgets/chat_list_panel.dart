@@ -81,11 +81,27 @@ class ChatListPanel extends StatelessWidget {
                       // 第一行是"已归档"入口（没有归档会话时不占位置）
                       itemCount: visible.length + (archived.isEmpty ? 0 : 1),
                       itemBuilder: (_, i) {
-                        if (archived.isNotEmpty && i == 0) {
-                          return _archivedRow(archived);
-                        }
-                        return _chatTile(
-                          visible[i - (archived.isEmpty ? 0 : 1)],
+                        final total =
+                            visible.length + (archived.isEmpty ? 0 : 1);
+                        final row = (archived.isNotEmpty && i == 0)
+                            ? _archivedRow(archived)
+                            : _chatTile(
+                                visible[i - (archived.isEmpty ? 0 : 1)],
+                              );
+                        // 行间 1px 分隔线：TG `Cells/DialogCell.java` 的
+                        // needDivider 画法——从文字起点（messagePaddingStart
+                        // = 72 = 11 + 52 + 9）画到右缘，最后一行不画。
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            row,
+                            if (i != total - 1)
+                              Container(
+                                height: 1,
+                                margin: const EdgeInsets.only(left: 72),
+                                color: TelegramColors.divider,
+                              ),
+                          ],
                         );
                       },
                     ),
