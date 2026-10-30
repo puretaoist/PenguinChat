@@ -603,7 +603,10 @@ class Qq8LoginService {
   /// 用已存的票据续期登录（不需要口令）。
   Future<void> loginWithToken({required int uin}) async {
     final token = await tokenStore.load(uin);
-    if (token == null || !token.usable) {
+    // 闸门只看「有没有任何一条免密材料」：D2 链（子命令 11）或 A1 对
+    // （子命令 15）。两者都没有才是真的没料——这时才报错，具体走哪条由
+    // 下面的 planner 决定（材料不足的话术也由 planner 的 Stop 分支负责）。
+    if (token == null || !token.recoveryUsable) {
       _emit(const Qq8LoginSnapshot(
         stage: Qq8LoginStage.failed,
         error: '没有可用的票据（先做一次口令登录）',
@@ -659,15 +662,24 @@ class Qq8LoginService {
       case Qq8RecoveryMaterial.d2Key:
         // 已接线：`_login` 里 tgtgt = MD5(token.d2key)（见 :666）。
         break;
-      case Qq8RecoveryMaterial.a2Key:
       case Qq8RecoveryMaterial.a1NoPicSig:
+        // 已接线：子命令 15（`wtlogin.exchange_emp`）直接发 A1 + noPicSig。
+        // body 形态依据 z.java 的 `tlv_t106.set_data(bArr2, len)` 与
+        // `tlv_t16aVar.get_tlv_16a(bArr3)`（原样塞料，不再自己派生）。
+        // **live 未验证**（没有真机证据），失败就按现有失败分支收尾。
+        // 不降级成 d2Key、更不降级成密码。
+        await _login(
+          uin: uin,
+          passwordMd5: null,
+          a1: token.a1,
+          noPicSig: token.noPicSig,
+        );
+        return;
+      case Qq8RecoveryMaterial.a2Key:
       case Qq8RecoveryMaterial.a2Only:
-        // ⚠️ **未接线，live = unavailable**。
+        // 仍未接线，live = unavailable：
         // - a2Key：需要把 a2Key 塞进 tgtgt 而不是 MD5(d2key)，`Qq8Device.withTgtgt`
         //   的语义与官方 `WtloginHelper.java:699` 的显式 key 路径尚未逐字节核对；
-        // - a1NoPicSig：组包在 kernel 侧已有（`lib/kernel/wlogin8/qq8_login.dart:591
-        //   Qq8LoginBody.buildA1Exchange`，子命令 15），但**未逐字节核对、也未接线**；
-        //   这条路径会自增服务端 A1 version，没有真机证据前不接；
         // - a2Only：无 key 时 tgtgt 该填什么（空 / 全零）官方未在证据里给死。
         // 因此这里**明确停**，绝不降级成 d2key 或密码，也不假装已实现。
         _log.w('免密恢复分支 $material 未接线（live=unavailable），'
@@ -687,15 +699,21 @@ class Qq8LoginService {
     required int uin,
     required Uint8List? passwordMd5,
     Qq8TokenData? token,
+    // A1 对那条恢复分支（子命令 15）：给了 [a1] 就发 exchange_emp 包，
+    // 不再走 token/password 两条。
+    Uint8List? a1,
+    Uint8List? noPicSig,
     bool smsLogin = false,
   }) async {
-    // 闸门：口令链（token == null，含手机号验证登录）没有官方 native 真签时默认禁止。
-    // 理由见 lib/kernel/safety/login_policy.dart 与 docs/RESEARCH-code45.md。
-    // 票据续期（token != null）不受影响。
+    // 闸门：口令链（token == null 且没有 A1，含手机号验证登录）没有官方 native
+    // 真签时默认禁止。理由见 lib/kernel/safety/login_policy.dart 与
+    // docs/RESEARCH-code45.md。
+    // 票据续期（token != null）与 A1 对那条（a1 != null，子命令 15）都不是口令链，
+    // 不受这条闸门影响。
     // 组包用的是纯 Dart 真签（`_tlvCtx` 恒为 Qq8T544Mode.oicq），如实上报给闸门；
     // 只有退回官方降级体（4 个零字节）时闸门才会重新拦下口令链。
     Qq8LoginPolicy.deviceSignatureAvailable = true;
-    if (token == null && Qq8LoginPolicy.passwordLoginBlocked) {
+    if (token == null && a1 == null && Qq8LoginPolicy.passwordLoginBlocked) {
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.failed,
         uin: uin,
@@ -704,7 +722,7 @@ class Qq8LoginService {
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
-    _loginIsRenewal = token != null;
+    _loginIsRenewal = token != null || a1 != null;
     try {
       // 一次登录流程内的固定材料：设备按 uin 派生（同一账号恒定同一台设备），
       // ECDH / 会话标识 / 随机密钥都只生成一次，验证分支复用同一套。
@@ -717,6 +735,18 @@ class Qq8LoginService {
         if (token != null) {
           // token 路径的约定：tgtgt = MD5(d2key)（没有密码就派生不出新的）
           _device = _device!.withTgtgt(md5Bytes(token.d2key));
+        } else if (a1 != null) {
+          // A1 路径的约定：tgtgt 取 A1 的尾部 16 字节。响应 0x119 票据块就是
+          // 用这个 tgtgt 加密的，`Qq8SigBundle.parse(t119, _device!.tgtgt)`
+          // 不换成它必然解不开（A1 里尾部就是 tgtgt，这也是给 0x106 去尾
+          // 16B 的依据）。A1 短于 16B 时不猜、不崩：记一条 w 日志后照常发，
+          // 由服务端裁决。
+          if (a1.length >= 16) {
+            _device = _device!.withTgtgt(a1.sublist(a1.length - 16));
+          } else {
+            _log.w('A1 只有 ${a1.length}B（不足 16B，取不出尾部 tgtgt），'
+                '按服务端裁决照常发包');
+          }
         }
         _ecdh = (ecdhBuilder ??
             () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
@@ -736,7 +766,17 @@ class Qq8LoginService {
       // QIMEI：优先用手工/身份文件注入的值；没有才去灯塔取号（只取一次）。
       // 取号失败不阻断登录——官方取不到 0x545 就整条不发（`k.java` case 1349）。
       final effectiveQimei = await _resolveQimei();
-      final body = token == null
+      final body = a1 != null
+          // 子命令 15：0x106 塞 A1 密文（0x119 里的 0x106 是 en_A1），0x16A 塞
+          // noPicSig，两者都是原样字节（`request/z.java` 的 set_data / get_tlv_16a）。
+          // A1 带得比 16B 长时去掉尾部 16B（tgtgt）：官方 exchange_emp 原样塞密文，
+          // 解不开时用这个回退形态。依据是 z.java，**live 未验证**。
+          ? Qq8LoginBody.buildA1Exchange(
+              ctx,
+              a1: a1.length > 16 ? a1.sublist(0, a1.length - 16) : a1,
+              noPicSig: noPicSig ?? Uint8List(0),
+            )
+          : token == null
           ? Qq8LoginBody.build(
               ctx,
               Qq8SubCmd.password,
@@ -3284,13 +3324,22 @@ class Qq8LoginService {
       sig: sigInfo,
       seqId: _seq,
     );
-    final cmd = token == null ? qq8LoginCmd : qq8ExchangeEmpCmd;
     // **发出什么**也要记：原先只记响应，发出去的 TLV 一直靠推断。真机上
     // "档案换了、实际清单变没变""某项是不是被 guard 滤掉了"都只能靠猜
     // （2026-09-21 的教训：9.3.60 有没有真发 0x553 无从确认）。
     final peek = Qq8LoginBody.peekBody(body);
     _log.i('发登录包 uin=$uin subCmd=${peek.$1} TLV=${peek.$2.length}项 '
         '${peek.$2.map((t) => '0x${t.toRadixString(16)}').join(',')}');
+    // 命令字按 **body 的实际子命令**定，不按有没有 token 猜：子命令 15
+    // （A1 对）调进来时 token 是 null，但官方命令字仍是
+    // `wtlogin.exchange_emp`（`request/z.java` 构造器 `this.v`），发成
+    // `wtlogin.login` 服务端必拒。token 链（11）与口令链（9）行为不变。
+    final subCmd = peek.$1;
+    final cmd = qq8LoginCmdForSubCmd(subCmd);
+    // 诊断标签要能区分 A1 包，别把它记成口令登录包。
+    final diagTag = subCmd == Qq8SubCmd.a1Exchange
+        ? 'a1'
+        : (token == null ? 'login' : 'token');
     final pkt = Qq8Sso.buildLoginPacket(
       ssoCtx,
       cmd,
@@ -3304,7 +3353,7 @@ class Qq8LoginService {
     // 等待方只能超时，服务端说的话一个字都读不到）。登录包的应答被拒要
     // 立刻按"服务端拒绝"报错，而不是拿空 payload 去解析出一句看不懂的话。
     if (sso.retcode != 0) {
-      onDiagnostic?.call(token == null ? 'login' : 'token', frame, null);
+      onDiagnostic?.call(diagTag, frame, null);
       throw Qq8ServerRetcodeException(
         retcode: sso.retcode,
         seq: sso.seq,
@@ -3315,10 +3364,10 @@ class Qq8LoginService {
     try {
       r = Qq8LoginResponse.parse(sso.payload, ecdh.shareKey);
     } on Object {
-      onDiagnostic?.call(token == null ? 'login' : 'token', frame, null);
+      onDiagnostic?.call(diagTag, frame, null);
       rethrow;
     }
-    onDiagnostic?.call(token == null ? 'login' : 'token', frame, r);
+    onDiagnostic?.call(diagTag, frame, r);
     _log.i('登录响应 uin=$uin type=${r.type} '
         '${r.tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(',')}');
     await _handleResponse(uin, r, smsStep: smsStep);
@@ -3974,8 +4023,9 @@ class Qq8LoginService {
         // 所以每次都重建，而不是只在循环开始时重建一次。
         if (attempt > 1) await _teardownConnection();
         final token = await tokenStore.load(uin);
-        if (token == null || !token.usable) {
-          _log.w('断线恢复：没有可用票据，停在断线状态等手动重登');
+        // 判据与 loginWithToken 的闸门一致：D2 链或 A1 对任一条在就不算"没料"。
+        if (token == null || !token.recoveryUsable) {
+          _log.w('断线恢复：没有可用的免密材料（D2/A1 都缺），停在断线状态等手动重登');
           return;
         }
         _log.i('断线恢复：第 $attempt/$reconnectAttempts 次（票据续期）');

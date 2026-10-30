@@ -68,6 +68,19 @@ const String qq8ExchangeEmpCmd = 'wtlogin.exchange_emp';
 /// 扫码取票的命令字（code2d 取码/轮询走它，见 `qq8_qrcode.dart`）。
 const String qq8TransEmpCmd = 'wtlogin.trans_emp';
 
+/// 按登录 body 的**实际子命令**选登录层命令字。
+///
+/// - 子命令 11（token 续期）：官方 `request/m.java` 的 token 分支硬编码
+///   `wtlogin.exchange_emp`；
+/// - 子命令 15（A1 对免密恢复）：官方 `request/z.java` 构造器
+///   `this.v = "wtlogin.exchange_emp"`；
+/// - 其余（9 口令、2 滑块、7/8 短信、20 设备锁）走 `wtlogin.login`。
+///
+/// 抽成纯函数是为了能在离线测试里钉死：包体最终被 TEA 加密，明文里
+/// 搜不到命令字，只能靠「同一个函数」保证行为一致。
+String qq8LoginCmdForSubCmd(int subCmd) =>
+    (subCmd == 11 || subCmd == 15) ? qq8ExchangeEmpCmd : qq8LoginCmd;
+
 /// 登录信封的传输类型。
 abstract final class Qq8LoginType {
   /// 心跳。

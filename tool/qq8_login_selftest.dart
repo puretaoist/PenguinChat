@@ -456,6 +456,95 @@ Future<void> main() async {
     );
   }
 
+  // -- 2c2. A1 + noPicSig（子命令 15，wtlogin.exchange_emp）--------------
+  //
+  // 依据 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java：
+  // 类 z 构造器 this.t = 2064; this.u = 15; this.v = "wtlogin.exchange_emp"；
+  // 组包时 tlv_t106Var.set_data(bArr2, len) ⇒ 0x106 的 body 就是传入的 A1 密文
+  // 原样，tlv_t16aVar.get_tlv_16a(bArr3) ⇒ 0x16A 的 body 就是 noPicSig。
+  // 注意：截掉尾部 16B（tgtgt）是**调用方**（登录服务）的事，kernel 只原样塞料。
+  stdout.writeln('\n【2c2】A1 + noPicSig 免密登录 body（子命令 15）');
+  {
+    final ctx = _tlvCtx(qq8ProfileQQ8950);
+    final a1 = _fill(64, 0x5a);
+    final noPic = _fill(80, 0x6b);
+    final body = Qq8LoginBody.buildA1Exchange(ctx, a1: a1, noPicSig: noPic);
+    final tlvs = qq8ReadTlv(body, offset: 4);
+
+    check(
+      'A1：前 2 字节是子命令 15',
+      (body[0] << 8 | body[1]) == 15,
+      (body[0] << 8 | body[1]).toString(),
+    );
+    check(
+      'A1：常量 Qq8SubCmd.a1Exchange == 15（官方 z.java 构造器 this.u=15）',
+      Qq8SubCmd.a1Exchange == 15,
+      Qq8SubCmd.a1Exchange.toString(),
+    );
+    check(
+      'A1：0x106 = a1 原样（截尾 16B 由调用方做）',
+      tlvs[0x106] != null && tlvs[0x106]!.join(',') == a1.join(','),
+      'len=${tlvs[0x106]!.length}',
+    );
+    check(
+      'A1：0x16A = noPicSig 原样',
+      tlvs[0x16A] != null && tlvs[0x16A]!.join(',') == noPic.join(','),
+      'len=${tlvs[0x16A]!.length}',
+    );
+    check(
+      'A1：实发顺序是 Qq8A1ExchangeTlvOrder 的子序列（不重排、不插队）',
+      tlvs.keys.join(',') ==
+          Qq8A1ExchangeTlvOrder.where(tlvs.containsKey).join(','),
+      tlvs.keys.map((k) => '0x${k.toRadixString(16)}').join(','),
+    );
+    check(
+      'A1：命令字是 wtlogin.exchange_emp（与 token 链同一个后端命令）',
+      qq8ExchangeEmpCmd == 'wtlogin.exchange_emp',
+      qq8ExchangeEmpCmd,
+    );
+    // 命令字选择抽成了纯函数 qq8LoginCmdForSubCmd（包体被 TEA 加密，发出去的
+    // 明文里搜不到命令字，只能靠这个函数钉死行为）。
+    check(
+      '命令字映射：子命令 15（A1 对）→ wtlogin.exchange_emp',
+      qq8LoginCmdForSubCmd(15) == 'wtlogin.exchange_emp',
+      qq8LoginCmdForSubCmd(15),
+    );
+    check(
+      '命令字映射：子命令 11（token 续期）→ wtlogin.exchange_emp',
+      qq8LoginCmdForSubCmd(11) == 'wtlogin.exchange_emp',
+      qq8LoginCmdForSubCmd(11),
+    );
+    check(
+      '命令字映射：子命令 9（口令）→ wtlogin.login',
+      qq8LoginCmdForSubCmd(9) == 'wtlogin.login',
+      qq8LoginCmdForSubCmd(9),
+    );
+    check(
+      '命令字映射：子命令 2（滑块）/7、8（短信）→ wtlogin.login',
+      qq8LoginCmdForSubCmd(2) == 'wtlogin.login' &&
+          qq8LoginCmdForSubCmd(7) == 'wtlogin.login' &&
+          qq8LoginCmdForSubCmd(8) == 'wtlogin.login',
+      '${qq8LoginCmdForSubCmd(2)}/${qq8LoginCmdForSubCmd(7)}/${qq8LoginCmdForSubCmd(8)}',
+    );
+
+    // 空料必须拒发（官方 z.java 的 bArrC/bArrD 为空直接返回 -1014）
+    var threw = false;
+    try {
+      Qq8LoginBody.buildA1Exchange(ctx, a1: Uint8List(0), noPicSig: noPic);
+    } on Qq8LoginException {
+      threw = true;
+    }
+    check('A1：空 A1 抛 Qq8LoginException（官方同样拒发）', threw, '');
+
+    var threw2 = false;
+    try {
+      Qq8LoginBody.buildA1Exchange(ctx, a1: a1, noPicSig: Uint8List(0));
+    } on Qq8LoginException {
+      threw2 = true;
+    }
+    check('A1：空 noPicSig 抛 Qq8LoginException', threw2, '');
+  }
+
   // -- 2d. 滑动验证码提交（子命令 2）------------------------------------
   stdout.writeln('\n【2d】滑动验证码提交 body');
   {

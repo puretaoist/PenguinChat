@@ -31,6 +31,7 @@ import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_push.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
 
 int _pass = 0;
@@ -960,6 +961,68 @@ Future<void> main() async {
         svc.snapshot.stage == Qq8LoginStage.failed &&
             (svc.snapshot.error ?? '').contains('票据'),
         '${svc.snapshot.stage.name} / ${svc.snapshot.error}');
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('4f. P5：A1 对（子命令 15）真能发出去，tgtgt 取自 A1 尾部 16B');
+  {
+    // 依据 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java：
+    // 0x106 原样塞 A1 密文；0x119 票据块用 A1 尾部 16B（tgtgt）加密，
+    // 所以服务必须把它注入设备，否则 0x119 解不开。
+    final a1Tail = Uint8List.fromList(List<int>.filled(16, 0xc7));
+    final a1 = Uint8List.fromList(<int>[...List<int>.filled(48, 0x5a), ...a1Tail]);
+    final noPic = Uint8List.fromList(List<int>.filled(40, 0x6b));
+    final scripted = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: a1Tail),
+      _registerFrame(1),
+    ]);
+    final store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: Uint8List(0),
+        d2: Uint8List(0),
+        d2key: Uint8List(0),
+        sigKey: Uint8List(0),
+        ticketKey: Uint8List(0),
+        srmToken: Uint8List(0),
+        a1: a1,
+        noPicSig: noPic,
+      );
+    final diagTags = <String>[];
+    final svc = Qq8LoginService(
+      tokenStore: store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => scripted,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    // onDiagnostic 是可写字段，不是构造参数。
+    svc.onDiagnostic = (tag, frame, parsed) => diagTags.add(tag);
+    await svc.loginWithToken(uin: 10001);
+
+    check('A1：真的发了登录包（不是空转）', scripted.sent.isNotEmpty,
+        scripted.sent.length.toString());
+    // 命令字在 **SSO 信封内**，而 SSO 信封又被 ECDH 密钥 TEA 加密：发出的
+    // 明文里根本搜不到命令字字面量（2026-10-30 教训，字符搜索法在这里不成立）。
+    // 改成两条等价的离线证据：
+    // ① 服务打的诊断标签必须是 a1（证明走的是 A1 分支，不是口令/token 分支）；
+    // ② 命令字选择用纯函数 qq8LoginCmdForSubCmd 钉死（kernel 自测有穷举）。
+    check('A1：诊断标签是 a1（不是 login/token，说明走的就是 A1 分支）',
+        diagTags.contains('a1') && !diagTags.contains('login'),
+        diagTags.join(','));
+    check('A1：子命令 15 的命令字映射为 wtlogin.exchange_emp',
+        qq8LoginCmdForSubCmd(Qq8SubCmd.a1Exchange) == 'wtlogin.exchange_emp',
+        qq8LoginCmdForSubCmd(Qq8SubCmd.a1Exchange));
+    check('A1：尾部 tgtgt 解开了 0x119，登录后在线',
+        svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+    check('A1：上线后新票已落盘（0x143 → d2 非空）',
+        store.data != null && store.data!.d2.isNotEmpty,
+        '');
     await svc.close();
   }
 

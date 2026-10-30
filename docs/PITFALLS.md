@@ -4008,3 +4008,26 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 - 用 TS 数组拼 Dart 源码时，**双引号字符串里不能再出现未转义的双引号**（报 `Expected ',', got 'ident'`）；Dart 注释里的英文引号一律换「」。
 
 **验收**：`tool/recovery_planner_selftest.dart` 45 项（顺序常量 / 两种 Stop 及优先级 / 逐级降级 / d2 空但 d2key 非空不算可用 / 纯函数性 / 单飞三个并发断言 / 有界 3 组含抛异常吞掉 / 票据新字段 JSON 往返与旧文件兼容与脏值）；`tool/qq8_login_service_selftest.dart` 新增 4e 段两组：**d2Key 路径真的发一个包**、**材料不足一个包都不发且不退回密码**。
+
+## C82 A1 免密分支：从『只记录』接到真发包，命令字必须按子命令选（2026-10-30，P5）
+
+**做了什么**：P4 遗留的 `a1NoPicSig` 分支只打日志不联网，P5 把它接到真发包。
+- `lib/client_api/qq8_token_store.dart`：新增 `bool get hasA1Pair => a1.isNotEmpty && (noPicSig?.isNotEmpty ?? false);` 与 `bool get recoveryUsable => usable || hasA1Pair;`。**`usable` 一字未改**（仍是 `d2.isNotEmpty && d2key.isNotEmpty`），因为 UI/自动登录的『有没有票』语义靠它。
+- `lib/client_api/qq8_login_service.dart`：`loginWithToken` 闸门改 `if (token == null || !token.recoveryUsable)`；planner 的 `a1NoPicSig` 分支改成 `await _login(uin: uin, passwordMd5: null, a1: token.a1, noPicSig: token.noPicSig)`（`a2Key/a2Only` 仍明确停 + `live=unavailable`）；`_login` 增 `Uint8List? a1, Uint8List? noPicSig`，body 三分支（A1 / token / 口令），`_loginIsRenewal = token != null || a1 != null`。
+- 官方依据（`analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java`）：类 `z` 构造器 `this.t=2064; this.u=15; this.v="wtlogin.exchange_emp"`；`tlv_t106Var.set_data(bArr2, len)` ⇒ 0x106 body 就是传入 A1 密文原样（截尾 16B 是调用方的事）；`tlv_t16aVar.get_tlv_16a(bArr3)` ⇒ 0x16A 就是 noPicSig；空料直接 -1014 拒发。
+
+**三条必修坑（都在第一版里真实存在，靠审查抓出来的）**：
+1. **命令字不能按「有没有 token」猜**。原写法 `token == null ? qq8LoginCmd : qq8ExchangeEmpCmd` 在 A1 分支（token 为 null）会发 `wtlogin.login`，服务端必拒。改为按 **body 实际子命令**：11（token）/15（A1）→ `wtlogin.exchange_emp`，其余 → `wtlogin.login`。已抽成纯函数 `String qq8LoginCmdForSubCmd(int subCmd)`（`lib/kernel/wlogin8/qq8_sso.dart`，紧跟 `qq8TransEmpCmd`）。
+2. **tgtgt 必须取自 A1 尾部 16B**（`en_A1` 的最后 16 字节）。0x119 票据块用它加密；不注入则服务端解不开 0x119。长度 <16B 时打 w 日志照发（服务端裁决），不要本地拒发。
+3. **口令链闸门要放行 A1**：`Qq8LoginPolicy.passwordLoginBlocked` 的条件加 `&& a1 == null`，否则 A1 会被当成「密码登录」拦掉。
+
+**离线无法断言命令字的字面量（重要方法教训）**：登录包 = OICQ 信封（明文头：长度/8001/0x810/uin/加密类型）内含 **TEA(SSO 信封, ecdh.shareKey)**；命令字 `cmd` 在 SSO 信封里 ⇒ **发出的明文里搜不到 "wtlogin.exchange_emp"**。第一版测试用 `String.fromCharCodes(sent.first).contains('wtlogin.exchange_emp')` 必然失败——这不是产品错，是断言方式错。正解是两条等价证据：①`onDiagnostic` 打出的 `tag=='a1'`（证明走的是 A1 分支而非口令链）；②纯函数 `qq8LoginCmdForSubCmd` 的穷举断言（9/2/7/8→login，11/15→exchange_emp）。顺带一提，`sent.first` 的 0x119 能被 A1 尾部 16B 解开本身就是「tgtgt 接线正确」的强证据（脚本传输用该 key 造成功回包，登录后确实 online）。
+
+**其余小坑**：
+- `Qq8LoginService.onDiagnostic` 是**可写字段**，不是构造参数（写成 `onDiagnostic:` 会报 `The named parameter 'onDiagnostic' isn't defined`）⇒ 先构造再 `svc.onDiagnostic = (tag, frame, parsed) {...}`。
+- 用 `tools.edit` 改长测试文件时，像 `Qq8LoginService(...)` 这种块会**多处重复**（matched 4 times）⇒ `old_string` 必须带上下文锚点（如上一行的 `noPicSig: noPic,`）。
+
+**诚实边界（必须如实上报）**：`a2Key / a2Only` 两个分支仍是「明确停 + live=unavailable」；A1 分支**只做过脚本传输的离线自测，没有一次真实发到服务器**（live=unavailable）⇒ 交付的是『接好线、可离线验证、缺真机证据』，不是『A1 免密登录已验证可用』。
+
+**验收**：`tool/qq8_login_selftest.dart` 新增【2c2】段（0x106/0x16A 逐字节原样、31 项顺序子序列、空料抛异常、4 条命令字映射）→ 189 项全过；`tool/qq8_login_service_selftest.dart` 新增【4f】段（真的发了 2 个包 / diagTag=a1 / 尾部 tgtgt 解开 0x119 后 online / 新票 d2 落盘 / 材料不足不发包）→ 113 项全过。
+

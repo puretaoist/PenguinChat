@@ -69,9 +69,10 @@ class Qq8TokenData {
   /// `decodeT119` 也是 `sig.a1 = t[0x106]` 并随 token 文件落盘。不存它，
   /// 每次登录在服务端眼里都像一台从没成功过的裸设备。
   ///
-  /// 2026-10-24 起持久化。**刻意不改变任何发包行为**：官方把 A1 当
-  /// `tlv_t106` 的密钥喂回快速重登（`WtloginHelper.java:699` 的
-  /// GetA1ByAccount 路径），那是独立的、有风险的协议变化；这里只先存下来。
+  /// 2026-10-24 起持久化。现在它也是子命令 15（`wtlogin.exchange_emp`）的
+  /// 0x106 body 来源之一：`Qq8LoginBody.buildA1Exchange` 原样塞密文（依据
+  /// `analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java`
+  /// 的 `tlv_t106.set_data(bArr2, len)`）。这条分支的 live 行为未验证。
   /// 旧票据文件没有 `a1` 键 → 读成空（向后兼容，不报错）。
   final Uint8List a1;
 
@@ -127,6 +128,17 @@ class Qq8TokenData {
   }) : a1 = a1 ?? Uint8List(0);
 
   bool get usable => d2.isNotEmpty && d2key.isNotEmpty;
+
+  /// A1 对（A1 + noPicSig）是否齐备：子命令 15（`wtlogin.exchange_emp`）的
+  /// 两条 body 都有料。**注意它的优先级低于 [usable]**：A1 对只在 d2/d2key
+  /// 缺失时才有意义，先走哪条由 `recovery_planner.dart` 的 `planNext` 保证，
+  /// 这里只报"材料在不在"，不表达先后。
+  bool get hasA1Pair => a1.isNotEmpty && (noPicSig?.isNotEmpty ?? false);
+
+  /// 能不能在**不要口令**的前提下尝试恢复：D2 链（子命令 11）或 A1 对
+  /// （子命令 15）任一条材料齐备即可。只用于"要不要发包"这道闸门，
+  /// 具体走哪条仍由 `recovery_planner.dart` 决定。
+  bool get recoveryUsable => usable || hasA1Pair;
 
   /// 服务端是否已经判过这张票失效（冷启动别白试）。
   bool get invalidated => invalidatedAtMs != null;
