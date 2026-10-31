@@ -394,10 +394,27 @@ class Qq8Session {
     }
   }
 
-  /// 登录层请求（命令字 + 信封 type=0/1）。
+  /// 登录层请求（命令字 + 信封 type=0/1/2）。
   ///
   /// type 见 [Qq8LoginType]：心跳类用 0（SSO 层不加密）、上线后用 1
-  /// （SSO 层用 d2key 加密）。
+  /// （SSO 层用 d2key 加密）、登录/取票用 2（SSO 层用全零密钥）。
+  ///
+  /// ## OICQ 信封只属于 type=2（2026-10-31 修正，缺陷1 根因候选）
+  ///
+  /// 以前这里无条件给 body 套一层 `buildOicqPacket`——那本是 `wtlogin.*`
+  /// 登录/取票命令的格式。但注册（`StatSvc.register`）、校时
+  /// （`Client.CorrectTime`）、心跳（`Heartbeat.Alive`）的 body 本身就是
+  /// WUP 原始字节，**不该再套一层**：
+  ///
+  /// * oicq 参考 `lib/core/base-client.ts:829-864` 的 `buildLoginPacket`
+  ///   只在 `type === 2` 时把 body 包成 OICQ（`writeU8(0x02)...`）；
+  ///   `register()`（:728-729）用 type 1 传原始 WUP，`syncTimeDiff()`
+  ///   （:759）用 type 0 传 4 字节，`exchange_emp` 默认 type 2。
+  /// * 官方注册 `msf/core/push/e.java:94-164` 是把 `SvcReqRegister` 的 WUP
+  ///   直接 `putWupBuffer` → `sendSsoMsg`，body 就是 WUP 原始字节，没有
+  ///   第二层 OICQ。
+  ///
+  /// 所以只有 type==login(=2) 才套 OICQ；type 0/1 直接进 SSO。
   Future<Qq8SsoResponse> sendLoginLayer(
     String cmd,
     Uint8List body, {
@@ -406,12 +423,10 @@ class Qq8Session {
   }) {
     final seq = _nextSeq();
     final ctx = _ctx(seq);
-    final pkt = Qq8Sso.buildLoginPacket(
-      ctx,
-      cmd,
-      Qq8Sso.buildOicqPacket(ctx, body),
-      type,
-    );
+    final carry = type == Qq8LoginType.login
+        ? Qq8Sso.buildOicqPacket(ctx, body)
+        : body;
+    final pkt = Qq8Sso.buildLoginPacket(ctx, cmd, carry, type);
     return _send(seq, pkt, timeout);
   }
 
@@ -486,8 +501,13 @@ class Qq8Session {
     Duration timeout = const Duration(seconds: 30),
   }) async {
     try {
-      final ok = await register(logout: logout, timeout: timeout);
-      return ok ? Qq8RegisterOutcome.confirmed : Qq8RegisterOutcome.rejected;
+      final parse = await registerParsed(logout: logout, timeout: timeout);
+      return switch (parse) {
+        Qq8RegisterParse.ok => Qq8RegisterOutcome.confirmed,
+        Qq8RegisterParse.rejected => Qq8RegisterOutcome.rejected,
+        // 畸形包不等于被拒：可能只是坏包，按「未确认」处理，别把上线打回 failed。
+        Qq8RegisterParse.malformed => Qq8RegisterOutcome.unconfirmed,
+      };
     } on Object {
       // 超时 / 等回应期间连接断开：请求可能到了、也可能没到，无法判断。
       return Qq8RegisterOutcome.unconfirmed;
@@ -495,6 +515,15 @@ class Qq8Session {
   }
 
   Future<bool> register({
+    bool logout = false,
+    Duration timeout = const Duration(seconds: 30),
+  }) async =>
+      (await registerParsed(logout: logout, timeout: timeout)) ==
+      Qq8RegisterParse.ok;
+
+  /// 发一次 `StatSvc.register`，返回三态解析（供 [registerWithOutcome] 区分
+  /// 明确被拒 / 坏包）。
+  Future<Qq8RegisterParse> registerParsed({
     bool logout = false,
     Duration timeout = const Duration(seconds: 30),
   }) async {
@@ -509,7 +538,7 @@ class Qq8Session {
       type: Qq8LoginType.online,
       timeout: timeout,
     );
-    return Qq8Register.parseResponse(r.payload);
+    return Qq8Register.parseResponseDetailed(r.payload);
   }
 
   /// 在线状态上报（`StatSvc.SetStatusFromClient`，**UNI 外壳 0x0B**）。

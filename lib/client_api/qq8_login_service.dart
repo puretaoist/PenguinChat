@@ -52,6 +52,7 @@ import '../kernel/crypto/ecdh.dart';
 import '../kernel/safety/login_policy.dart';
 import '../kernel/safety/safety_gate.dart';
 import '../kernel/wlogin8/qq8_config.dart';
+import '../kernel/wlogin8/qq8_config_push.dart';
 import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_login.dart';
 import '../kernel/wlogin8/qq8_history.dart';
@@ -192,11 +193,24 @@ class Qq8LoginSnapshot {
   /// 失败原因（[Qq8LoginStage.failed] 时，已转成给人看的话）。
   final String? error;
 
+  /// 这次状态变化是不是**网络不可用**导致的（而不是服务端给了结论）。
+  ///
+  /// 断线自动恢复时，每轮重试失败都只是"连不上网"，不该被上层当成登录失败
+  /// 弹错/刷日志（真机缺陷②：恢复期间每次重试都多一条 `W/ChatStore 会话层报错`）。
+  /// 上层据此静默处理。
+  final bool networkIssue;
+
   /// 服务端返回码（[Qq8LoginStage.rejected] 时非空）。
   ///
   /// 单独留着是因为 UI 要能显示「服务端返回 type=45」这种可检索的一手
   /// 事实：文案是服务端给的、会变，返回码不会。排查时两者都要。
   final int? resultType;
+
+  /// 原始异常栈（[Qq8LoginStage.failed] 时非空）。
+  ///
+  /// 上游把它塞进 [SessionFailure] 是刻意保留的：出错现场只有一份，
+  /// 换算成「人话」之后如果连栈也丢了，再想定位就只能复现。
+  final StackTrace? stackTrace;
 
   const Qq8LoginSnapshot({
     required this.stage,
@@ -210,6 +224,8 @@ class Qq8LoginSnapshot {
     this.qrMessage,
     this.error,
     this.resultType,
+    this.networkIssue = false,
+    this.stackTrace,
   });
 
   bool get isOnline => stage == Qq8LoginStage.online;
@@ -2899,6 +2915,7 @@ class Qq8LoginService {
   /// 那会连带 UI 的 provider 一起结束。关闭失败吞掉：这条连接本来就已经坏了。
   Future<void> _teardownConnection() async {
     _sessionEpoch++; // 旧会话的异步任务从此作废
+    _registerInFlight = null; // 旧会话的在途注册不可被新会话复用
     _pullTimer?.cancel();
     _pullTimer = null;
     await _pushSub?.cancel();
@@ -2929,6 +2946,27 @@ class Qq8LoginService {
     _emit(const Qq8LoginSnapshot(stage: Qq8LoginStage.idle));
     await _states.close();
     await _events.close();
+  }
+
+  /// 回执 `ConfigPushSvc.PushResp`（只发不等）。
+  ///
+  /// 字段序与请求不同：请求是 1=type/2=data/3=seq，回执是 1=type/2=seq/
+  /// 3=data(仅 type==3)。SSO 层 seq 取原推送帧的 seq（官方 a/c.java:606
+  /// setRequestSsoSeq(fromServiceMsg.getRequestSsoSeq())）。
+  void _ackConfigPush(Qq8ConfigPushReq req, int pushSeq) {
+    final session = _session;
+    if (session == null) return;
+    final body = buildPushRespBody(
+      type: req.type,
+      seq: req.seq,
+      data: req.data,
+    );
+    // 服务端从不回这个回执的包，必须只发不等；以前走 sendUni 会空等 10 秒。
+    unawaited(session
+        .sendUniNoReply('ConfigPushSvc.PushResp', body, seq: pushSeq)
+        .then((_) => _log.i('ConfigPushSvc.PushReq 已回执（type=${req.type}）'))
+        .catchError(
+            (Object e) => _log.d('ConfigPushSvc.PushResp 失败', error: e)));
   }
 
   /// 收推送：解析成事件；被踢下线要改状态（否则 UI 一直以为还在线）。
@@ -3004,6 +3042,14 @@ class Qq8LoginService {
             _snapshot.stage == Qq8LoginStage.online) {
           _log.i('QueryHB → 重新注册推送（官方语义）并补拉');
           unawaited(_registerOnce(_session!).then((Qq8RegisterOutcome o) {
+            // QueryHB 触发的重注册也要统一提交结果（旧版只打日志）：
+            // 成功即恢复推送通道标记，未确认即置位，供在线检查降级。
+            _lastRegisterOutcome = o;
+            if (o == Qq8RegisterOutcome.confirmed) {
+              _pushChannelUnconfirmed = false;
+            } else if (o == Qq8RegisterOutcome.unconfirmed) {
+              _pushChannelUnconfirmed = true;
+            }
             _log.d('QueryHB 触发的重注册完成：${o.name}');
           }).catchError((Object e) {
             _log.d('QueryHB 触发的重注册失败', error: e);
@@ -3017,18 +3063,20 @@ class Qq8LoginService {
         //   servant  QQService.ConfigPushSvc.MainServant
         //   method   PushResp
         //   struct   [config_type(嵌套[1]), seq(嵌套[3])]
-        // 完整处理：解析 PushReq → 存 bigdata 会话 → 回带原值的 PushResp。
+        // 完整处理：先按 PushReq 解析 → 回执，再应用 type2 的 bigdata。
+        //
+        // 回执顺序按官方 a/c.java:500-524：dispatch（type2 只是转交应用进程）
+        // 之后统一 b() 回执，故回执不依赖内层 pb 解析是否成功。以前把两者挤在
+        // 一个流程里，内层解码一抛异常就连回执一起丢掉。
         if (cmd == 'ConfigPushSvc.PushReq' && _session != null) {
           try {
-            var payload = r.payload;
-            if (payload.isNotEmpty && payload[0] == 0) {
-              payload = Uint8List.sublistView(payload, 4);
-            }
-            final nested = Qq8Jce.decodeWrapper(payload);
-            final configType = nested[1];
-            final bigdata = nested[2];
-            final pushSeq = nested[3];
-            if (configType == 2 && bigdata is List<int> && bigdata.isNotEmpty) {
+            final req = decodePushReq(r.payload);
+            if (req == null) {
+              _log.d('ConfigPush 请求解析失败（不回执）');
+            } else {
+              _ackConfigPush(req, r.seq);
+              final bigdata = req.data;
+              if (req.type == 2 && bigdata.isNotEmpty) {
               // icqq 两步解：`jce.decode(nested[2])[5][5]` 是 pb 的
               // `{1281: {1: sig_session, 2: session_key, 3: [...]}}`
               //（直接 pb.decode 会撞 wiretype 1，真机 15:13 实证）。
@@ -3071,25 +3119,7 @@ class Qq8LoginService {
                 }
               }
             }
-            final body = Qq8Jce.encodeWrapper(
-              service: 'QQService.ConfigPushSvc.MainServant',
-              method: 'PushResp',
-              attributes: <String, Uint8List>{
-                // 官方 c.java:606 是 uniPacket.put("PushResp", gVar)——
-                // 属性键就是 "PushResp"（icqq 用 "MainServant"，两种都试，
-                // 先照官方）。回执带推送的 seq（c.java:613 setRequestSsoSeq）。
-                'PushResp':
-                    Qq8Jce.encodeStruct(<int, Object?>{0: configType, 2: pushSeq}),
-              },
-            );
-            // 这类回执本就没有应答（服务端不等回包）：以前走 sendUni 空等
-            // 10 秒再报错（真机 `ConfigPushSvc.PushResp 失败 | 等待响应超时
-            // （seq=-1807239620，10s）`），现改只发不等。
-            unawaited(_session!
-                .sendUniNoReply('ConfigPushSvc.PushResp', body, seq: r.seq)
-                .then((_) => _log.i('ConfigPushSvc.PushReq 已回执（type=$configType）'))
-                .catchError((Object e) =>
-                    _log.d('ConfigPushSvc.PushResp 失败', error: e)));
+            }
           } on Object catch (e) {
             _log.d('ConfigPush 处理失败', error: e);
           }
@@ -3972,7 +4002,12 @@ class Qq8LoginService {
   bool get pushChannelUnconfirmed => _pushChannelUnconfirmed;
 
   /// 在途的注册请求（single-flight）。
-  Future<Qq8RegisterOutcome>? _registerInFlight;
+  ///
+  /// 存会话与代际：只复用**同一会话、同一代**的结果。否则断线重连后
+  /// 新会话会误用旧会话那条永远回不来的 Future（表现：新会话上线 30 秒
+  /// 内注册全部被「复用」成旧会话的 pending）。
+  ({Qq8Session session, int epoch, Future<Qq8RegisterOutcome> future})?
+      _registerInFlight;
 
   /// 注册 single-flight：同一时刻只允许一条 `StatSvc.register` 在途。
   ///
@@ -3984,14 +4019,17 @@ class Qq8LoginService {
     Duration timeout = const Duration(seconds: 30),
   }) {
     final inFlight = _registerInFlight;
-    if (inFlight != null) {
-      _log.d('注册已在途，复用这次结果');
-      return inFlight;
+    if (inFlight != null &&
+        identical(inFlight.session, session) &&
+        inFlight.epoch == _sessionEpoch) {
+      _log.d('注册已在途（同一会话），复用这次结果');
+      return inFlight.future;
     }
     final f = session.registerWithOutcome(timeout: timeout);
-    _registerInFlight = f;
+    _registerInFlight = (session: session, epoch: _sessionEpoch, future: f);
     return f.whenComplete(() {
-      if (identical(_registerInFlight, f)) _registerInFlight = null;
+      final cur = _registerInFlight;
+      if (cur != null && identical(cur.future, f)) _registerInFlight = null;
     });
   }
 
@@ -4016,6 +4054,9 @@ class Qq8LoginService {
     _lastRegisterOutcome = outcome;
     switch (outcome) {
       case Qq8RegisterOutcome.confirmed:
+        // 确认成功必须清掉「未确认」标记，否则一旦某次超时置过位，
+        // 之后即使注册成功，在线检查也会一直被跳过（永久降级）。
+        _pushChannelUnconfirmed = false;
         _log.i('上线注册已确认（cReplyCode=0）');
         return;
       case Qq8RegisterOutcome.unconfirmed:
@@ -4061,7 +4102,7 @@ class Qq8LoginService {
     final inFlight = _registerInFlight;
     if (inFlight != null) {
       try {
-        await inFlight;
+        await inFlight.future;
       } on Object catch (_) {
         // 超时/失败都算「没有确认结论」，下面统一按 outcome 判断。
       }
@@ -4275,6 +4316,7 @@ class Qq8LoginService {
             _emit(Qq8LoginSnapshot(
               stage: Qq8LoginStage.disconnected,
               uin: uin,
+              networkIssue: true,
               error: '网络不可用，正在等待网络恢复后自动续连',
             ));
           } else {
@@ -4303,12 +4345,17 @@ class Qq8LoginService {
           }
           return;
         }
-        offline = _networkUnavailable(_snapshot.error ?? '');
+        // _fail 已把网络类失败归一成「网络不可用，请检查网络后重试」并打了
+        // networkIssue 标；这里必须认那个标——只看错误文本会漏判（S3 回归：
+        // 断网 5 轮被当成 3 次服务端失败直接停住）。
+        offline = _snapshot.networkIssue ||
+            _networkUnavailable(_snapshot.error ?? '');
         if (!offline) attempt++;
         if (offline) {
           _emit(Qq8LoginSnapshot(
             stage: Qq8LoginStage.disconnected,
             uin: uin,
+            networkIssue: true,
             error: '网络不可用，正在等待网络恢复后自动续连',
           ));
         }
@@ -4330,10 +4377,16 @@ class Qq8LoginService {
 
   void _fail(String what, Object e, StackTrace st) {
     _log.e(what, error: e, stack: st);
+    // 网络不可用不是"登录失败"：报 disconnected（可静默等网络），并在快照上
+    // 打 networkIssue，让适配层不要往事件流里发 SessionFailure（缺陷②）。
+    final network = _networkUnavailable(e.toString());
     _emit(Qq8LoginSnapshot(
-      stage: Qq8LoginStage.failed,
+      stage: network ? Qq8LoginStage.disconnected : Qq8LoginStage.failed,
       uin: _snapshot.uin,
-      error: '$what：$e',
+      networkIssue: network,
+      error: network ? '网络不可用，请检查网络后重试' : '$what：$e',
+      // 只有真正的登录失败才带栈；断网那支不值得污染事件流。
+      stackTrace: network ? null : st,
     ));
   }
 

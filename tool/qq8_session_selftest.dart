@@ -170,6 +170,36 @@ Uint8List _registerResp(int replyCode) {
   return (cmd: cmd, body: body);
 }
 
+/// 从登录层信封（0x0A）里取出未加密前的请求 body。
+///
+/// 结构见 [Qq8Sso.buildLoginPacket]：
+/// 外层 = `u32 0x0A | u8 type | withLen(d2) | u8 0 | withLen(uin:ascii) | sso`；
+/// sso = `withLen(inner 头) | withLen(body)`，type==1 用 d2key TEA 加密、
+/// type==2 用全零密钥、type==0 明文。
+Uint8List _loginLayerBody(Uint8List pkt) {
+  final r = ByteReader(pkt);
+  r.readUint32(); // 外层总长
+  final o = ByteReader(r.readRest());
+  o.readUint32(); // 0x0A
+  final type = o.read(1)[0];
+  final d2len = o.readUint32();
+  o.read(d2len - 4);
+  o.read(1); // 常量 0
+  final uinLen = o.readUint32();
+  o.read(uinLen - 4);
+  var sso = o.readRest();
+  if (type == Qq8LoginType.online) {
+    sso = qqTeaDecrypt(sso, _d2key);
+  } else if (type == Qq8LoginType.login) {
+    sso = qqTeaDecrypt(sso, Uint8List(16));
+  }
+  final s = ByteReader(sso);
+  final innerLen = s.readUint32();
+  s.read(innerLen - 4);
+  final bodyLen = s.readUint32();
+  return Uint8List.fromList(s.read(bodyLen - 4));
+}
+
 /// 只发不收的传输层：write 成功但永不投递响应（模拟"断网但 socket 没报错"）。
 class _HangingTransport implements Qq8Transport {
   final List<Uint8List> sent = <Uint8List>[];
@@ -300,6 +330,26 @@ Future<void> main() async {
   checkEq('收到空闲响应', hb.payload.length, 0);
   checkEq('帧里带命令字 Heartbeat.Alive',
       String.fromCharCodes(transport.sent[2]).contains('Heartbeat.Alive'), true);
+
+  section('1b. 登录层信封：只有 type=login 才套 OICQ（缺陷1 根因）');
+  {
+    // 真机缺陷1 的候选根因：以前 sendLoginLayer 无条件给 body 套
+    // buildOicqPacket（首字节 0x02）。但注册/校时/心跳的 body 本身就是
+    // WUP 原始字节，套了就是多发一层。这里从实际发出的包反解 body 验证。
+    final regBody = _loginLayerBody(transport.sent[0]);
+    checkEq('register body 首字节不是 0x02（未套 OICQ 信封）',
+        regBody.isEmpty || regBody[0] != 0x02, true);
+    final regFields = Qq8Jce.decodeWrapper(regBody);
+    checkEq('register body 是原始 WUP（tag0 = uin 10001）', regFields[0], 10001);
+    checkEq('register body 带 pb blob（tag38 = 1000）', regFields[38], 1000);
+    checkEq('register body tag4 = 11（在线，非登出）', regFields[4], 11);
+    // 校时：type=0 明文，body 是 4 字节零。
+    final ctBody = _loginLayerBody(transport.sent[1]);
+    checkEq('校时 body = 4 字节零（type=0 明文）', toHex(ctBody), '00000000');
+    // 心跳：type=0 空 body。
+    final hbBody = _loginLayerBody(transport.sent[2]);
+    checkEq('Heartbeat.Alive body 为空', hbBody.length, 0);
+  }
 
   section('4. UNI 心跳（seq 104）');
   final uni = await session.uniHeartbeat();

@@ -170,11 +170,21 @@ void testResponse() {
   // bCrashFlag=1 只是崩溃标记，不能当失败（旧口径会误判）
   checkEq('cReplyCode=0 且 bCrashFlag=1 → 仍成功',
       Qq8Register.parseResponse(respWith(replyCode: 0, crashFlag: 1)), true);
-  // tag2 缺失（老样本/畸形包）退回旧口径
-  checkEq('缺 cReplyCode、bCrashFlag=1 → 退化口径判成功',
-      Qq8Register.parseResponse(respWith(crashFlag: 1)), true);
-  checkEq('缺 cReplyCode、bCrashFlag=0 → 退化口径判失败',
-      Qq8Register.parseResponse(respWith(crashFlag: 0)), false);
+  // 三态解析：缺 tag2 是畸形包，**不再用 bCrashFlag 兜底判成功**。
+  checkEq('cReplyCode=0 → detailed = ok',
+      Qq8Register.parseResponseDetailed(respWith(replyCode: 0)),
+      Qq8RegisterParse.ok);
+  checkEq('cReplyCode=2 → detailed = rejected',
+      Qq8Register.parseResponseDetailed(respWith(replyCode: 2)),
+      Qq8RegisterParse.rejected);
+  checkEq('缺 cReplyCode、bCrashFlag=1 → detailed = malformed（不当成功）',
+      Qq8Register.parseResponseDetailed(respWith(crashFlag: 1)),
+      Qq8RegisterParse.malformed);
+  checkEq('缺 cReplyCode、bCrashFlag=0 → detailed = malformed',
+      Qq8Register.parseResponseDetailed(respWith(crashFlag: 0)),
+      Qq8RegisterParse.malformed);
+  checkEq('缺 cReplyCode（bCrashFlag=1）→ 布尔版为 false（不再退化判成功）',
+      Qq8Register.parseResponse(respWith(crashFlag: 1)), false);
 }
 
 void testSetStatus() {

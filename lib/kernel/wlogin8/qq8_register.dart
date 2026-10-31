@@ -166,14 +166,27 @@ abstract final class Qq8Register {
   /// **服务端根本没回包**（10s 超时），错位本身没暴露；但一旦服务端回了
   /// 非 0 的 cReplyCode，旧口径会把它误判成成功，所以照官方改。
   ///
-  /// tag 2 缺失（老样本/畸形包）时退回旧口径：tag 9 存在且非 0 视为成功。
-  static bool parseResponse(Uint8List payload) {
-    final rsp = Qq8Jce.decodeWrapper(payload);
+  /// 三态解析：`ok` = cReplyCode==0；`rejected` = 有 cReplyCode 但非 0；
+  /// `malformed` = 解不开或没有 tag2。
+  ///
+  /// **不再用 tag9(bCrashFlag) 兜底判成功**：tag9 是崩溃标记，与应答码无关
+  /// （oicq 读错的就是这个字段）。缺 tag2 的包属于畸形，既不等于成功，也
+  /// 不能当明确被拒——上层按「未确认」处理（可能只是坏包，不等于会话失效）。
+  static Qq8RegisterParse parseResponseDetailed(Uint8List payload) {
+    final Map<int, Object?> rsp;
+    try {
+      rsp = Qq8Jce.decodeWrapper(payload);
+    } on Object {
+      return Qq8RegisterParse.malformed;
+    }
     final replyCode = rsp[2];
-    if (replyCode is int) return replyCode == 0;
-    final v = rsp[9];
-    return v != null && v != 0;
+    if (replyCode is! int) return Qq8RegisterParse.malformed;
+    return replyCode == 0 ? Qq8RegisterParse.ok : Qq8RegisterParse.rejected;
   }
+
+  /// 兼容旧调用的布尔版：只有 `ok` 才算成功（畸形/被拒都 false）。
+  static bool parseResponse(Uint8List payload) =>
+      parseResponseDetailed(payload) == Qq8RegisterParse.ok;
 
   /// 组装在线状态上报的请求体（**UNI 外壳，命令字见 [cmdSetStatus]**）。
   ///
@@ -248,4 +261,16 @@ abstract final class Qq8Register {
       },
     );
   }
+}
+
+/// `SvcRespRegister` 的三态解析结果（见 [Qq8Register.parseResponseDetailed]）。
+enum Qq8RegisterParse {
+  /// `cReplyCode(tag 2) == 0`。
+  ok,
+
+  /// 收到应答，但 `cReplyCode != 0`（明确被拒）。
+  rejected,
+
+  /// 解不开 / 缺 tag2：畸形包，不能当成功也不能当被拒。
+  malformed,
 }

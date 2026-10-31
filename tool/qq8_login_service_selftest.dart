@@ -693,6 +693,49 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
+  section('2h. 断网登录失败：快照是 disconnected + networkIssue，不是 failed（缺陷②）');
+  //
+  // 断线自动恢复时每轮重试「连不上网」都只是网络问题，不该被当成登录失败：
+  // 否则 ChatStore 每轮刷一条「会话层报错」，UI 也会弹失败。这里验证源头
+  // 的分类：stage=disconnected、networkIssue=true，且全程没有 failed 快照。
+  {
+    final snaps = <Qq8LoginSnapshot>[];
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore()
+        ..data = Qq8TokenData(
+          uin: 10001,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        ),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => _OfflineTransport(),
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      heartbeatInterval: const Duration(hours: 1),
+      timeout: const Duration(milliseconds: 300),
+    );
+    svc.states.listen(snaps.add);
+    await svc.loginWithToken(uin: 10001);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final last = svc.snapshot;
+    check('最终状态是 disconnected（不是 failed）',
+        last.stage == Qq8LoginStage.disconnected, last.stage.name);
+    check('快照标记 networkIssue = true', last.networkIssue, '${last.networkIssue}');
+    check('错误文案说的是网络（不是服务端结论）',
+        (last.error ?? '').contains('网络'), last.error ?? '');
+    check('全程没有任何 failed 快照（不弹「登录失败」）',
+        snaps.every((s) => s.stage != Qq8LoginStage.failed),
+        snaps.map((s) => s.stage.name).join('>'));
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
   section('3. 设备锁（204）→ 解锁 → 上线');
   {
     final store = _MemStore();
