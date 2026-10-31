@@ -4089,3 +4089,16 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 两个细节坑：① 判据**不能**把「等待响应超时」算作断网，否则服务端一直不回时会变成无限重试；② `_login` 内部 `on Object catch` 会把传输异常吞成 `failed` 快照（`qq8_login_service.dart:892-894`），真正的分类点在「未上线兜底」分支读 `_snapshot.error` 文本，不是 catch 里。
 
 安全前提：纯传输失败不会 `markInvalidated`（那只在服务端 sessionExpired 分支调用），所以多轮网络重试不会烧掉票据材料，自动路径始终只用票、不用密码。
+
+
+## C86 错误分类要「一次定性、下游认标志」，别再拿归一后的文案反推（2026-10-31，S3/S4）
+
+**踩到的回归**：S3 让 `_fail` 把网络类异常统一改写成「网络不可用，请检查网络后重试」并在快照上打 `networkIssue`，可 `reconnect()` 的「未上线兜底」仍在用 `_networkUnavailable(_snapshot.error)` 判文本——新文案不含「连接失败/SocketException/Failed host lookup」任何一个，于是**断网被当成 3 次服务端失败**，5 轮断网后直接停住（自测 2f 从通过变红，2 条断言抓到）。教训：**错误一旦被归一成给人看的文案，就不能再拿它反推类型**。判据只认结构化标志：`offline = _snapshot.networkIssue || _networkUnavailable(...)`（保留文本判断只为兼容更早的路径）。
+
+**S4 消费者的四条硬要求**（`qq8_session_adapter._onStage` 与 QQ8 provider/连接页）：
+1. **failure 不重放**：按 `stage|resultType|error` 做指纹去重，同一份失败只发一次 `SessionFailure`；否则 ChatStore 每轮记日志、UI 反复弹同一句。
+2. **同态 reason 要能更新**：只比 `state` 会把「等待网络恢复 → 自动重连失败，请手动重新登录」这类变化吞掉，界面永远停在第一句。判据改成 `_state != before || (reason != null && reason != _lastStateReason)`。
+3. **原栈不丢**：`Qq8LoginSnapshot` 新增 `StackTrace? stackTrace`，`_fail` 只在**非网络**失败时带上，adapter 原样塞进 `SessionFailure`。
+4. **网络问题不装成错误**：`Qq8ConnectStatus` 增 `networkIssue`，`disconnected` 在断网时标签是「等待网络恢复」（不是「已断开」），连接页用中性色 + 键 `qq8-network-hint`（`failed` 仍是 `qq8-error` 红字）。
+
+**测试写法**：adapter 自测第 12 段用「离线传输 + 真服务」建 `Qq8SessionAdapter`，订阅 `events` 后断言 `whereType<SessionFailure>().isEmpty` 且最后一条 `SessionStateChanged.reason` 含「网络」——只断言最终 stage 无法区分「没发 failure」和「发了没人看」。
