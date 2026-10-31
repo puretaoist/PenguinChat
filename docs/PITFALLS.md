@@ -4246,3 +4246,34 @@ C92 修完之后，名字缓存在服务层是**一张全局 `uin → 名字` �
 写成多个 `-e`：`grep -E -e A -e B log`。同理 `adb pull` 的目标要写 Windows 路径 `C:/...`，
 Git Bash 里还要 `export MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 被改写成 Windows 路径。
 
+## C96 `pumpAndSettle` 遇到 indeterminate 进度条必然超时（2026-10-31）
+
+**现象**：`test/startup_splash_test.dart` 里 `await tester.pumpAndSettle()` 直接
+`pumpAndSettle timed out`，但页面其实早就构建完了。
+
+**根因**：`LinearProgressIndicator` 不传 `value` 就是无限循环动画，每帧都还在调度下一帧，
+`pumpAndSettle` 等的「没有待处理帧」永远不会到来。
+
+**处理**：用固定步进 `await tester.pump(const Duration(milliseconds: 500))`，
+既能跑完 420ms 的 `TweenAnimationBuilder`，也不会卡在无限动画上。
+
+## C97 `AnimatedSwitcher` 默认 layoutBuilder 不适合「整页二选一」（2026-10-31）
+
+**现象**：窄屏从会话列表切到对话时，新页面先缩一下再展开，位置也跳。
+
+**根因**：默认 layoutBuilder 是 `Stack(alignment: center)` 且用两棵子树的**各自尺寸**排布；
+两个都要占满屏幕时，旧页消失的过程中布局约束在变。
+
+**处理**：自定义 `layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, if (current != null) current])`，
+并给两个子页各套 `KeyedSubtree(key: ValueKey('chat-list'|'chat-pane'))` 让切换有身份可言。
+
+## C98 列表里的入场动画必须判「新」，否则滚动重建会重播（2026-10-31）
+
+**现象**：给消息气泡加 `BubbleEntrance` 后，往回滚动历史消息，整屏气泡一起淡入。
+
+**根因**：`ListView.builder` 的行没有状态、离屏即销毁；重建时 `initState` 再次 `forward()`。
+「该不该播」不能由 widget 自己决定，因为它的生命周期与「首次出现」不是一回事。
+
+**处理**：状态提到页面里 `Set<String> _entered`；判据 = 开关开 && 未播过 &&
+`now - m.time <= 8s`（把冷启动从磁盘载入的旧消息挡在动画外）；`_entered` 上限 400 条。
+

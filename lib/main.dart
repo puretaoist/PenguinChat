@@ -37,7 +37,8 @@ import 'kernel/onebot/backend_profile.dart';
 import 'kernel/safety/safety_gate.dart';
 import 'ui/lifecycle/keep_alive_scope.dart';
 import 'ui/lifecycle/message_notify_scope.dart';
-import 'ui/pages/home_page.dart';
+import 'ui/pages/app_bootstrap.dart';
+import 'ui/prefs/ui_prefs.dart';
 import 'ui/platform/android_device_info.dart';
 import 'ui/platform/foreground_keep_alive.dart';
 import 'ui/theme/telegram_theme.dart';
@@ -182,13 +183,23 @@ class QQClientApp extends ConsumerWidget {
     // 之后这一帧里所有 `TelegramColors.xxx` 读到的就是它。
     // 其它页面自己也调了一次（applyThemePalette），避免谁先重建谁读到旧值。
     final dark = applyThemePalette(ref);
+    // 字号倍率作用在根 MediaQuery 上：整个应用（含后续 push 的页面）一起变，
+    // 不需要每个 Text 各自算一遍。
+    final fontScale = ref.watch(uiPrefsProvider).fontScale;
     return MaterialApp(
       title: 'QQ Client',
       debugShowCheckedModeBanner: false,
       theme: buildTelegramTheme(dark: dark),
-      // 直接进主界面：未连接时主界面自己会引导去连接页，
-      // 不让用户每开一次应用都先看一遍连接设置。
-      home: const HomePage(),
+      builder: (BuildContext context, Widget? child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(textScaler: TextScaler.linear(fontScale)),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
+      // 冷启动先放品牌页，等账号恢复有结论（或超时）再淡入主界面。
+      // 这段"其实正在登录"的时间以前是一片空态，用户会以为连不上。
+      home: const AppBootstrap(),
     );
   }
 }

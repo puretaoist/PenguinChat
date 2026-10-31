@@ -229,5 +229,58 @@ ThemeData buildTelegramTheme({bool dark = true}) {
     // 之前是 NoSplash，整个 App 点下去毫无反馈，像卡住了一样。
     splashFactory: InkRipple.splashFactory,
     hoverColor: p.bgHover,
+    // 页面切换统一走 TG 观感（淡入 + 右侧轻推），而不是 Material 默认的
+    // 缩放（ZoomPageTransitionsBuilder）——后者在深色主题下会露出一层白边，
+    // 和"设置/登录页滑进来"的 TG 手感也完全不同。
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: <TargetPlatform, PageTransitionsBuilder>{
+        TargetPlatform.android: TgPageTransitionsBuilder(),
+        TargetPlatform.iOS: TgPageTransitionsBuilder(),
+        TargetPlatform.macOS: TgPageTransitionsBuilder(),
+        TargetPlatform.windows: TgPageTransitionsBuilder(),
+        TargetPlatform.linux: TgPageTransitionsBuilder(),
+        TargetPlatform.fuchsia: TgPageTransitionsBuilder(),
+      },
+    ),
   );
+}
+
+/// Telegram 风格的页面切换：淡入 + 从右侧轻推（220ms）。
+///
+/// 只影响"整页 push/pop"；列表/气泡之类的局部动画各有各的实现，
+/// 别指望这一个类把全应用的动效都包了。
+class TgPageTransitionsBuilder extends PageTransitionsBuilder {
+  const TgPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 220);
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curved = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    return FadeTransition(
+      // 前 70% 就把不透明度拉满：整段都在淡会显得"蒙一层灰"。
+      opacity: CurvedAnimation(
+        parent: animation,
+        curve: const Interval(0, 0.7, curve: Curves.easeOut),
+      ),
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0.08, 0),
+          end: Offset.zero,
+        ).animate(curved),
+        child: child,
+      ),
+    );
+  }
 }

@@ -33,8 +33,10 @@ import '../../kernel/wlogin8/qq8_file.dart';
 import '../../kernel/wlogin8/qq8_gfs.dart';
 import '../../kernel/wlogin8/qq8_list.dart';
 import '../../client_api/session_providers.dart';
+import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
+import '../widgets/bubble_entrance.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/chat_actions.dart';
 import '../widgets/face_panel.dart';
@@ -108,6 +110,32 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 多选模式里选中的消息 id（空 = 不在多选模式）。
   final Set<String> _selected = <String>{};
+
+  /// 已经播过入场动画的消息 id。
+  ///
+  /// ListView.builder 的行在滚动时会重建，若每次重建都放动画，往回滚就会
+  /// 整屏气泡一起淡入——只有"首次出现在视野里的新消息"才该动。
+  /// 上限 400 条：只防长会话无界增长，删最老的（动画早已结束，删了也不影响）。
+  final Set<String> _entered = <String>{};
+
+  /// 这条消息该不该播入场动画：开关关 / 已播过 / 不是"新"消息 → 不动画。
+  ///
+  /// "新"= 消息时间距现在 8 秒内。冷启动从磁盘载入历史时所有气泡都是旧的，
+  /// 靠这条把它们挡在动画之外；反过来推送刚到的消息必然在 8 秒内。
+  bool _shouldAnimateBubble(ChatMessage m) {
+    if (!ref.read(uiPrefsProvider).messageAnimations) return false;
+    if (_entered.contains(m.id)) return false;
+    final age = DateTime.now().difference(m.time);
+    if (age.isNegative || age > const Duration(seconds: 8)) {
+      _entered.add(m.id);
+      return false;
+    }
+    _entered.add(m.id);
+    if (_entered.length > 400) {
+      _entered.remove(_entered.first);
+    }
+    return true;
+  }
 
   bool get _selecting => _selected.isNotEmpty;
 
@@ -647,13 +675,33 @@ class _HomePageState extends ConsumerState<HomePage> {
       backgroundColor: TelegramColors.bgApp,
       body: SafeArea(
         bottom: false,
-        child: _showChatList
-            ? sidebar
-            : _buildChatPane(
-                chats,
-                store,
-                onBack: () => setState(() => _showChatList = true),
-              ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          // 两页都是全屏尺寸：用 Stack 叠着做交叉淡入。默认 layoutBuilder
+          // 会把新旧子树各自按内容大小居中排，手机上会看到位置跳一下。
+          layoutBuilder: (current, previous) => Stack(
+            fit: StackFit.expand,
+            children: [
+              ...previous,
+              ?current,
+            ],
+          ),
+          child: _showChatList
+              ? KeyedSubtree(
+                  key: const ValueKey<String>('chat-list'),
+                  child: sidebar,
+                )
+              : KeyedSubtree(
+                  key: const ValueKey<String>('chat-pane'),
+                  child: _buildChatPane(
+                    chats,
+                    store,
+                    onBack: () => setState(() => _showChatList = true),
+                  ),
+                ),
+        ),
       ),
     );
   }
@@ -1527,7 +1575,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                             }
                             final m = item.message!;
                             final checked = _selected.contains(m.id);
-                            return Row(
+                            // 新消息气泡淡入 + 轻微上浮（TG 的 appear 动画）。
+                            return BubbleEntrance(
+                              key: ValueKey<String>('bubble-${m.id}'),
+                              animate: _shouldAnimateBubble(m),
+                              child: Row(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 if (_selecting)
@@ -1601,6 +1653,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                   ),
                                 ),
                               ],
+                              ),
                             );
                           },
                         ),

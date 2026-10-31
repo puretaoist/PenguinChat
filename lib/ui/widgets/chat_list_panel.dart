@@ -299,7 +299,10 @@ class ChatListPanel extends StatelessWidget {
       key: ValueKey('chat-row-${chat.id}'),
       onTap: () => onOpenChat(chat),
       onLongPress: () => onLongPressChat(chat, store),
-      child: Container(
+      // 选中/取消选中的底色做 140ms 过渡（TG 的 DialogCell 换选中态也是渐显）。
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
         color: selected ? TelegramColors.bgSelected : Colors.transparent,
         constraints: const BoxConstraints(
           minHeight: TelegramMetrics.chatRowHeight,

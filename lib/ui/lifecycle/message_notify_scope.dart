@@ -25,6 +25,7 @@ import '../../client_api/qq8_providers.dart';
 import '../../client_api/session_providers.dart';
 import '../../infra/log/logger.dart';
 import '../platform/message_notifier.dart';
+import '../prefs/ui_prefs.dart';
 
 class MessageNotifyScope extends ConsumerStatefulWidget {
   const MessageNotifyScope({super.key, required this.child, this.notifier});
@@ -91,6 +92,14 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
   @override
   Widget build(BuildContext context) {
     ref.listen<ChatStore?>(chatStoreProvider, (_, next) => _attach(next));
+    // 用户把「消息通知」关掉：正在挂着的常驻通知要立刻撤掉，
+    // 否则开关看着是关的、通知栏里却还留着几条。
+    ref.listen<bool>(
+      uiPrefsProvider.select((UiPrefs p) => p.notifications),
+      (_, bool enabled) {
+        if (!enabled) unawaited(_notifier.cancelAll());
+      },
+    );
     return widget.child;
   }
 
@@ -119,6 +128,11 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
     if (chatId == null || store == null) return;
     // 前台收到消息不弹（应用内本来就能看见），省掉后面所有取数。
     if (!_background) return;
+    // 设置里的总开关：关了就不弹（消息照收照落盘，只是不打扰）。
+    if (!ref.read(uiPrefsProvider).notifications) {
+      Log.get('Notify').d('通知开关已关闭，跳过 chat=$chatId');
+      return;
+    }
 
     final messages = store.messagesOf(chatId);
     if (messages.isEmpty) return;
