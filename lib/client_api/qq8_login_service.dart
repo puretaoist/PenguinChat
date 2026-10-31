@@ -3891,6 +3891,8 @@ class Qq8LoginService {
         _handleConnectionLost(session, epoch, error);
     // 旧接口保留兼容：不要在这里重复触发恢复（单飞会挡，但语义要干净）。
     session.onOffline = () {};
+    // 心跳里的注册续租收到 authDead：终态，走与上线注册同一条"身份失效"路径。
+    session.onAuthDead = (e) => _markAuthLost(e, '心跳续租注册');
     _session = session;
     _pushSub?.cancel();
     _pushSub = session.pushes.listen(

@@ -197,20 +197,26 @@ abstract final class Qq8Register {
   /// uClientBatteryGetInterval` 取出来存进 PushInfo，下次注册原样回送
   /// （`e.java:104-105`）；字段序见 `SvcRespRegister.java:69-84`。
   /// 回送是服务端识别「同一条推送会话」的依据，不回送等于每次都是新注册。
-  static ({int timeStamp, int largeSeq, int helloInterval, int batteryInterval})?
-      parsePushState(Uint8List payload) {
+  static ({
+    int? timeStamp,
+    int? largeSeq,
+    int? helloInterval,
+    int? batteryInterval,
+  })? parsePushState(Uint8List payload) {
     try {
       final rsp = Qq8Jce.decodeWrapper(payload);
-      final ts = rsp[8];
-      if (ts is! int) return null;
-      final ls = rsp[13];
-      final hi = rsp[12];
-      final bi = rsp[18];
+      int? at(int k) {
+        final v = rsp[k];
+        return v is int ? v : null;
+      }
+
+      // 字段缺席一律返回 null（而不是 0）：0 是"服务端明确给了 0"，缺席是
+      // "这次应答没带"，两者语义不同——调用方对缺席要保留旧值。
       return (
-        timeStamp: ts,
-        largeSeq: ls is int ? ls : 0,
-        helloInterval: hi is int ? hi : 0,
-        batteryInterval: bi is int ? bi : 0,
+        timeStamp: at(8),
+        largeSeq: at(13),
+        helloInterval: at(12),
+        batteryInterval: at(18),
       );
     } on Object {
       return null;

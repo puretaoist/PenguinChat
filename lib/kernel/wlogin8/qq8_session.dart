@@ -162,6 +162,12 @@ class Qq8Session {
   /// 心跳连失败两次（视为掉线）时的回调（旧接口，保留给工具与自测）。
   void Function()? onOffline;
 
+  /// 维护性请求（心跳续租注册等）被服务端判「身份/票据失效」时回调。
+  ///
+  /// 与 [onConnectionLost] 必须分开：那边代表"连接坏了，重连有意义"，这边是
+  /// **终态**——重连只会把 -10003/-12003 刷成噪音，正确做法是停轮询等用户重登。
+  void Function(Qq8ServerRetcodeException error)? onAuthDead;
+
   /// 连接**非预期断开**时统一回调一次（传输层断开 / 心跳判坏）。
   ///
   /// 与 [onOffline] 的区别：这里带原因，且由会话层保证「一条连接只报一次」。
@@ -545,6 +551,34 @@ class Qq8Session {
     bool logout = false,
     Duration timeout = const Duration(seconds: 30),
   }) async {
+    // 单飞：心跳续租与服务层上线注册可能撞在一起，两次注册同时在路上时后到
+    // 的应答会覆盖先到的 timeStamp/iLargeSeq，推送会话又被打回"新注册"。
+    final inflight = _registerInFlight;
+    if (!logout && inflight != null) return inflight;
+    if (logout && inflight != null) {
+      // 登出必须真发出去：等前一次结束再发，不能复用它的结果。
+      try {
+        await inflight;
+      } on Object {
+        // 前一次失败不影响这次登出
+      }
+    }
+    final work = _registerParsedOnce(logout: logout, timeout: timeout);
+    _registerInFlight = work;
+    try {
+      return await work;
+    } finally {
+      if (identical(_registerInFlight, work)) _registerInFlight = null;
+    }
+  }
+
+  /// 正在路上的那次注册（单飞用，见 [registerParsed]）。
+  Future<Qq8RegisterParse>? _registerInFlight;
+
+  Future<Qq8RegisterParse> _registerParsedOnce({
+    required bool logout,
+    required Duration timeout,
+  }) async {
     final body = Qq8Register.buildBody(
       uin: uin,
       device: device,
@@ -559,13 +593,18 @@ class Qq8Session {
       timeout: timeout,
     );
     lastRegisterDiagnostic = Qq8Register.describeResponse(r.payload);
-    final state = Qq8Register.parsePushState(r.payload);
-    if (state != null) {
-      _pushTimeStamp = state.timeStamp;
-      _pushLargeSeq = state.largeSeq;
-      _pushHelloInterval = state.helloInterval;
+    final parse = Qq8Register.parseResponseDetailed(r.payload);
+    // **只有 cReplyCode==0 才更新续租状态**：被拒/畸形包里的 tag8/tag13 不是
+    // 这条推送会话的续租凭证；字段缺席时保留旧值，不能清零。
+    if (parse == Qq8RegisterParse.ok) {
+      final state = Qq8Register.parsePushState(r.payload);
+      if (state != null) {
+        _pushTimeStamp = state.timeStamp ?? _pushTimeStamp;
+        _pushLargeSeq = state.largeSeq ?? _pushLargeSeq;
+        _pushHelloInterval = state.helloInterval ?? _pushHelloInterval;
+      }
     }
-    return Qq8Register.parseResponseDetailed(r.payload);
+    return parse;
   }
 
   /// 在线状态上报（`StatSvc.SetStatusFromClient`，**UNI 外壳 0x0B**）。
@@ -643,8 +682,32 @@ class Qq8Session {
   /// 掉线：停表、置离线、回调 [onOffline]（对应 oicq 两次超时后 destroy）。
   void startHeartbeat({Duration interval = const Duration(seconds: 270)}) {
     stopHeartbeat();
+    _heartbeatInterval = interval;
     _online = true;
     _timer = Timer.periodic(interval, (_) => unawaited(heartbeatOnce()));
+  }
+
+  /// 当前心跳周期（默认 270 s；注册应答给了 iHelloInterval 时会跟随）。
+  Duration get heartbeatInterval => _heartbeatInterval;
+
+  Duration _heartbeatInterval = const Duration(seconds: 270);
+
+  /// 服务端用 `SvcRespRegister.iHelloInterval` 指定它期望的续租周期
+  /// （官方 `msf/core/push/e.java:318-327`）。固定 270 s 只在服务端也这么说时
+  /// 才安全：它说 60 s 而我们 270 s 才续一次，会话在中途就漏了。
+  ///
+  /// 只采纳 60–600 s 这种合理范围（超界视为异常应答，保持原周期），而且只在
+  /// 周期模式（[_timer] 存在）下改——手动/自测模式不动定时器。
+  void _syncHeartbeatInterval() {
+    final timer = _timer;
+    if (timer == null) return;
+    final seconds = _pushHelloInterval;
+    if (seconds < 60 || seconds > 600) return;
+    final next = Duration(seconds: seconds);
+    if (next == _heartbeatInterval) return;
+    _heartbeatInterval = next;
+    timer.cancel();
+    _timer = Timer.periodic(next, (_) => unawaited(heartbeatOnce()));
   }
 
   void stopHeartbeat() {
@@ -670,9 +733,19 @@ class Qq8Session {
       // 服务端看到的是「一条只在登录时注册过一次的连接」。
       try {
         await registerParsed(timeout: const Duration(seconds: 10));
+      } on Qq8ServerRetcodeException catch (e) {
+        if (e.authDead) {
+          // 身份失效是终态：交给上层停轮询、置 sessionExpired，不要再当"续租
+          // 超时"静默重试（那正是 -10003 风暴的形态）。
+          onAuthDead?.call(e);
+          _handleTransportDown(e);
+          return false;
+        }
+        // 普通服务端拒绝：这一轮续租没成，下一轮再来。
       } on Object {
         // 续租失败不致命（注册成功与否另有在线检查判读），下一轮再来。
       }
+      _syncHeartbeatInterval();
       await uniHeartbeat();
       await _maybeReportStatus();
       return true;

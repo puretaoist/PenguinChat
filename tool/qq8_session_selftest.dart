@@ -22,6 +22,7 @@ import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_register.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
@@ -91,6 +92,19 @@ Qq8Device _device() => Qq8Device(
       imsi: Uint8List(16),
       tgtgt: Uint8List(16),
       guid: hex('00112233445566778899aabbccddeeff'),
+    );
+
+/// 造一个已配置好的会话（默认 uin=10001、QQ 8.9.50 档案、固定 d2key）。
+Qq8Session _mkSession(Qq8Transport transport, int seqStart) => Qq8Session(
+      transport: transport,
+      profile: qq8ProfileQQ8950,
+      uin: 10001,
+      device: _device(),
+      sessionId: hex('01020304'),
+      ecdhPublicKey: hex('04${'11' * 64}'),
+      ecdhShareKey: hex('f3df7dfb6d55b17975d908d8228dee11'),
+      sig: Qq8SigInfo(d2key: _d2key),
+      seqStart: seqStart,
     );
 
 /// 造一个真机结构的响应帧：`[外壳(flag=2)][SSO 头][payload]`。
@@ -637,6 +651,118 @@ Future<void> main() async {
     checkEq('普通返回码(-1000) → 仍是 unconfirmed（不当终态）', plain,
         Qq8RegisterOutcome.unconfirmed);
     await sPlain.close();
+  }
+
+  section('11c. 注册续租：单飞 / 只认 cReplyCode==0 / 字段缺席不清零 / authDead 上报');
+  {
+    // 造 SvcRespRegister：tag0=uin、tag2=cReplyCode、tag8=timeStamp、
+    // tag13=iLargeSeq、tag12=iHelloInterval（官方 writeTo 字段序）。
+    Uint8List regFull({int replyCode = 0, int? ts, int? ls, int? hi}) {
+      final struct = Qq8Jce.encodeStruct(<int, Object?>{
+        0: 10001,
+        2: replyCode,
+        if (ts != null) 8: ts,
+        if (ls != null) 13: ls,
+        if (hi != null) 12: hi,
+      });
+      final payload = Qq8Jce.encode(<int, Object?>{
+        0: <Object?, Object?>{'SvcRespRegister': struct},
+      });
+      return Qq8Jce.encode(<int, Object?>{7: payload});
+    }
+
+    final t = Qq8ScriptedTransport(<Uint8List>[
+      _frame(seq: 201, cmd: 'StatSvc.register',
+          payload: regFull(ts: 1234, ls: 56, hi: 300)),
+      _frame(seq: 202, cmd: 'StatSvc.register',
+          payload: regFull(replyCode: 7, ts: 9999, ls: 99, hi: 30)),
+      _frame(seq: 203, cmd: 'StatSvc.register', payload: regFull()),
+      _frame(seq: 204, cmd: 'StatSvc.register',
+          payload: regFull(ts: 777, ls: 88, hi: 280)),
+    ]);
+    final s = _mkSession(t, 200);
+    await s.start();
+    checkEq('首次续租注册 ok', await s.registerParsed(), Qq8RegisterParse.ok);
+    checkEq('记下 iHelloInterval=300', s.pushHelloInterval, 300);
+
+    checkEq('被拒(cReplyCode=7) → rejected', await s.registerParsed(),
+        Qq8RegisterParse.rejected);
+    checkEq('被拒包里的 hi 不覆盖缓存', s.pushHelloInterval, 300);
+
+    checkEq('字段缺席的成功应答 → ok', await s.registerParsed(),
+        Qq8RegisterParse.ok);
+    checkEq('字段缺席时 iHelloInterval 保留旧值（不清零）', s.pushHelloInterval,
+        300);
+
+    final body4 = Qq8Jce.decodeWrapper(_loginLayerBody(t.sent[2]));
+    checkEq('下次注册回送缓存 timeStamp=1234（不是被拒包的 9999）', body4[10],
+        1234);
+    checkEq('下次注册回送缓存 iLargeSeq=56（不是被拒包的 99）', body4[23], 56);
+
+    final before = t.sent.length;
+    final r1 = s.registerParsed();
+    final r2 = s.registerParsed();
+    final both = await Future.wait(<Future<Qq8RegisterParse>>[r1, r2]);
+    checkEq('并发两次注册只发一包（单飞）', t.sent.length - before, 1);
+    checkEq('两个调用方拿到同一结果',
+        both.every((x) => x == Qq8RegisterParse.ok), true);
+    await s.close();
+
+    // 心跳里的续租注册遇 authDead：必须上报终态，不能静默吞掉。
+    final t2 = Qq8ScriptedTransport(<Uint8List>[
+      _frame(seq: 211, cmd: 'Client.CorrectTime', payload: hex('6b49d200')),
+      _frame(seq: 212, cmd: 'Heartbeat.Alive'),
+      _frame(seq: 213, cmd: 'StatSvc.register', retcode: -10003),
+    ]);
+    final s2 = _mkSession(t2, 210);
+    var authDeadCalls = 0;
+    var lostCalls = 0;
+    Object? deadErr;
+    s2.onAuthDead = (e) {
+      authDeadCalls++;
+      deadErr = e;
+    };
+    s2.onConnectionLost = (_) => lostCalls++;
+    await s2.start();
+    checkEq('心跳续租遇 authDead → heartbeatOnce 返回 false',
+        await s2.heartbeatOnce(), false);
+    checkEq('回调 onAuthDead 一次', authDeadCalls, 1);
+    checkEq('同时收敛为一次连接断开上报（L3 唯一入口）', lostCalls, 1);
+    checkEq('上报对象是 authDead 异常',
+        (deadErr as Qq8ServerRetcodeException?)?.authDead, true);
+    await s2.close();
+
+    // 心跳周期跟随服务端 iHelloInterval（固定 270 s 只在服务端也这么说时安全）。
+    final t3 = Qq8ScriptedTransport(<Uint8List>[
+      _frame(seq: 221, cmd: 'Client.CorrectTime', payload: hex('6b49d200')),
+      _frame(seq: 222, cmd: 'Heartbeat.Alive'),
+      _frame(seq: 223, cmd: 'StatSvc.register',
+          payload: regFull(ts: 5, ls: 6, hi: 300)),
+      _frame(seq: 224, cmd: 'OidbSvc.0x480_9_IMCore', payload: hex('0a00')),
+    ]);
+    final s3 = _mkSession(t3, 220);
+    await s3.start();
+    s3.startHeartbeat(interval: const Duration(seconds: 270));
+    checkEq('初始心跳周期 270s', s3.heartbeatInterval.inSeconds, 270);
+    await s3.heartbeatOnce();
+    checkEq('注册应答给 iHelloInterval=300 → 周期跟到 300s',
+        s3.heartbeatInterval.inSeconds, 300);
+    await s3.close();
+
+    // 异常值（0 / 5 s / 700 s）不采纳，保持原周期。
+    final t4 = Qq8ScriptedTransport(<Uint8List>[
+      _frame(seq: 231, cmd: 'Client.CorrectTime', payload: hex('6b49d200')),
+      _frame(seq: 232, cmd: 'Heartbeat.Alive'),
+      _frame(seq: 233, cmd: 'StatSvc.register', payload: regFull(hi: 5)),
+      _frame(seq: 234, cmd: 'OidbSvc.0x480_9_IMCore', payload: hex('0a00')),
+    ]);
+    final s4 = _mkSession(t4, 230);
+    await s4.start();
+    s4.startHeartbeat(interval: const Duration(seconds: 270));
+    await s4.heartbeatOnce();
+    checkEq('离谱的 iHelloInterval=5s 不采纳（保持 270s）',
+        s4.heartbeatInterval.inSeconds, 270);
+    await s4.close();
   }
 
   stdout.writeln('\n${'=' * 62}');
