@@ -4097,7 +4097,7 @@ class Qq8LoginService {
         // 确认成功必须清掉「未确认」标记，否则一旦某次超时置过位，
         // 之后即使注册成功，在线检查也会一直被跳过（永久降级）。
         _pushChannelUnconfirmed = false;
-        _log.i('上线注册已确认（cReplyCode=0）');
+        _log.i('上线注册已确认（cReplyCode=0）${session.lastRegisterDiagnostic ?? ''}');
         return;
       case Qq8RegisterOutcome.unconfirmed:
         // 真机现场：30 秒一个字都没回来。这时服务端到底有没有把推送通道

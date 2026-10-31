@@ -350,6 +350,19 @@ class Qq8Session {
   DateTime? _resendAt;
   int _resendStreak = 0;
 
+  /// 最近一次 `StatSvc.register` 应答里服务端给的推送相关字段（诊断用，
+  /// 见 [Qq8Register.describeResponse]）。仅用于日志，不参与任何判读。
+  String? lastRegisterDiagnostic;
+
+  /// 推送会话状态：服务端在 `SvcRespRegister` 里下发，下次注册必须回送
+  /// （官方 `msf/core/push/e.java:104-105` 用 PushInfo.timeStamp / iLargeSeq）。
+  int _pushTimeStamp = 0;
+  int _pushLargeSeq = 0;
+  int _pushHelloInterval = 0;
+
+  /// 服务端要求的注册/推送续租间隔（`SvcRespRegister.iHelloInterval`，秒）。
+  int get pushHelloInterval => _pushHelloInterval;
+
   /// 短窗口内多个请求都耗尽重发预算 ⇒ 连接大概率已经不可用。
   ///
   /// 仅用于让上层**暂停非必要的轮询**，绝不据此判定凭证失效
@@ -536,6 +549,8 @@ class Qq8Session {
       uin: uin,
       device: device,
       logout: logout,
+      pushTimeStamp: _pushTimeStamp,
+      pushLargeSeq: _pushLargeSeq,
     );
     final r = await sendLoginLayer(
       Qq8Register.cmd,
@@ -543,6 +558,13 @@ class Qq8Session {
       type: Qq8LoginType.online,
       timeout: timeout,
     );
+    lastRegisterDiagnostic = Qq8Register.describeResponse(r.payload);
+    final state = Qq8Register.parsePushState(r.payload);
+    if (state != null) {
+      _pushTimeStamp = state.timeStamp;
+      _pushLargeSeq = state.largeSeq;
+      _pushHelloInterval = state.helloInterval;
+    }
     return Qq8Register.parseResponseDetailed(r.payload);
   }
 
@@ -642,6 +664,15 @@ class Qq8Session {
     }
     try {
       await heartbeatAlive();
+      // 官方把「注册」当作推送会话的续租：`msf/core/push/e.java:318-327`
+      // 拿 `iHelloInterval` 排下一次注册（`g.java:665-670` 默认 300 s），
+      // 且下次注册要回送服务端给的 timeStamp / iLargeSeq。缺了这步，
+      // 服务端看到的是「一条只在登录时注册过一次的连接」。
+      try {
+        await registerParsed(timeout: const Duration(seconds: 10));
+      } on Object {
+        // 续租失败不致命（注册成功与否另有在线检查判读），下一轮再来。
+      }
       await uniHeartbeat();
       await _maybeReportStatus();
       return true;

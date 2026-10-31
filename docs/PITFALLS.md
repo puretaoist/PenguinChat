@@ -4115,3 +4115,23 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 **同一轮的三条配套**：`_goOnline` 在 `await` 后 emit 前必须校验 `identical(_session, session) && epoch == _sessionEpoch`（关闭/切号期间飞回来的结果不许点亮新会话）；`registerWithOutcome` 要在 `on Object` **之前**单独接住 `Qq8ServerRetcodeException`，`e.authDead` 必须 rethrow（吞成 unconfirmed = 无限重注册）；`_registerInBackground` 捕获后先 `_markAuthLost` 再决定是否降级。
 
 **测试写法**：迟到结果的用例不能"close 完再断言没 online"就完事——得证明它确实走到了那一步。用按索引延迟的 `_DelayTransport`（第 n 次 send 慢 delays[n]）把流程卡在「在线状态上报」400ms，登录后 120ms 关闭，然后**同时**断言「无 online」「终态 idle」「出现过 connecting」（防空转）。
+
+
+## C88 推送通道要三件事：注册续租、握手回声、通知只当「去拉」（2026-10-31，真机实测）
+
+**背景**：用户问「消息接收还是通过轮询吗」。查完官方 + 真机实测，结论是**推送本来就能通，但我方把续租字段丢了，通道长期处于"每次都是新注册"的状态**。
+
+**三件事，缺一件就只剩拉取**：
+
+1. **注册应答的 `timeStamp`(tag8) / `iLargeSeq`(tag13) 必须在下一次注册原样回送**。官方 `msf/core/push/e.java:104-105` 用 `aVar.k.timeStamp` / `aVar.k.iLargeSeq` 填 `SvcReqRegister`，`:314-327` 再用应答的 `iHelloInterval` 排下一次注册（默认 300s）——**注册不是一次性动作，是推送会话的周期续租**。我方此前恒回送 0，等于每轮都是新注册：真机表现为旧包每 3 分钟被 `StatSvc.QueryHB` 催一次、且催出来的重注册 30s 超时（unconfirmed）。回填后 `13:21:49` 一次落定，`QueryHB` 自 `12:57` 后再没出现过。
+2. **`SSO.HelloPush` 必须原样回声**（官方 `g.java:2343-2363` putWupBuffer 回送）。没回 = 服务端认为推送通道不可用。这条早前已修，但只修它不够——注册不落定照样收不到。
+3. **`MessageSvc.PushNotify` 只是"有新消息，去拉"**，不是消息体：`payload[4:]`（失败退 `payload[15:]`）→ JCE `nested[5]` = 通知类型（166 好友 / 141 陌生人 / 167 单向 / 208 语音 / 529 离线文件 / 33·38·85 群 / 84·87·525 群系统 / 187·191 好友系统），命中就调 `PbGetMsg` 增量拉。**oicq 的 `pushNotifyListener`（`analysis/_ref/oicq-src/lib/internal/listeners.ts:13-40`）根本不回执**，所以「必须回 `OnlinePush.RespPush` 才能继续收」是伪需求；官方 `MessageHandler.java:2613` 只在 `ping_flag==1` 时回，回的是 `SvcRespPushMsg` 壳（`awxd.java:16-50`：lUin/svrip/vDelInfos/bytes_push_token/service_type/deviceInfo）。
+
+**真机实测（包 com.example.qqclient，uin 3880159487）**：
+- 私聊：`13:30:05.923` 收到 `有新消息通知（type=166）` → `:06.037` 拉回 1 条 → 落盘 `private_2089495846.jsonl`「中的」「咋的」。**端到端 ~0.1s**。
+- 群：`13:32:56.268` 直接收到 `收到消息 group from=1817819508 gid=486045673 seq=59157: 重开有点麻烦`（`OnlinePush.PbPushGroupMsg`，带消息体，不需要再拉）。
+- 同一条消息被拉 4 次（`消息=1` 重复出现在 13:30:06/:10/:13/:21）**不是重复投递**，是两条消息 + sync_cookie 收敛过程；落盘侧 msgId 去重后只有 5 条唯一文本，无重复。
+
+**教训**：
+- 「未处理的推送 cmd=X」的**历史计数毫无意义**（`QueryHB` 196 次全是修复前的），判读必须卡时间窗。
+- 判读推送是否"通"，看**用户可感知的因果链**（消息文本落盘 + 时间戳），不要只看"有没有 cmd 日志"——我方 handled 的推送没有 cmd 日志，只有 `收到消息`/`有新消息通知`。

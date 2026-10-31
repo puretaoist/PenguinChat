@@ -90,6 +90,8 @@ abstract final class Qq8Register {
     required Qq8Device device,
     bool logout = false,
     int? nowMillis,
+    int pushTimeStamp = 0,
+    int pushLargeSeq = 0,
   }) {
     final pbBlob = Qq8Pb.encode(<int, Object?>{
       1: <Object?>[
@@ -112,7 +114,10 @@ abstract final class Qq8Register {
       7: 0,
       8: 0,
       9: 0,
-      10: logout ? 44 : 0,
+      // 10 = `SvcReqRegister.timeStamp`：**服务端在 `SvcRespRegister` 里给的
+      // 推送会话时间戳**，下次注册必须原样回送（官方
+      // `msf/core/push/e.java:104` 用 `aVar.k.timeStamp`）。
+      10: logout ? 44 : pushTimeStamp,
       11: device.version.sdk,
       12: 1,
       13: '',
@@ -125,7 +130,9 @@ abstract final class Qq8Register {
       20: device.model,
       21: device.version.release,
       22: 1,
-      23: 0,
+      // 23 = `iLargeSeq`：同上，服务端给的推送大序号，下次注册回送
+      // （官方 `e.java:105` 用 `aVar.k.iLargeSeq`）。
+      23: pushLargeSeq,
       24: 0,
       // 25: null
       26: 0,
@@ -182,6 +189,48 @@ abstract final class Qq8Register {
     final replyCode = rsp[2];
     if (replyCode is! int) return Qq8RegisterParse.malformed;
     return replyCode == 0 ? Qq8RegisterParse.ok : Qq8RegisterParse.rejected;
+  }
+
+  /// 从 `SvcRespRegister` 里取出「推送会话状态」。
+  ///
+  /// 官方在 `msf/core/push/e.java:215-228` 把 `bUpdateFlag/timeStamp/
+  /// uClientBatteryGetInterval` 取出来存进 PushInfo，下次注册原样回送
+  /// （`e.java:104-105`）；字段序见 `SvcRespRegister.java:69-84`。
+  /// 回送是服务端识别「同一条推送会话」的依据，不回送等于每次都是新注册。
+  static ({int timeStamp, int largeSeq, int helloInterval, int batteryInterval})?
+      parsePushState(Uint8List payload) {
+    try {
+      final rsp = Qq8Jce.decodeWrapper(payload);
+      final ts = rsp[8];
+      if (ts is! int) return null;
+      final ls = rsp[13];
+      final hi = rsp[12];
+      final bi = rsp[18];
+      return (
+        timeStamp: ts,
+        largeSeq: ls is int ? ls : 0,
+        helloInterval: hi is int ? hi : 0,
+        batteryInterval: bi is int ? bi : 0,
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  /// 诊断用：把 `SvcRespRegister`（tag 序见 `SvcRespRegister.java:60-85`）里
+  /// 服务端实际给的字段摊平成一行，便于真机看清推送通道到底卡在哪一步。
+  static String describeResponse(Uint8List payload) {
+    try {
+      final rsp = Qq8Jce.decodeWrapper(payload);
+      String g(int k) => rsp[k]?.toString() ?? '-';
+      return 'cReplyCode=${g(2)} bUpdateFlag=${g(7)} timeStamp=${g(8)} '
+          'iHelloInterval=${g(12)} iLargeSeq=${g(13)} '
+          'bLargeSeqUpdate=${g(14)} iStatus=${g(16)} '
+          'uExtOnlineStatus=${g(17)} batteryInterval=${g(18)} '
+          'tags=[${rsp.keys.join(",")}]';
+    } on Object catch (e) {
+      return 'decodeFailed=$e';
+    }
   }
 
   /// 兼容旧调用的布尔版：只有 `ok` 才算成功（畸形/被拒都 false）。
