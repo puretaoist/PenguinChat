@@ -4337,3 +4337,18 @@ Dart 侧开销。
 并把 `wide` 的计算提前到 sidebar 组装之前）。注意 `_resolvedChatId` 本身仍要
 保留——窄屏的 `_send/_ensureOpened` 依赖它。
 
+
+## C103 头像被父级约束压窄就成椭圆：ClipOval / BoxShape.circle 都按"盒子的长宽"画（2026-10-31）
+
+**现象**：群聊里发言人头像"不是正圆"，看着像竖向拉长的椭圆（真机 25091RP04C 实测 30x34）。
+
+**根因**：`lib/ui/pages/home_page.dart` 的发言人头像槽写成
+`SizedBox(width: TelegramMetrics.bubbleAvatarSize + 10)`，头像 34、内边距左 8 右 6
+共 14 —— 44 减 14 只剩 30，于是 `ClipOval` 拿到 30x34 的非正方盒。
+这两种画法（`ClipOval`、`BoxDecoration(shape: BoxShape.circle)`）都是**内接椭圆**，
+盒子不是正方形就必然画出椭圆；`Image.network(fit: cover)` 也不会自己救回来。
+
+**处理**：槽宽 = 头像尺寸 + 左右内边距（改成 `bubbleAvatarSize + 14`）。凡是给
+`TelegramAvatar` 留位的地方，容器可用宽度必须 >= `size`；回归测试见
+`test/home_page_test.dart`「群聊头像必须是正圆」——遍历 `find.byType(ClipOval)`
+断言 `size.width == size.height`（用 `+10` 时这条会红）。

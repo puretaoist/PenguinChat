@@ -548,4 +548,35 @@ void main() {
         reason: '删消息不该把会话也删掉');
     await _teardownStore(tester);
   });
+
+  testWidgets('群聊头像必须是正圆（槽宽 >= 头像 + 左右内边距）', (tester) async {
+    _wideScreen(tester);
+    session.emit(SessionMessage(ChatMessage(
+      id: 'g-avatar-1',
+      text: '群里说话',
+      segments: <Segment>[const TextSegment('群里说话')],
+      time: DateTime(2026, 9, 12, 10),
+      chatId: 'group_12345',
+      senderId: '20003',
+      senderName: '小明',
+    )));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row-group_12345')));
+    await tester.pumpAndSettle();
+
+    final avatars = find.byType(ClipOval);
+    expect(avatars, findsWidgets, reason: '群里要有真头像（ClipOval）');
+    for (final Element e in avatars.evaluate()) {
+      final Size s = e.size!;
+      expect(
+        s.width,
+        moreOrLessEquals(s.height, epsilon: 0.01),
+        reason: '头像盒必须是正方形；非正方盒画出来就是椭圆，实测 $s',
+      );
+    }
+    await _teardownStore(tester);
+  });
 }

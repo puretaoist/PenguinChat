@@ -1629,8 +1629,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                                     ),
                                   ),
                                 if (item.showAvatarSlot)
+                                  // 槽宽必须 >= 头像尺寸 + 左右内边距（8+6）。
+                                  // 早先是 +10：44 减掉 14 只剩 30，头像被压成
+                                  // 30x34 —— ClipOval/BoxShape.circle 在非正方盒里
+                                  // 画出来就是椭圆，群里看着"不是正圆"。
                                   SizedBox(
-                                    width: TelegramMetrics.bubbleAvatarSize + 10,
+                                    width: TelegramMetrics.bubbleAvatarSize + 14,
                                     child: item.showAvatar
                                         ? Padding(
                                             padding: const EdgeInsets.only(

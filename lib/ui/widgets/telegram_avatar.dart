@@ -21,6 +21,9 @@ Color _colorFromName(String name) {
   return palette[hash % palette.length];
 }
 
+/// 注意：本组件按 [size] 正方形绘制。**调用方给它的可用宽度必须 >= size**，
+/// 否则父级约束会把它压成非正方盒，`ClipOval` / `BoxShape.circle` 画出来就是椭圆
+/// （2026-10-31 真机：气泡头像槽宽 44 减左右内边距 14 只剩 30 → 30x34 椭圆，C103）。
 class TelegramAvatar extends StatelessWidget {
   final String name;
   final double size;
