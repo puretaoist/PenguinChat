@@ -1114,7 +1114,8 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     try {
       // bootstrap 失败也要把这一对释放掉：否则 adapter 的事件流还开着、
       // 半建的 store 还握着同一个数据根，下一代建起来就成两个写者。
-      await store.bootstrap();
+      // false = 会话列表的网络刷新不阻塞启动（磁盘索引先交给 UI）。
+      await store.bootstrap(awaitRemoteChats: false);
     } on Object catch (e) {
       log?.call('warn', '账号数据层启动失败（uin=$uin），释放半成品', e);
       _coordinator.fail(plan);

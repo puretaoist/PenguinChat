@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'client_api/chat_index_preview.dart';
 import 'client_api/qq8_providers.dart';
 import 'client_api/qq8_token_store.dart';
 import 'client_api/session_providers.dart';
@@ -89,6 +90,14 @@ Future<void> main() async {
     '设备身份已确定: ${deviceIdentity == null ? "无（将退回合成派生）" : "有（本机采集或人工注入）"}',
   );
 
+  // 冷启动首帧的会话列表：直接读上次那个账号的 chats.json。
+  // 这是"官方同款启动"的关键一步（Telegram 的 LaunchActivity 就是这么做的：
+  // 列表从本地库立刻出，网络在后台追）——没有它，第一帧只能是品牌页。
+  final preview = await loadChatIndexPreview(dataDir);
+  Log.get('Main').i(
+    '会话预览: ${preview == null ? "无（将显示品牌页）" : "uin=${preview.uin} 会话数=${preview.chats.length}"}',
+  );
+
   runApp(
     ProviderScope(
       overrides: [
@@ -114,8 +123,8 @@ Future<void> main() async {
       // KeepAliveScope 必须在 MaterialApp 外面：它不需要 context、不参与布局，
       // 而前台服务是进程级资源，整个应用只能有一个观察者。
       // MessageNotifyScope 同理（订阅 ChatStore + 应用生命周期 → 系统通知）。
-      child: const KeepAliveScope(
-        child: MessageNotifyScope(child: QQClientApp()),
+      child: KeepAliveScope(
+        child: MessageNotifyScope(child: QQClientApp(preview: preview)),
       ),
     ),
   );
@@ -175,7 +184,11 @@ Future<BackendProfileRegistry> _loadBackendRegistry() async {
 }
 
 class QQClientApp extends ConsumerWidget {
-  const QQClientApp({super.key});
+  const QQClientApp({super.key, this.preview});
+
+  /// 冷启动会话预览（见 `client_api/chat_index_preview.dart`）。null = 没有
+  /// 可读索引（首装/刚登出/索引损坏），此时退回"品牌页 + 等登录"。
+  final ChatIndexPreview? preview;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -199,7 +212,8 @@ class QQClientApp extends ConsumerWidget {
       },
       // 冷启动先放品牌页，等账号恢复有结论（或超时）再淡入主界面。
       // 这段"其实正在登录"的时间以前是一片空态，用户会以为连不上。
-      home: const AppBootstrap(),
+      // 有会话预览就直接第一帧画列表（不再过品牌页）。
+      home: AppBootstrap(preview: preview),
     );
   }
 }

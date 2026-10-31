@@ -59,7 +59,25 @@ import 'search_page.dart';
 import 'settings_page.dart';
 
 class HomePage extends ConsumerStatefulWidget {
-  const HomePage({super.key});
+  const HomePage({
+    super.key,
+    this.connecting = false,
+    this.previewChats = const <Chat>[],
+  });
+
+  /// 冷启动时从磁盘索引读出的会话快照（见 `chat_index_preview.dart`）。
+  ///
+  /// 只为"第一帧就有列表"存在：真实 store 还没建好（要等登录）时先画它，
+  /// store 一到就自动换成 store 的数据。两者用的是同一份 `chats.json` 和
+  /// 同一个排序函数，所以换过去**不会有任何视觉跳动**。
+  final List<Chat> previewChats;
+
+  /// 账号恢复还没结论时为 true（冷启动壳在 maximumWait 到点后先放人进主界面）。
+  ///
+  /// 只影响会话栏空态文案：显示「正在连接…」而不是「未连接后端」。由冷启动壳
+  /// 传入并随登录状态更新（它 watch 了 qq8LoginStateProvider，本页不 watch，
+  /// 因为 widget 测试的 provider override 里没有协议线的依赖）。
+  final bool connecting;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -328,6 +346,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _openChat(Chat chat) {
+    // 预览期（store 还没建好）点会话没有意义：没有历史可拉、也发不出去。
+    // 让这一下"什么都没发生"，比切到一个空对话面板更像话。
+    if (ref.read(chatStoreProvider) == null) return;
     setState(() {
       _selectedChatId = chat.id;
       _showChatList = false;
@@ -591,8 +612,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 只为"换主题时整页重画"而 watch：颜色是静态 getter（见 telegram_theme.dart），
     // 本方法不重建就不会重读新的调色板。
     applyThemePalette(ref);
-    final chats = ref.watch(chatsProvider).valueOrNull ?? const <Chat>[];
+    final live = ref.watch(chatsProvider).valueOrNull ?? const <Chat>[];
     final store = ref.watch(chatStoreProvider);
+    // store 还没建好（登录中）但磁盘上有索引 → 先画预览，别让用户看空态。
+    // store 一接管就用它的数据（live 此时非空）。
+    final chats = live.isNotEmpty ? live : widget.previewChats;
+    // 预览里的会话不可交互（没有 store 就没有 openChat/发送/长按菜单），
+    // 所以预览期间不解析"选中会话"，右侧对话面板保持空。
+    final bool previewOnly = store == null && widget.previewChats.isNotEmpty;
     _draftStore = store; // 给 dispose() 里的草稿收尾用（那时不能再碰 ref）
 
     // 点系统通知 → 打开对应会话。通知由 [MessageNotifyScope] 发出，
@@ -621,7 +648,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       _opened.clear();
     }
 
-    _resolvedChatId = _resolveSelected(chats);
+    _resolvedChatId = previewOnly ? null : _resolveSelected(chats);
     if (_resolvedChatId != null &&
         store != null &&
         !_opened.contains(_resolvedChatId)) {
@@ -633,6 +660,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final sidebar = ChatListPanel(
       chats: chats,
       store: store,
+      connecting: widget.connecting,
       selectedChatId: _resolvedChatId,
       onOpenChat: _openChat,
       onLongPressChat: _showChatActions,

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动窗口底色：必须与 Dart 侧 StartupSplash 的 TelegramColors.bgApp 一致，
+         否则冷启动会先闪一帧别的颜色再进品牌页（官方 QQ 用 windowDisablePreview
+         直接关掉系统启动预览，我们做不到，只能把颜色对齐）。
+
+         只做一档（不改 values-night）：本应用的主题是**应用内开关**（默认暗色
+         TelegramPalette.dark，bgApp=#0F0F0F），与系统深色模式无关；系统是亮色时
+         Android 仍取 values/ 这一套，所以这里必须是暗色才能对上首帧。 -->
+    <color name="launch_background">#FF0F0F0F</color>
+    <!-- 启动图标（气泡）的圆底：与 TelegramColors.dark 的 accent 同值，
+         让启动画面和我们列表里的紫色强调色是一套。 -->
+    <color name="launch_icon_bg">#FF8774E1</color>
+</resources>

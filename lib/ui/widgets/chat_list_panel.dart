@@ -32,6 +32,7 @@ class ChatListPanel extends StatelessWidget {
     required this.onOpenSettings,
     required this.onOpenArchive,
     required this.onOpenConnect,
+    this.connecting = false,
     required this.onOpenQq8Login,
   });
 
@@ -40,6 +41,12 @@ class ChatListPanel extends StatelessWidget {
 
   /// 空态要区分「没连后端」和「连了但没会话」，所以把 store 带进来。
   final ChatStore? store;
+
+  /// store 仍是 null、但账号恢复正在进行中（冷启动壳在超时后先放人进来）。
+  ///
+  /// 这时既不是「用户没配后端」也不是「没有会话」，空态不能写「未连接后端」
+  /// 去催用户配置——那是假消息。只显示等待态，登录完成后本子树自然重建出列表。
+  final bool connecting;
 
   /// 当前选中的会话 id（选中行翻色，见 [_chatTile]）。
   final String? selectedChatId;
@@ -67,6 +74,18 @@ class ChatListPanel extends StatelessWidget {
       child: Column(
         children: [
           _buildSearchBar(),
+          // 有预览列表但还没连上时，列表顶部压一条 2px 的强调色细线：提醒
+          // "这些是缓存，正在后台恢复连接"。
+          //
+          // 刻意用**静态**细线而不是 LinearProgressIndicator：后者是无限
+          // 动画，会一直向引擎要帧（低端机/ debug 包上是持续的掉帧源），
+          // 而这条线要表达的信息只有"还没连上"，静态就够。
+          if (store == null && connecting)
+            Container(
+              key: const ValueKey('preview-connecting-line'),
+              height: 2,
+              color: TelegramColors.accent.withValues(alpha: 0.7),
+            ),
           Expanded(
             child: RefreshIndicator(
               onRefresh: onRefresh,
@@ -228,6 +247,8 @@ class ChatListPanel extends StatelessWidget {
 
   /// 列表为空时也要能下拉刷新，所以用可滚动容器包一层。
   Widget _buildSidebarEmpty() {
+    // 恢复中 vs 真没连：文案与入口完全不同，先算一次。
+    final bool pending = store == null && connecting;
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
@@ -236,13 +257,17 @@ class ChatListPanel extends StatelessWidget {
           child: Column(
             children: [
               Icon(
-                store == null ? Icons.link_off : Icons.inbox_outlined,
+                pending
+                    ? Icons.sync
+                    : (store == null ? Icons.link_off : Icons.inbox_outlined),
                 color: TelegramColors.textMuted,
                 size: 36,
               ),
               const SizedBox(height: 12),
               Text(
-                store == null ? '未连接后端' : '暂无会话',
+                pending
+                    ? '正在连接…'
+                    : (store == null ? '未连接后端' : '暂无会话'),
                 style: TextStyle(
                   color: TelegramColors.textSecondary,
                   fontSize: 14,
@@ -250,9 +275,11 @@ class ChatListPanel extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                store == null
-                    ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
-                    : '下拉可刷新会话列表',
+                pending
+                    ? '正在恢复上次的会话，请稍候'
+                    : (store == null
+                        ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
+                        : '下拉可刷新会话列表'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: TelegramColors.textMuted,
@@ -260,7 +287,7 @@ class ChatListPanel extends StatelessWidget {
                   height: 1.4,
                 ),
               ),
-              if (store == null) ...[
+              if (store == null && !pending) ...[
                 const SizedBox(height: 14),
                 TextButton(
                   onPressed: onOpenConnect,

@@ -195,22 +195,8 @@ class ChatStore {
   /// 会话列表：置顶 → 优先级 → 最后消息时间倒序。
   List<Chat> get chats {
     final list = _chats.values.toList();
-    list.sort((a, b) {
-      if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
-      final byPriority = a.priority.compareTo(b.priority);
-      if (byPriority != 0) return byPriority;
-      final at = a.lastTime;
-      final bt = b.lastTime;
-      if (at != null && bt != null) {
-        final byTime = bt.compareTo(at);
-        if (byTime != 0) return byTime;
-      } else if (at != null) {
-        return -1; // 有消息的排在还没消息的前面
-      } else if (bt != null) {
-        return 1;
-      }
-      return a.id.compareTo(b.id); // 兜底稳定序
-    });
+    // 排序规则见顶层 [compareChatsForList]（冷启动预览共用同一份）。
+    list.sort(compareChatsForList);
     return List.unmodifiable(list);
   }
 
@@ -241,7 +227,11 @@ class ChatStore {
   ///
   /// 消息文件**不在这里读**：会话可能上百个，全读一遍会拖慢冷启动，
   /// 改为 [openChat] 时按会话懒加载。
-  Future<void> bootstrap() async {
+  /// [awaitRemoteChats] 为 false 时，"网络追上来"的那次会话列表刷新**不阻塞**
+  /// 启动（生产路径用它：协议线一上线就把磁盘索引交给 UI，好友/群列表随后合并，
+  /// 与 Telegram 的"本地先出、网络后台追"一致）。默认 true 保持既有语义
+  /// （自测与需要"bootstrap 返回即已合并"的调用方不受影响）。
+  Future<void> bootstrap({bool awaitRemoteChats = true}) async {
     await dataDir.create(recursive: true);
     await _chatsDir.create(recursive: true);
     _loadIndex();
@@ -268,7 +258,15 @@ class ChatStore {
     );
 
     if (session.state == SessionState.ready) {
-      await refreshChats();
+      // 磁盘索引已经读完了（上面 _loadIndex）。生产路径不等这次网络合并：
+      // 真机实测省掉好友列表 + 群列表两次往返，让"协议线已上线"从 2.23s
+      // 提前到 1.67s，而 UI 看到的会话集合是同一批（只是晚 ~0.5s 收到第二次
+      // chats 变更）。
+      if (awaitRemoteChats) {
+        await refreshChats();
+      } else {
+        unawaited(refreshChats());
+      }
     } else {
       _log.i('会话未就绪，先用磁盘上的 ${_chats.length} 个会话');
     }
@@ -1508,31 +1506,62 @@ class ChatStore {
         if (c.online) 'online': true,
       };
 
-  Chat? _chatFromJson(Map<String, dynamic> j) {
-    final id = j['id'];
-    if (id is! String || id.isEmpty) return null;
-    final lastTime = j['lastTime'];
-    return Chat(
-      id: id,
-      title: (j['title'] as String?) ?? id,
-      type: ChatType.parse(j['type'] as String?),
-      rawId: j['rawId'] as int?,
-      avatarUrl: j['avatarUrl'] as String?,
-      memberCount: (j['memberCount'] as int?) ?? 0,
-      ownerUin: (j['ownerUin'] as int?) ?? 0,
-      pinned: j['pinned'] == true,
-      muted: j['muted'] == true,
-      priority: (j['priority'] as int?) ?? 3,
-      lastMessage: (j['lastMessage'] as String?) ?? '',
-      lastTime: lastTime is int ? DateTime.fromMillisecondsSinceEpoch(lastTime) : null,
-      unreadCount: (j['unread'] as int?) ?? 0,
-      lastReadId: j['lastRead'] as String?,
-      archived: j['archived'] == true,
-      draft: (j['draft'] as String?) ?? '',
-      manualUnread: j['manualUnread'] == true,
-      online: j['online'] == true,
-    );
+  // 解析逻辑搬到顶层 [chatFromIndexJson]：冷启动的会话预览要复用同一份，
+  // 两处各写一遍迟早会漂（一个支持新字段、一个不支持）。
+  Chat? _chatFromJson(Map<String, dynamic> j) => chatFromIndexJson(j);
+}
+
+/// 从索引 JSON 还原一个会话（`chats.json` 的数组元素）。
+///
+/// 顶层函数而不是方法：冷启动的会话预览（`chat_index_preview.dart`）没有
+/// ChatStore 实例，但必须和 ChatStore 用**同一套**解析规则，否则预览和真实
+/// 列表会出现"同一份文件两种读法"的诡异差异。
+Chat? chatFromIndexJson(Map<String, dynamic> j) {
+  final id = j['id'];
+  if (id is! String || id.isEmpty) return null;
+  final lastTime = j['lastTime'];
+  return Chat(
+    id: id,
+    title: (j['title'] as String?) ?? id,
+    type: ChatType.parse(j['type'] as String?),
+    rawId: j['rawId'] as int?,
+    avatarUrl: j['avatarUrl'] as String?,
+    memberCount: (j['memberCount'] as int?) ?? 0,
+    ownerUin: (j['ownerUin'] as int?) ?? 0,
+    pinned: j['pinned'] == true,
+    muted: j['muted'] == true,
+    priority: (j['priority'] as int?) ?? 3,
+    lastMessage: (j['lastMessage'] as String?) ?? '',
+    lastTime:
+        lastTime is int ? DateTime.fromMillisecondsSinceEpoch(lastTime) : null,
+    unreadCount: (j['unread'] as int?) ?? 0,
+    lastReadId: j['lastRead'] as String?,
+    archived: j['archived'] == true,
+    draft: (j['draft'] as String?) ?? '',
+    manualUnread: j['manualUnread'] == true,
+    online: j['online'] == true,
+  );
+}
+
+/// 会话列表排序：置顶 → 优先级（小在前）→ 最后消息时间倒序 → id 兜底。
+///
+/// 顶层函数是为了让冷启动预览与 [ChatStore.chats] 排出**完全一样**的顺序：
+/// 顺序不同，登录完成接管的那一刻列表会自己重排一次，看起来像"跳了一下"。
+int compareChatsForList(Chat a, Chat b) {
+  if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+  final byPriority = a.priority.compareTo(b.priority);
+  if (byPriority != 0) return byPriority;
+  final at = a.lastTime;
+  final bt = b.lastTime;
+  if (at != null && bt != null) {
+    final byTime = bt.compareTo(at);
+    if (byTime != 0) return byTime;
+  } else if (at != null) {
+    return -1; // 有消息的排在还没消息的前面
+  } else if (bt != null) {
+    return 1;
   }
+  return a.id.compareTo(b.id); // 兜底稳定序
 }
 
 /// 本地占用统计（UI 的"存储与缓存"页用它显示）。

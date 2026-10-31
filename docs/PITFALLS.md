@@ -4277,3 +4277,43 @@ Git Bash 里还要 `export MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 被改写�
 **处理**：状态提到页面里 `Set<String> _entered`；判据 = 开关开 && 未播过 &&
 `now - m.time <= 8s`（把冷启动从磁盘载入的旧消息挡在动画外）；`_entered` 上限 400 条。
 
+
+## C99 「连接中」提示别用无限动画：低端机持续掉帧，测试还会超时（2026-10-31）
+
+**现象**：会话列表在有缓存、正在恢复连接时想提示"还没连上"，先用了
+`LinearProgressIndicator(minHeight: 2)`，结果 ①用户反馈"卡顿感强" ②
+`test/chat_list_connecting_test.dart` 里 `pumpAndSettle` 直接 timed out。
+
+**根因**：同 C96。indeterminate 进度条每帧都在调度下一帧，debug/低端机上
+就是一条永不停止的重绘源；而它要表达的信息只有"还没连上"这一件事。
+
+**处理**：换成 `Container(height: 2, color: accent.withValues(alpha: .7))` 静态细线
+（`ValueKey('preview-connecting-line')`）。要动感的话宁可让它闪一次再停，
+不要常驻动画。
+
+## C100 把 `windowSplashScreenAnimatedIcon` 设成 transparent = 引擎启动期纯黑（2026-10-31）
+
+**现象**：冷启动点图标后先看到 2–3 秒纯黑，用户以为卡死（"感官上比较慢"）。
+
+**根因**：为了让 Android 12+ 的"系统图标页"看起来不存在，我们把
+`windowSplashScreenAnimatedIcon` 设成了 `@android:color/transparent`。
+但 Flutter 引擎出第一帧本来就要 1–3 秒，这一段系统窗口 Drawable 只有底色，
+于是"没有预览页"变成了"一块纯黑占位"。
+
+**处理**：给这块窗口一个品牌标记 —— 矢量 `drawable/splash_mark.xml` +
+`windowSplashScreenIconBackgroundColor`（=accent 紫）；pre-31 用
+`launch_background.xml` 的 layer-list 居中同一张矢量。黑屏期变成"暗底 +
+图标"，同一段时间的感受完全不同。
+
+## C101 debug 包的 `Displayed` 不能当性能结论（2026-10-31，真机 25091RP04C）
+
+**现象**：同一份代码，debug 包 `Displayed +3825ms`，release 包 `+808ms`；
+其中 process→日志已启动 debug 约 2.4s、release 约 60ms。
+
+**根因**：debug 走 JIT、带断言、APK 163MB（release arm64 只有 20.1MB），
+类加载与着色器都不一样。拿 debug 数判断"启动慢"会把人带去找根本不存在的
+Dart 侧开销。
+
+**处理**：启动性能一律用 `bash scripts/build-local.sh release` 的产物量
+（`--split-per-abi`，装 `app-arm64-v8a-release.apk`）；debug 只用来验证功能。
+

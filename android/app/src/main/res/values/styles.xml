@@ -5,6 +5,14 @@
         <!-- Show a splash screen on the activity. Automatically removed when
              the Flutter engine draws its first frame -->
         <item name="android:windowBackground">@drawable/launch_background</item>
+        <!-- Android 12+ 的系统启动画面：官方 QQ 用 windowDisablePreview=true
+             关掉预览后自己画闪屏图，我们关不掉预览，那就把这一屏做好看：
+             暗底 + 品牌紫圆 + 白色气泡（@drawable/splash_mark）。
+             它一直显示到 Flutter 引擎画出第一帧（会话列表），所以既不会
+             闪白，也不会让用户对着纯黑屏以为卡死。 -->
+        <item name="android:windowSplashScreenBackground">@color/launch_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_mark</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/launch_icon_bg</item>
     </style>
     <!-- Theme applied to the Android Window as soon as the process has started.
          This theme determines the color of the Android Window while your
