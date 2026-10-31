@@ -127,6 +127,9 @@ class TelegramColors {
   /// 当前调色板（诊断/测试用）。
   static TelegramPalette get current => _p;
 
+  /// 是否暗色（少数需要按明暗分叉画的地方用它，比如日期胶囊的底色）。
+  static bool get isDark => identical(_p, TelegramPalette.dark);
+
   static Color get bgApp => _p.bgApp;
   static Color get bgSidebar => _p.bgSidebar;
   static Color get bgChat => _p.bgChat;
@@ -147,6 +150,31 @@ class TelegramColors {
   static Color get online => _p.online;
   static Color get badge => _p.badge;
   static Color get danger => _p.danger;
+
+  /// 群聊里发送者名字的 7 色轮转（TG UserObject.java:212-216 的
+  /// colorId = (int)(user.id % 7)，取 Theme.keys_avatar_nameInMessage 七色，
+  /// 色值见 ThemeColors.java:184-190）。
+  static const List<Color> nameColors = <Color>[
+    Color(0xFFCC5049),
+    Color(0xFFD67722),
+    Color(0xFF955CDB),
+    Color(0xFF40A920),
+    Color(0xFF309EBA),
+    Color(0xFF368AD1),
+    Color(0xFFC7508B),
+  ];
+
+  /// 按发送者 id 取名字颜色；非数字 id 退强调色。
+  ///
+  /// 暗色底上原始七色偏暗，按 TG 暗色主题的做法整体往白提亮 18%。
+  static Color nameColorFor(String senderId) {
+    final n = int.tryParse(senderId);
+    if (n == null) return accent;
+    final c = nameColors[n.abs() % nameColors.length];
+    return current == TelegramPalette.dark
+        ? Color.lerp(c, Colors.white, 0.18)!
+        : c;
+  }
 }
 
 /// 尺寸规格（对齐现行 Telegram 客户端）
@@ -185,11 +213,14 @@ class TelegramMetrics {
   static const chatAvatarGap = 9.0;
 
   /// 群聊里收到的消息旁的小头像。
-  static const bubbleAvatarSize = 34.0;
+  ///
+  /// TG ChatMessageCell.java:1936 的 setRoundRadius(dp(21)) 即直径 42，
+  /// 左留 6dp（:13839 setImageCoords(dp(6), y, dp(42), dp(42))）。
+  static const bubbleAvatarSize = 42.0;
 
   /// 气泡圆角：三个角大、贴着自己那侧的下角小（TG 的"尾巴"感）。
-  static const bubbleRadius = 16.0;
-  static const bubbleTailRadius = 6.0;
+  static const bubbleRadius = 17.0;
+  static const bubbleTailRadius = 5.0;
 
   /// 输入框胶囊圆角。
   static const inputRadius = 20.0;

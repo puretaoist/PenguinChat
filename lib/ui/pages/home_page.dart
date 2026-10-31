@@ -1819,6 +1819,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       onOpenGroupFiles: () => unawaited(_openGroupFiles(chat)),
       onOpenGroupSettings: () => unawaited(_openGroupSettings(chat)),
       onOpenSettings: _openSettings,
+      onSearch: _openSearch,
     );
   }
 

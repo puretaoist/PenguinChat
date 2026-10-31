@@ -17,6 +17,7 @@ class ChatHeader extends StatelessWidget {
     this.onOpenGroupFiles,
     this.onOpenGroupSettings,
     this.onOpenSettings,
+    this.onSearch,
   });
 
   final Chat chat;
@@ -25,6 +26,9 @@ class ChatHeader extends StatelessWidget {
   final VoidCallback? onOpenGroupFiles;
   final VoidCallback? onOpenGroupSettings;
   final VoidCallback? onOpenSettings;
+
+  /// 头部搜索（TG 顶栏右侧第一个图标就是放大镜）。
+  final VoidCallback? onSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -79,12 +83,25 @@ class ChatHeader extends StatelessWidget {
               ],
             ),
           ),
+          // TG 顶栏右侧：搜索 + 更多（⋮）。群工具与设置收进"更多"里，
+          // 不再各占一个图标位（ChatAvatarContainer.java 右侧就是这两个）。
+          if (onSearch != null)
+            IconButton(
+              key: const ValueKey('chat-header-search'),
+              onPressed: onSearch,
+              icon: Icon(
+                Icons.search,
+                color: TelegramColors.textSecondary,
+                size: 22,
+              ),
+              tooltip: '搜索',
+            ),
           if (chat.isGroup)
             PopupMenuButton<String>(
               key: const ValueKey('group-menu'),
-              tooltip: '群工具',
+              tooltip: '更多',
               icon: Icon(
-                Icons.folder_outlined,
+                Icons.more_vert,
                 color: TelegramColors.textSecondary,
                 size: 22,
               ),
@@ -96,9 +113,11 @@ class ChatHeader extends StatelessWidget {
                     onOpenGroupSettings?.call();
                   case 'members':
                     onOpenMembers?.call();
+                  case 'app-settings':
+                    onOpenSettings?.call();
                 }
               },
-              itemBuilder: (_) => const <PopupMenuEntry<String>>[
+              itemBuilder: (_) => <PopupMenuEntry<String>>[
                 PopupMenuItem<String>(
                   key: ValueKey('group-menu-files'),
                   value: 'files',
@@ -114,18 +133,25 @@ class ChatHeader extends StatelessWidget {
                   value: 'members',
                   child: Text('群成员'),
                 ),
+                if (onOpenSettings != null)
+                  PopupMenuItem<String>(
+                    key: ValueKey('chat-header-settings'),
+                    value: 'app-settings',
+                    child: Text('设置'),
+                  ),
               ],
+            )
+          else if (onOpenSettings != null)
+            IconButton(
+              key: const ValueKey('chat-header-settings'),
+              onPressed: onOpenSettings,
+              icon: Icon(
+                Icons.settings,
+                color: TelegramColors.textSecondary,
+                size: 22,
+              ),
+              tooltip: '设置',
             ),
-          IconButton(
-            key: const ValueKey('chat-header-settings'),
-            onPressed: onOpenSettings,
-            icon: Icon(
-              Icons.settings,
-              color: TelegramColors.textSecondary,
-              size: 22,
-            ),
-            tooltip: '设置',
-          ),
         ],
       ),
     );

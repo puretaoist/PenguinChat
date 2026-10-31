@@ -31,8 +31,9 @@ class JumpToLatestButton extends StatelessWidget {
         customBorder: const CircleBorder(),
         onTap: onTap,
         child: SizedBox(
-          width: 44,
-          height: 44,
+          // TG 的 chat_go_down 按钮直径 dp(46)
+          width: 46,
+          height: 46,
           child: Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.center,

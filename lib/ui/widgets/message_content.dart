@@ -61,6 +61,12 @@ class MessageContent extends StatelessWidget {
   /// 当前后端是不是协议线、也不知道该存到哪。上层接进来才有点击行为。
   final void Function(FileSegment segment)? onOpenFile;
 
+  /// 叠在图片右下角的时间块（TG media 分支）。
+  ///
+  /// 只有"这一条消息就是一张图"时由气泡传进来——放不进气泡的 _metaRow，
+  /// 也放不了行内尾巴（图片是块级段）。为 null 时图片块不画任何角标。
+  final Widget? imageMeta;
+
   /// 追加在**最后一行正文末尾**的行内元素（TG 就是这么排时间的：
   /// `ChatMessageCell.java:7381` `backgroundWidth += timeWidth + dp(12)`，
   /// 时间不单独占一行）。只有纯行内内容用得上——有图片/文件这类块级段时
@@ -77,6 +83,7 @@ class MessageContent extends StatelessWidget {
     this.retryMedia,
     this.onOpenFile,
     this.trailing,
+    this.imageMeta,
   });
 
   @override
@@ -147,6 +154,8 @@ class MessageContent extends StatelessWidget {
           break; // 引用由气泡顶部的引用条负责
         case ImageSegment():
           flush();
+          // 只有"整条消息就是这一张图"才叠时间块（多图/图文混排交给
+          // 气泡底部的 _metaRow，叠在一堆图里反而看不清）。
           blocks.add(_ImageBlock(
             seg: s,
             isOut: isOut,
@@ -154,6 +163,8 @@ class MessageContent extends StatelessWidget {
             ensureMedia: ensureMedia,
             mediaFailure: mediaFailure,
             retryMedia: retryMedia,
+            imageMeta: singleImageBlock(message) ? imageMeta : null,
+            fullBleed: _pureImage,
           ));
         case RecordSegment():
           flush();
@@ -267,6 +278,30 @@ class MessageContent extends StatelessWidget {
     ]));
   }
 
+  /// 这条消息是不是"一张图 + 若干行内元素"（没有别的块级段）。
+  ///
+  /// 用来决定时间画在图片右下角还是另起一行——TG 的 media 分支就是按
+  /// "有 photo 且没有其它块"判的（ChatMessageCell.java:24015-24060）。
+  static bool singleImageBlock(ChatMessage message) {
+    var images = 0;
+    for (final s in message.segments) {
+      if (s is ImageSegment) {
+        images++;
+        continue;
+      }
+      if (s is TextSegment || s is FaceSegment || s is AtSegment) continue;
+      if (s is ReplySegment) continue; // 引用走顶部引用条，不算块级内容
+      return false;
+    }
+    return images == 1;
+  }
+
+  /// 纯图（单图 + 无文字说明 + 无引用）：气泡内边距归零、图片贴满四角。
+  bool get _pureImage =>
+      singleImageBlock(message) &&
+      message.text.trim().isEmpty &&
+      message.replyPreview == null;
+
   /// 这条消息里有没有块级段（图片 / 语音 / 视频 / 文件 / 卡片）。
   ///
   /// 有的话气泡的"最后一行"不是文本行，时间得单独占一行——否则会贴到块级
@@ -371,6 +406,12 @@ class _ImageBlock extends StatefulWidget {
   final MediaFetchFailureKind? Function(Segment segment)? mediaFailure;
   final Future<String?> Function(Segment segment)? retryMedia;
 
+  /// 叠在右下角的时间块（见 [MessageContent.imageMeta]）。
+  final Widget? imageMeta;
+
+  /// 贴满四角（气泡已去掉内边距与圆角裁剪）。
+  final bool fullBleed;
+
   const _ImageBlock({
     required this.seg,
     required this.isOut,
@@ -378,6 +419,8 @@ class _ImageBlock extends StatefulWidget {
     this.ensureMedia,
     this.mediaFailure,
     this.retryMedia,
+    this.imageMeta,
+    this.fullBleed = false,
   });
 
   @override
@@ -504,18 +547,29 @@ class _ImageBlockState extends State<_ImageBlock> {
     final ar = seg.aspectRatio ?? 1.0;
     final w = _maxWidth;
     final h = (w / ar).clamp(90.0, 320.0);
-    final radius = BorderRadius.circular(10);
+    final radius = BorderRadius.circular(widget.fullBleed ? 0 : 10);
+
+    final picture = SizedBox(
+      width: w,
+      height: h,
+      child: GestureDetector(
+        onTap: () => _onTap(context),
+        child: _imageOrPlaceholder(context),
+      ),
+    );
+    final meta = widget.imageMeta;
 
     return ClipRRect(
       borderRadius: radius,
-      child: SizedBox(
-        width: w,
-        height: h,
-        child: GestureDetector(
-          onTap: () => _onTap(context),
-          child: _imageOrPlaceholder(context),
-        ),
-      ),
+      child: meta == null
+          ? picture
+          // 时间叠在图片右下角（TG 是 4/6dp 内缩，这里 5dp）。
+          : Stack(
+              children: [
+                picture,
+                Positioned(right: 5, bottom: 5, child: meta),
+              ],
+            ),
     );
   }
 

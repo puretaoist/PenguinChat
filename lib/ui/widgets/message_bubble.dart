@@ -106,9 +106,9 @@ class MessageBubble extends StatelessWidget {
         // （messenger/MessageObject.java:8527-8531）。本组件拿到的
         // constraints 已经扣掉了头像槽（44dp），所以这里只补 20（= 80 - 44 - 16
         // 里的差值）与头像那 52。短屏上比以前窄 18dp 左右，正是 TG 的留白。
-        final avatarInset = avatarVisible ? 52.0 : 0.0;
+        final avatarInset = avatarVisible ? 56.0 : 0.0;
         final avail =
-            math.max(constraints.maxWidth - chrome - 20 - avatarInset, 0.0);
+            math.max(constraints.maxWidth - chrome - 16 - avatarInset, 0.0);
         final maxWidth =
             constraints.maxWidth.isFinite ? math.min(mediaLimit, avail) : mediaLimit;
         return _build(context, maxWidth);
@@ -118,25 +118,33 @@ class MessageBubble extends StatelessWidget {
 
   Widget _build(BuildContext context, double maxWidth) {
     final isOut = message.outgoing;
-    final body = ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: maxWidth,
-      ),
-      child: Container(
+    // 单图（没有别的块级段）时把时间画进图片右下角（TG ChatMessageCell.java
+    // 24015-24060 的 media 分支），气泡不再为时间另留一行；没有文字说明的
+    // 纯图还要四边贴边（连内边距一起去掉）。
+    final imageOnly = MessageContent.singleImageBlock(message) &&
+        !message.isFailed &&
+        !(message.isRecalled && !message.revealed);
+    final pureImage = imageOnly &&
+        message.text.trim().isEmpty &&
+        message.replyPreview == null;
+    final bubbleShape = BorderRadius.only(
+      topLeft: const Radius.circular(TelegramMetrics.bubbleRadius),
+      topRight: const Radius.circular(TelegramMetrics.bubbleRadius),
+      bottomLeft: Radius.circular(
+          isOut ? TelegramMetrics.bubbleRadius : TelegramMetrics.bubbleTailRadius),
+      bottomRight: Radius.circular(
+          isOut ? TelegramMetrics.bubbleTailRadius : TelegramMetrics.bubbleRadius),
+    );
+    final inner = Container(
         decoration: BoxDecoration(
           color: isOut ? TelegramColors.bubbleOut : TelegramColors.bubbleIn,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(TelegramMetrics.bubbleRadius),
-            topRight: const Radius.circular(TelegramMetrics.bubbleRadius),
-            bottomLeft: Radius.circular(isOut
-                ? TelegramMetrics.bubbleRadius
-                : TelegramMetrics.bubbleTailRadius),
-            bottomRight: Radius.circular(isOut
-                ? TelegramMetrics.bubbleTailRadius
-                : TelegramMetrics.bubbleRadius),
-          ),
+          borderRadius: bubbleShape,
         ),
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+        // 内边距不是四边等宽：TG layoutTextXY 16626-16651 自己 +11、对方 +17
+        // （给对方头像留空隙），上 8、右 12、下 6。
+        padding: pureImage
+            ? EdgeInsets.zero
+            : EdgeInsets.fromLTRB(isOut ? 11 : 17, 8, 12, 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
@@ -160,7 +168,9 @@ class MessageBubble extends StatelessWidget {
                       child: Text(
                         senderLabel ?? message.senderName,
                         style: TextStyle(
-                          color: TelegramColors.accent,
+                          // TG 按 user.id % 7 轮转七色（UserObject.java:212-216），
+                          // 不是统一强调色。
+                          color: TelegramColors.nameColorFor(message.senderId),
                           fontSize: 12.5,
                           fontWeight: FontWeight.w600,
                         ),
@@ -214,6 +224,7 @@ class MessageBubble extends StatelessWidget {
                       mediaFailure: mediaFailure,
                       retryMedia: retryMedia,
                       onOpenFile: onOpenFile,
+                      imageMeta: imageOnly ? _imageTimeBadge(isOut) : null,
                       trailing: _inlineMeta ? _metaInline(isOut) : null,
                     ),
                     if (message.deleted)
@@ -233,10 +244,21 @@ class MessageBubble extends StatelessWidget {
             ),
             // 时间/状态能贴正文就贴（TG 的排法，见 [_inlineMeta]），贴不了
             // 才单独占一行——否则每个气泡都白多出一行高度，短消息看着特别空。
-            if (!_inlineMeta) ...[const SizedBox(height: 2), _metaRow(isOut)],
+            // 单图的时间已经画在图片右下角（imageOnly），不再占一行。
+            if (!_inlineMeta && !imageOnly) ...[
+              const SizedBox(height: 2),
+              _metaRow(isOut),
+            ],
           ],
         ),
+      );
+    final body = ConstrainedBox(
+      constraints: BoxConstraints(
+        maxWidth: maxWidth,
       ),
+      // 纯图要贴满四角：Container 的 decoration 不裁剪子级，必须自己 Clip。
+      child:
+          pureImage ? ClipRRect(borderRadius: bubbleShape, child: inner) : inner,
     );
 
     return Padding(
@@ -257,6 +279,44 @@ class MessageBubble extends StatelessWidget {
             ),
           ],
           body,
+        ],
+      ),
+    );
+  }
+
+  /// 图片右下角的时间块（TG media 分支：黑 52% 底、圆角 8、白字 12）。
+  ///
+  /// 图片四边贴气泡，时间只能叠在图上——否则会像以前那样在图片下面白多一行。
+  Widget _imageTimeBadge(bool isOut) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.52),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            formatTime(message.time),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11.5,
+              height: 1.2,
+            ),
+          ),
+          if (isOut) ...[
+            const SizedBox(width: 3),
+            Icon(
+              message.isFailed
+                  ? Icons.error_outline
+                  : message.isSending
+                      ? Icons.schedule
+                      : Icons.done_all,
+              size: 12,
+              color: Colors.white70,
+            ),
+          ],
         ],
       ),
     );
@@ -472,13 +532,19 @@ class DateChip extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 8),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.35),
+          // 暗色是黑底白字；亮色反过来——TG 亮色的日期胶囊是比聊天背景
+          // 略深的浅灰底 + 深灰字，白字压在浅色背景上根本看不清。
+          color: TelegramColors.isDark
+              ? Colors.black.withValues(alpha: 0.35)
+              : Colors.black.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(TelegramMetrics.dateChipRadius),
         ),
         child: Text(
           label(day, now: now),
           style: TextStyle(
-            color: Colors.white,
+            color: TelegramColors.isDark
+                ? Colors.white
+                : TelegramColors.textSecondary,
             fontSize: TelegramMetrics.fontDateChip,
             fontWeight: FontWeight.w500,
           ),

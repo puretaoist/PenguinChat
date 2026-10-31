@@ -124,12 +124,13 @@ void main() {
     expect(box.constraints?.maxHeight, 22);
   });
 
-  testWidgets('未读行标题加粗、非未读行不加粗', (tester) async {
+  testWidgets('会话名恒加粗：未读 w700、已读 w600（TG dialogs_namePaint 走 BOLD）',
+      (tester) async {
     await _pump(tester);
     final unread = tester.widget<Text>(find.text('产品讨论组'));
     final read = tester.widget<Text>(find.text('李四'));
     expect(unread.style?.fontWeight, FontWeight.w700);
-    expect(read.style?.fontWeight, FontWeight.w500);
+    expect(read.style?.fontWeight, FontWeight.w600);
   });
 
   testWidgets('行间分隔线：每行之间一条，最后一条不画；归档行也有', (tester) async {

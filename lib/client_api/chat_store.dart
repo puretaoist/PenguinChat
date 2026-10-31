@@ -869,6 +869,7 @@ class ChatStore {
           ? chat.clearedPreview()
           : chat.copyWith(
               lastMessage: list.last.displayText,
+              lastSender: list.last.outgoing ? '你' : list.last.senderName,
               lastTime: list.last.time,
             );
       _scheduleIndexPersist();
@@ -1253,6 +1254,7 @@ class ChatStore {
     if (newer) {
       chat = chat.copyWith(
         lastMessage: message.displayText,
+        lastSender: message.outgoing ? '你' : message.senderName,
         lastTime: message.time,
       );
     }
@@ -1288,6 +1290,7 @@ class ChatStore {
       draft: local.draft,
       manualUnread: local.manualUnread,
       lastMessage: keepLocalPreview ? local.lastMessage : remote.lastMessage,
+      lastSender: keepLocalPreview ? local.lastSender : remote.lastSender,
       lastTime: keepLocalPreview ? local.lastTime : remote.lastTime,
     );
   }
@@ -1566,6 +1569,7 @@ class ChatStore {
         if (c.muted) 'muted': true,
         if (c.priority != 3) 'priority': c.priority,
         'lastMessage': c.lastMessage,
+        if (c.lastSender.isNotEmpty) 'lastSender': c.lastSender,
         if (c.lastTime != null) 'lastTime': c.lastTime!.millisecondsSinceEpoch,
         if (c.unreadCount != 0) 'unread': c.unreadCount,
         if (c.lastReadId != null) 'lastRead': c.lastReadId,
@@ -1601,6 +1605,7 @@ Chat? chatFromIndexJson(Map<String, dynamic> j) {
     muted: j['muted'] == true,
     priority: (j['priority'] as int?) ?? 3,
     lastMessage: (j['lastMessage'] as String?) ?? '',
+    lastSender: (j['lastSender'] as String?) ?? '',
     lastTime:
         lastTime is int ? DateTime.fromMillisecondsSinceEpoch(lastTime) : null,
     unreadCount: (j['unread'] as int?) ?? 0,

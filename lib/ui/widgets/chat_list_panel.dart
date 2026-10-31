@@ -133,7 +133,10 @@ class ChatListPanel extends StatelessWidget {
 
   Widget _buildSearchBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+      // TG 的搜索条外边距 14、高 36、圆角 18、字号 16、图标 24
+      // （DialogsActivity 的 searchLayout / Theme.dialogs_searchField）。我们
+      // 原来 38/20/14/18，量出来比 TG 小半号，而且左右留白偏窄。
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Row(
         children: [
           Expanded(
@@ -143,27 +146,25 @@ class ChatListPanel extends StatelessWidget {
               borderRadius: BorderRadius.circular(TelegramMetrics.inputRadius),
               onTap: onOpenSearch,
               child: Container(
-                height: 38,
+                height: 36,
                 decoration: BoxDecoration(
                   color: TelegramColors.bgHover,
-                  borderRadius: BorderRadius.circular(
-                    TelegramMetrics.inputRadius,
-                  ),
+                  borderRadius: BorderRadius.circular(18),
                 ),
                 child: Row(
                   children: [
-                    const SizedBox(width: 14),
+                    const SizedBox(width: 12),
                     Icon(
                       Icons.search,
-                      size: 18,
+                      size: 22,
                       color: TelegramColors.textSecondary,
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 10),
                     Text(
                       '搜索会话与消息',
                       style: TextStyle(
                         color: TelegramColors.textSecondary,
-                        fontSize: 14,
+                        fontSize: 16,
                       ),
                     ),
                   ],
@@ -249,68 +250,114 @@ class ChatListPanel extends StatelessWidget {
   Widget _buildSidebarEmpty() {
     // 恢复中 vs 真没连：文案与入口完全不同，先算一次。
     final bool pending = store == null && connecting;
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
-          child: Column(
-            children: [
-              Icon(
-                pending
-                    ? Icons.sync
-                    : (store == null ? Icons.link_off : Icons.inbox_outlined),
-                color: TelegramColors.textMuted,
-                size: 36,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                pending
-                    ? '正在连接…'
-                    : (store == null ? '未连接后端' : '暂无会话'),
-                style: TextStyle(
-                  color: TelegramColors.textSecondary,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                pending
-                    ? '正在恢复上次的会话，请稍候'
-                    : (store == null
-                        ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
-                        : '下拉可刷新会话列表'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: TelegramColors.textMuted,
-                  fontSize: 12,
-                  height: 1.4,
-                ),
-              ),
-              if (store == null && !pending) ...[
-                const SizedBox(height: 14),
-                TextButton(
-                  onPressed: onOpenConnect,
-                  child: Text(
-                    '去连接设置',
-                    style: TextStyle(color: TelegramColors.accent),
+    // TG 空态（Cells/DialogsEmptyCell.java:84/90/100/103/109）：整块**垂直居中**、
+    // 图 100、标题 20 粗、说明 14、左右各 52 的留白。我们原来是顶部起 60px
+    // 左对齐小字，看起来像一条提示而不是"这里本来就没内容"。
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 52, vertical: 40),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    pending
+                        ? Icons.sync
+                        : (store == null ? Icons.link_off : Icons.inbox_outlined),
+                    color: TelegramColors.textMuted,
+                    size: 96,
                   ),
-                ),
-                // 协议线（自实现 QQ 协议）的主入口：与 OneBot 线并存，一条直达。
-                const SizedBox(height: 4),
-                TextButton.icon(
-                  onPressed: onOpenQq8Login,
-                  icon: const Icon(Icons.key, size: 16),
-                  label: const Text('QQ 账号登录（自实现协议）'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: TelegramColors.accent,
+                  const SizedBox(height: 16),
+                  Text(
+                    pending
+                        ? '正在连接…'
+                        : (store == null ? '未连接后端' : '暂无会话'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: TelegramColors.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-              ],
-            ],
+                  const SizedBox(height: 8),
+                  Text(
+                    pending
+                        ? '正在恢复上次的会话，请稍候'
+                        : (store == null
+                            ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
+                            : '下拉可刷新会话列表'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: TelegramColors.textSecondary,
+                      fontSize: 14,
+                      height: 1.4,
+                    ),
+                  ),
+                  if (store == null && !pending) ...[
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: onOpenConnect,
+                      child: Text(
+                        '去连接设置',
+                        style: TextStyle(color: TelegramColors.accent),
+                      ),
+                    ),
+                    // 协议线（自实现 QQ 协议）的主入口：与 OneBot 线并存，一条直达。
+                    const SizedBox(height: 4),
+                    TextButton.icon(
+                      onPressed: onOpenQq8Login,
+                      icon: const Icon(Icons.key, size: 16),
+                      label: const Text('QQ 账号登录（自实现协议）'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: TelegramColors.accent,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
-      ],
+      ),
+    );
+  }
+
+  /// 会话摘要：群聊显示「发送者: 正文」，私聊与老数据只显示正文。
+  ///
+  /// 发送者名比正文粗一档（TG dialogs_messageNamePaint 与 messagePaint 只差
+  /// 字重），颜色一致，避免整行出现第三种颜色。
+  Widget _preview(Chat chat, Color subColor) {
+    final sender = chat.lastMessage.isEmpty ? '' : chat.lastSender.trim();
+    if (!chat.isGroup || sender.isEmpty) {
+      return Text(
+        chat.lastMessage,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        // 摘要 dp(16)：TG 的 dialogs_messagePaint。
+        style: TextStyle(color: subColor, fontSize: 16),
+      );
+    }
+    return Text.rich(
+      TextSpan(children: [
+        TextSpan(
+          text: '$sender: ',
+          style: TextStyle(
+            color: subColor,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        TextSpan(
+          text: chat.lastMessage,
+          style: TextStyle(color: subColor, fontSize: 16),
+        ),
+      ]),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -330,7 +377,10 @@ class ChatListPanel extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 140),
         curve: Curves.easeOut,
-        color: selected ? TelegramColors.bgSelected : Colors.transparent,
+        // 置顶行整行带一层浅底（TG 的 chats_pinnedOverlay，DialogCell.java:4164-4188）。
+        color: selected
+            ? TelegramColors.bgSelected
+            : (chat.pinned ? TelegramColors.bgHover : Colors.transparent),
         constraints: const BoxConstraints(
           minHeight: TelegramMetrics.chatRowHeight,
         ),
@@ -376,36 +426,37 @@ class ChatListPanel extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      if (chat.pinned) ...[
-                        Icon(
-                          Icons.push_pin,
-                          size: 13,
-                          color: selected
-                              ? Colors.white.withValues(alpha: 0.85)
-                              : TelegramColors.textMuted,
-                        ),
-                        const SizedBox(width: 4),
-                      ],
                       Expanded(
                         child: Text(
                           chat.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          // TG `DialogCell` 的会话名是 dp(17)（Theme.java:7897
-                          // 附近的 dialogs_namePaint），有未读时加粗。我们原来写
-                          // 14.5，整列看起来比 TG 小一号。
+                          // TG 的会话名一律加粗（Theme.java:7812 的 dialogs_namePaint
+                          // 走 Typeface.BOLD；未读时再粗一档视觉上已经无差）——
+                          // 我们原来常态 w500，整列比 TG 淡。
                           style: TextStyle(
                             color: titleColor,
                             fontSize: 17,
                             fontWeight: chat.unreadCount > 0
                                 ? FontWeight.w700
-                                : FontWeight.w500,
+                                : FontWeight.w600,
                           ),
                         ),
                       ),
+                      // 免打扰：标题后一个小铃铛斜杠（TG DialogCell 的 muted 图标）。
+                      if (chat.muted) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.notifications_off,
+                          size: 16,
+                          color: selected
+                              ? Colors.white.withValues(alpha: 0.85)
+                              : TelegramColors.textMuted,
+                        ),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   // 有草稿就显示草稿（TG/Nagram 的 `Draft:` 前缀），
                   // 不然用户会以为刚才打的字丢了
                   if (chat.draft.isNotEmpty)
@@ -431,13 +482,9 @@ class ChatListPanel extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     )
                   else
-                    Text(
-                      chat.lastMessage,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      // 摘要 dp(16)：TG 的 dialogs_messagePaint。
-                      style: TextStyle(color: subColor, fontSize: 16),
-                    ),
+                    // 群聊摘要按 TG 排成「发送者: 正文」（DialogCell.java:1802-1827）：
+                    // 只有正文的话，群里的消息看不出是谁说的。
+                    _preview(chat, subColor),
                 ],
               ),
             ),
@@ -445,12 +492,36 @@ class ChatListPanel extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  chat.lastTime == null ? '' : formatTime(chat.lastTime!),
-                  style: TextStyle(
-                    color: subColor,
-                    fontSize: TelegramMetrics.fontTimestamp,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 置顶标记放在时间左边（TG DialogCell.java:2491-2496 的小 pin），
+                    // 不是压在标题前面——否则每个置顶会话的名字都要缩进。
+                    if (chat.pinned) ...[
+                      Icon(
+                        Icons.push_pin,
+                        size: 12,
+                        color: selected
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : TelegramColors.textMuted,
+                      ),
+                      const SizedBox(width: 3),
+                    ],
+                    Text(
+                      chat.lastTime == null ? '' : formatTime(chat.lastTime!),
+                      style: TextStyle(
+                        // 有未读的会话，时间也是强调色加粗（TG dialogs_timePaint 的
+                        // 未读态）。
+                        color: chat.unreadCount > 0 && !selected
+                            ? TelegramColors.accent
+                            : subColor,
+                        fontSize: TelegramMetrics.fontTimestamp,
+                        fontWeight: chat.unreadCount > 0
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 if (chat.unreadCount > 0)

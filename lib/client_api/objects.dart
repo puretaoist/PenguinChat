@@ -63,6 +63,12 @@ class Chat {
   /// 最近一条消息的文本摘要。
   final String lastMessage;
 
+  /// 最近一条消息的发送者显示名（自己的消息记 '你'）。
+  ///
+  /// 会话列表按 TG 的排法显示「发送者: 正文」（DialogCell.java:1802-1827），
+  /// 光有正文分不清是谁在群里说的。空串 = 未知/老数据，此时只显示正文。
+  final String lastSender;
+
   /// 最近消息时间。
   final DateTime? lastTime;
 
@@ -124,6 +130,7 @@ class Chat {
     required this.id,
     required this.title,
     this.lastMessage = '',
+    this.lastSender = '',
     this.lastTime,
     this.unreadCount = 0,
     this.online = false,
@@ -167,6 +174,7 @@ class Chat {
     String? id,
     String? title,
     String? lastMessage,
+    String? lastSender,
     DateTime? lastTime,
     int? unreadCount,
     bool? online,
@@ -186,6 +194,7 @@ class Chat {
         id: id ?? this.id,
         title: title ?? this.title,
         lastMessage: lastMessage ?? this.lastMessage,
+        lastSender: lastSender ?? this.lastSender,
         lastTime: lastTime ?? this.lastTime,
         unreadCount: unreadCount ?? this.unreadCount,
         online: online ?? this.online,

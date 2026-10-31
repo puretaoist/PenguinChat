@@ -160,6 +160,9 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
     await tester.pumpAndSettle();
 
+    // 附件是一个入口 + 底部 ActionSheet（同 TG 只有一个回形针）
+    await tester.tap(find.byKey(const ValueKey('attach')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('attach-file')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('send-image-dialog')), findsOneWidget);
@@ -185,6 +188,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const ValueKey('attach')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('attach-local-file')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('send-file-dialog')), findsOneWidget);

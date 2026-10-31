@@ -4412,3 +4412,17 @@ Dart 侧开销。
 **实测（真机 23:20:31，群 486045673，md5 8532b418…/fileid 868376579）**：`群图换链成功 → https://gchat.qpic.cn/download?...&rkey=…` → `媒体换链成功 bytes=6718 87ms`，落盘大小与元数据 `size=6718` 一致。详见 `docs/群图换链-GroupPicDown-20261031.md`。
 
 **教训**：①PB 字段读错类型不会报错，只会让请求悄悄少一个参数、服务端回一个看不懂的 206/199——先用一次性诊断工具（`tool/tmp/list_group_pics.dart`，只读）把「服务端实际返回什么」打出来，再写产品代码；②「过期」不是唯一的不可用形态，**先分类再决定重试/换链**（同 C104 的教训在协议层的复现）；③能力上线前先写清楚它**救不了哪部分数据**（老消息、私聊），否则用户拿最老的一张图试就判定"没做"。
+
+## C108 对齐 TG 的前端改造：金样必变、但别把「改期望值」当成修 bug（2026-10-31）
+
+**问题**：按 TG 源码重排气泡几何（radius 16→17、tail 6→5、头像 34→42、入站左边距 17）、图片时间戳内嵌、会话名 w500→w600 之后，`flutter test` 一次红了 7 条，其中 5 条是**金样**（chat_pane / chat_pane_light / chat_header_private_light / chat_header_group / chat_list_panel），2 条是**期望值本身就该改**（会话名 w500、theme.json 的 bubble_radius 16 与实际 17 不一致）。
+
+**处理**：
+1. 先分清「期望值过时」和「实现错了」：`ui_test.dart:232` 断言 `metrics['bubble_radius'] == TelegramMetrics.bubbleRadius` 是**防两边各改一半**的护栏，改常量必须同步 `assets/theme.json`（另 `bubble_avatar_size`、`bubble_tail_radius` 也在这个文件里，别只改 radius）。
+2. 金样必须 `flutter test --update-goldens <这三个测试文件>` 后**逐张目视**（`read_image` 打开 png）：重点看图片气泡右下角时间块、纯图贴边、群头像 42、日期胶囊在亮色下是浅灰底深字。只看"All tests passed"等于没验证。
+3. 单测里 `width: bubbleAvatarSize + 10` 这类**手算槽宽**要与真实槽宽（size+14）对齐，否则测试自己会造出 30x34 的畸形盒（C103 的同类问题）。
+
+**教训**：①做视觉对齐时，**改金样是正常动作，但必须逐张看图**；不看的金样更新 = 把 bug 固化进基线。②护栏型断言（theme.json ↔ 常量）红了先怀疑"两边只改了一边"，不要删断言。③期望值里的视觉参数（字重/字号）与源码依据一起改，并在测试名里写清依据（`TG dialogs_namePaint 走 BOLD`），后人翻账才知道为什么。
+
+**同批踩到的小坑**：输入栏把「图片/文件」两个 IconButton 合并成一个回形针 + ActionSheet 后，`test/home_page_test.dart` 里直接 `tap(ValueKey('attach-file'))` 的用例失败——key 挂在 **ActionSheet 的菜单项**上，必须先点 `attach` 再点菜单项。可见「组件结构变了，测试的交互路径也要变」，不能只改 key。
+

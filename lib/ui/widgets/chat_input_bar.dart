@@ -1,4 +1,4 @@
-/// L4 表现层：聊天输入栏（回复条 + 附件/表情/文本框/发送钮）。
+/// L4 表现层：聊天输入栏（回复条 + 表情/附件/文本框/发送钮）。
 ///
 /// 从 home_page.dart 抽出的**纯哑视图**：输入控制器与回调由 [HomePage]
 /// 注入，本组件不读 provider、不发网络。附件与表情不依赖连接状态
@@ -52,33 +52,10 @@ class ChatInputBar extends StatelessWidget {
               // 键盘弹起、正文变高时按钮不跟着浮到中间。
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // 📎 发本地图片：上传链路（探图 → PicUp → highway）在适配器里，
-                // 这里只问路径
-                IconButton(
-                  key: const ValueKey('attach-file'),
-                  onPressed: onAttachImage,
-                  icon: Icon(
-                    Icons.attach_file,
-                    color: TelegramColors.textSecondary,
-                    size: 22,
-                  ),
-                  tooltip: '发送图片',
-                ),
-                // 📄 发本地文件：走离线文件链路（申请 → HTTP 上传 → 声明完成 →
-                // 消息体），只在私聊里支持（群文件是另一套命令）。
-                IconButton(
-                  key: const ValueKey('attach-local-file'),
-                  onPressed: onAttachFile,
-                  icon: Icon(
-                    Icons.insert_drive_file_outlined,
-                    color: TelegramColors.textSecondary,
-                    size: 22,
-                  ),
-                  tooltip: '发送文件',
-                ),
-                const SizedBox(width: 4),
-                // 表情面板：不依赖连接状态（没连线也能先打字/选表情），
-                // 点一下把 `/名字` 插到光标处，发送时协议层翻成表情元素。
+                // 表情面板放在最左——TG 的 ChatActivityEnterView 就是
+                // emoji 键贴在输入框左边，附件键在它右侧。
+                // 不依赖连接状态（没连线也能先打字/选表情），点一下把
+                // `/名字` 插到光标处，发送时协议层翻成表情元素。
                 IconButton(
                   key: const ValueKey('open-faces'),
                   onPressed: onOpenFaces,
@@ -88,6 +65,19 @@ class ChatInputBar extends StatelessWidget {
                     size: 22,
                   ),
                   tooltip: 'QQ 表情',
+                ),
+                const SizedBox(width: 4),
+                // 📎 附件：TG 只有一个回形针，点开是底部 ActionSheet 让你选
+                // 图片还是文件。原来我们并排两个图标，比官方多占一格。
+                IconButton(
+                  key: const ValueKey('attach'),
+                  onPressed: () => _pickAttachment(context),
+                  icon: Icon(
+                    Icons.attach_file,
+                    color: TelegramColors.textSecondary,
+                    size: 22,
+                  ),
+                  tooltip: '附件',
                 ),
                 const SizedBox(width: 4),
                 Expanded(
@@ -132,23 +122,36 @@ class ChatInputBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                GestureDetector(
-                  onTap: enabled ? onSend : null,
-                  child: Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: enabled
-                          ? TelegramColors.accent
-                          : TelegramColors.bgHover,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.send,
-                      color: enabled ? Colors.white : TelegramColors.textMuted,
-                      size: 20,
-                    ),
-                  ),
+                // 右侧：有字才是发送（纸飞机，accent 底）；空输入时是麦克风
+                // ——TG 的 ChatActivityEnterView 同样按输入内容在 send/mic
+                // 之间切换，空输入给一个假的发送键会让人以为发出去了。
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: controller,
+                  builder: (context, value, _) {
+                    final hasText = value.text.trim().isNotEmpty;
+                    final active = enabled && hasText;
+                    return GestureDetector(
+                      key: const ValueKey('send-or-mic'),
+                      onTap: active ? onSend : null,
+                      child: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: active
+                              ? TelegramColors.accent
+                              : TelegramColors.bgHover,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          active ? Icons.send : Icons.mic_none,
+                          color: active
+                              ? Colors.white
+                              : TelegramColors.textMuted,
+                          size: 20,
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -156,6 +159,49 @@ class ChatInputBar extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// 附件入口：TG 的点回形针 = 底部弹出「图片 / 文件」两项。
+  Future<void> _pickAttachment(BuildContext context) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: TelegramColors.bgInput,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const ValueKey('attach-file'),
+              leading: Icon(
+                Icons.image_outlined,
+                color: TelegramColors.textSecondary,
+              ),
+              title: Text(
+                '发送图片',
+                style: TextStyle(color: TelegramColors.textPrimary),
+              ),
+              onTap: () => Navigator.of(sheetContext).pop('image'),
+            ),
+            ListTile(
+              key: const ValueKey('attach-local-file'),
+              leading: Icon(
+                Icons.insert_drive_file_outlined,
+                color: TelegramColors.textSecondary,
+              ),
+              title: Text(
+                '发送文件',
+                style: TextStyle(color: TelegramColors.textPrimary),
+              ),
+              onTap: () => Navigator.of(sheetContext).pop('file'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted) return;
+    if (picked == 'image') onAttachImage();
+    if (picked == 'file') onAttachFile();
   }
 
   /// 输入框上方的"正在回复"条（点 ✕ 取消）。
