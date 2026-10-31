@@ -1105,6 +1105,9 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
         session: adapter,
         dataDir: scope.root,
         mediaFetcher: mediaFetcher,
+        // 群图直链过期（rkey 几小时）时，凭 fileid 向服务端换一条新链——
+        // 这是历史图还能回看的唯一路径，见 ChatStore.imageUrlResolver。
+        imageUrlResolver: service.resolveGroupImageUrl,
       );
     } on Object {
       await adapter.dispose();

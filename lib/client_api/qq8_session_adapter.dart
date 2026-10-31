@@ -744,7 +744,12 @@ int _seenActionSerial = -1;
         m.fromNick ??
         _nickCache[m.fromUin] ??
         (outgoing ? (_account?.nickname ?? '') : '');
-    final segments = m.elems.map(_toSegment).toList(growable: false);
+    // 群图要带群号：直链过期时靠它发 GroupPicDown 换新链（见 chat_store 的
+    // imageUrlResolver）。私聊图不带。
+    final imgGroupCode = (isGroup && rawId > 0) ? rawId : null;
+    final segments = m.elems
+        .map((e) => _toSegment(e, groupCode: imgGroupCode))
+        .toList(growable: false);
     // 引用的原文来自 src_msg（Elem 45）：气泡顶部的引用条读 replyPreview。
     // 注意**不设 replyToId**——src_msg 里没有 rand，拼不出可靠的消息 ID
     //（见 qq8_elem.dart 的 Qq8ReplyElem），宁可不给也不能给个假 ID。
@@ -773,7 +778,7 @@ int _seenActionSerial = -1;
   }
 
   /// 内核元素 → 消息段（[ChatMessage.segments]）。
-  static Segment _toSegment(Qq8Elem e) => switch (e) {
+  static Segment _toSegment(Qq8Elem e, {int? groupCode}) => switch (e) {
         Qq8TextElem(:final text) => TextSegment(text),
         Qq8AtElem(:final target, :final name) => AtSegment(target, name: name),
         Qq8FaceElem(:final id, :final isBig) => FaceSegment(id, isBig: isBig),
@@ -783,13 +788,19 @@ int _seenActionSerial = -1;
           :final width,
           :final height,
           :final flash,
+          :final md5,
+          :final fileId,
+          :final group,
         ) =>
           ImageSegment(file,
               url: url,
               summary: e.summary,
               flash: flash,
               width: width,
-              height: height),
+              height: height,
+              md5: md5,
+              fileId: fileId,
+              groupCode: group ? groupCode : null),
         Qq8VoiceElem(:final md5, :final url, :final seconds, :final size) =>
           RecordSegment(md5 ?? '', url: url, seconds: seconds, size: size),
         Qq8VideoElem(

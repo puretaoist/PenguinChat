@@ -246,6 +246,17 @@ class ImageSegment extends Segment {
   /// 闪照。
   final bool flash;
 
+  /// md5（32 位小写 hex）。QQ 协议线的图片名本身就带 md5，这里单独留一份
+  /// 是为了「链接过期后重新换一条」时不必再解析文件名。
+  final String? md5;
+
+  /// 群图的 `CustomFace.uint64_fileid`。取新直链（`ImgStore.GroupPicDown`）
+  /// 时服务端要它，只给 md5 会回 206。
+  final int? fileId;
+
+  /// 群号（仅群图）。刷新直链要带上群号。
+  final int? groupCode;
+
   /// 原始宽高（像素）。协议线会给（QQ 图片元素里有），OneBot 后端多半没有——
   /// UI 拿它算占位框的宽高比，拿不到就退回方形占位。
   final int? width;
@@ -258,6 +269,9 @@ class ImageSegment extends Segment {
     this.flash = false,
     this.width,
     this.height,
+    this.md5,
+    this.fileId,
+    this.groupCode,
   });
 
   factory ImageSegment.fromData(Map<String, dynamic> data) => ImageSegment(
@@ -267,6 +281,9 @@ class ImageSegment extends Segment {
         flash: data['type'] == 'flash',
         width: _intOf(data['width']),
         height: _intOf(data['height']),
+        md5: data['md5'] as String?,
+        fileId: _intOf(data['fileId']),
+        groupCode: _intOf(data['groupCode']),
       );
 
   static int? _intOf(Object? v) =>
@@ -293,6 +310,9 @@ class ImageSegment extends Segment {
         if (width != null) 'width': width,
         if (height != null) 'height': height,
         if (flash) 'type': 'flash',
+        if (md5 != null) 'md5': md5,
+        if (fileId != null) 'fileId': fileId,
+        if (groupCode != null) 'groupCode': groupCode,
       };
 
   @override

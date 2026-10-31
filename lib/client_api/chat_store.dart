@@ -112,6 +112,7 @@ class ChatStore {
     this.maxCacheBytes = 512 * 1024 * 1024,
     this.keepMediaFor = const Duration(days: 30),
     this.mediaFetcher,
+    this.imageUrlResolver,
   }) : _log = logger ?? Log.get('ChatStore');
 
   /// 数据来源。ChatStore **不拥有**它的生命周期——不负责 connect / dispose，
@@ -148,6 +149,18 @@ class ChatStore {
   /// null = 不下载，只命中已有缓存。自测与"只看本地"的场景传 null，
   /// 生产环境由 `session_providers.dart` 注入 [HttpMediaFetcher]。
   final MediaFetcher? mediaFetcher;
+
+  /// 群图直链过期后「换一条新地址」的回调。
+  ///
+  /// 腾讯的 rkey 直链几小时后必然 400 `-5503007`，但群图能凭 `fileid` 重新
+  /// 要一条（`ImgStore.GroupPicDown` 会重签 rkey）。null = 不换链（自测/离线）。
+  /// 只有**前台可见**的那次 `ensureMedia` 会用它；后台预取不换，否则打开一个
+  /// 会话就会为整屏死链各发一个 WUP 请求。
+  final Future<String?> Function({
+    required int groupCode,
+    required String md5Hex,
+    required int fileId,
+  })? imageUrlResolver;
 
   /// 媒体缓存（`<dataDir>/media` + `<dataDir>/media_index.json`）。
   ///
@@ -554,11 +567,32 @@ class ChatStore {
       category: ref.category,
       url: ref.url,
       altUrls: ref.altUrls,
+      refreshUrl: _refresherFor(seg),
     );
     if (path != null && !_disposed) {
       _emit(ChatStoreChangeKind.media);
     }
     return path;
+  }
+
+  /// 给 [MediaCache] 用的「换链」闭包：只有群图且 md5/fileId/群号齐全时才有。
+  ///
+  /// 缺任一项都返回 null——宁可显示"链接已失效"，也不发一个注定回 206 的请求。
+  Future<String?> Function()? _refresherFor(Segment seg) {
+    final resolver = imageUrlResolver;
+    if (resolver == null || seg is! ImageSegment) return null;
+    final md5 = seg.md5;
+    final fileId = seg.fileId;
+    final groupCode = seg.groupCode;
+    if (md5 == null ||
+        md5.isEmpty ||
+        fileId == null ||
+        fileId == 0 ||
+        groupCode == null ||
+        groupCode <= 0) {
+      return null;
+    }
+    return () => resolver(groupCode: groupCode, md5Hex: md5, fileId: fileId);
   }
 
   /// 该段媒体的失败分类（仍然有效时）；没试过 / 成功 / 已过 TTL 返回 null。

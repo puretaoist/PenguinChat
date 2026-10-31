@@ -197,12 +197,15 @@ Future<void> main(List<String> argv) async {
           'seq': Qq8Pb.intAt(head, 5) ?? 0,
           'fromUin': Qq8Pb.intAt(head, 1) ?? 0,
           'cf': Qq8Pb.decode(cf),
+          'em': em,
         });
       }
     }
     stdout.writeln('群 $gid seq=$begin-$end 图片元素 ${faces.length} 个');
-    for (final f in faces.take(3)) {
-      stdout.writeln('\n--- seq=${f['seq']} from=${f['fromUin']} 原始 custom_face 全字段:');
+    for (final f in faces.take(2)) {
+      stdout.writeln('\n--- seq=${f['seq']} from=${f['fromUin']} 整个 Elem 全字段:');
+      stdout.writeln(_dump(f['em']));
+      stdout.writeln('    ...其中 custom_face(Elem.8):');
       stdout.writeln(_dump(f['cf']));
     }
     if (faces.isEmpty) return;
@@ -213,43 +216,76 @@ Future<void> main(List<String> argv) async {
       Qq8ImageDown.picTypeBig,
       Qq8ImageDown.picTypeThumb,
     ];
-    for (final f in faces.take(2)) {
-      final cf = f['cf']! as Map<int, List<Object>>;
-      final md5hex = _hexStr(Qq8Pb.bytesAt(cf, 13) ?? Uint8List(0));
-      final fidStr = Qq8Pb.textAt(cf, 7) ?? '';
-      stdout.writeln('\n==== seq=${f['seq']} md5=$md5hex fid=$fidStr');
-      for (final picType in variants) {
-        final (flag, type) = Qq8ImageDown.urlFlagTypeOf(picType);
+    final f0 = faces.first;
+    final cf0 = f0['cf']! as Map<int, List<Object>>;
+    final md5hex = _hexStr(Qq8Pb.bytesAt(cf0, 13) ?? Uint8List(0));
+    final fromUin = f0['fromUin']! as int;
+    final cf7 = Qq8Pb.intAt(cf0, 7) ?? 0;
+    stdout.writeln('\n==== 第一张 seq=${f0['seq']} md5=$md5hex sender=$fromUin cf7=$cf7');
+
+    final dsts = <String, int>{'self': uin, 'sender': fromUin};
+    final extras = <String, List<int>?>{
+      'none': null,
+      'fileId': <int>[cf7],
+      'ts': <int>[cf7],
+    };
+    for (final dst in dsts.entries) {
+      for (final ex in extras.entries) {
         final body = Qq8ImageDown.buildGroupPicDownBody(
           gid: gid,
-          uin: uin,
+          uin: dst.value,
           md5HexList: <String>[md5hex],
-          picType: picType,
+          fileIds: ex.key == 'fileId' ? ex.value : null,
+          picUpTimestamps: ex.key == 'ts' ? ex.value : null,
         );
-        stdout.writeln('\n-- picType=$picType（url_flag=$flag url_type=$type）');
+        final tag = 'dst=${dst.key} extra=${ex.key}';
         try {
           final rsp = await session.sendUni(Qq8ImageDown.cmdGroupPicDown, body,
-              timeout: const Duration(seconds: 20));
-          final rt = Qq8Pb.decode(rsp.payload);
-          stdout.writeln('   RspBody 原始:');
-          stdout.writeln(_dump(rt, '     '));
+              timeout: const Duration(seconds: 15));
           final replies = Qq8ImageDown.parseGroupPicDownResponse(rsp.payload);
-          for (final r in replies) {
-            stdout.writeln('   解析: $r');
-            for (final e in <String, Uint8List?>{
-              'thumb': r.thumbPara,
-              'original': r.originalPara,
-              'big': r.bigPara,
-              'bigThumb': r.bigThumbPara,
-            }.entries) {
-              final b = e.value;
-              if (b == null) continue;
-              stdout.writeln('     ${e.key} = ${_hexStr(b)}'
-                  '  ascii="${String.fromCharCodes(b.where((c) => c >= 32 && c < 127))}"');
-            }
+          if (replies.isEmpty) {
+            stdout.writeln('  [$tag] 空回执: ${_dump(Qq8Pb.decode(rsp.payload), '')}');
+            continue;
+          }
+          final r = replies.first;
+          stdout.writeln('  [$tag] result=${r.result} msg="${r.failMsg}" '
+              'orig=${r.originalPara?.length} big=${r.bigPara?.length} '
+              'dom=${r.domains.join('|')} https=${r.httpsFlag}');
+          for (final e in <String, Uint8List?>{
+            'thumb': r.thumbPara,
+            'original': r.originalPara,
+            'big': r.bigPara,
+            'bigThumb': r.bigThumbPara,
+          }.entries) {
+            final b = e.value;
+            if (b == null) continue;
+            stdout.writeln('     ${e.key} = ${String.fromCharCodes(b.where((c) => c >= 32 && c < 127))}');
           }
         } on Object catch (e) {
-          stdout.writeln('   失败: $e');
+          stdout.writeln('  [$tag] 失败: $e');
+        }
+      }
+    }
+    // 若某一档成功，再对原图/大图/缩略各取一次看差异
+    if (variants.isNotEmpty) {
+      stdout.writeln('\n（三档对照，沿用 dst=sender + fileId）');
+      for (final picType in variants) {
+        final body = Qq8ImageDown.buildGroupPicDownBody(
+          gid: gid,
+          uin: fromUin,
+          md5HexList: <String>[md5hex],
+          picType: picType,
+          fileIds: <int>[cf7],
+        );
+        try {
+          final rsp = await session.sendUni(Qq8ImageDown.cmdGroupPicDown, body,
+              timeout: const Duration(seconds: 15));
+          final r = Qq8ImageDown.parseGroupPicDownResponse(rsp.payload);
+          final x = r.isEmpty ? null : r.first;
+          stdout.writeln('  picType=$picType result=${x?.result} msg="${x?.failMsg}" '
+              'para=${x?.originalPara?.length}/${x?.bigPara?.length}/${x?.thumbPara?.length}');
+        } on Object catch (e) {
+          stdout.writeln('  picType=$picType 失败: $e');
         }
       }
     }

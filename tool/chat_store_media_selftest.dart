@@ -64,6 +64,12 @@ Future<HttpServer> _serve() async {
       res.add(Uint8List.fromList(List<int>.filled(64, 0xAA)));
     } else if (req.uri.path == '/img/b.jpg') {
       res.add(Uint8List.fromList(List<int>.filled(64, 0xBB)));
+    } else if (req.uri.path == '/img/fresh.jpg') {
+      // 群图"换链"之后服务端给的新地址
+      res.add(Uint8List.fromList(List<int>.filled(64, 0xCC)));
+    } else if (req.uri.path == '/expired') {
+      res.statusCode = 400;
+      res.write('{"retcode":-5503007,"retmsg":"download url has expired"}');
     } else {
       res.statusCode = 404;
     }
@@ -167,6 +173,67 @@ Future<void> main() async {
     check('恢复的路径与之前一致', restored == before, '$restored vs $before');
 
     await store2.dispose();
+
+    // -------------------------------------------------------------
+    print('\n[群图换链] 直链过期 -> 凭 fileid 换一条 -> 落盘');
+    final session3 = FakeSession();
+    var resolvedCalls = 0;
+    var resolvedGid = 0;
+    var resolvedMd5 = '';
+    var resolvedFileId = 0;
+    final store3 = ChatStore(
+      session: session3,
+      dataDir: Directory('${tmp.path}/data3'),
+      mediaFetcher: HttpMediaFetcher(),
+      imageUrlResolver: ({
+        required int groupCode,
+        required String md5Hex,
+        required int fileId,
+      }) async {
+        resolvedCalls++;
+        resolvedGid = groupCode;
+        resolvedMd5 = md5Hex;
+        resolvedFileId = fileId;
+        return '$base/img/fresh.jpg';
+      },
+    );
+    await store3.bootstrap();
+
+    final deadGroupImg = ImageSegment(
+      'dead.jpg',
+      url: '$base/expired',
+      md5: '0123456789abcdef0123456789abcdef',
+      fileId: 987654,
+      groupCode: 486045673,
+    );
+    final gotPath = await store3.ensureMedia(deadGroupImg);
+    check('过期直链换链后拿到本地路径', gotPath != null, '$gotPath');
+    check('换链回调被调用一次', resolvedCalls == 1, '$resolvedCalls');
+    check('回调参数：群号', resolvedGid == 486045673, '$resolvedGid');
+    check('回调参数：md5', resolvedMd5 == '0123456789abcdef0123456789abcdef',
+        resolvedMd5);
+    check('回调参数：fileid', resolvedFileId == 987654, '$resolvedFileId');
+    check('落盘后 mediaPathOf 命中', store3.mediaPathOf(deadGroupImg) != null);
+
+    // 缺 fileId（老消息没存下来）时不许发请求：注定回 206。
+    final noFileId = ImageSegment(
+      'old.jpg',
+      url: '$base/expired',
+      md5: '0123456789abcdef0123456789abcdef',
+      groupCode: 486045673,
+    );
+    final noFileIdPath = await store3.ensureMedia(noFileId);
+    check('没有 fileId 时不换链', noFileIdPath == null, '$noFileIdPath');
+    check('没有 fileId 时回调没被调用', resolvedCalls == 1, '$resolvedCalls');
+
+    // 私聊图（无群号）同样不换链。
+    final privateImg =
+        ImageSegment('p.jpg', url: '$base/expired', md5: 'ffffffffffffffffffffffffffffffff');
+    await store3.ensureMedia(privateImg);
+    check('私聊图不换链', resolvedCalls == 1, '$resolvedCalls');
+
+    await store3.dispose();
+    await session3.dispose();
   } finally {
     await server.close(force: true);
     await session.dispose();

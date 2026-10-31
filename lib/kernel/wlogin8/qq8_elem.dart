@@ -96,6 +96,12 @@ class Qq8ImageElem extends Qq8Elem {
   /// md5（32 位小写 hex）。
   final String? md5;
 
+  /// 群图的 `CustomFace.uint64_fileid`（字段 7）。
+  ///
+  /// 拿它去 `ImgStore.GroupPicDown` 才能换到**新的** `down_para`：只给 md5
+  /// 会回 206「query index timeout」，给了 fileid 且 dst_uin 是**自己**才回 0。
+  final int? fileId;
+
   final int? size;
   final int? width;
   final int? height;
@@ -113,6 +119,7 @@ class Qq8ImageElem extends Qq8Elem {
     required this.file,
     this.url,
     this.md5,
+    this.fileId,
     this.size,
     this.width,
     this.height,
@@ -712,6 +719,7 @@ class Qq8ElemScan {
     final int? width;
     final int? height;
     final String? fid;
+    int? fileId;
     String? url;
     bool asFace = false;
 
@@ -723,6 +731,9 @@ class Qq8ElemScan {
       width = Qq8Pb.intAt(i, 22);
       height = Qq8Pb.intAt(i, 23);
       fid = Qq8Pb.textAt(i, 7);
+      // 字段 7 是 **varint**（uint64_fileid），不是字符串——以前用 textAt 读
+      // 永远是 null，所以「刷新历史图」的请求拿不到 fileid，只会回 206。
+      fileId = Qq8Pb.intAt(i, 7);
       // 直链片段按 `parseImgElem`（icqq parser.js:441-490）的优先级取：
       //   34.30（嵌套子消息里的完整路径）> 16 > 15 > md5 兜底。
       // **每个片段都必须以 `/` 开头**才算路径 —— 真机踩过：字段 16 里有时
@@ -770,6 +781,7 @@ class Qq8ElemScan {
       ),
       url: url,
       md5: md5,
+      fileId: fileId,
       size: size,
       width: width,
       height: height,

@@ -511,6 +511,35 @@ abstract final class Qq8ImageDown {
   static const int picTypeBig = 1;
   static const int picTypeOriginal = 131075;
 
+  /// 从回执里拼出可下载的完整 URL。
+  ///
+  /// 服务端给的是**以 `/` 开头的路径**（真机实测形如
+  /// `/download?appid=1407&fileid=…&rkey=…&spec=0`），配 `bytes_down_domain`
+  /// （实测 `gchat.qpic.cn`）就是完整地址；没有域名时才退回 IP:端口直连。
+  /// 拿不到 para / 域名 / IP 一律返回 null，交给调用方保持原状——**绝不返回
+  /// 猜出来的地址**（拼错域名等于必然 404，还会污染负缓存）。
+  static String? downloadUrlOf(
+    Qq8PicDownReply reply, {
+    int picType = picTypeOriginal,
+  }) {
+    final para = switch (picType) {
+      picTypeThumb => reply.thumbPara,
+      picTypeBig => reply.bigPara,
+      _ => reply.originalPara,
+    };
+    if (para == null || para.isEmpty) return null;
+    final path = latin1.decode(para, allowInvalid: true);
+    final domain = reply.domains.firstOrNull ?? '';
+    if (domain.isNotEmpty) {
+      return 'https://$domain${path.startsWith('/') ? '' : '/'}$path';
+    }
+    if (reply.ips.isNotEmpty && reply.ports.isNotEmpty) {
+      return 'http://${reply.ips.first}:${reply.ports.first}'
+          '${path.startsWith('/') ? '' : '/'}$path';
+    }
+    return null;
+  }
+
   /// 图片规格 → `(uint32_url_flag, uint32_url_type)`，出处见类文档。
   static (int, int) urlFlagTypeOf(int picType) => switch (picType) {
         picTypeThumb => (1, 2),

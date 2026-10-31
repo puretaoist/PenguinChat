@@ -163,6 +163,69 @@ void main() {
       Qq8Pb.encode(<int, Object?>{2: 2}));
   checkEq('没有 rpt_msg_getimg_url_rsp 时返回空表', empty.length, 0);
 
+  stdout.writeln('\n== downloadUrlOf 拼地址 ==');
+  // 真机实测回执形态：para 是以 / 开头的路径，域名是 gchat.qpic.cn。
+  const paraText = '/download?appid=1407&fileid=AB&rkey=CD&spec=0';
+  Qq8PicDownReply mk({
+    Uint8List? original,
+    Uint8List? thumb,
+    List<String> domains = const <String>[],
+    List<String> ips = const <String>[],
+    List<int> ports = const <int>[],
+  }) =>
+      Qq8PicDownReply(
+        result: 0,
+        failMsg: '',
+        md5Hex: '',
+        originalPara: original,
+        thumbPara: thumb,
+        domains: domains,
+        ips: ips,
+        ports: ports,
+      );
+
+  final withDomain = mk(
+    original: Uint8List.fromList(utf8.encode(paraText)),
+    domains: const <String>['gchat.qpic.cn'],
+    ips: const <String>['1.2.3.4'],
+    ports: const <int>[80],
+  );
+  checkEq('域名优先且走 https', Qq8ImageDown.downloadUrlOf(withDomain),
+      'https://gchat.qpic.cn$paraText');
+
+  final ipOnly = mk(
+    original: Uint8List.fromList(utf8.encode(paraText)),
+    ips: const <String>['1.2.3.4'],
+    ports: const <int>[8080],
+  );
+  checkEq('没域名时退回 ip:port', Qq8ImageDown.downloadUrlOf(ipOnly),
+      'http://1.2.3.4:8080$paraText');
+
+  final noSlash = mk(
+    original: Uint8List.fromList(utf8.encode('download?x=1')),
+    domains: const <String>['gchat.qpic.cn'],
+  );
+  checkEq('para 不以 / 开头时补一个', Qq8ImageDown.downloadUrlOf(noSlash),
+      'https://gchat.qpic.cn/download?x=1');
+
+  checkEq('没有 para 返回 null', Qq8ImageDown.downloadUrlOf(mk()), null);
+  checkEq(
+      '没有域名也没有 ip 返回 null',
+      Qq8ImageDown.downloadUrlOf(mk(
+        original: Uint8List.fromList(utf8.encode(paraText)),
+      )),
+      null);
+
+  final thumbOnly = mk(
+    thumb: Uint8List.fromList(utf8.encode('/small')),
+    domains: const <String>['gchat.qpic.cn'],
+  );
+  checkEq('picType=thumb 取缩略 para',
+      Qq8ImageDown.downloadUrlOf(thumbOnly, picType: Qq8ImageDown.picTypeThumb),
+      'https://gchat.qpic.cn/small');
+  checkEq('picType=original 时缩略 para 不算数',
+      Qq8ImageDown.downloadUrlOf(thumbOnly), null);
+
   stdout.writeln('\n=== 结果: $_pass 通过, $_fail 失败 ===');
   if (_fail > 0) throw StateError('$_fail 项失败');
 }

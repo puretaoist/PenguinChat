@@ -1713,6 +1713,53 @@ class Qq8LoginService {
     return got;
   }
 
+  /// 群图直链过期后重新要一条（`ImgStore.GroupPicDown`，WUP subcmd=2）。
+  ///
+  /// 服务端会**重签 rkey**（实测同一张图新旧 rkey 不同），所以这是历史图
+  /// 回看的唯一可靠路径。三个前提，缺一个就会失败：
+  /// - `dst_uin` 必须是**自己**（发件人 uin 会回 `199 para error`）；
+  /// - `uint64_fileid` 必须给（只给 md5 回 `206 query index timeout`）；
+  /// - 目标图在服务端还有缓存（真没了就是没了，客户端无能为力）。
+  ///
+  /// 只读旁路：失败一律返回 null、不抛异常、不进登录状态机。
+  Future<String?> resolveGroupImageUrl({
+    required int groupCode,
+    required String md5Hex,
+    required int fileId,
+  }) async {
+    final s = _session;
+    if (s == null || !s.isOnline) return null;
+    try {
+      final rsp = await s.sendUni(
+        Qq8ImageDown.cmdGroupPicDown,
+        Qq8ImageDown.buildGroupPicDownBody(
+          gid: groupCode,
+          uin: s.uin,
+          md5HexList: <String>[md5Hex],
+          fileIds: <int>[fileId],
+        ),
+        timeout: timeout,
+      );
+      final replies = Qq8ImageDown.parseGroupPicDownResponse(rsp.payload);
+      if (replies.isEmpty) {
+        _log.w('群图换链无回执 gid=$groupCode md5=$md5Hex');
+        return null;
+      }
+      final r = replies.first;
+      if (r.result != 0) {
+        _log.w('群图换链失败 gid=$groupCode md5=$md5Hex '
+            'result=${r.result} msg=${r.failMsg}');
+        return null;
+      }
+      final url = Qq8ImageDown.downloadUrlOf(r);
+      _log.i('群图换链成功 gid=$groupCode md5=$md5Hex → ${url ?? "（无地址）"}');
+      return url;
+    } catch (e) {
+      _log.w('群图换链异常 gid=$groupCode md5=$md5Hex：$e');
+      return null;
+    }
+  }
+
   /// 取一个离线文件的下载直链（1200）。需已上线。
   Future<Qq8FileLink> fetchFileLink({required String fid}) async {
     final s = _requireOnline();

@@ -158,12 +158,16 @@ class MediaCache {
   /// 取的兜底直链有时还活着。按顺序试，第一个成功的就算数。
   /// [foreground] 为 false 表示后台预取：不占着并发配额做退避重试
   /// （可见时那一次 ensure 会带重试）。
+  /// [refreshUrl] 是「换一条新地址」的回调：直链带 rkey，几小时后必然过期
+  /// （实测 400 -5503007）。群图能凭 fileid 重新要一条（ImgStore.GroupPicDown
+  /// 会重签 rkey），所以只在候选全挂且失败分类属于 expired/missing 时调它**一次**。
   Future<String?> ensure({
     required String key,
     required String category,
     required String url,
     List<String> altUrls = const <String>[],
     bool foreground = true,
+    Future<String?> Function()? refreshUrl,
   }) {
     if (_disposed) return Future<String?>.value();
     final hit = pathFor(key);
@@ -175,7 +179,8 @@ class MediaCache {
     if (running != null) return running;
 
     final task =
-        _download(key, category, url, altUrls, foreground: foreground)
+        _download(key, category, url, altUrls,
+                foreground: foreground, refreshUrl: refreshUrl)
             .whenComplete(() {
       _inflight.remove(key);
     });
@@ -209,17 +214,23 @@ class MediaCache {
     String url,
     List<String> altUrls, {
     bool foreground = true,
+    Future<String?> Function()? refreshUrl,
   }) async {
     final f = fetcher;
     if (f == null) return null;
     await _acquire(category);
     try {
       var worst = MediaFetchFailureKind.none;
+      // 主链（用户消息里那条 url）的失败分类。换链只看它：主链被服务端拒绝
+      // （rkey 过期/被改坏）才值得换一条新链，兜底地址的失败不说明链路问题。
+      var primaryKind = MediaFetchFailureKind.none;
+      var candidateIndex = 0;
       // 后台预取只试一次：它失败后可见时那次 ensure 会再试，不该占着配额睡。
       final plan = foreground
           ? retryPlan
           : const <MediaFetchFailureKind, List<Duration>>{};
       for (final candidate in <String>[url, ...altUrls]) {
+        candidateIndex++;
         if (candidate.isEmpty) continue;
         if (_disposed) return null;
         for (var attempt = 0;; attempt++) {
@@ -238,6 +249,7 @@ class MediaCache {
           final failed = outcome is MediaFetchFailed ? outcome : null;
           final kind = failed?.kind ?? MediaFetchFailureKind.unknown;
           worst = _worse(worst, kind);
+          if (candidateIndex == 1) primaryKind = kind;
           final backoff = plan[kind] ?? const <Duration>[];
           _log.w('媒体下载失败 key=$key cat=$category cand=$candidate '
               'try=${attempt + 1} kind=${kind.name} '
@@ -248,6 +260,38 @@ class MediaCache {
           if (_disposed) return null;
         }
       }
+      // 候选全挂且是"链接过期/失效"——最后再换一次新地址试一次。只换一次：
+      // 服务端若仍给坏地址，重试只会打转，交给负缓存按 TTL 拒绝。
+      // 主链过期（-5503007）、找不到（404）、被拒（-5503010/-5503011 invalid
+      // rkey）都算「这条链不能用了」，值得向服务端要一条新的。
+      if (refreshUrl != null &&
+          (primaryKind == MediaFetchFailureKind.expired ||
+              primaryKind == MediaFetchFailureKind.missing ||
+              primaryKind == MediaFetchFailureKind.rejected)) {
+        final fresh = await refreshUrl();
+        if (fresh != null &&
+            fresh.isNotEmpty &&
+            fresh != url &&
+            !altUrls.contains(fresh) &&
+            !_disposed) {
+          final sw = Stopwatch()..start();
+          final outcome = await f.fetchOutcome(fresh, maxBytes: maxBytes);
+          sw.stop();
+          if (outcome is MediaFetchOk && outcome.bytes.isNotEmpty) {
+            _failures.remove(key);
+            _log.i('媒体换链成功 key=$key cat=$category bytes='
+                '${outcome.bytes.length} ${sw.elapsedMilliseconds}ms');
+            return await _store(key, category, fresh, outcome.bytes);
+          }
+          final kind = outcome is MediaFetchFailed
+              ? outcome.kind
+              : MediaFetchFailureKind.unknown;
+          _log.w('媒体换链失败 key=$key cat=$category kind=${kind.name} '
+              '${sw.elapsedMilliseconds}ms');
+          worst = _worse(worst, kind);
+        }
+      }
+
       if (worst != MediaFetchFailureKind.none) {
         _failures[key] = _Failure(
           kind: worst,

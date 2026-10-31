@@ -616,6 +616,82 @@ Future<void> main() async {
       c8.dispose();
     }
 
+    // --- 链接过期后"换一条新地址"（群图 GroupPicDown 兜底） ---
+    print('\n-- 换链钩子 --');
+    {
+      final c = MediaCache(
+        root: Directory('${tmp.path}/media-refresh'),
+        indexFile: File('${tmp.path}/media-refresh_index.json'),
+        fetcher: HttpMediaFetcher(),
+      );
+      await c.load();
+
+      var refreshes = 0;
+      final ok = await c.ensure(
+        key: 'r-ok',
+        category: 'photos',
+        url: '$base/expired',
+        refreshUrl: () async {
+          refreshes++;
+          return '$base/img/a.jpg';
+        },
+      );
+      check('过期后换到新地址能落地', ok != null && ok.isNotEmpty, '$ok');
+      check('换链只调一次', refreshes == 1, 'refreshes=$refreshes');
+      check('换链成功后清掉负缓存', c.failureOf('r-ok') == null,
+          '${c.failureOf('r-ok')}');
+
+      var sameRefreshes = 0;
+      final same = await c.ensure(
+        key: 'r-same',
+        category: 'photos',
+        url: '$base/expired',
+        refreshUrl: () async {
+          sameRefreshes++;
+          // 服务端不肯给新地址，原样返回：不能再拿同一个 url 重试一轮
+          return '$base/expired';
+        },
+      );
+      check('换链给的还是原地址时不再重试', same == null, '$same');
+      check('换链调用次数仍是 1', sameRefreshes == 1, '$sameRefreshes');
+      check('失败仍记负缓存（expired）', c.failureOf('r-same') == MediaFetchFailureKind.expired,
+          '${c.failureOf('r-same')}');
+
+      var nullRefreshes = 0;
+      final none = await c.ensure(
+        key: 'r-null',
+        category: 'photos',
+        url: '$base/expired',
+        refreshUrl: () async {
+          nullRefreshes++;
+          return null;
+        },
+      );
+      check('换链返回 null 时结果为 null', none == null, '$none');
+      check('换链返回 null 也只调一次', nullRefreshes == 1, '$nullRefreshes');
+
+      // 主链被拒（invalid rkey）+ 兜底 404：也该换链（真机上改坏 rkey 就是这个形态）
+      var rejRefreshes = 0;
+      final rej = await c.ensure(
+        key: 'r-rejected',
+        category: 'photos',
+        url: '$base/rejected',
+        altUrls: <String>['$base/404'],
+        refreshUrl: () async {
+          rejRefreshes++;
+          return '$base/img/b.jpg';
+        },
+      );
+      check('主链 invalid rkey 也能换链成功', rej != null, '$rej');
+      check('换链调用一次（rejected）', rejRefreshes == 1, '$rejRefreshes');
+
+      // 没有 refreshUrl 时行为不变（老用例的路径）
+      final plain = await c.ensure(
+          key: 'r-plain', category: 'photos', url: '$base/img/a.jpg');
+      check('不传 refreshUrl 照常下载', plain != null, '$plain');
+      c.dispose();
+    }
+
     counting.close();
     check('dispose 会关闭 fetcher', counting.closed);
   } finally {
