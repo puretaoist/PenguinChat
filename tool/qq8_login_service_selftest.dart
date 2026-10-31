@@ -600,6 +600,89 @@ Future<void> main() async {
     await svc.close();
   }
 
+  // ----------------------------------------------------------------
+  section('2f. 断线恢复：「连不上网络」不消耗 3 次上限，网络回来自己上线');
+  //
+  // 真机 2026-10-31 10:28 现场：飞行模式 30 秒，三轮 2s/4s/6s 全落在断网窗口里，
+  // 三次失败后直接停住，网络恢复后应用再没自己上线。断网不是凭证问题，不该
+  // 拿「服务端失败次数」去数它。
+  {
+    Qq8TokenData token() => Qq8TokenData(
+          uin: 10001,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        );
+    final ok = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+      _registerFrame(1),
+    ]);
+    var builds = 0;
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore()..data = token(),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () {
+        builds++;
+        // 前 5 条连接全失败（远多于 reconnectAttempts=3），第 6 条才通。
+        return builds <= 5 ? _OfflineTransport() : ok;
+      },
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      heartbeatInterval: const Duration(hours: 1),
+      timeout: const Duration(milliseconds: 300),
+    )
+      ..reconnectBaseDelay = const Duration(milliseconds: 1)
+      ..reconnectOfflineDelay = const Duration(milliseconds: 5);
+    check('前置：有可续期票据', svc.snapshot.stage != Qq8LoginStage.online);
+    await svc.reconnect(uin: 10001);
+    check('断网 5 轮后网络回来仍能上线（没被 3 次上限掐死）',
+        svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+    check('确实重建了 6 条连接（5 次断网 + 1 次成功）', builds == 6, '$builds');
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('2g. 断线恢复：能连上但服务端不回，仍按 3 次有界停止');
+  //
+  // 边界反例：如果把「等待响应超时」也当成断网，就会在网络正常、服务端抽风时
+  // 每 15 秒无限重发（等于对服务端做长时间敲打）。这类失败必须继续计数。
+  {
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore()
+        ..data = Qq8TokenData(
+          uin: 10001,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        ),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => _TimeoutTransport(),
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      heartbeatInterval: const Duration(hours: 1),
+      timeout: const Duration(milliseconds: 300),
+    )
+      ..reconnectBaseDelay = const Duration(milliseconds: 1)
+      ..reconnectOfflineDelay = const Duration(milliseconds: 5);
+    _TimeoutTransport.built = 0;
+    await svc.reconnect(uin: 10001);
+    check('服务端超时 → 停在 disconnected（不无限重发）',
+        svc.snapshot.stage == Qq8LoginStage.disconnected,
+        svc.snapshot.stage.name);
+    check('恰好尝试 3 次', _TimeoutTransport.built == 3, '${_TimeoutTransport.built}');
+    await svc.close();
+  }
+
     await svc.submitSmsCode('654321');
     check('register 无应答仍算上线（icqq -2 语义）',
         svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
@@ -1853,4 +1936,69 @@ Future<void> main() async {
 
   stdout.writeln('\n${'=' * 62}');  stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);
+}
+
+/// 只模拟「连不上网络」的传输：connect 直接抛和真机同款的失败文本。
+///
+/// 真机上的文本长这样（qq8_tran.dart:380）：
+/// `连接失败（已尝试 5 个端点）\n  - tcp: SocketException: Failed host lookup…`
+class _OfflineTransport implements Qq8Transport {
+  @override
+  bool get isConnected => false;
+
+  @override
+  Future<void> connect() async => throw Qq8TransportException(
+      '连接失败（已尝试 5 个端点）\n'
+      "  - tcp: SocketException: Failed host lookup: 'msfwifi.3g.qq.com'");
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) {}
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) {}
+
+  @override
+  Future<void> write(Uint8List packet) async => connect();
+
+  @override
+  Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async {
+    await connect();
+    throw StateError('unreachable');
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
+/// 能连上但服务端不回：用来验证「超时」仍按有界次数停止，不被当成断网。
+class _TimeoutTransport implements Qq8Transport {
+  /// 构造了几条（每轮恢复重建一条）。
+  static int built = 0;
+
+  _TimeoutTransport() {
+    built++;
+  }
+
+  @override
+  bool get isConnected => true;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) {}
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) {}
+
+  @override
+  Future<void> write(Uint8List packet) async =>
+      throw Qq8TransportException('等待响应超时（seq=1，8s）');
+
+  @override
+  Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async =>
+      throw Qq8TransportException('等待响应超时（seq=1，8s）');
+
+  @override
+  Future<void> close() async {}
 }

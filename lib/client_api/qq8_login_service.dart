@@ -377,6 +377,17 @@ class Qq8LoginService {
 
   Duration reconnectBaseDelay = const Duration(seconds: 2);
 
+  /// 纯「连不上网络」时的重试间隔。
+  ///
+  /// 断网不是凭证问题：网络一回来，同一份票据就能续上。真机 2026-10-31 10:28
+  /// 现场：飞行模式 30 秒，三轮 2s/4s/6s 全落在断网窗口里，三次失败后直接停在
+  /// 断线状态——网络恢复时应用再没自己上线。所以「网络不可用」单独一类：不消耗
+  /// [reconnectAttempts] 这个有界次数，按固定间隔慢慢等。
+  Duration reconnectOfflineDelay = const Duration(seconds: 15);
+
+  /// 网络一直不可用时最多等多久（超过就停在断线状态，别无限耗着）。
+  Duration reconnectOfflineGiveUpAfter = const Duration(minutes: 30);
+
   bool _reconnecting = false;
 
   /// 会话代际：每建一次新会话 / 拆一次连接就 +1。
@@ -4043,9 +4054,24 @@ class Qq8LoginService {
   /// 用 [Qq8LoginType.login]（= 2）发：与官方包同形（全零密钥加密 SSO 层）。
   /// 任何一条失败都只记日志——它们不是上线的前置条件，不该拖垮登录。
   Future<void> _runOnlineChecks(Qq8Session session, int uin, int epoch) async {
-    if (_pushChannelUnconfirmed) {
-      // 注册都没回执，说明推送通道压根没谈成；这两条只是"试探服务端会不会
-      // 因为见过它们就开始推"，此刻发只会各空等 8 秒。降级为诊断：跳过。
+    // 真机 2026-10-31：本方法在 [_registerInBackground] 之后**立刻**启动，那时
+    // 注册还在途、`_pushChannelUnconfirmed` 仍是 false，于是两条回放检查照样
+    // 发出去，各空等 7-8 秒（日志里落在「在线状态上报: 未确认」之后）。
+    // 先等这次注册有结论（single-flight，最多一条在途），再决定发不发。
+    final inFlight = _registerInFlight;
+    if (inFlight != null) {
+      try {
+        await inFlight;
+      } on Object catch (_) {
+        // 超时/失败都算「没有确认结论」，下面统一按 outcome 判断。
+      }
+      if (!identical(_session, session) || epoch != _sessionEpoch) return;
+    }
+    // 注册没到 confirmed（无回执 / 被拒 / 从没跑过），说明推送通道压根没谈成；
+    // 这两条只是"试探服务端会不会因为见过它们就开始推"，此刻发只会各空等
+    // 8 秒。降级为诊断：跳过。
+    if (_pushChannelUnconfirmed ||
+        _lastRegisterOutcome != Qq8RegisterOutcome.confirmed) {
       _log.i('注册未确认：跳过两条在线检查（回放仅作诊断，省 16s 空等）');
       return;
     }
@@ -4176,6 +4202,19 @@ class Qq8LoginService {
     }
   }
 
+  /// 这段文本看起来是「网络根本连不上」而不是「服务端给了结论」吗？
+  ///
+  /// 判据用错误文本而不是异常类型：连接失败一路被包了好几层
+  /// （Qq8TransportException 里套 SocketException / DNS 失败），拿到的始终是文本。
+  /// 注意**不收**「等待响应超时」——那说明网络通、服务端不回，按正常失败计数。
+  static bool _networkUnavailable(String text) =>
+      text.contains('连接失败') ||
+      text.contains('SocketException') ||
+      text.contains('Failed host lookup') ||
+      text.contains('Network is unreachable') ||
+      text.contains('连接已断开') ||
+      text.contains('No route to host');
+
   /// 断线自动恢复：重连 + 用已存票据续期重上线（不用密码）。
   ///
   /// 官方对照（wtlogin 日志）：连接断了会自动重建并用已有票据续登，
@@ -4183,7 +4222,8 @@ class Qq8LoginService {
   /// 等用户手动重登——**不要**在自动路径里退化成密码登录。
   ///
   /// 也公开给 UI 的「重连」按钮用（断线提示里写的就是"可重新登录或重连"）。
-  /// [reconnectAttempts] 次退避重试全失败后停在 disconnected。
+  /// [reconnectAttempts] 次退避重试全失败后停在 disconnected；纯「连不上网络」
+  /// 不计入这个次数，按 [reconnectOfflineDelay] 继续等（见 [reconnectOfflineGiveUpAfter]）。
   Future<void> reconnect({required int uin}) async {
     if (_reconnecting) return;
     _reconnecting = true;
@@ -4194,28 +4234,56 @@ class Qq8LoginService {
       // 紧接着 loginWithToken 就 `SocketException: Software caused connection abort`。
       // 旧的 Qq8Session 也要一起扔掉——它的 _pending / 心跳定时器不该带进新一轮。
       await _teardownConnection();
-      for (var attempt = 1; attempt <= reconnectAttempts; attempt++) {
-        if (_states.isClosed) return; // close() 之后不再抢跑
-        await Future<void>.delayed(reconnectBaseDelay * attempt);
+      // attempt 只数「服务端给了结论 / 连上但没上线」的失败；
+      // 纯粹连不上网络时 offline=true，按固定间隔继续等，不消耗有界次数。
+      var attempt = 0;
+      var offline = false;
+      final offlineDeadline = DateTime.now().add(reconnectOfflineGiveUpAfter);
+      while (!_states.isClosed && attempt < reconnectAttempts) {
+        if (offline) {
+          if (!DateTime.now().isBefore(offlineDeadline)) {
+            _log.w('断线恢复：网络已中断超过 '
+                '${reconnectOfflineGiveUpAfter.inMinutes} 分钟，停在断线状态等手动重登');
+            break;
+          }
+          await Future<void>.delayed(reconnectOfflineDelay);
+        } else {
+          await Future<void>.delayed(reconnectBaseDelay * (attempt + 1));
+        }
         if (_states.isClosed) return;
         // 上一轮 loginWithToken 可能已经把 transport 弄坏（连上又断、或写失败），
         // 所以每次都重建，而不是只在循环开始时重建一次。
-        if (attempt > 1) await _teardownConnection();
+        if (attempt > 0 || offline) await _teardownConnection();
         final token = await tokenStore.load(uin);
         // 判据与 loginWithToken 的闸门一致：D2 链或 A1 对任一条在就不算"没料"。
         if (token == null || !token.recoveryUsable) {
           _log.w('断线恢复：没有可用的免密材料（D2/A1 都缺），停在断线状态等手动重登');
           return;
         }
-        _log.i('断线恢复：第 $attempt/$reconnectAttempts 次（票据续期）');
+        _log.i(offline
+            ? '断线恢复：等网络恢复后再试（票据续期，已尝试 $attempt/$reconnectAttempts 次）'
+            : '断线恢复：第 ${attempt + 1}/$reconnectAttempts 次（票据续期）');
         try {
           await loginWithToken(uin: uin);
         } on Object catch (e) {
-          _log.w('断线恢复第 $attempt 次抛异常', error: e);
+          offline = _networkUnavailable(e.toString());
+          if (!offline) attempt++;
+          if (offline) {
+            _log.w('断线恢复：网络不可用，'
+                '${reconnectOfflineDelay.inSeconds}s 后再试（不计入 $reconnectAttempts 次上限）');
+            // 断网不是「登录失败」：让界面显示断线（可手动重连），别报成登录错误。
+            _emit(Qq8LoginSnapshot(
+              stage: Qq8LoginStage.disconnected,
+              uin: uin,
+              error: '网络不可用，正在等待网络恢复后自动续连',
+            ));
+          } else {
+            _log.w('断线恢复第 $attempt 次抛异常', error: e);
+          }
           continue;
         }
         if (_snapshot.stage == Qq8LoginStage.online) {
-          _log.i('断线恢复成功（第 $attempt 次）');
+          _log.i('断线恢复成功（第 ${attempt + 1} 次尝试）');
           return;
         }
         // **准入拒绝不重试**。
@@ -4235,7 +4303,19 @@ class Qq8LoginService {
           }
           return;
         }
-        _log.w('断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试');
+        offline = _networkUnavailable(_snapshot.error ?? '');
+        if (!offline) attempt++;
+        if (offline) {
+          _emit(Qq8LoginSnapshot(
+            stage: Qq8LoginStage.disconnected,
+            uin: uin,
+            error: '网络不可用，正在等待网络恢复后自动续连',
+          ));
+        }
+        _log.w(offline
+            ? '断线恢复：网络不可用（stage=${_snapshot.stage.name}），'
+                '${reconnectOfflineDelay.inSeconds}s 后再试'
+            : '断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试');
       }
       _log.w('断线恢复 $reconnectAttempts 次均失败，停在断线状态等手动重登');
       _emit(Qq8LoginSnapshot(
