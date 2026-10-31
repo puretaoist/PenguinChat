@@ -4102,3 +4102,16 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 4. **网络问题不装成错误**：`Qq8ConnectStatus` 增 `networkIssue`，`disconnected` 在断网时标签是「等待网络恢复」（不是「已断开」），连接页用中性色 + 键 `qq8-network-hint`（`failed` 仍是 `qq8-error` 红字）。
 
 **测试写法**：adapter 自测第 12 段用「离线传输 + 真服务」建 `Qq8SessionAdapter`，订阅 `events` 后断言 `whereType<SessionFailure>().isEmpty` 且最后一条 `SessionStateChanged.reason` 含「网络」——只断言最终 stage 无法区分「没发 failure」和「发了没人看」。
+
+## C87 去重要有「作用域」：用户的新动作必须重置指纹，而序号得在产出瞬间打（2026-10-31，四点复审）
+
+**踩到的坑**：C86 的 failure 指纹去重（`stage|resultType|error`）本身对，但它把「用户第二次点登录」也去掉了——用户看到界面毫无反应。反过来若简单按时间清空指纹，又会让断网自动重连每轮都刷一条失败。
+
+**定案**：去重的作用域 = **一次用户动作**。
+1. `Qq8LoginService` 增 `int _actionSerial` / `void beginAction() => _actionSerial++`；`Qq8LoginSnapshot` 增 `final int actionSeq`。
+2. 打戳必须在**快照产生的那一瞬间**（`_emit` 内 `s.stamped(_actionSerial)`），**不能**在 adapter 收到快照时读 `service.actionSerial`：状态流异步投递，一批快照同一步送达，那时序号已推进——实测两条快照都读到 2，于是只报了 1 条失败（诊断脚本 `tmp/diag_dedupe.dart` 复现）。
+3. adapter 见序号变化即清 `_lastStateReason` / `_lastFailureKey`；`qq8_providers._run`（所有 UI 动作唯一入口）开头调 `beginAction()`，**自动重连不经 _run**，序号不变 ⇒ 断网重复失败仍被去重。两个诉求靠"谁推进序号"分开，而不是靠文案或时间。
+
+**同一轮的三条配套**：`_goOnline` 在 `await` 后 emit 前必须校验 `identical(_session, session) && epoch == _sessionEpoch`（关闭/切号期间飞回来的结果不许点亮新会话）；`registerWithOutcome` 要在 `on Object` **之前**单独接住 `Qq8ServerRetcodeException`，`e.authDead` 必须 rethrow（吞成 unconfirmed = 无限重注册）；`_registerInBackground` 捕获后先 `_markAuthLost` 再决定是否降级。
+
+**测试写法**：迟到结果的用例不能"close 完再断言没 online"就完事——得证明它确实走到了那一步。用按索引延迟的 `_DelayTransport`（第 n 次 send 慢 delays[n]）把流程卡在「在线状态上报」400ms，登录后 120ms 关闭，然后**同时**断言「无 online」「终态 idle」「出现过 connecting」（防空转）。
