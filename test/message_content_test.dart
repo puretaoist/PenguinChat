@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qqclient/client_api/objects.dart';
 import 'package:qqclient/client_api/segment.dart';
+import 'package:qqclient/infra/net/media_fetcher.dart';
 import 'package:qqclient/ui/widgets/message_content.dart';
 
 // 缺陷3（图片首屏只显示文件名占位卡，重启才出图）的回归测试：
@@ -103,5 +104,70 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls, 0);
     expect(find.byType(Image), findsOneWidget);
+  });
+
+  // 失败分类的界面：直链过期时不能再假装「加载中」，要说清原因并给重试入口。
+  testWidgets('已知链接过期：直接显示过期占位，不自动发请求', (tester) async {
+    var ensures = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: MessageContent(
+          message: imageMessage(),
+          isOut: false,
+          localMedia: (s) => null,
+          ensureMedia: (s) async {
+            ensures++;
+            return null;
+          },
+          mediaFailure: (s) => MediaFetchFailureKind.expired,
+          retryMedia: (s) async => null,
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(find.textContaining('图片链接已过期'), findsOneWidget);
+    expect(find.textContaining('点按重试'), findsOneWidget);
+    expect(ensures, 0, reason: '已知失败不自动刷请求');
+  });
+
+  testWidgets('点按失败占位会走 retryMedia（而不是打开大图）', (tester) async {
+    var retries = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: MessageContent(
+          message: imageMessage(),
+          isOut: false,
+          localMedia: (s) => null,
+          mediaFailure: (s) => MediaFetchFailureKind.expired,
+          retryMedia: (s) async {
+            retries++;
+            return null;
+          },
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.tap(find.textContaining('点按重试'));
+    await tester.pump();
+    expect(retries, 1);
+    // 重试失败后仍停在失败态，而不是弹大图对话框
+    expect(find.byType(Dialog), findsNothing);
+  });
+
+  testWidgets('本地已有文件时失败分类不影响显示', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: MessageContent(
+          message: imageMessage(),
+          isOut: false,
+          localMedia: (s) => pngPath,
+          mediaFailure: (s) => MediaFetchFailureKind.expired,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.textContaining('图片链接已过期'), findsNothing);
   });
 }

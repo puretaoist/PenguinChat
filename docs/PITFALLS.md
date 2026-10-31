@@ -4352,3 +4352,25 @@ Dart 侧开销。
 `TelegramAvatar` 留位的地方，容器可用宽度必须 >= `size`；回归测试见
 `test/home_page_test.dart`「群聊头像必须是正圆」——遍历 `find.byType(ClipOval)`
 断言 `size.width == size.height`（用 `+10` 时这条会红）。
+
+## C104 图片「加载不出来」不是加载慢，是**没有加载层**：直链几小时必过期，UI 还绕过缓存直接 Image.network（2026-10-31）
+
+**现象**：用户反馈「图片还是有可能加载不出来」。真机抽 16 条 chats/*.jsonl 里的图片直链逐条 curl：
+200 两条、**400 十条**、404 四条，成功率 12.5%。400 的 body 恒为
+`retcode=-5503007 / retmsg download url has expired`。
+
+**根因（三层叠加）**：
+1. 直链是**有时效的签名地址**，聊天记录里存的是当时那个 URL，几小时后就返回 400；我们没有任何重新申请地址的协议请求。
+2. 群图还有一类地址形态是 `gchatpic_new/0/0-0-<MD5>/0`（零路径 + md5 兜底），实测 24~34 种组合全 404，**这个形态在 HTTP 上永远取不到**。
+3. `lib/ui/widgets/message_content.dart` 的图片块直接 `Image.network(seg.url)`，绕过 MediaCache：失败一次就画个和「正在加载」一模一样的占位，没有失败区分、没有重试、没有负缓存；而 `lib/client_api/media_refs.dart:112-124` 的 md5 兜底注释自称「20% 有效」是错的（实测 0）。
+
+**为什么官方不受影响**：官方根本不走 HTTP 直链取图，走 SSO 富媒体通道（`RichMediaConstants.java:18` CMD_LONGCONN_OFFPIC_DOWN、群图 `ImgStore.GroupPicDown`，见 `analysis/_ref/official-logs/msf-20260919.log:1431` sendGroupPicDownRequest）。TG 同理：`ImageLoader.loadImageForImageReceiver(:3347)` 只认 memCache/磁盘/FileLoader，控件自己不许发请求。
+
+**处理（P0+P1，2026-10-31）**：
+- `lib/infra/net/media_fetcher.dart`：`MediaFetchOutcome`（Ok/Failed{kind,status,retcode,retmsg}）+ `classifyMediaHttpFailure()`；非 2xx **读前 512 字节 body** 抠 retcode/retmsg（原来直接 drain 掉，等于丢证据）。分类：400+-5503007→expired、404→missing、400 其他→rejected、429/503→rateLimited、5xx/超时/Socket→network、超 maxBytes→tooLarge。
+- `lib/infra/storage/media_cache.dart`：负缓存（按类 TTL）、有限退避重试（network 0.5s+2s、rateLimited 1.5s）、按 category 的并发槽、每次尝试一行结构化日志。
+- `lib/ui/widgets/message_content.dart`：**删掉 Image.network 路径**，未命中一律占位；失败态文案「图片链接已过期 · 点按重试」，点按走 `ChatStore.retryMedia`（先 forgetFailure 再 ensure；直接再调 ensure 会被负缓存短路，用户点了没反应是这里最容易踩的坑）。
+- 头像 `telegram_avatar.dart`：失败 2s×2 次退避重试，不再一次失败就永久钉成首字母；重试必须换 `Image` 的 key，否则命中 Flutter 的失败图缓存、`setState` 根本不重发请求。
+
+**教训**：①「加载不出来」的默认怀疑对象不该是网速，先看**地址是不是已经过期**（curl 一条，看 retcode）；②任何展示层直接打远端 URL 都是错的，字节必须经过缓存层，否则单飞/去重/负缓存/重试/离线全部失效；③给「失败」做 UI 之前先给失败**分类**，否则只能写「加载失败」，无法告诉用户「点按重试有用」还是「这图没了」。
+

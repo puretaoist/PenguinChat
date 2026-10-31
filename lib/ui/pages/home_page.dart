@@ -1671,6 +1671,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                                       message: m,
                                       localMedia: store?.mediaPathOf,
                                       ensureMedia: store?.ensureMedia,
+                                      mediaFailure: store?.mediaFailureOf,
+                                      retryMedia: store?.retryMedia,
                                       onOpenFile: (seg) =>
                                           unawaited(_downloadFileMessage(seg)),
                                       onRetry:

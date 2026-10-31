@@ -20,6 +20,7 @@ import 'package:flutter/material.dart';
 import '../../client_api/chat_store.dart';
 import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
+import '../../infra/net/media_fetcher.dart';
 import '../../kernel/wlogin8/qq8_elem.dart';
 import '../theme/telegram_theme.dart';
 
@@ -42,6 +43,18 @@ class MessageContent extends StatelessWidget {
   /// 只显示文件名占位卡、非要重启才出图——预取时机错过就再没人触发过）。
   final Future<String?> Function(Segment segment)? ensureMedia;
 
+  /// 取"这段媒体上次失败的原因"的钩子（来自 [ChatStore.mediaFailureOf]）。
+  ///
+  /// 有它才能把占位分成两态：还在加载（显示文件名）与真的取不到
+  /// （「图片链接已过期 · 点按重试」）。为 null 时只有前者。
+  final MediaFetchFailureKind? Function(Segment segment)? mediaFailure;
+
+  /// 点按重试的钩子（来自 [ChatStore.retryMedia]）。
+  ///
+  /// 与 [ensureMedia] 的区别是它会先清掉缓存层的负缓存，否则第二次调用会被
+  /// 直接短路成 null，用户点了没反应。
+  final Future<String?> Function(Segment segment)? retryMedia;
+
   /// 点文件块时要做什么（下载/另存）。
   ///
   /// 为 null 时文件块只是静态展示——**气泡自己不做网络请求**：它不知道
@@ -60,6 +73,8 @@ class MessageContent extends StatelessWidget {
     required this.isOut,
     this.localMedia,
     this.ensureMedia,
+    this.mediaFailure,
+    this.retryMedia,
     this.onOpenFile,
     this.trailing,
   });
@@ -137,6 +152,8 @@ class MessageContent extends StatelessWidget {
             isOut: isOut,
             localMedia: localMedia,
             ensureMedia: ensureMedia,
+            mediaFailure: mediaFailure,
+            retryMedia: retryMedia,
           ));
         case RecordSegment():
           flush();
@@ -351,12 +368,16 @@ class _ImageBlock extends StatefulWidget {
   final bool isOut;
   final String? Function(Segment segment)? localMedia;
   final Future<String?> Function(Segment segment)? ensureMedia;
+  final MediaFetchFailureKind? Function(Segment segment)? mediaFailure;
+  final Future<String?> Function(Segment segment)? retryMedia;
 
   const _ImageBlock({
     required this.seg,
     required this.isOut,
     this.localMedia,
     this.ensureMedia,
+    this.mediaFailure,
+    this.retryMedia,
   });
 
   @override
@@ -369,6 +390,15 @@ class _ImageBlockState extends State<_ImageBlock> {
   String? Function(Segment segment)? get localMedia => widget.localMedia;
   Future<String?> Function(Segment segment)? get ensureMedia =>
       widget.ensureMedia;
+
+  /// 当前仍然有效的失败分类（来自缓存层）；null = 没试过/成功/已过 TTL。
+  MediaFetchFailureKind? get _failure {
+    try {
+      return widget.mediaFailure?.call(seg);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 已经补过下载的那条媒体的键；同一个键只补一次，失败也不无限重试。
   String? _ensureTried;
@@ -395,9 +425,13 @@ class _ImageBlockState extends State<_ImageBlock> {
   /// 首帧没有本地文件时补一次下载。放在帧后跑：`initState` 里不能直接拿
   /// 异步结果，而且 `build` 必须保持同步。
   void _scheduleEnsure() {
-    final ensure = ensureMedia;
+    // 优先用 retryMedia：它会先清负缓存，与"首次尝试"语义等价（清一个不存在
+    // 的负缓存是空操作），但用户点按重试时是它救命的唯一路径。
+    final ensure = widget.retryMedia ?? ensureMedia;
     if (ensure == null || seg.flash) return;
     if (_ensureInFlight || _ensureTried == _mediaKey) return;
+    // 已知失败（链接过期/已失效）：等用户点按，不自动刷流量。
+    if (_failure != null) return;
     if (_localPath() != null) return;
     final key = _mediaKey;
     _ensureInFlight = true;
@@ -416,6 +450,36 @@ class _ImageBlockState extends State<_ImageBlock> {
         });
       });
     });
+  }
+
+  /// 用户点按重试：清掉负缓存后重新下一次。
+  ///
+  /// 不走 [_scheduleEnsure]：那里会因为"已知失败"直接返回，而重试恰恰要覆盖
+  /// 那个判断。
+  void _retry() {
+    final retry = widget.retryMedia ?? ensureMedia;
+    if (retry == null) return;
+    final key = _mediaKey;
+    setState(() {
+      _ensureInFlight = true;
+      _ensureTried = null;
+    });
+    retry(seg).whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        _ensureInFlight = false;
+        _ensureTried = key;
+      });
+    });
+  }
+
+  /// 点按：失败态先重试，其余看大图。
+  void _onTap(BuildContext context) {
+    if (!seg.flash && _failure != null) {
+      _retry();
+      return;
+    }
+    _openLarge(context);
   }
 
   /// 已经落到本地的文件路径（没有或已不存在则为 null）。
@@ -448,7 +512,7 @@ class _ImageBlockState extends State<_ImageBlock> {
         width: w,
         height: h,
         child: GestureDetector(
-          onTap: () => _openLarge(context),
+          onTap: () => _onTap(context),
           child: _imageOrPlaceholder(context),
         ),
       ),
@@ -467,24 +531,27 @@ class _ImageBlockState extends State<_ImageBlock> {
         // 按显示尺寸解码（TG ImageLoader 的 downsampling 等价物）：
         // 相机原图 4000px 解码到 240px 档，内存与解码耗时都是数量级差别。
         cacheWidth: _decodeWidth(context, _maxWidth),
-        errorBuilder: (_, _, _) => _networkOrPlaceholder(context),
+        errorBuilder: (_, _, _) => _failedPlaceholder(),
       );
     }
-    return _networkOrPlaceholder(context);
+
+    // 已知取不到：说清原因并让人点按重试，而不是永远转圈。
+    final failure = _failure;
+    if (failure != null) return _failedPlaceholder(failure);
+
+    // 其余（正在下 / 没有可用地址）显示文件名与尺寸，便于排查。
+    //
+    // **刻意不再走 Image.network**：直链几小时就过期，绕过 MediaCache 直接打
+    // CDN 的结果就是"永远转圈的破图"，还会重复下载、失败后无法重试。所有
+    // 字节都必须经过缓存层（这也是 Telegram ImageLoader 的做法：只认
+    // memCache / 磁盘缓存 / FileLoader，不让控件自己发请求）。
+    return _placeholder(_hint());
   }
 
-  Widget _networkOrPlaceholder(BuildContext context) {
-    final src = seg.url;
-    if (src == null || src.isEmpty) return _placeholder(_hint());
-    return Image.network(
-      src,
-      fit: BoxFit.cover,
-      cacheWidth: _decodeWidth(context, _maxWidth),
-      // 加载中与失败都必须有东西显示：CDN 拒绝是常态，不能留白。
-      loadingBuilder: (_, child, progress) =>
-          progress == null ? child : _placeholder('加载中…'),
-      errorBuilder: (_, _, _) => _placeholder(_hint()),
-    );
+  /// 失败占位：文案 = 失败原因 + 点按重试。
+  Widget _failedPlaceholder([MediaFetchFailureKind? kind]) {
+    final label = kind == null ? '加载失败' : mediaFetchFailureLabel(kind);
+    return _placeholder('$label · 点按重试');
   }
 
   /// 解码目标宽（物理像素）。取整到 256 的倍数可以复用 ImageCache 的键，

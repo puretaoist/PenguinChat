@@ -38,6 +38,7 @@ import 'dart:typed_data';
 
 import 'package:pointycastle/digests/sha256.dart';
 
+import '../log/logger.dart';
 import '../net/media_fetcher.dart';
 
 /// 媒体缓存。
@@ -60,13 +61,34 @@ class MediaCache {
   final int maxBytes;
 
   final Map<String, _Entry> _entries = <String, _Entry>{};
+
+  /// 失败负缓存：`key -> 失败记录`。直链过期/404 这类失败立刻重试没有意义，
+  /// 但**不是永久**——过期地址换地址可能活，404 也可能被 CDN 补上，所以每条
+  /// 记录都有 TTL（见 [_failureTtl]）。
+  final Map<String, _Failure> _failures = <String, _Failure>{};
+
   final Map<String, Future<String?>> _inflight = <String, Future<String?>>{};
-  int _running = 0;
-  final List<Completer<void>> _waiters = <Completer<void>>[];
+
+  /// 按分类的并发计数与等待队列。
+  ///
+  /// 分档的理由与 Telegram `FileLoader` 的 `smallFilesQueue[5]/largeFilesQueue[5]`
+  /// 相同：一张 20 KB 的头像不该排在 30 MB 的视频后面。分开计数后，大文件
+  /// 塞满自己的配额不会把聊天里的图片卡住。
+  final Map<String, int> _runningByCategory = <String, int>{};
+  final Map<String, List<Completer<void>>> _waitersByCategory =
+      <String, List<Completer<void>>>{};
 
   Timer? _saveDebounce;
   bool _loaded = false;
   bool _disposed = false;
+
+  final Logger _log = Log.get('媒体缓存');
+
+  /// 分类并发上限（没列出的分类用 [maxConcurrent]）。
+  final Map<String, int> categoryLimits;
+
+  /// 重试计划：失败分类 → 每次重试前的退避。只给"可能自己好"的分类排期。
+  final Map<MediaFetchFailureKind, List<Duration>> retryPlan;
 
   MediaCache({
     required this.root,
@@ -74,6 +96,8 @@ class MediaCache {
     this.fetcher,
     this.maxConcurrent = 3,
     this.maxBytes = kDefaultMediaMaxBytes,
+    this.categoryLimits = const <String, int>{},
+    this.retryPlan = kDefaultMediaRetryPlan,
   });
 
   /// 读索引。可重复调用，只生效一次。
@@ -132,47 +156,107 @@ class MediaCache {
   ///
   /// [altUrls] 是备选地址：腾讯的 `rkey` 直链几小时后必然失效，而按 md5
   /// 取的兜底直链有时还活着。按顺序试，第一个成功的就算数。
+  /// [foreground] 为 false 表示后台预取：不占着并发配额做退避重试
+  /// （可见时那一次 ensure 会带重试）。
   Future<String?> ensure({
     required String key,
     required String category,
     required String url,
     List<String> altUrls = const <String>[],
+    bool foreground = true,
   }) {
     if (_disposed) return Future<String?>.value();
     final hit = pathFor(key);
     if (hit != null) return Future<String?>.value(hit);
+    // 负缓存：刚失败过就先别再烧流量（TTL 见 [_failureTtl]）。
+    final failed = failureOf(key);
+    if (failed != null) return Future<String?>.value();
     final running = _inflight[key];
     if (running != null) return running;
 
-    final task = _download(key, category, url, altUrls).whenComplete(() {
+    final task =
+        _download(key, category, url, altUrls, foreground: foreground)
+            .whenComplete(() {
       _inflight.remove(key);
     });
     _inflight[key] = task;
     return task;
   }
 
+  /// 该 key **仍然有效**的失败分类；没有失败或 TTL 已过返回 null。
+  ///
+  /// UI 用它区分"还在加载"和"这图真的取不到（链接过期/已失效）"——后者要
+  /// 显示成可点按重试，而不是永远转圈。
+  MediaFetchFailureKind? failureOf(String key) {
+    final f = _failures[key];
+    if (f == null) return null;
+    final ttl = _failureTtl[f.kind] ?? const Duration(minutes: 5);
+    if (DateTime.now().millisecondsSinceEpoch - f.atMs > ttl.inMilliseconds) {
+      _failures.remove(key);
+      return null;
+    }
+    return f.kind;
+  }
+
+  /// 忘掉该 key 的失败记录（用户点按重试时调用）。
+  void forgetFailure(String key) {
+    _failures.remove(key);
+  }
+
   Future<String?> _download(
     String key,
     String category,
-    String url, [
-    List<String> altUrls = const <String>[],
-  ]) async {
+    String url,
+    List<String> altUrls, {
+    bool foreground = true,
+  }) async {
     final f = fetcher;
     if (f == null) return null;
-    await _acquire();
+    await _acquire(category);
     try {
+      var worst = MediaFetchFailureKind.none;
+      // 后台预取只试一次：它失败后可见时那次 ensure 会再试，不该占着配额睡。
+      final plan = foreground
+          ? retryPlan
+          : const <MediaFetchFailureKind, List<Duration>>{};
       for (final candidate in <String>[url, ...altUrls]) {
         if (candidate.isEmpty) continue;
         if (_disposed) return null;
-        final bytes = await f.fetch(candidate, maxBytes: maxBytes);
-        if (bytes == null || bytes.isEmpty) continue;
-        // 扩展名按**成功拿到字节的那个地址**推断（兜底地址没有后缀时
-        // 会退到内容嗅探，见 _extOf）。
-        return await _store(key, category, candidate, bytes);
+        for (var attempt = 0;; attempt++) {
+          final sw = Stopwatch()..start();
+          final outcome = await f.fetchOutcome(candidate, maxBytes: maxBytes);
+          sw.stop();
+          if (outcome is MediaFetchOk && outcome.bytes.isNotEmpty) {
+            _failures.remove(key);
+            _log.i('媒体下载成功 key=$key cat=$category '
+                'cand=$candidate bytes=${outcome.bytes.length} '
+                '${sw.elapsedMilliseconds}ms');
+            // 扩展名按**成功拿到字节的那个地址**推断（兜底地址没有后缀时
+            // 会退到内容嗅探，见 _extOf）。
+            return await _store(key, category, candidate, outcome.bytes);
+          }
+          final failed = outcome is MediaFetchFailed ? outcome : null;
+          final kind = failed?.kind ?? MediaFetchFailureKind.unknown;
+          worst = _worse(worst, kind);
+          final backoff = plan[kind] ?? const <Duration>[];
+          _log.w('媒体下载失败 key=$key cat=$category cand=$candidate '
+              'try=${attempt + 1} kind=${kind.name} '
+              'status=${failed?.status} retcode=${failed?.retcode} '
+              'msg=${failed?.retmsg} ${sw.elapsedMilliseconds}ms');
+          if (attempt >= backoff.length) break;
+          await Future<void>.delayed(backoff[attempt]);
+          if (_disposed) return null;
+        }
+      }
+      if (worst != MediaFetchFailureKind.none) {
+        _failures[key] = _Failure(
+          kind: worst,
+          atMs: DateTime.now().millisecondsSinceEpoch,
+        );
       }
       return null;
     } finally {
-      _release();
+      _release(category);
     }
   }
 
@@ -362,22 +446,29 @@ class MediaCache {
     }
   }
 
-  Future<void> _acquire() async {
-    if (_running < maxConcurrent) {
-      _running++;
+  int _limitFor(String category) => categoryLimits[category] ?? maxConcurrent;
+
+  Future<void> _acquire(String category) async {
+    final limit = _limitFor(category);
+    final running = _runningByCategory[category] ?? 0;
+    if (running < limit) {
+      _runningByCategory[category] = running + 1;
       return;
     }
     final c = Completer<void>();
-    _waiters.add(c);
+    (_waitersByCategory[category] ??= <Completer<void>>[]).add(c);
     await c.future;
   }
 
-  void _release() {
-    if (_waiters.isNotEmpty) {
-      _waiters.removeAt(0).complete();
-    } else {
-      _running--;
+  void _release(String category) {
+    final waiters = _waitersByCategory[category];
+    if (waiters != null && waiters.isNotEmpty) {
+      // 让位给队首：槽位直接转交，计数不变。
+      waiters.removeAt(0).complete();
+      return;
     }
+    final running = (_runningByCategory[category] ?? 1) - 1;
+    _runningByCategory[category] = running < 0 ? 0 : running;
   }
 
   void _scheduleSave() {
@@ -430,6 +521,61 @@ class MediaCache {
     // 复用 BlobStore 的哈希（同一套实现，避免两处不一致）。
     return _sha256(data);
   }
+}
+
+/// 默认重试计划：只给"可能自己好"的失败排期。
+///
+/// * [MediaFetchFailureKind.network]：断网/超时最常见的形态，退避 0.5s、2s 各一次。
+/// * [MediaFetchFailureKind.rateLimited]：CDN 限流，1.5s 后再试一次就够。
+///
+/// 其余（过期/404/参数错/超大）重试同一个地址没有意义，重试只是烧流量。
+const Map<MediaFetchFailureKind, List<Duration>> kDefaultMediaRetryPlan =
+    <MediaFetchFailureKind, List<Duration>>{
+  MediaFetchFailureKind.network: <Duration>[
+    Duration(milliseconds: 500),
+    Duration(seconds: 2),
+  ],
+  MediaFetchFailureKind.rateLimited: <Duration>[Duration(milliseconds: 1500)],
+};
+
+/// 负缓存的有效期（按失败分类）。取"多久之后值得再问一次服务端"：
+/// 过期直链换个地址可能活 → 30 分钟；404 可能是 CDN 还没就绪 → 7 天；
+/// 网络错误转眼就好 → 30 秒。
+const Map<MediaFetchFailureKind, Duration> _failureTtl =
+    <MediaFetchFailureKind, Duration>{
+  MediaFetchFailureKind.expired: Duration(minutes: 30),
+  MediaFetchFailureKind.missing: Duration(days: 7),
+  MediaFetchFailureKind.rejected: Duration(minutes: 30),
+  MediaFetchFailureKind.tooLarge: Duration(hours: 24),
+  MediaFetchFailureKind.badUrl: Duration(days: 3650),
+  MediaFetchFailureKind.rateLimited: Duration(seconds: 60),
+  MediaFetchFailureKind.network: Duration(seconds: 30),
+  MediaFetchFailureKind.unknown: Duration(minutes: 5),
+};
+
+/// 多个候选/多次尝试都失败时，报**最可处置**的那一个（严重度从高到低）。
+const List<MediaFetchFailureKind> _frailtyOrder = <MediaFetchFailureKind>[
+  MediaFetchFailureKind.expired,
+  MediaFetchFailureKind.missing,
+  MediaFetchFailureKind.rejected,
+  MediaFetchFailureKind.tooLarge,
+  MediaFetchFailureKind.badUrl,
+  MediaFetchFailureKind.rateLimited,
+  MediaFetchFailureKind.network,
+  MediaFetchFailureKind.unknown,
+];
+
+MediaFetchFailureKind _worse(MediaFetchFailureKind a, MediaFetchFailureKind b) {
+  if (a == MediaFetchFailureKind.none) return b;
+  if (b == MediaFetchFailureKind.none) return a;
+  return _frailtyOrder.indexOf(a) <= _frailtyOrder.indexOf(b) ? a : b;
+}
+
+class _Failure {
+  final MediaFetchFailureKind kind;
+  final int atMs;
+
+  const _Failure({required this.kind, required this.atMs});
 }
 
 class _Entry {

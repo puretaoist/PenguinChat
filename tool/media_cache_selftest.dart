@@ -39,6 +39,8 @@ void check(String name, bool ok, [String? detail]) {
 ///   /empty       -> 200 但 0 字节
 ///   /redirect    -> 302 到 /img/a.jpg
 ///   /slow        -> 延迟 300ms 后返回（验证并发合并）
+int _flakyHits = 0;
+
 Future<HttpServer> _serve() async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((req) async {
@@ -64,6 +66,25 @@ Future<HttpServer> _serve() async {
       case '/slow':
         await Future<void>.delayed(const Duration(milliseconds: 300));
         res.add(Uint8List.fromList(List<int>.filled(50, 0xCC)));
+      // 真机抓到的那三种拒绝形态 + 限流，用来验失败分类
+      case '/expired':
+        res.statusCode = 400;
+        res.write('{"retcode":-5503007,"retmsg":"download url has expired"}');
+      case '/rejected':
+        res.statusCode = 400;
+        res.write('{"retcode":-5503010,"retmsg":"invalid rkey"}');
+      case '/rate':
+        res.statusCode = 429;
+        res.write('slow down');
+      case '/flaky':
+        // 前两次 500，第三次 200：验网络错误的退避重试
+        _flakyHits++;
+        if (_flakyHits <= 2) {
+          res.statusCode = 500;
+          res.write('boom');
+        } else {
+          res.add(Uint8List.fromList(List<int>.filled(77, 0xDD)));
+        }
       default:
         res.statusCode = 404;
     }
@@ -73,7 +94,7 @@ Future<HttpServer> _serve() async {
 }
 
 /// 计数用的包装，验证"同一个 key 并发只下载一次"。
-class _CountingFetcher implements MediaFetcher {
+class _CountingFetcher extends MediaFetcher {
   final MediaFetcher inner;
   int calls = 0;
   bool closed = false;
@@ -90,6 +111,32 @@ class _CountingFetcher implements MediaFetcher {
     closed = true;
     inner.close();
   }
+}
+
+/// 计数的 fetchOutcome 包装：验证"负缓存命中时不再发请求"。
+///
+/// 注意必须覆盖 [fetchOutcome] 而不是只覆盖 [fetch] —— MediaCache 只调前者，
+/// 只覆盖 fetch 的包装会让每次调用都落到基类默认实现（分类恒为 unknown）。
+class _OutcomeCounter extends MediaFetcher {
+  final MediaFetcher inner;
+  int calls = 0;
+  final List<String> urls = [];
+  _OutcomeCounter(this.inner);
+
+  @override
+  Future<Uint8List?> fetch(String url, {int maxBytes = kDefaultMediaMaxBytes}) =>
+      inner.fetch(url, maxBytes: maxBytes);
+
+  @override
+  Future<MediaFetchOutcome> fetchOutcome(String url,
+      {int maxBytes = kDefaultMediaMaxBytes}) {
+    calls++;
+    urls.add(url);
+    return inner.fetchOutcome(url, maxBytes: maxBytes);
+  }
+
+  @override
+  void close() => inner.close();
 }
 
 Future<void> main() async {
@@ -415,6 +462,158 @@ Future<void> main() async {
           sw.elapsedMilliseconds >= 850, '${sw.elapsedMilliseconds}ms');
       check('全部成功', c4.bytes > 0, '${c4.bytes}');
       c4.dispose();
+    }
+
+    // ---------------------------------------------------------------
+    print('\n[失败分类] classifyMediaHttpFailure（纯函数）');
+    {
+      MediaFetchFailureKind k(int s, int? rc) => classifyMediaHttpFailure(s, rc);
+      check('404 -> missing', k(404, null) == MediaFetchFailureKind.missing);
+      check('410 -> missing', k(410, null) == MediaFetchFailureKind.missing);
+      check('429 -> rateLimited', k(429, null) == MediaFetchFailureKind.rateLimited);
+      check('503 -> rateLimited', k(503, null) == MediaFetchFailureKind.rateLimited);
+      check('500 -> network', k(500, null) == MediaFetchFailureKind.network);
+      check('400 + -5503007 -> expired',
+          k(400, -5503007) == MediaFetchFailureKind.expired);
+      check('400 + -5503010 -> rejected',
+          k(400, -5503010) == MediaFetchFailureKind.rejected);
+      check('400 + -5503037 -> rejected',
+          k(400, -5503037) == MediaFetchFailureKind.rejected);
+      check('400 无 retcode -> rejected',
+          k(400, null) == MediaFetchFailureKind.rejected);
+    }
+
+    print('\n[fetcher] fetchOutcome 的落点');
+    {
+      final f = HttpMediaFetcher();
+      final e = await f.fetchOutcome('$base/expired');
+      check('400+过期码 -> expired 且抠出 retcode',
+          e is MediaFetchFailed &&
+              e.kind == MediaFetchFailureKind.expired &&
+              e.retcode == -5503007,
+          e is MediaFetchFailed ? '${e.kind} ${e.retcode}' : '$e');
+      check('retmsg 也抠出来了',
+          e is MediaFetchFailed && (e.retmsg ?? '').contains('expired'),
+          e is MediaFetchFailed ? '${e.retmsg}' : '');
+      final m = await f.fetchOutcome('$base/404');
+      check('404 -> missing 且 status=404',
+          m is MediaFetchFailed &&
+              m.kind == MediaFetchFailureKind.missing &&
+              m.status == 404);
+      final rj = await f.fetchOutcome('$base/rejected');
+      check('400+rkey 错 -> rejected',
+          rj is MediaFetchFailed && rj.kind == MediaFetchFailureKind.rejected);
+      final rl = await f.fetchOutcome('$base/rate');
+      check('429 -> rateLimited',
+          rl is MediaFetchFailed && rl.kind == MediaFetchFailureKind.rateLimited);
+      final big = await f.fetchOutcome('$base/big', maxBytes: 1024);
+      check('声明超 maxBytes -> tooLarge',
+          big is MediaFetchFailed && big.kind == MediaFetchFailureKind.tooLarge);
+      // 裸路径按本地文件处理（OneBot 后端会给 /data/...），所以用别的协议试
+      final bad = await f.fetchOutcome('ftp://example.com/a.jpg');
+      check('不支持的协议 -> badUrl',
+          bad is MediaFetchFailed && bad.kind == MediaFetchFailureKind.badUrl);
+      final ok = await f.fetchOutcome('$base/img/a.jpg');
+      check('正常 -> MediaFetchOk 且字节数对',
+          ok is MediaFetchOk && ok.bytes.length == 100);
+      f.close();
+    }
+
+    print('\n[MediaCache] 负缓存（失败后不再自动刷请求）');
+    {
+      final counter = _OutcomeCounter(HttpMediaFetcher());
+      final c5 = MediaCache(
+          root: Directory('${tmp.path}/media5'),
+          indexFile: File('${tmp.path}/media5_index.json'),
+          fetcher: counter);
+      await c5.load();
+      final p1 = await c5.ensure(
+          key: 'x', category: 'photos', url: '$base/expired');
+      check('过期链接第一次 -> null', p1 == null);
+      check('失败被记下（expired）',
+          c5.failureOf('x') == MediaFetchFailureKind.expired,
+          '${c5.failureOf('x')}');
+      final p2 = await c5.ensure(
+          key: 'x', category: 'photos', url: '$base/expired');
+      check('负缓存命中 -> 直接 null 且不再发请求',
+          p2 == null && counter.calls == 1, 'calls=${counter.calls}');
+      c5.forgetFailure('x');
+      check('forgetFailure 清掉分类', c5.failureOf('x') == null);
+      final p3 = await c5.ensure(
+          key: 'x', category: 'photos', url: '$base/expired');
+      check('清掉后重试会真的再发一次',
+          p3 == null && counter.calls == 2, 'calls=${counter.calls}');
+      c5.dispose();
+    }
+
+    print('\n[MediaCache] 网络错误退避重试');
+    {
+      final counter = _OutcomeCounter(HttpMediaFetcher());
+      final c6 = MediaCache(
+          root: Directory('${tmp.path}/media6'),
+          indexFile: File('${tmp.path}/media6_index.json'),
+          fetcher: counter);
+      await c6.load();
+      final sw = Stopwatch()..start();
+      final p = await c6.ensure(
+          key: 'flaky', category: 'photos', url: '$base/flaky');
+      sw.stop();
+      check('两次 500 后第三次成功', p != null, '$p');
+      check('一共发了 3 次（1 次原始 + 2 次退避重试）', counter.calls == 3,
+          'calls=${counter.calls}');
+      check('退避确实等了（0.5s + 2s）', sw.elapsedMilliseconds >= 2300,
+          '${sw.elapsedMilliseconds}ms');
+      final p2 = await c6.ensure(
+          key: 'flaky', category: 'photos', url: '$base/flaky');
+      check('成功结果进缓存，第二次不再发请求',
+          p2 == p && counter.calls == 3, 'calls=${counter.calls}');
+      c6.dispose();
+    }
+
+    print('\n[MediaCache] 候选回退（第一个地址死了换下一个）');
+    {
+      final c7 = MediaCache(
+          root: Directory('${tmp.path}/media7'),
+          indexFile: File('${tmp.path}/media7_index.json'),
+          fetcher: HttpMediaFetcher());
+      await c7.load();
+      final p = await c7.ensure(
+          key: 'fb',
+          category: 'photos',
+          url: '$base/404',
+          altUrls: ['$base/img/a.jpg']);
+      check('首个候选 404 -> 用备用地址成功', p != null && p.endsWith('.jpg'), '$p');
+      c7.dispose();
+    }
+
+    print('\n[MediaCache] 按分类的并发上限');
+    {
+      final c8 = MediaCache(
+        root: Directory('${tmp.path}/media8'),
+        indexFile: File('${tmp.path}/media8_index.json'),
+        fetcher: HttpMediaFetcher(),
+        maxConcurrent: 8,
+        categoryLimits: const <String, int>{'photos': 1},
+      );
+      await c8.load();
+      final sw = Stopwatch()..start();
+      await Future.wait(List.generate(
+          4,
+          (i) => c8.ensure(
+              key: 'p-$i', category: 'photos', url: '$base/slow')));
+      sw.stop();
+      // 4 个 300ms、分类上限 1 -> 串行，至少 1.1s（全局上限 8 不构成瓶颈）
+      check('分类上限 1 时串行执行', sw.elapsedMilliseconds >= 1100,
+          '${sw.elapsedMilliseconds}ms');
+      final sw2 = Stopwatch()..start();
+      await Future.wait(List.generate(
+          4,
+          (i) => c8.ensure(
+              key: 'v-$i', category: 'voices', url: '$base/slow')));
+      sw2.stop();
+      check('别的分类不受影响（voices 走全局 8，并行）',
+          sw2.elapsedMilliseconds < 900, '${sw2.elapsedMilliseconds}ms');
+      c8.dispose();
     }
 
     counting.close();

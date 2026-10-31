@@ -166,6 +166,19 @@ class ChatStore {
     'other',
   ];
 
+  /// 各分类的并发下载上限。
+  ///
+  /// 对齐 Telegram `FileLoader` 的"`smallFilesQueue` / `largeFilesQueue` 分档"：
+  /// 照片要多路并发（列表滚动时一屏十几张），视频/文件少路（单个体积大，
+  /// 占满带宽只会让所有东西都慢）。
+  static const Map<String, int> _mediaConcurrency = <String, int>{
+    'photos': 4,
+    'videos': 2,
+    'files': 2,
+    'voices': 2,
+    'other': 6,
+  };
+
   /// 索引落盘防抖：会话摘要每来一条消息就会变，逐条写盘不划算。
   static const Duration _indexDebounce = Duration(milliseconds: 200);
 
@@ -244,6 +257,7 @@ class ChatStore {
       indexFile: File('${dataDir.path}${Platform.pathSeparator}media_index.json'),
       fetcher: mediaFetcher,
       maxBytes: maxCacheBytes,
+      categoryLimits: _mediaConcurrency,
     );
     await cache.load();
     _mediaCache = cache;
@@ -547,6 +561,26 @@ class ChatStore {
     return path;
   }
 
+  /// 该段媒体的失败分类（仍然有效时）；没试过 / 成功 / 已过 TTL 返回 null。
+  ///
+  /// UI 用它区分"还在加载"与"这张图真的取不到"——后者要显示成可点按重试，
+  /// 而不是永远停在"加载中…"。
+  MediaFetchFailureKind? mediaFailureOf(Segment seg) {
+    final ref = mediaRefOf(seg);
+    if (ref == null) return null;
+    return _mediaCache?.failureOf(ref.key);
+  }
+
+  /// 用户点按重试：先忘掉负缓存再下（与 [ensureMedia] 的全部区别）。
+  ///
+  /// 必须走这里而不是直接再调 [ensureMedia]：否则负缓存会把它短路成 null，
+  /// 用户点了没反应。
+  Future<String?> retryMedia(Segment seg) async {
+    final ref = mediaRefOf(seg);
+    if (ref != null) _mediaCache?.forgetFailure(ref.key);
+    return ensureMedia(seg);
+  }
+
   /// 后台预取一条消息里的全部媒体。
   ///
   /// 刻意**不 await、不报错**：这是尽力而为的暖缓存。失败就失败，下次打开
@@ -564,6 +598,7 @@ class ChatStore {
             category: ref.category,
             url: ref.url,
             altUrls: ref.altUrls,
+            foreground: false,
           )
           .then((path) {
         if (path != null && !_disposed) {

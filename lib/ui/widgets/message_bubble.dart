@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
+import '../../infra/net/media_fetcher.dart';
 import '../theme/telegram_theme.dart';
 import 'message_content.dart';
 
@@ -63,6 +64,13 @@ class MessageBubble extends StatelessWidget {
   /// 与 [localMedia] 配套：拿不到本地文件时由图片块补一次下载（缺陷3）。
   final Future<String?> Function(Segment segment)? ensureMedia;
 
+  /// 「这段媒体上次为什么失败」的钩子（[ChatStore.mediaFailureOf]）。
+  /// 有它才能把图片占位分成"还在加载"与"确实取不到，可点按重试"。
+  final MediaFetchFailureKind? Function(Segment segment)? mediaFailure;
+
+  /// 点按重试的钩子（[ChatStore.retryMedia]）：清负缓存后重新下。
+  final Future<String?> Function(Segment segment)? retryMedia;
+
   /// 点文件块时的动作（下载/另存）。为 null = 只展示，不可点。
   final void Function(FileSegment segment)? onOpenFile;
 
@@ -77,6 +85,8 @@ class MessageBubble extends StatelessWidget {
     this.onReveal,
     this.localMedia,
     this.ensureMedia,
+    this.mediaFailure,
+    this.retryMedia,
     this.onOpenFile,
   });
 
@@ -201,6 +211,8 @@ class MessageBubble extends StatelessWidget {
                       isOut: isOut,
                       localMedia: localMedia,
                       ensureMedia: ensureMedia,
+                      mediaFailure: mediaFailure,
+                      retryMedia: retryMedia,
                       onOpenFile: onOpenFile,
                       trailing: _inlineMeta ? _metaInline(isOut) : null,
                     ),
