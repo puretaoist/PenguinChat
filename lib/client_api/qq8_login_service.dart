@@ -368,11 +368,13 @@ class Qq8LoginService {
   /// 所以收消息只能靠这个轮询——**它就是延迟上限**。原先 20 s 意味着最坏
   /// 等 20 秒才看到新消息，用户体感"不实时"。
   ///
-  /// 取 8 s 是折中：一次轮询只打 2 个包（`MessageSvc.PbGetMsg` + 每个群
-  /// 一条 `PbGetGroupMsg`，7 个群共 8 个），频率从 3 次/分升到 7.5 次/分，
-  /// 仍远低于心跳（270 s）之外官方客户端自身的拉取强度，且 `_pollGroups`
-  /// 只会对**有游标**的群发请求。想更激进可下调，但要记住这属于主动轮询，
-  /// 频率越高越像第三方工具。
+  /// **2026-10-31 起推送已实测可用**（私聊 `MessageSvc.PushNotify` → 立刻拉、
+  /// 群 `OnlinePush.PbPushGroupMsg` 带体直达），所以这里不再是"延迟上限"，
+  /// 而是**对账兜底**：推送丢了也要在一个可接受的时间内自己发现。
+  ///
+  /// 取 15 s：一次对账只打 2 个包（`MessageSvc.PbGetMsg` + 需要探的群），
+  /// 频率 4 次/分，低于原先 8 s 的 7.5 次/分。群侧另有"窗口问空就不再重复
+  /// 问"的短路（见 [_groupWindowIdle]），实际包量更低。
   final Duration pullInterval;
   /// 应用在后台时的轮询间隔。
   ///
@@ -381,10 +383,10 @@ class Qq8LoginService {
   /// 去拉；群消息更常直接走 `OnlinePush.PbPushGroupMsg`。也就是说官方的新鲜
   /// 度来自推送，`onRunningForeground` 那条链路里没有消息拉取。
   ///
-  /// 我们收不到任何 `OnlinePush.*` / `PushNotify`（真机日志 0 命中），只能靠
-  /// 轮询兜底。但轮询的意义只在「用户看得见屏幕」时成立——在后台以 8 s
-  /// 频率打 8 个包，既不带来任何可见收益（我们还没有消息通知），又白白
-  /// 提高被判定为第三方工具的风险。所以前台 8 s、后台 60 s。
+  /// 我方现在也能收到推送（2026-10-31 实测），后台的即时性靠推送就够；
+  /// 定时对账只在"推送漏了"时兜底，120 s 一次完全够用，且把后台的主动
+  /// 请求压到接近官方水平（官方在后台根本不轮询）。
+  /// 所以前台 15 s、后台 120 s。
   final Duration backgroundPullInterval;
   /// 上线后延迟多久做第一次补拉（0 = 不做）。测试里调大避免抢帧。
   final Duration startupPullDelay;
@@ -476,6 +478,27 @@ class Qq8LoginService {
 
   /// 供自测读取某群的当前游标（`null` = 还没铺底）。只读，无副作用。
   int? debugGroupCursor(int groupCode) => _groupLastSeq[groupCode];
+  /// 供自测：下一次请求会拿到的 seq（不消耗号；null = 未上线）。
+  int? get debugSeqCursor => _session?.seqCursor;
+
+  /// 供自测：直接跑一轮群轮询（不经过定时器，也不碰私聊）。
+  Future<void> debugPollGroups({String reason = '自测轮询'}) => _pollGroups(reason);
+
+  /// 供自测：所有群的当前游标（只读快照）。
+  Map<int, int> get debugGroupCursors => Map<int, int>.unmodifiable(_groupLastSeq);
+
+  /// 供自测：当前因"窗口问空"被短路的群（只读快照）。
+  Set<int> get debugGroupWindowIdle => Set<int>.unmodifiable(_groupWindowIdle);
+
+  /// 供自测：直接铺一个群游标（跳过上线探测）。
+  void debugSeedGroupCursor(int groupCode, int seq, {bool synced = true}) {
+    _groupLastSeq[groupCode] = seq;
+    if (synced) {
+      _groupSynced.add(groupCode);
+    } else {
+      _groupSynced.remove(groupCode);
+    }
+  }
   /// seq 探测两路都拿不到的群（本轮会话内不再重试，避免请求风暴）。
   final Set<int> _primeFailed = {};
 
@@ -491,6 +514,21 @@ class Qq8LoginService {
   /// 因此 103 之后再拉就是纯浪费：每 20 秒一轮 ×3 群，四份日志累计
   /// 8517 次群历史请求里 0 次成功。这里记死，本会话不再重试。
   final Set<int> _groupDead = {};
+
+  /// 「窗口已经问空、且此后没有任何新证据」的群。
+  ///
+  /// 群的消息发现原本是"每轮都把 `[游标+1, 游标+20]` 问一遍"——真机上这就是
+  /// 每 16 秒一次 `群历史 gid=486045673 seq=59159-59178 result=104`，四份日志
+  /// 累计 8517 次请求里 0 次拿到消息（P2 实测：水位停在 59158，窗口永远落在
+  /// 水位之外）。而群侧现在有推送（`OnlinePush.PbPushGroupMsg` 带体直达），
+  /// 没有推送时还有 `PbUnReadMsgSeq` 对账（见 [_resyncGroupSeqs]，它自己会
+  /// `_catchUpGroup` 补齐缺口）。所以「窗口问空 + 无推送 + 水位没动」这三件事
+  /// 同时成立时，再问同一个窗口是纯浪费。
+  ///
+  /// 只在这个前提下跳过；一旦出现新证据（收到群推送 / 水位跳变 / 拉到消息 /
+  /// 重新上线）立即移出集合，回到逐轮探测。**不推进游标**，所以不可能跳过
+  /// 真消息（C36 的「永久跳过」错法在这里不成立）。
+  final Set<int> _groupWindowIdle = {};
 
   // 一次登录流程内固定的材料（与参考实现一致：同一客户端实例复用同一套）
   Qq8Device? _device;
@@ -592,8 +630,8 @@ class Qq8LoginService {
     this.ecdhBuilder,
     this.gate,
     this.heartbeatInterval = const Duration(seconds: 270),
-    this.pullInterval = const Duration(seconds: 8),
-    this.backgroundPullInterval = const Duration(seconds: 60),
+    this.pullInterval = const Duration(seconds: 15),
+    this.backgroundPullInterval = const Duration(seconds: 120),
     this.startupPullDelay = const Duration(seconds: 2),
     this.primeGroupSeqs = true,
     this.reportOnlineChecks = true,
@@ -1863,6 +1901,8 @@ class Qq8LoginService {
         final seq = Qq8Pb.intAt(info, 3) ?? 0;
         final known = _groupLastSeq[code] ?? 0;
         if (code > 0 && seq != known) {
+          // 水位动了 = 有新消息，之前"窗口问空"的结论失效，放开探测。
+          _groupWindowIdle.remove(code);
           // 服务端真值可能**低于**盲推进的光标——(0,0)/103/104 的
           // returnEndSeq 把光标越推越远（真机 17:47 实证：盲 10214 vs 真 9934）。
           // 无论方向都以真值为准；真值更高才回看（真值更低说明之前
@@ -2025,6 +2065,8 @@ class Qq8LoginService {
     final maxSeq = page.messages
         .map((m) => m.seq)
         .fold<int>(0, (a, b) => b > a ? b : a);
+    // 真收到消息 ⇒ 群里确实有流量，放开窗口探测。
+    _groupWindowIdle.remove(groupCode);
     if (maxSeq > (_groupLastSeq[groupCode] ?? 0)) {
       _groupLastSeq[groupCode] = maxSeq;
     }
@@ -2076,6 +2118,8 @@ class Qq8LoginService {
       final gid = e.key, last = e.value;
       // 103 = 服务端对该群的准入结论（见 [_groupDead]），本会话不再试。
       if (_groupDead.contains(gid)) continue;
+      // 窗口已问空且之后没有任何新证据：这一轮别再问（见 [_groupWindowIdle]）。
+      if (_groupWindowIdle.contains(gid)) continue;
       final firstSync = !_groupSynced.contains(gid);
       final begin = firstSync ? (last - 19 < 1 ? 1 : last - 19) : last + 1;
       final end = firstSync ? last : last + 20;
@@ -2108,9 +2152,12 @@ class Qq8LoginService {
             case 104:
               // 0/104 = 窗口内没有新消息（104 = 区间越界/无更新）。
               // **不能推进游标**：新消息就落在 `游标+1..` 这段，推进到
-              // 窗口末尾会把真消息永远跳过去（C36 的教训）。保持原样
-              // 重问同一窗口，正是我们「靠轮询发现新消息」的手段。第一次
-              // 的往回窗口例外——它拉的是历史，空就是空，标记已同步即可。
+              // 窗口末尾会把真消息永远跳过去（C36 的教训）。
+              // 但**也不必每轮重问**：记进 [_groupWindowIdle]，等出现新证据
+              // （群推送 / 水位跳变 / 重新上线）再回来问。
+              // 第一次的往回窗口例外——它拉的是历史，空就是空，标记已同步，
+              // 下一轮的向前窗口才是真正的探测起点。
+              if (!firstSync) _groupWindowIdle.add(gid);
               break;
             default:
               _log.d('$reason（群 $gid）空页但 result=${page.result}');
@@ -3017,6 +3064,9 @@ class Qq8LoginService {
     switch (ev) {
       case Qq8MessagePush(:final message):
         _log.i('收到消息 ${message.brief()}');
+        // 群推送带体直达：之前"窗口问空"的结论作废（见 [_groupWindowIdle]）。
+        final pushedGid = message.groupCode;
+        if (pushedGid != null) _groupWindowIdle.remove(pushedGid);
       case Qq8KickPush(:final hint):
         _log.w('被服务端踢下线：$hint');
         _emit(Qq8LoginSnapshot(
@@ -3688,6 +3738,7 @@ class Qq8LoginService {
       // 「首次往回看一窗」，`_groupLastSeq` 残留则可能带着别的账号的 seq。
       _groupLastSeq.clear();
       _groupSynced.clear();
+      _groupWindowIdle.clear();
       _primeFailed.clear();
       _groupDead.clear();
       _syncCookie = null;

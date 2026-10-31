@@ -240,6 +240,24 @@ Uint8List _groupMsgPayload() => Qq8Pb.encode(<int, Object?>{
       ],
     });
 
+/// `PbGetGroupMsgResp`：空页 + 指定 result（104 = 区间越界/无更新）。
+Uint8List _emptyGroupPayload(int result,
+        {int groupCode = 987654321, int begin = 0, int end = 0}) =>
+    Qq8Pb.encode(<int, Object?>{1: result, 3: groupCode, 4: begin, 5: end});
+
+/// 群消息推送负载：`PbPushGroupMsg{1: Msg{...}, 2: svrip}`（带体直达）。
+Uint8List _groupPushPayload() => Qq8Pb.encode(<int, Object?>{
+      1: _msg(
+        from: 33333,
+        to: 10001,
+        msgType: 82,
+        seq: 59159,
+        text: '群推送',
+        groupInfo: {1: 987654321},
+      ),
+      2: 7,
+    });
+
 /// 好友列表响应（JCE）：第 [start] 页（序号 1/2 对应两个人），总数 [total]。
 Uint8List _friendPagePayload({required int start, required int total}) =>
     Qq8Jce.encode(<int, Object?>{
@@ -1341,6 +1359,9 @@ Future<void> main() async {
       transportBuilder: () => scripted,
       reportOnlineChecks: false,
       reportOnlineStatus: false,
+      // 本块自己控制群游标（6a 段）：关掉上线铺底，避免后台 primeGroups
+      // 偷偷消费脚本帧，把"谁发了哪个包"搅乱。
+      primeGroupSeqs: false,
       timeout: const Duration(seconds: 5),
     );
     // 直接用 token 路径上线：先塞一份可用票据
@@ -1444,6 +1465,41 @@ Future<void> main() async {
     check('累计 8 个包（登录/注册 + 3 拉取 + 3 列表）',
         scripted.sent.length == 8,
         '${scripted.sent.length}');
+
+    // 6a. 轮询策略：推送为主、定时只为对账；群"窗口问空"不再重复问
+    check('默认前台对账间隔 15 s / 后台 120 s（推送已通，轮询降级为对账）',
+        svc.pullInterval.inSeconds == 15 &&
+            svc.backgroundPullInterval.inSeconds == 120,
+        '${svc.pullInterval.inSeconds}s/${svc.backgroundPullInterval.inSeconds}s');
+    svc.debugSeedGroupCursor(987654321, 59158);
+    final sentBefore = scripted.sent.length;
+    // 应答的 seq 必须等于请求将要拿到的号（脚本传输是 FIFO + 按 seq 配对）。
+    var nextSeq = Qq8Uni.nextSeq(svc.debugSeqCursor!);
+    scripted.scriptedResponses.add(
+        _frame(nextSeq, Qq8History.cmdGetGroupMsg, _emptyGroupPayload(104)));
+    await svc.debugPollGroups();
+    check('群窗口问空(104) → 该群进"短路"集合，且真的发了一个包',
+        svc.debugGroupWindowIdle.contains(987654321) &&
+            scripted.sent.length == sentBefore + 1,
+        '${svc.debugGroupWindowIdle} 发包 ${scripted.sent.length - sentBefore}');
+    await svc.debugPollGroups();
+    check('短路生效：下一轮一个群包都不发（游标没动，不会跳过消息）',
+        scripted.sent.length == sentBefore + 1 &&
+            svc.debugGroupCursor(987654321) == 59158,
+        '${scripted.sent.length - sentBefore} 游标 ${svc.debugGroupCursor(987654321)}');
+    scripted.emit(_frame(102, Qq8PushCmd.pushGroup, _groupPushPayload()));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    check('群推送带体到达 → 短路立即解除（下一轮恢复探测）',
+        !svc.debugGroupWindowIdle.contains(987654321),
+        '${svc.debugGroupWindowIdle}');
+    nextSeq = Qq8Uni.nextSeq(svc.debugSeqCursor!);
+    scripted.scriptedResponses.add(
+        _frame(nextSeq, Qq8History.cmdGetGroupMsg, _emptyGroupPayload(104)));
+    await svc.debugPollGroups();
+    check('有新证据后重新探测（又发一个包，随后重新短路）',
+        scripted.sent.length == sentBefore + 2 &&
+            svc.debugGroupWindowIdle.contains(987654321),
+        '${scripted.sent.length - sentBefore}');
 
     scripted.emit(_frame(101, 'MessageSvc.PushForceOffline', _kickPayload()));
     await Future<void>.delayed(const Duration(milliseconds: 50));
