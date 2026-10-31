@@ -28,6 +28,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -426,6 +427,199 @@ abstract final class Qq8ImageUp {
       ));
     }
     return out;
+  }
+}
+
+/// 一次 GroupPicDown（用 md5 换**新的**下载参数）的回执，一张图一条。
+///
+/// 字段号出处：官方 `tencent/im/cs/cmd0x388/cmd0x388.java` 的
+/// `GetImgUrlRsp.__fieldMap__`（8.2.11 真 dex 反编译，见
+/// docs/图片富媒体下载-P3取证与探针-20261031.md）。
+class Qq8PicDownReply {
+  /// `uint32_result`：0 = 成功。
+  final int result;
+
+  /// `bytes_fail_msg`（失败原因，成功时为空）。
+  final String failMsg;
+
+  /// `bytes_file_md5`（hex，小写）。
+  final String md5Hex;
+
+  /// 三种规格的下载参数（**都要再拼成 URL 才能下载**，形态待真机取证）。
+  final Uint8List? thumbPara;
+  final Uint8List? originalPara;
+  final Uint8List? bigPara;
+
+  /// 大缩略图的下载参数（仅 `bytes_big_thumb_down_para`，老版本没有）。
+  final Uint8List? bigThumbPara;
+
+  /// `bytes_down_domain`（域名列表，追加 80 端口）。
+  final List<String> domains;
+
+  /// `rpt_uint32_down_ip` 转成的点分十进制。
+  final List<String> ips;
+
+  /// `rpt_uint32_down_port`。
+  final List<int> ports;
+
+  /// `uint32_https_url_flag`（非 0 表示应该用 https）。
+  final int httpsFlag;
+
+  const Qq8PicDownReply({
+    required this.result,
+    required this.failMsg,
+    required this.md5Hex,
+    this.thumbPara,
+    this.originalPara,
+    this.bigPara,
+    this.bigThumbPara,
+    this.domains = const <String>[],
+    this.ips = const <String>[],
+    this.ports = const <int>[],
+    this.httpsFlag = 0,
+  });
+
+  /// 拿到任意一份下载参数就算成功。
+  bool get ok =>
+      result == 0 &&
+      (originalPara != null || bigPara != null || thumbPara != null);
+
+  @override
+  String toString() => 'Qq8PicDownReply(result=$result, md5=$md5Hex, '
+      'paras=[thumb=${thumbPara?.length}, orig=${originalPara?.length}, '
+      'big=${bigPara?.length}], domains=$domains, ips=$ips, '
+      'ports=$ports, https=$httpsFlag)';
+}
+
+/// GroupPicDown（`ImgStore.GroupPicDown`，cmd0x388 subcmd=2）：用图片 md5
+/// 向服务端再要一份**新的**下载参数，绕开已过期的旧直链。
+///
+/// ## 证据链
+/// * 命令字与「这是 WUP 取 URL，不是 highway 下载」：官方 8.2.11
+///   `defpackage/ayux.java`（`ImgStore.GroupPicDown` 的 MSFServlet 处理体）
+///   —— 它 `uint32_subcmd.set(2)` 后把 `GetImgUrlReq` 塞进
+///   `cmd0x388.ReqBody`，回包取 `rpt_msg_getimg_url_rsp`。
+/// * 字段号：官方 `cmd0x388.GetImgUrlReq/Rsp/ReqBody/RspBody.__fieldMap__`。
+/// * `url_flag/url_type` 与图片类型的对应：`ayux.a(int, ayvj, ReqBody)`
+///   （65537 → flag16/1 + type2；1 → flag8 + type3；131075 → flag2 + type4）。
+abstract final class Qq8ImageDown {
+  /// 命令字（官方 `RichMediaConstants.CMD_LONGCONN_GROUPPIC_DOWN`）。
+  static const String cmdGroupPicDown = 'ImgStore.GroupPicDown';
+
+  /// 图片规格码（官方 `ayux` 里的三个分支）。
+  static const int picTypeThumb = 65537;
+  static const int picTypeBig = 1;
+  static const int picTypeOriginal = 131075;
+
+  /// 图片规格 → `(uint32_url_flag, uint32_url_type)`，出处见类文档。
+  static (int, int) urlFlagTypeOf(int picType) => switch (picType) {
+        picTypeThumb => (1, 2),
+        picTypeBig => (8, 3),
+        picTypeOriginal => (2, 4),
+        _ => (2, 4),
+      };
+
+  /// 组一份群图取 URL 请求体（`cmd0x388.ReqBody`）。
+  ///
+  /// [md5HexList] 每项 32 位 hex；[picType] 取 [picTypeOriginal] 等三档。
+  /// [fileIds] 若有则逐条写 `uint64_fileid`（服务端给过的 fileid，没给过留 0）。
+  static Uint8List buildGroupPicDownBody({
+    required int gid,
+    required int uin,
+    required List<String> md5HexList,
+    int picType = picTypeOriginal,
+    List<int>? fileIds,
+    List<int>? picUpTimestamps,
+    int netType = 6,
+    int buType = 1,
+    int transferType = 0,
+    String buildVer = '8.2.11.0153f87a',
+  }) {
+    final (flag, type) = urlFlagTypeOf(picType);
+    final reqs = <Uint8List>[];
+    for (var i = 0; i < md5HexList.length; i++) {
+      reqs.add(Qq8Pb.encode(<int, Object?>{
+        1: gid,
+        2: uin,
+        3: (fileIds != null && i < fileIds.length) ? fileIds[i] : 0,
+        4: _hexToBytes(md5HexList[i]),
+        5: flag,
+        6: type,
+        7: 5, // uint32_req_term
+        8: 9, // uint32_req_platform_type（Android）
+        9: 0, // uint32_inner_ip
+        10: buType,
+        11: buildVer, // bytes_build_ver
+        12: i, // uint64_file_id（批量内下标）
+        19: (picUpTimestamps != null && i < picUpTimestamps.length)
+            ? picUpTimestamps[i]
+            : 0, // uint32_pic_up_timestamp
+        20: transferType,
+      }));
+    }
+    return Qq8Pb.encode(<int, Object?>{
+      1: netType, // uint32_net_type
+      2: 2, // uint32_subcmd：2 = GetImgUrl
+      4: reqs, // rpt_msg_getimg_url_req
+    });
+  }
+
+  /// 解析群图取 URL 回执（`cmd0x388.RspBody.rpt_msg_getimg_url_rsp`）。
+  static List<Qq8PicDownReply> parseGroupPicDownResponse(Uint8List payload) {
+    final top = Qq8Pb.decode(payload);
+    final raw = top[4];
+    if (raw == null || raw.isEmpty) return const <Qq8PicDownReply>[];
+    final out = <Qq8PicDownReply>[];
+    for (final item in raw) {
+      if (item is! Uint8List) continue;
+      final m = Qq8Pb.decode(item);
+      final ips = <String>[];
+      for (final v in m[9] ?? const <Object>[]) {
+        if (v is int) ips.add(qq8Int32IpToStr(v));
+      }
+      final ports = <int>[];
+      for (final v in m[10] ?? const <Object>[]) {
+        if (v is int) ports.add(v & 0xFFFF);
+      }
+      final domains = <String>[];
+      for (final v in m[11] ?? const <Object>[]) {
+        if (v is Uint8List) {
+          domains.add(utf8.decode(v, allowMalformed: true));
+        }
+      }
+      out.add(Qq8PicDownReply(
+        result: Qq8Pb.intAt(m, 3) ?? -1,
+        failMsg: Qq8Pb.textAt(m, 4) ?? '',
+        md5Hex: _bytesToHex(Qq8Pb.bytesAt(m, 2) ?? Uint8List(0)),
+        thumbPara: Qq8Pb.bytesAt(m, 12),
+        originalPara: Qq8Pb.bytesAt(m, 13),
+        bigPara: Qq8Pb.bytesAt(m, 14),
+        bigThumbPara: Qq8Pb.bytesAt(m, 18),
+        domains: domains,
+        ips: ips,
+        ports: ports,
+        httpsFlag: Qq8Pb.intAt(m, 19) ?? 0,
+      ));
+    }
+    return out;
+  }
+
+  static Uint8List _hexToBytes(String hex) {
+    final s = hex.replaceAll(' ', '');
+    final out = Uint8List(s.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      out[i] = int.parse(s.substring(i * 2, i * 2 + 2), radix: 16);
+    }
+    return out;
+  }
+
+  static String _bytesToHex(Uint8List b) {
+    if (b.isEmpty) return '';
+    final sb = StringBuffer();
+    for (final x in b) {
+      sb.write(x.toRadixString(16).padLeft(2, '0'));
+    }
+    return sb.toString();
   }
 }
 
