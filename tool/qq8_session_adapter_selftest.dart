@@ -1147,9 +1147,91 @@ Future<void> main() async {
     }
   }
 
+  // ----------------------------------------------------------------
+  section('12. 断网失败：不发 SessionFailure，状态原因说网络（缺陷②）');
+  //
+  // 断线自动恢复每轮「连不上网」只是网络问题，不是登录失败。适配层若发出
+  // SessionFailure，ChatStore 会每轮刷一条「会话层报错」、UI 弹红字。这里
+  // 从适配器的事件流侧验证：没有 SessionFailure，且状态原因说的是网络。
+  {
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore()
+        ..data = Qq8TokenData(
+          uin: _me,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        ),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => _OfflineTransport(),
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      heartbeatInterval: const Duration(hours: 1),
+      timeout: const Duration(milliseconds: 300),
+    );
+    final ad = Qq8SessionAdapter(service: svc, uin: _me);
+    final evs = <SessionEvent>[];
+    final sub = ad.events.listen(evs.add);
+    await svc.loginWithToken(uin: _me);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final failures = evs.whereType<SessionFailure>().toList();
+    check('断网失败不往事件流塞 SessionFailure', failures.isEmpty,
+        failures.map((f) => f.error.toString()).join(' | '));
+    final states = evs.whereType<SessionStateChanged>().toList();
+    check('状态确实变成 disconnected',
+        states.isNotEmpty && states.last.state == SessionState.disconnected,
+        states.map((e) => e.state.name).join('>'));
+    check('状态原因说的是网络（用户看到的是"网络"不是"登录失败"）',
+        states.isNotEmpty && (states.last.reason ?? '').contains('网络'),
+        states.isEmpty ? 'none' : (states.last.reason ?? ''));
+    check('状态标签是「等待网络恢复」，不是「登录失败」',
+        const Qq8ConnectStatus(
+                    stage: Qq8LoginStage.disconnected, networkIssue: true)
+                .stateLabel ==
+            '等待网络恢复' &&
+        const Qq8ConnectStatus(stage: Qq8LoginStage.disconnected).stateLabel ==
+            '已断开');
+    await sub.cancel();
+    await ad.dispose();
+    await svc.close();
+  }
+
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);
+}
+
+class _OfflineTransport implements Qq8Transport {
+  @override
+  bool get isConnected => false;
+
+  @override
+  Future<void> connect() async => throw Qq8TransportException(
+      '连接失败（已尝试 5 个端点）\n'
+      "  - tcp: SocketException: Failed host lookup: 'msfwifi.3g.qq.com'");
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) {}
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) {}
+
+  @override
+  Future<void> write(Uint8List packet) async => connect();
+
+  @override
+  Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async {
+    await connect();
+    throw StateError('unreachable');
+  }
+
+  @override
+  Future<void> close() async {}
 }
 
 class _MemStore implements Qq8TokenStore {

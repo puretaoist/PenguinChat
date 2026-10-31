@@ -89,6 +89,12 @@ class Qq8SessionAdapter implements Session {
   final Map<int, String> _nickCache = <int, String>{};
 
   SessionState _state = SessionState.disconnected;
+
+/// 上一次上报给上游的状态原因；用于「状态没变但原因变了」时也能刷出去。
+String? _lastStateReason;
+
+/// 上一次已上报的失败指纹（stage|返回码|文案）；同一份失败不重复上报。
+String? _lastFailureKey;
   AccountInfo? _account;
   bool _disposed = false;
 
@@ -596,25 +602,43 @@ class Qq8SessionAdapter implements Session {
         nickname: _account?.nickname ?? '',
         backendName: label,
       );
+      // 上线成功说明之前的失败已翻篇，允许下一次同样的失败再报一次。
+      _lastFailureKey = null;
     }
-    if (_state != before) {
-      _emit(SessionStateChanged(_state, reason: s.error));
+    // 只比 state 会把「原因变了」吞掉：disconnected→disconnected，但错误从
+    // 「正在等待网络恢复」变成「自动重连失败，请手动重新登录」——用户看到的
+    // 提示必须跟着更新，否则界面上永远停在第一句。
+    final reason = s.error;
+    if (_state != before || (reason != null && reason != _lastStateReason)) {
+      _lastStateReason = reason;
+      _emit(SessionStateChanged(_state, reason: reason));
     }
     // failed 与 rejected / sessionExpired 都往事件流报一条 [SessionFailure]（UI 要能
     // 弹一句人话），但错误对象带的信息不同：rejected 额外挂 resultType，让上游能
     // 区分「参数写错了，改一改再试」和「服务端不放这个账号进，别试了」；
     // sessionExpired 则意味着「换张票就能继续」，不要暗示账号被风控。
-    if ((s.stage == Qq8LoginStage.failed ||
+    //
+    // **networkIssue 一律不发**：断线自动恢复时每轮只是"连不上网"，发 SessionFailure
+    // 会让 ChatStore 每轮刷一条「会话层报错：…」（真机缺陷②）。状态变化
+    // (SessionStateChanged) 照发，UI 仍能看到"断线/等待网络"。
+    if (!s.networkIssue &&
+        (s.stage == Qq8LoginStage.failed ||
             s.stage == Qq8LoginStage.rejected ||
             s.stage == Qq8LoginStage.sessionExpired) &&
         s.error != null) {
+      // 同一份失败不重放：状态流里 failed 可能被多次 emit（例如重试后给出
+      // 同一结论），但 SessionFailure 会让 UI 反复弹同一句错、也会让 ChatStore
+      // 反复记日志。这里按 stage+返回码+文案去重。
+      final failureKey = '${s.stage.name}|${s.resultType}|${s.error}';
+      if (failureKey == _lastFailureKey) return;
+      _lastFailureKey = failureKey;
       _emit(SessionFailure(
         s.stage == Qq8LoginStage.sessionExpired
             ? SessionExpiredException(s.error!, s.resultType)
             : s.stage == Qq8LoginStage.rejected
                 ? AccessRejectedException(s.error!, s.resultType)
                 : StateError(s.error!),
-        null,
+        s.stackTrace,
       ));
     }
   }

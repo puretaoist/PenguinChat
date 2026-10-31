@@ -697,12 +697,18 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         ];
       case Qq8LoginStage.failed:
       case Qq8LoginStage.disconnected:
+        // 网络问题不是「登录失败」：用中性提示、不标红，也不显示「登录失败」的
+        // 红字文案，否则断网恢复期间用户会以为账号出事了（真机缺陷②）。
+        final network = s.networkIssue;
         return <Widget>[
           const SizedBox(height: 12),
           if (s.error != null)
             Text(s.error!,
-                key: const ValueKey('qq8-error'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                key: ValueKey(network ? 'qq8-network-hint' : 'qq8-error'),
+                style: TextStyle(
+                    color: network
+                        ? Theme.of(context).colorScheme.onSurfaceVariant
+                        : Theme.of(context).colorScheme.error)),
         ];
       case Qq8LoginStage.idle:
       case Qq8LoginStage.connecting:

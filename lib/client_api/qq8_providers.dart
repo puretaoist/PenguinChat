@@ -472,6 +472,12 @@ class Qq8ConnectStatus {
   /// 比十句重新描述的文案有用，所以原样带出来。
   final int? resultType;
 
+  /// 这次「断开/失败」是不是网络不可用导致的（不是服务端结论）。
+  ///
+  /// UI 据此换文案与配色：网络问题说「等待网络恢复」，别用报错的红色吓人，
+  /// 也别让用户以为账号出了事（真机缺陷②）。
+  final bool networkIssue;
+
   /// 有动作在跑（UI 该禁用按钮）。
   final bool busy;
 
@@ -487,6 +493,7 @@ class Qq8ConnectStatus {
     this.qrMessage,
     this.error,
     this.resultType,
+    this.networkIssue = false,
     this.busy = false,
   });
 
@@ -509,7 +516,7 @@ class Qq8ConnectStatus {
         Qq8LoginStage.needsDeviceLock => '需要设备锁验证',
         Qq8LoginStage.waitingQrScan => '等待扫码确认',
         Qq8LoginStage.online => '已上线',
-        Qq8LoginStage.disconnected => '已断开',
+        Qq8LoginStage.disconnected => networkIssue ? '等待网络恢复' : '已断开',
         Qq8LoginStage.failed => '登录失败',
         // 与 failed 分开说：failed 是「这次没成，可以再试」，rejected 是
         // 「服务端不放这个账号进，重试没用」。用同一句「登录失败」会让用户
@@ -1163,6 +1170,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       qrMessage: _snap.qrMessage,
       error: _snap.error,
       resultType: _snap.resultType,
+      networkIssue: _snap.networkIssue,
       busy: _busy,
     );
   }
