@@ -95,6 +95,9 @@ String? _lastStateReason;
 
 /// 上一次已上报的失败指纹（stage|返回码|文案）；同一份失败不重复上报。
 String? _lastFailureKey;
+
+/// 上次见到的用户动作序号（[Qq8LoginService.actionSerial]）。
+int _seenActionSerial = -1;
   AccountInfo? _account;
   bool _disposed = false;
 
@@ -594,6 +597,15 @@ String? _lastFailureKey;
 
   void _onStage(Qq8LoginSnapshot s) {
     if (_disposed) return;
+    // 用户又发起了一次动作：上一次「同一份失败不重放」的结论作废——
+    // 否则用户连点两次、两次都断网，只会在第一次看到提示。
+    // 自动重连不走 provider._run，序号不变 ⇒ 仍按指纹去重（不刷屏）。
+    final serial = s.actionSeq;
+    if (serial != _seenActionSerial) {
+      _seenActionSerial = serial;
+      _lastStateReason = null;
+      _lastFailureKey = null;
+    }
     final before = _state;
     _state = _mapStage(s.stage);
     if (s.stage == Qq8LoginStage.online && s.uin != null) {

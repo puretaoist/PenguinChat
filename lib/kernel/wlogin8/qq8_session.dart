@@ -508,6 +508,11 @@ class Qq8Session {
         // 畸形包不等于被拒：可能只是坏包，按「未确认」处理，别把上线打回 failed。
         Qq8RegisterParse.malformed => Qq8RegisterOutcome.unconfirmed,
       };
+    } on Qq8ServerRetcodeException catch (e) {
+      // 服务端明确回了「身份/票据失效」：这是终态，不是「没收到回执」。
+      // 若在这里一并吞成 unconfirmed，上层会一直重注册（真机 -10003 风暴）。
+      if (e.authDead) rethrow;
+      return Qq8RegisterOutcome.unconfirmed;
     } on Object {
       // 超时 / 等回应期间连接断开：请求可能到了、也可能没到，无法判断。
       return Qq8RegisterOutcome.unconfirmed;

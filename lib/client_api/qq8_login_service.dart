@@ -212,6 +212,13 @@ class Qq8LoginSnapshot {
   /// 换算成「人话」之后如果连栈也丢了，再想定位就只能复现。
   final StackTrace? stackTrace;
 
+  /// 这份快照产生时的用户动作序号。
+  ///
+  /// 由 [_emit] 统一打戳（业务代码不必手填）。上层据此区分「用户又点了一次」
+  /// 与「同一次动作里状态被重复 emit」——注意**不能在收到时去问服务当前序号**：
+  /// 状态流是异步投递的，一批快照会在同一步里送达，那时序号早已推进。
+  final int actionSeq;
+
   const Qq8LoginSnapshot({
     required this.stage,
     this.uin,
@@ -226,7 +233,26 @@ class Qq8LoginSnapshot {
     this.resultType,
     this.networkIssue = false,
     this.stackTrace,
+    this.actionSeq = 0,
   });
+
+  /// 复制一份并打上动作序号（[_emit] 用；本类不可变，只能整份重建）。
+  Qq8LoginSnapshot stamped(int seq) => Qq8LoginSnapshot(
+        stage: stage,
+        uin: uin,
+        sliderUrl: sliderUrl,
+        phone: phone,
+        smsAutoSent: smsAutoSent,
+        smsFlow: smsFlow,
+        deviceLockHint: deviceLockHint,
+        qrToken: qrToken,
+        qrMessage: qrMessage,
+        error: error,
+        resultType: resultType,
+        networkIssue: networkIssue,
+        stackTrace: stackTrace,
+        actionSeq: seq,
+      );
 
   bool get isOnline => stage == Qq8LoginStage.online;
   bool get needsHumanAction =>
@@ -411,6 +437,15 @@ class Qq8LoginService {
   /// 异步任务（注册、在线检查、延迟补拉）在写回状态前必须核对自己拿到
   /// 的 epoch——断线重连后旧会话的回调不能踩新会话的状态。
   int _sessionEpoch = 0;
+
+  /// 用户动作序号：每发起一次 UI 驱动的动作（登录 / 交码 / 换票 …）就 +1。
+  ///
+  /// 上层用它区分两件不同的事：「用户又点了一次」必须让同样的失败再报一次
+  /// （否则点两次只看到一次提示）；「同一次动作里状态被重复 emit」必须继续
+  /// 去重（否则自动重连每轮都会刷一条同样的错）。
+  int _actionSerial = 0;
+  int get actionSerial => _actionSerial;
+  void beginAction() => _actionSerial++;
   /// 收消息兜底轮询（PushNotify 不可靠时的补拉）。
   Timer? _pullTimer;
   Qq8Session? _session;
@@ -3898,6 +3933,9 @@ class Qq8LoginService {
       }
     }
 
+    // 上面 await 过 setOnlineStatus：期间可能已经切号 / 关闭 / 断线重连。
+    // 旧会话的流程跑完，不许把 online 写到新会话上（迟到结果）。
+    if (!identical(_session, session) || epoch != _sessionEpoch) return;
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.online, uin: uin));
     _log.i('已上线 uin=$uin');
 
@@ -4047,6 +4085,8 @@ class Qq8LoginService {
       outcome = await _registerOnce(session, timeout: registerTimeout);
     } on Object catch (e) {
       if (epoch != _sessionEpoch) return; // 旧会话的失败不算新会话的
+      // 身份/票据失效是终态：不能再当「无回执」继续上线（会一直重注册）。
+      if (_markAuthLost(e, '上线注册')) return;
       _log.w('上线注册无应答（等价 icqq -2），继续上线', error: e);
       return;
     }
@@ -4391,8 +4431,11 @@ class Qq8LoginService {
   }
 
   void _emit(Qq8LoginSnapshot s) {
-    _snapshot = s;
-    if (!_states.isClosed) _states.add(s);
+    // 打戳：这份状态是「第几次用户动作」产生的。异步投递时序号可能已经
+    // 推进，所以必须在**产出这一刻**记住，不能让上层自己去问。
+    final stamped = s.actionSeq == _actionSerial ? s : s.stamped(_actionSerial);
+    _snapshot = stamped;
+    if (!_states.isClosed) _states.add(stamped);
   }
 }
 

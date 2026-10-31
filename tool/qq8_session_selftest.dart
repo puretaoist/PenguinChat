@@ -597,6 +597,48 @@ Future<void> main() async {
   checkEq('连续 3 次耗尽重发预算 → 疑云置位', s4.resendStormSuspected, true);
   await s4.close();
 
+  section('11b. 注册三态：authDead 必须抛出，不能吞成「无回执」');
+  {
+    Qq8Session mk(int retcode) => Qq8Session(
+          transport: Qq8ScriptedTransport(<Uint8List>[
+            _frame(seq: 101, cmd: 'StatSvc.register', retcode: retcode),
+          ]),
+          profile: qq8ProfileQQ8950,
+          uin: 10001,
+          device: _device(),
+          sessionId: hex('01020304'),
+          ecdhPublicKey: hex('04${'11' * 64}'),
+          ecdhShareKey: hex('f3df7dfb6d55b17975d908d8228dee11'),
+          sig: Qq8SigInfo(d2key: _d2key),
+          seqStart: 100,
+        );
+
+    final sAuth = mk(-10003);
+    await sAuth.start();
+    Object? caught;
+    Qq8RegisterOutcome? got;
+    try {
+      got =
+          await sAuth.registerWithOutcome(timeout: const Duration(seconds: 5));
+    } on Object catch (e) {
+      caught = e;
+    }
+    checkEq('authDead(-10003) → 抛 Qq8ServerRetcodeException',
+        caught is Qq8ServerRetcodeException, true);
+    checkEq('该异常被标成 authDead',
+        caught is Qq8ServerRetcodeException && caught.authDead, true);
+    checkEq('authDead → 不返回 unconfirmed', got == null, true);
+    await sAuth.close();
+
+    final sPlain = mk(-1000);
+    await sPlain.start();
+    final plain =
+        await sPlain.registerWithOutcome(timeout: const Duration(seconds: 5));
+    checkEq('普通返回码(-1000) → 仍是 unconfirmed（不当终态）', plain,
+        Qq8RegisterOutcome.unconfirmed);
+    await sPlain.close();
+  }
+
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

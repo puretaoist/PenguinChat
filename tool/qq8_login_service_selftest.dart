@@ -103,12 +103,12 @@ Qq8Device _fixtureDevice(int uin) => Qq8Device(
     );
 
 /// 造一个真机结构的响应帧：`[外壳(flag=2)][SSO 头][payload]`。
-Uint8List _frame(int seq, String cmd, Uint8List payload) {
+Uint8List _frame(int seq, String cmd, Uint8List payload, {int retcode = 0}) {
   final cmdBytes = utf8.encode(cmd);
   final header = (ByteWriter()
         ..u32(0)
         ..u32(seq)
-        ..u32(0)
+        ..u32(retcode)
         ..u32(4)
         ..u32(cmdBytes.length + 4)
         ..raw(cmdBytes)
@@ -1975,6 +1975,80 @@ Future<void> main() async {
           svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
       await svc.close();
     }
+
+    // D. 身份失效：注册回 authDead 返回码 → 直接 sessionExpired，不继续上线
+    {
+      final svc = build(<Uint8List>[
+        _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+        _frame(1, 'StatSvc.register', Uint8List(0), retcode: -10003),
+      ]);
+      await svc.loginWithToken(uin: 10001);
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (svc.snapshot.stage != Qq8LoginStage.sessionExpired &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      check('注册回 authDead(-10003) → 状态 sessionExpired',
+          svc.snapshot.stage == Qq8LoginStage.sessionExpired,
+          svc.snapshot.stage.name);
+      check('authDead → 文案说凭证失效',
+          (svc.snapshot.error ?? '').contains('失效'), '${svc.snapshot.error}');
+      await svc.close();
+    }
+
+    // E. 迟到结果：登录已跑到「在线状态上报」时用户关了会话 → 不许把 online
+    // 写回新状态（进程从 close 回到 idle，旧流程跑完不能再点亮它）。
+    {
+      final tran = _DelayTransport(
+        <Uint8List>[
+          _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+          _registerFrame(1),
+          _frame(2, 'StatSvc.SetStatusFromClient', Uint8List(0)),
+        ],
+        <Duration>[
+          Duration.zero,
+          Duration.zero,
+          const Duration(milliseconds: 400),
+        ],
+      );
+      final svc = Qq8LoginService(
+        tokenStore: _MemStore()
+          ..data = Qq8TokenData(
+            uin: 10001,
+            savedAt: 'test',
+            tgt: _hex('1122334455667788'),
+            d2: _hex('a2' * 64),
+            d2key: _hex('a3' * 16),
+            sigKey: _hex('a4' * 48),
+            ticketKey: _hex('a5' * 16),
+            srmToken: _hex('a6' * 56),
+          ),
+        deviceBuilder: _fixtureDevice,
+        ecdhBuilder: () => _fixedEcdh,
+        transportBuilder: () => tran,
+        reportOnlineChecks: false,
+        reportOnlineStatus: true,
+        primeGroupSeqs: false,
+        startupPullDelay: const Duration(seconds: 30),
+        heartbeatInterval: const Duration(minutes: 5),
+        timeout: const Duration(seconds: 2),
+        registerTimeout: const Duration(milliseconds: 300),
+      );
+      final seen = <Qq8LoginStage>[];
+      svc.states.listen((s) => seen.add(s.stage));
+      final fut = svc.loginWithToken(uin: 10001);
+      // 120ms 时登录正卡在延迟 400ms 的那一步（在线状态上报）
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await svc.close();
+      await fut;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      check('关闭后旧流程跑完也不写 online',
+          !seen.contains(Qq8LoginStage.online) &&
+              svc.snapshot.stage == Qq8LoginStage.idle,
+          'seen=${seen.map((s) => s.name).join('>')} now=${svc.snapshot.stage.name}');
+      check('该用例确实跑到了线上流程（不是提前失败的空转）',
+          seen.contains(Qq8LoginStage.connecting), seen.map((s) => s.name).join('>'));
+    }
   }
 
   stdout.writeln('\n${'=' * 62}');  stdout.writeln('通过 $_pass 项，失败 $_fail 项');
@@ -2044,4 +2118,53 @@ class _TimeoutTransport implements Qq8Transport {
 
   @override
   Future<void> close() async {}
+}
+
+/// 按「第 n 次 send 慢 delays[n]」回放的传输层。
+///
+/// 用来把登录流程卡在指定步骤上（例如「在线状态上报」那一步），好在那个
+/// 窗口里模拟「用户关闭会话」，验证旧流程跑完后不会把 online 写回新状态。
+class _DelayTransport implements Qq8Transport {
+  _DelayTransport(this.responses, this.delays);
+
+  final List<Uint8List> responses;
+  final List<Duration> delays;
+  final List<Uint8List> sent = <Uint8List>[];
+
+  int _i = 0;
+  bool _connected = false;
+
+  @override
+  bool get isConnected => _connected;
+
+  @override
+  Future<void> connect() async => _connected = true;
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) {}
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) {}
+
+  @override
+  Future<void> write(Uint8List packet) async {
+    if (!_connected) await connect();
+    sent.add(packet);
+  }
+
+  @override
+  Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async {
+    if (!_connected) await connect();
+    sent.add(payload);
+    if (_i >= responses.length) {
+      throw Qq8TransportException('脚本已用尽（第 ${_i + 1} 个请求无响应）');
+    }
+    final d = _i < delays.length ? delays[_i] : Duration.zero;
+    final resp = responses[_i++];
+    if (d > Duration.zero) await Future<void>.delayed(d);
+    return resp;
+  }
+
+  @override
+  Future<void> close() async => _connected = false;
 }

@@ -1201,6 +1201,55 @@ Future<void> main() async {
     await svc.close();
   }
 
+  // ----------------------------------------------------------------
+  section('13. 失败指纹去重：用户重新动作要再报一次，同一次动作内不重放');
+  //
+  // 去重是为了不让「自动重连每轮同一句网络失败」刷屏（缺陷②），但用户
+  // 亲手点第二次时，同一句失败必须再报一次——否则点了没反应，像卡死。
+  {
+    final tmp = await Directory.systemTemp.createTemp('qq8-dedupe-');
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore(), // 无票据 → loginWithToken 本地失败，不发包
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => _OfflineTransport(),
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(milliseconds: 300),
+    );
+    final ad = Qq8SessionAdapter(service: svc, uin: _me);
+    final evs = <SessionEvent>[];
+    final sub = ad.events.listen(evs.add);
+    final c = Qq8ConnectController(service: svc, dataDir: tmp);
+
+    // A. 同一个动作里重复触发（不经 provider._run，动作序号不变）：只报一条
+    await svc.loginWithToken(uin: _me);
+    await svc.loginWithToken(uin: _me);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final once = evs.whereType<SessionFailure>().length;
+    check('同一次动作内两次相同失败 → 只报 1 条 SessionFailure', once == 1,
+        '实际 $once 条');
+
+    // B. 用户点了两次（controller → _run → beginAction，序号变化）：两条都报
+    evs.clear();
+    await c.loginWithToken(_me);
+    await c.loginWithToken(_me);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final twice = evs.whereType<SessionFailure>().length;
+    check('用户两次动作、同一句失败 → 报 2 条 SessionFailure', twice == 2,
+        '实际 $twice 条');
+
+    await sub.cancel();
+    await ad.dispose();
+    await c.shutdown();
+    await svc.close();
+    try {
+      await tmp.delete(recursive: true);
+    } on FileSystemException {
+      // Windows 句柄延迟释放，忽略。
+    }
+  }
+
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);

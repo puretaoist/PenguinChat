@@ -974,6 +974,8 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   Future<void> _run(Future<void> Function() action) async {
     if (_closed || _busy) return;
+    // 记一次「用户动作」：会话适配器据此让同样的失败再报一次。
+    service.beginAction();
     _busy = true;
     _emit();
     try {
