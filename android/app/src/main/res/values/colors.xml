@@ -8,7 +8,4 @@
          TelegramPalette.dark，bgApp=#0F0F0F），与系统深色模式无关；系统是亮色时
          Android 仍取 values/ 这一套，所以这里必须是暗色才能对上首帧。 -->
     <color name="launch_background">#FF0F0F0F</color>
-    <!-- 启动图标（气泡）的圆底：与 TelegramColors.dark 的 accent 同值，
-         让启动画面和我们列表里的紫色强调色是一套。 -->
-    <color name="launch_icon_bg">#FF8774E1</color>
 </resources>

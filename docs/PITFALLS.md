@@ -4300,10 +4300,15 @@ Git Bash 里还要 `export MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 被改写�
 但 Flutter 引擎出第一帧本来就要 1–3 秒，这一段系统窗口 Drawable 只有底色，
 于是"没有预览页"变成了"一块纯黑占位"。
 
-**处理**：给这块窗口一个品牌标记 —— 矢量 `drawable/splash_mark.xml` +
-`windowSplashScreenIconBackgroundColor`（=accent 紫）；pre-31 用
-`launch_background.xml` 的 layer-list 居中同一张矢量。黑屏期变成"暗底 +
-图标"，同一段时间的感受完全不同。
+**先试错的方向**：给这块窗口加一个品牌标记（矢量 `splash_mark.xml` +
+`windowSplashScreenIconBackgroundColor`，暗底 + 紫色圆 + 白气泡）。真机一看
+用户直接说"紫色气泡没必要" —— 这段窗口里**任何图形都会带来"闪一下再消失"**，
+比纯暗底更难看。
+
+**结论**：①底色必须与首帧严格同色（`@color/launch_background` = `#FF0F0F0F`
+= `TelegramColors.bgApp`），这样"窗口 → 首帧"没有色变；②**不要往这块窗口
+放 logo/插图**，产品上不划算；③真正的解法是缩短首帧（AOT / 减包体，见 C101），
+不是把黑屏装饰得像设计。
 
 ## C101 debug 包的 `Displayed` 不能当性能结论（2026-10-31，真机 25091RP04C）
 
