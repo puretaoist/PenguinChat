@@ -37,6 +37,7 @@ import '../kernel/wlogin8/qq8_elem.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
 import '../kernel/wlogin8/qq8_multimsg.dart';
 import '../kernel/wlogin8/qq8_push.dart';
+import 'deleted_placeholder.dart';
 import 'objects.dart';
 import 'qq8_login_service.dart';
 import 'segment.dart';
@@ -668,7 +669,11 @@ class Qq8SessionAdapter implements Session {
   ///
   /// 单独拎出来是为了能纯函数测试——不必造整条连接。
   static bool isDeletedPlaceholder(Qq8IncomingMessage m) =>
-      m.time <= 0 && m.fromUin == 0 && m.text == '[已删除]';
+      isServerDeletedPlaceholder(
+        timeMs: m.time,
+        senderUin: m.fromUin,
+        text: m.text,
+      );
 
   ChatMessage? _toChatMessage(Qq8IncomingMessage m) {
     final self = service.snapshot.uin ?? 0;

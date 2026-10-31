@@ -63,6 +63,7 @@ import 'dart:io';
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
 import '../infra/storage/media_cache.dart';
+import 'deleted_placeholder.dart';
 import 'objects.dart';
 import 'media_refs.dart';
 import 'segment.dart';
@@ -1272,6 +1273,7 @@ class ChatStore {
     if (!file.existsSync()) return;
 
     var skipped = 0;
+    var ghosts = 0;
     for (final line in file.readAsLinesSync()) {
       if (line.trim().isEmpty) continue;
       try {
@@ -1285,6 +1287,19 @@ class ChatStore {
           skipped++;
           continue;
         }
+        // 服务端「已删除」占位（time=0 / sender=0 / 正文「[已删除]」）曾经被
+        // 原样入库，重启后仍是 1970-01-01 的气泡。判定收在共享纯函数里，
+        // 与适配器入口用的是同一份条件。刻意只在读取路径过滤、不回写文件：
+        // 回写要在启动时重写每个 jsonl，中途被杀就是半个文件（同
+        // [_migrateSegments] 的理由）。
+        if (isServerDeletedPlaceholder(
+          timeMs: message.time.millisecondsSinceEpoch,
+          senderUin: int.tryParse(message.senderId) ?? -1,
+          text: message.text,
+        )) {
+          ghosts++;
+          continue;
+        }
         if (!list.any((m) => m.id == message.id)) list.add(message);
       } on FormatException {
         // 半截 JSON：进程被杀时最后一行没写完，属预期情况，跳过即可
@@ -1295,6 +1310,9 @@ class ChatStore {
     }
     if (skipped > 0) {
       _log.w('${file.path} 有 $skipped 行无法解析，已跳过');
+    }
+    if (ghosts > 0) {
+      _log.i('$chatId 跳过 $ghosts 条服务端删除占位（历史遗留，未回写磁盘）');
     }
     _sortMessages(chatId);
     // 打开会话时把还没落盘的媒体补上。用户从聊天列表点进来的那一刻，

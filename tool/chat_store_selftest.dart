@@ -1037,6 +1037,55 @@ Future<void> testMigrateUnknownField9() async {
 }
 
 // ---------------------------------------------------------------------------
+// 7c. 历史脏数据：服务端「已删除」占位（time=0 / sender=0）读取时丢弃
+// ---------------------------------------------------------------------------
+
+Future<void> testDropDeletedPlaceholder() async {
+  section('7c. 历史脏数据：服务端删除占位读取时丢弃');
+
+  final dir = newTempDir('ghost');
+  final chatDir = Directory('${dir.path}/chats')..createSync(recursive: true);
+
+  // 真机 2026-10-31 现场：群 486045673 的历史里混进 13 条这种形态，
+  // 被原样入库后渲染成 1970-01-01 的气泡。适配器入口的过滤只对新到的消息
+  // 生效，已经落盘的历史必须在读取路径再过一道。
+  Map<String, dynamic> ghost(String id) => {
+        ..._persistedMessage(id, '[已删除]'),
+        'time': 0,
+        'senderId': '0',
+        'senderName': '',
+      };
+
+  File('${chatDir.path}/group_12345.jsonl').writeAsStringSync(
+    '${jsonEncode(_persistedMessage('700', '正常一条'))}\n'
+    '${jsonEncode(ghost('701'))}\n'
+    // 真人发的同一句话：时间与发送者都正常，必须保留——不能只按中文文案删。
+    '${jsonEncode(_persistedMessage('702', '[已删除]'))}\n'
+    '${jsonEncode(_persistedMessage('703', '又一条正常的'))}\n',
+  );
+
+  final session = FakeSession();
+  final store = ChatStore(session: session, dataDir: dir);
+  await store.bootstrap();
+  await store.openChat('group_12345');
+
+  final loaded = store.messagesOf('group_12345');
+  checkEq('幽灵占位被丢弃，其余三条都在', loaded.length, 3);
+  checkEq('幽灵记录不在列表里', loaded.where((m) => m.id == '701').length, 0);
+  check(
+    '真人发的「[已删除]」仍然保留',
+    loaded.any((m) => m.id == '702' && m.text == '[已删除]'),
+  );
+  checkEq('顺序按时间排好，最后一条是 703', loaded.last.id, '703');
+
+  final onDisk = File('${chatDir.path}/group_12345.jsonl').readAsStringSync();
+  check('磁盘文件未被回写（过滤只在读取时做）', onDisk.contains('"701"'));
+
+  await store.dispose();
+  await session.dispose();
+}
+
+// ---------------------------------------------------------------------------
 // 8. 体积：淘汰最旧的，但不丢用户输入、不淘汰置顶会话
 // ---------------------------------------------------------------------------
 
@@ -1354,6 +1403,7 @@ Future<void> main() async {
     await testPaging();
     await testCorruptFiles();
     await testMigrateUnknownField9();
+    await testDropDeletedPlaceholder();
     await testRetention();
     await testSorting();
     await testForward();
