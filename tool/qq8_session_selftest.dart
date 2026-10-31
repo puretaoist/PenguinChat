@@ -203,7 +203,6 @@ Uint8List _loginLayerBody(Uint8List pkt) {
 /// 只发不收的传输层：write 成功但永不投递响应（模拟"断网但 socket 没报错"）。
 class _HangingTransport implements Qq8Transport {
   final List<Uint8List> sent = <Uint8List>[];
-  void Function(Uint8List frame)? _onFrame;
   void Function(Object error)? _onDisconnected;
   bool _connected = false;
 
@@ -220,7 +219,7 @@ class _HangingTransport implements Qq8Transport {
   Future<void> write(Uint8List packet) async => sent.add(packet);
 
   @override
-  set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
+  set onFrame(void Function(Uint8List frame)? cb) {} // 只发不收：不需要收帧回调
 
   @override
   set onDisconnected(void Function(Object error)? cb) => _onDisconnected = cb;
