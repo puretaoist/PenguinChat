@@ -4151,3 +4151,98 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
   `pm list packages -U` 查）；实测解除后 App 有约 2 分钟连不上（DNS 解析失败 + 所有 IP 超时，
   同一时刻 shell ping 正常、iptables 已无该 uid 规则），`am force-stop` 后立刻恢复 —— 疑似 netd 的
   按 uid 惩罚态，不是 App 缺陷。**下次用 `-j DROP`，或测完 force-stop 再起，避免误判"App 不自愈"。**
+
+
+## C90 通知 id 用会话哈希，撤通知不能用 NotificationManager.cancelAll()
+
+新消息系统通知里踩到的两处 Android 细节，都和"别影响别的东西"有关：
+
+- **同会话必须合并成一条**：通知 id 取 `chatId.hashCode()`（Telegram 是
+  `(int) dialogId + (int) (dialogId >> 32)`，NotificationsController.java:5012），
+  同一个会话后到的消息覆盖前一条。若用自增 id，一个群刷十条就是十条通知。
+- **`cancelAll()` 会连保活前台服务的常驻通知一起撤掉**：服务还在跑、通知没了，
+  用户会以为应用死了，系统对前台服务状态也会不一致。只能自己记住发过哪些 id 逐个
+  `cancel(id)`（Telegram 也是逐个 `cancel(notificationId)`）。
+- 附加坑：`MessagingStyle` 的历史是**原生侧内存态**，回前台 `cancelAll()` 时
+  必须把历史一起清掉，否则下次弹通知会把上次已经看过的消息重新列出来。
+
+## C91 Kotlin：`intent?.getStringExtra(...) ?: return` 不会把 intent 智能转换成非空
+
+第一次写 `handleChatIntent` 时这么写：
+
+```kotlin
+val chatId = intent?.getStringExtra(EXTRA_CHAT_ID) ?: return
+intent.removeExtra(EXTRA_CHAT_ID)   // ← Unresolved reference: removeExtra
+```
+
+elvis 只决定"返回不返回"，**不会**让编译器把 `intent` 收窄成 `Intent`，所以后面所有成员
+访问都报 Unresolved。正确写法是先落一个非空局部变量：
+
+```kotlin
+val i = intent ?: return
+val chatId = i.getStringExtra(EXTRA_CHAT_ID) ?: return
+i.removeExtra(EXTRA_CHAT_ID)
+```
+
+同一类错误还有"忘了 import android.content.Intent"，编译报的也是 `Unresolved reference: 'Intent'`，
+而 Gradle 的输出被 `tail -12` 截掉时只看到最后一条 —— **排障时先 grep 全部 `^e: ` 行**，
+不要只看最后一行。
+
+## C92 通知/气泡的「发言人」名字不能回落成 QQ 号（2026-10-31，真机反馈）
+
+用户原话（m45158）：「聊天界面，通知中，对方的名称无论私聊还是群聊都是qq号，既不是网名，更不是备注或者群名」。
+
+两条独立的成因，缺一条就不算修好：
+
+- **群聊**：`lib/kernel/wlogin8/qq8_push.dart:528` 从 `msg_head` 字段 14 取 `fromNick`，
+  服务端**经常给空**。适配器 `lib/client_api/qq8_session_adapter.dart` 的 senderName 当时写成
+  `m.fromNick ?? _nickCache[m.fromUin] ?? (outgoing ? 自己 : '${m.fromUin}')` —— 最后那个
+  兜底就是号码本身。**展示名的唯一可靠来源是好友列表 / 群成员列表**（Qq8Friend.displayName
+  备注优先、Qq8GroupMember.displayName 群名片优先，qq8_list.dart:77 / :421），不是消息体。
+  现在由 `qq8_login_service.dart` 的 `_displayNames` 缓存 + `displayNameOf(uin)` 提供，
+  并在 `ensureGroupNames(gid)` 里对同一群做 10 分钟限流补拉；适配器**绝不**再回落到号码。
+- **私聊**：会话 `chats.json` 里的 title 是对的（"净凾"），号码是 **MessagingStyle** 带进来的：
+  没设 `conversationTitle` 时，系统会拿「最后一条消息的 sender」当标题，而 sender 传的是号码。
+  所以 `MessageNotifier.kt` 里私聊的 `who` 必须直接用会话 title，群聊才用发言人
+  （空则给「群成员」），而不是「sender 是纯数字才换 title」这种打补丁式判断。
+
+排障入口：`adb shell dumpsys notification` 里看 `android.title` / `android.conversationTitle`，
+比看自己打的日志更快。
+
+## C93 冷启动「点通知进会话」：平台侧不要主动 invoke，改成 Dart 侧拉取
+
+`MainActivity` 原本在 MethodChannel 注册的 `.also{}` 里直接
+`pendingChatId?.let { channel.invokeMethod("opened", it) }`。冷启动时 Dart 的 handler
+是在 widget `initState` 里才 `install()` 的，**早于 handler 的 invoke 会被静默丢掉**，
+表现为「点通知冷启动后停在会话列表，没进那个会话」。
+
+改成纯拉取式：原生只存 `pendingChatId`，新增 `"takePendingChatId"` 方法（取完置 null），
+Dart 在 scope 的 `initState` 里 `unawaited(_consumePendingOpen())` 主动取。
+判断标准：**跨语言投递只要接收方生命周期不确定，就用「接收方就绪后拉」而不是「发送方立即推」**。
+
+
+## C94 名字缓存必须按「语境」分表：群名片 ≠ 私聊备注（2026-10-31，真机反馈）
+
+用户原话（m45402）：「为啥私聊其中一条信息显示的是对方群名」。
+
+C92 修完之后，名字缓存在服务层是**一张全局 `uin → 名字` 表**，好友列表写备注、
+群成员列表写**群名片**，后写的覆盖先写的。于是对方在群里叫「无道极法魔君」，
+私聊气泡/通知就跟着变成「无道极法魔君」——用户说的「对方群名」其实是**群名片**。
+
+真机数据侧证据：`chats/private_2089495846.jsonl` 里同一个人有
+`senderName:"无道极法魔君"`（16:40，群成员列表刚拉过）和 `senderName:"净凾"`（16:48）两种。
+
+修法：缓存拆成两张表 —— `_friendNames: uin → 备注/昵称`、
+`_groupMemberNames: gid → (uin → 群名片)`；查询按语境走
+`displayNameOf(uin)`（私聊）与 `groupMemberNameOf(gid, uin)`（该群）。
+适配器/气泡/通知三处都必须带上下文（会话类型 + rawId）才能查名字。
+
+顺带定了优先级：**服务层缓存 > 消息自带昵称**。理由是备注/群名片是用户自己设的、
+且能纠正历史数据（老记录里被写错的群名片）；消息里的 `fromNick` 只是发送方当时的自称。
+
+## C95 `su -c` 里不要塞 `grep A|B`（2026-10-31）
+
+`adb shell su -c "grep -E 'A|B' log"` 会被 su/内核拆成两条命令，报错或只跑一半。
+写成多个 `-e`：`grep -E -e A -e B log`。同理 `adb pull` 的目标要写 Windows 路径 `C:/...`，
+Git Bash 里还要 `export MSYS_NO_PATHCONV=1`，否则 `/sdcard/...` 被改写成 Windows 路径。
+

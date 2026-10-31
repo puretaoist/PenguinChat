@@ -36,6 +36,7 @@ import 'infra/log/logger.dart';
 import 'kernel/onebot/backend_profile.dart';
 import 'kernel/safety/safety_gate.dart';
 import 'ui/lifecycle/keep_alive_scope.dart';
+import 'ui/lifecycle/message_notify_scope.dart';
 import 'ui/pages/home_page.dart';
 import 'ui/platform/android_device_info.dart';
 import 'ui/platform/foreground_keep_alive.dart';
@@ -111,7 +112,10 @@ Future<void> main() async {
       ],
       // KeepAliveScope 必须在 MaterialApp 外面：它不需要 context、不参与布局，
       // 而前台服务是进程级资源，整个应用只能有一个观察者。
-      child: const KeepAliveScope(child: QQClientApp()),
+      // MessageNotifyScope 同理（订阅 ChatStore + 应用生命周期 → 系统通知）。
+      child: const KeepAliveScope(
+        child: MessageNotifyScope(child: QQClientApp()),
+      ),
     ),
   );
 }

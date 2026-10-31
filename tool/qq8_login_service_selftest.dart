@@ -304,6 +304,25 @@ Uint8List _groupListPayload() => Qq8Jce.encode(<int, Object?>{
       }),
     });
 
+/// 群成员列表响应（JCE）：20001 在本群的名片叫「群里的甲」。
+Uint8List _groupMemberPayload() => Qq8Jce.encode(<int, Object?>{
+      7: Qq8Jce.encode(<int, Object?>{
+        0: <Object?, Object?>{
+          'GetTroopMemberListResp': Qq8Jce.encodeStruct(<int, Object?>{
+            3: <Object?>[
+              Qq8JceNested(Qq8Jce.encode(<int, Object?>{
+                0: 20001,
+                4: '甲',
+                8: '群里的甲',
+              })),
+            ],
+            4: 0,
+            5: 0,
+          }),
+        },
+      }),
+    });
+
 /// 造**登录层** payload：`[16B 头][TEA(明文, shareKey)][0x03]`。
 ///
 /// 服务内部会跳过前 16 字节、丢掉末字节，再用 ECDH 共享密钥解中间那段，
@@ -1456,6 +1475,12 @@ Future<void> main() async {
             fl.friends[1].displayName == '路人乙' &&
             fl.classes.single.name == '我的好友',
         '${fl.friends.length}/${fl.total}');
+    check(
+        '好友名字进显示名缓存（备注优先于昵称）',
+        svc.displayNameOf(20001) == '甲' && svc.displayNameOf(20002) == '路人乙',
+        '${svc.displayNameOf(20001)}/${svc.displayNameOf(20002)}');
+    check('没见过的 uin 返回 null（回落策略交给调用方）',
+        svc.displayNameOf(424242) == null);
     final gl = await svc.fetchGroupList();
     check('群列表：1 个群、名字/成员数解出',
         gl.ok &&
@@ -1465,6 +1490,23 @@ Future<void> main() async {
     check('累计 8 个包（登录/注册 + 3 拉取 + 3 列表）',
         scripted.sent.length == 8,
         '${scripted.sent.length}');
+
+    // 群成员名单 -> 群名片只在该群生效（真机 m45402：私聊里冒出对方群名片）
+    scripted.scriptedResponses
+        .add(_frame(8, Qq8List.cmdGroupMemberList, _groupMemberPayload()));
+    final gm = await svc.fetchGroupMembers(987654321);
+    check('群成员列表拉到 1 人（群名片「群里的甲」）',
+        gm.ok && gm.members.single.uin == 20001,
+        'result=${gm.result} 人=${gm.members.length}');
+    check('群内显示名 = 群名片，私聊显示名仍是好友备注',
+        svc.groupMemberNameOf(987654321, 20001) == '群里的甲' &&
+            svc.displayNameOf(20001) == '甲',
+        '${svc.groupMemberNameOf(987654321, 20001)}/${svc.displayNameOf(20001)}');
+    check('别群查同一 uin 不会串到本群名片（退到好友名）',
+        svc.groupMemberNameOf(111222333, 20001) == '甲',
+        '${svc.groupMemberNameOf(111222333, 20001)}');
+    check('没见过的 uin 在群里也返回 null',
+        svc.groupMemberNameOf(987654321, 424242) == null);
 
     // 6a. 轮询策略：推送为主、定时只为对账；群"窗口问空"不再重复问
     check('默认前台对账间隔 15 s / 后台 120 s（推送已通，轮询降级为对账）',

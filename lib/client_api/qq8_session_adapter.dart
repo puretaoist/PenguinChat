@@ -730,9 +730,20 @@ int _seenActionSerial = -1;
         ? m.groupCode!
         : m.chatId(self);
     final outgoing = m.isSelf(self);
-    final senderName = m.fromNick ??
+    // 名字来源顺序：消息自带昵称 → 服务层名字缓存（好友备注/群名片）→
+    // 本适配器见过的推送昵称 → 自己的昵称 → 空串。
+    // 绝不回落成 QQ 号：真机反馈「通知里私聊群聊都显示号码，不是网名/备注/群名」。
+    // 名字要按"在哪说话"分开查：群消息查该群群名片，私聊查好友备注。
+    // 混用一张全局表会让私聊里冒出对方在别的群里的名字（真机 m45402 反馈）。
+    // 服务层缓存（备注/群名片）优先于消息自带昵称：备注是用户在客户端里设的，
+    // 这才是他期望看到的名字；消息里的昵称只是发送方当时的自称。
+    final scopedName = (isGroup && (m.groupCode ?? 0) > 0)
+        ? service.groupMemberNameOf(m.groupCode!, m.fromUin)
+        : service.displayNameOf(m.fromUin);
+    final senderName = scopedName ??
+        m.fromNick ??
         _nickCache[m.fromUin] ??
-        (outgoing ? (_account?.nickname ?? '') : '${m.fromUin}');
+        (outgoing ? (_account?.nickname ?? '') : '');
     final segments = m.elems.map(_toSegment).toList(growable: false);
     // 引用的原文来自 src_msg（Elem 45）：气泡顶部的引用条读 replyPreview。
     // 注意**不设 replyToId**——src_msg 里没有 rand，拼不出可靠的消息 ID

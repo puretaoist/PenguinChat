@@ -28,6 +28,7 @@ import '../../client_api/segment.dart';
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
 import '../../client_api/session.dart';
+import '../../infra/log/logger.dart';
 import '../../kernel/wlogin8/qq8_file.dart';
 import '../../kernel/wlogin8/qq8_gfs.dart';
 import '../../kernel/wlogin8/qq8_list.dart';
@@ -77,6 +78,10 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 本次 build 解析出的会话 id，供滚动/发送回调使用。
   String? _resolvedChatId;
+
+  /// 通知点击要打开的会话（可能比会话列表先到：冷启动时点通知，
+  /// 登录/会话加载还没完成）。等 chats 到位后再消费，见 [_tryConsumePendingOpen]。
+  String? _pendingOpenChatId;
 
   /// 已经触发过 openChat 的会话，避免每次 build 都排一次加载。
   final Set<String> _opened = <String>{};
@@ -240,12 +245,76 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
   }
 
+  /// 把"通知点击要打开的会话"落地。会话还没加载出来就先留着，
+  /// 等下一次 build（chats 变了会重建）再试；列表已加载却找不到才放弃。
+  void _tryConsumePendingOpen() {
+    final chatId = _pendingOpenChatId;
+    if (chatId == null || !mounted) return;
+    final chats = ref.read(chatsProvider).valueOrNull ?? const <Chat>[];
+    final target = chats.where((c) => c.id == chatId).firstOrNull;
+    if (target == null) {
+      if (chats.isNotEmpty) {
+        Log.get('Notify').w('通知指向的会话不存在，忽略：$chatId');
+        _pendingOpenChatId = null;
+        ref.read(pendingOpenChatProvider.notifier).state = null;
+      }
+      return;
+    }
+    _pendingOpenChatId = null;
+    ref.read(pendingOpenChatProvider.notifier).state = null;
+    _openChat(target);
+  }
+
+  /// 发言人显示名：优先消息里带的昵称，其次服务层名字缓存（备注/群名片）。
+  ///
+  /// 群消息体里的昵称经常为空、旧数据里甚至直接是 QQ 号；显示号码比留空更糟，
+  /// 所以解析不出来时返回空串（气泡就不画名字），不回落成号码。
+  /// 取名字服务（协议线登录服务）。组件测试里没有注入数据目录，读这个 provider 会抛
+  /// UnimplementedError；名字只是装饰，取不到就当没有，绝不能因此崩掉界面。
+  Qq8LoginService? _namesService() {
+    try {
+      return ref.read(qq8LoginServiceProvider);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 取这条消息的发送者显示名。**必须带会话上下文**：同一个人在群里叫群名片、
+  /// 私聊叫备注，混用一张全局表就会在私聊里显示出对方群名片（真机 m45402）。
+  String _senderLabelOf(ChatMessage m, Chat chat) {
+    final raw = m.senderName;
+    final numeric = raw.isNotEmpty && RegExp(r'^\d+$').hasMatch(raw);
+    final uin = int.tryParse(m.senderId);
+    final svc = _namesService();
+    // 缓存（备注 / 本群群名片）优先：它比消息里存的旧名字新，也能纠正历史数据里
+    // 被写错的群名片（真机 m45402：私聊那条存的是对方群名片）。
+    if (uin != null && svc != null) {
+      final gid = chat.rawId;
+      final cached = (chat.type == ChatType.group && gid != null)
+          ? svc.groupMemberNameOf(gid, uin)
+          : svc.displayNameOf(uin);
+      if (cached != null) return cached;
+    }
+    if (raw.isNotEmpty && !numeric) return raw;
+    return numeric ? '' : raw;
+  }
+
   void _openChat(Chat chat) {
     setState(() {
       _selectedChatId = chat.id;
       _showChatList = false;
     });
     unawaited(_ensureOpened(chat.id));
+    // 打开群会话顺手把成员名字补上（服务层 10 分钟限流）：群消息体里经常没有昵称，
+    // 不补就只剩 QQ 号。失败静默，不影响打开会话。
+    final gid = chat.rawId;
+    final names = _namesService();
+    if (chat.type == ChatType.group && gid != null && names != null) {
+      unawaited(names.ensureGroupNames(gid).then((_) {
+        // 名字是异步补的，补到就重画一次，气泡上的发言人才能立刻变成网名。
+        if (mounted) setState(() {});
+      }));
+    }
   }
 
   /// 打开会话：首次会拉历史并清未读。
@@ -497,6 +566,26 @@ class _HomePageState extends ConsumerState<HomePage> {
     final chats = ref.watch(chatsProvider).valueOrNull ?? const <Chat>[];
     final store = ref.watch(chatStoreProvider);
     _draftStore = store; // 给 dispose() 里的草稿收尾用（那时不能再碰 ref）
+
+    // 点系统通知 → 打开对应会话。通知由 [MessageNotifyScope] 发出，
+    // 它拿不到选中态（选中态只在这里），所以只能走这个状态口。
+    // 排到下一帧：listener 可能在 build 期间触发，直接 setState 会报错。
+    ref.listen<String?>(pendingOpenChatProvider, (_, chatId) {
+      if (chatId == null) return;
+      _pendingOpenChatId = chatId;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _tryConsumePendingOpen();
+      });
+    });
+    // 冷启动点通知的情形：事件在 HomePage 第一次 build 之前就到了，ref.listen
+    // 收不到"历史值"，只有在 build 里主动读一次才不会丢。
+    final pendingNow = ref.read(pendingOpenChatProvider);
+    if (pendingNow != null) _pendingOpenChatId = pendingNow;
+    if (_pendingOpenChatId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _tryConsumePendingOpen();
+      });
+    }
 
     // 换了 store（重连会新建）就忘掉"已打开"记录，否则新 store 的历史拉不下来。
     if (!identical(_openedForStore, store)) {
@@ -1466,7 +1555,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                               right: 6,
                                             ),
                                             child: TelegramAvatar(
-                                              name: m.senderName,
+                                              name: _senderLabelOf(m, chat),
                                               // 群聊里 senderId 就是说话人的
                                               // uin；非数字（OneBot 旧数据）
                                               // 时退回首字母。
@@ -1500,6 +1589,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                       onRetry:
                                           m.isFailed ? () => _retry(m.id) : null,
                                       showSenderName: item.showSenderName,
+                                      senderLabel: _senderLabelOf(m, chat),
                                       avatarVisible: item.showAvatar,
                                       highlighted:
                                           m.atMe || m.replyToId != null,

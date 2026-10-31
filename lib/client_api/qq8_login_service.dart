@@ -462,6 +462,62 @@ class Qq8LoginService {
   /// 口令链（不是免密恢复）时为 null。
   String? _attemptMaterial;
 
+  /// **私聊**显示名缓存：uin → 好友备注/昵称。
+  ///
+  /// 为什么要服务层兜这一层：消息体里的发送者昵称（`msg_head` 字段 14）经常为空，
+  /// 内核只能回落成 QQ 号，于是聊天气泡和通知栏都会出现一串数字。
+  ///
+  /// **必须和群名片分开存**：同一个人在群里可能叫「无道极法魔君」、私聊备注却是「净凾」。
+  /// 真机反馈过「私聊里显示的是对方在群里的名字」——就是一张全局 uin→名字 表混着用导致的。
+  final Map<int, String> _friendNames = <int, String>{};
+
+  /// **群内**显示名缓存：gid → (uin → 群名片/昵称)。
+  ///
+  /// 群名片只在该群有效，绝不能拿去当私聊名字。
+  final Map<int, Map<int, String>> _groupMemberNames = <int, Map<int, String>>{};
+
+  /// 群成员名单的最近拉取时间（同一个群 10 分钟内不重复拉）。
+  final Map<int, DateTime> _groupNamesFetchedAt = <int, DateTime>{};
+
+  /// 查**私聊**显示名（好友备注优先）。没有就返回 null（回落交给调用方）。
+  String? displayNameOf(int uin) {
+    final n = _friendNames[uin];
+    return (n == null || n.isEmpty) ? null : n;
+  }
+
+  /// 查**该群内**的显示名：群名片优先，退到好友名。都没有返回 null。
+  String? groupMemberNameOf(int gid, int uin) {
+    final inGroup = _groupMemberNames[gid]?[uin];
+    if (inGroup != null && inGroup.isNotEmpty) return inGroup;
+    return displayNameOf(uin);
+  }
+
+  void _rememberFriendName(int uin, String? name) {
+    if (uin == 0 || name == null || name.isEmpty) return;
+    _friendNames[uin] = name;
+  }
+
+  void _rememberGroupMemberName(int gid, int uin, String? name) {
+    if (gid == 0 || uin == 0 || name == null || name.isEmpty) return;
+    (_groupMemberNames[gid] ??= <int, String>{})[uin] = name;
+  }
+
+  /// 确保某个群的成员名字已缓存（10 分钟内只拉一次，失败静默）。
+  ///
+  /// 只为「让通知/气泡能显示网名」服务，所以绝不抛异常、绝不阻塞消息处理。
+  Future<void> ensureGroupNames(int gid) async {
+    final at = _groupNamesFetchedAt[gid];
+    if (at != null && DateTime.now().difference(at) < const Duration(minutes: 10)) {
+      return;
+    }
+    _groupNamesFetchedAt[gid] = DateTime.now();
+    try {
+      await fetchGroupMembers(gid);
+    } catch (_) {
+      // 名字是装饰，拉不到就算了。
+    }
+  }
+
   /// 增量拉消息的游标（`PbGetMsgResp.sync_cookie`，服务端靠它算增量）。
   Uint8List? _syncCookie;
   /// 每个群「已收到的最大消息 seq」。
@@ -1833,6 +1889,9 @@ class Qq8LoginService {
       start += pageSize;
       if (start >= total || friends.length >= total || pages >= maxPages) break;
     }
+    for (final fr in friends) {
+      _rememberFriendName(fr.uin, fr.displayName);
+    }
     _log.i('好友列表：${friends.length}/$total 人、${classes.length} 个分组'
         '（$pages 页，result=$result）');
     return Qq8FriendListPage(
@@ -2439,6 +2498,9 @@ class Qq8LoginService {
       next = page.nextUin;
       pages++;
       if (next == 0 || pages >= maxPages) break;
+    }
+    for (final m in members) {
+      _rememberGroupMemberName(gid, m.uin, m.displayName);
     }
     _log.i('群成员列表 gid=$gid：${members.length} 人（$pages 页，result=$result）');
     return Qq8GroupMemberPage(result: result, nextUin: next, members: members);

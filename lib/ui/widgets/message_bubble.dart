@@ -34,6 +34,12 @@ class MessageBubble extends StatelessWidget {
   /// 是否显示发送者名（群聊里同一人的第一条）。
   final bool showSenderName;
 
+  /// 发言人显示名的覆盖值（可选）。
+  ///
+  /// 消息体里带的 senderName 经常是空的、或（旧数据）是 QQ 号；上层能从
+  /// 名字缓存里解析出网名/备注时用这个覆盖，气泡自己不去查任何东西。
+  final String? senderLabel;
+
   /// 是否被 @（或回复到我）：左侧画一条 accent 竖线。
   final bool highlighted;
 
@@ -65,6 +71,7 @@ class MessageBubble extends StatelessWidget {
     required this.message,
     this.onRetry,
     this.showSenderName = true,
+    this.senderLabel,
     this.highlighted = false,
     this.avatarVisible = false,
     this.onReveal,
@@ -135,11 +142,13 @@ class MessageBubble extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (!isOut && showSenderName && message.senderName.isNotEmpty)
+                  if (!isOut &&
+                      showSenderName &&
+                      (senderLabel ?? message.senderName).isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2),
                       child: Text(
-                        message.senderName,
+                        senderLabel ?? message.senderName,
                         style: TextStyle(
                           color: TelegramColors.accent,
                           fontSize: 12.5,

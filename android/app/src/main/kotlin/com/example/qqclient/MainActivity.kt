@@ -1,6 +1,7 @@
 package com.example.qqclient
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
@@ -38,10 +39,19 @@ class MainActivity : FlutterActivity() {
 
         /** 通知权限请求码。任意值，只要与别处不冲突。 */
         private const val REQUEST_NOTIFICATIONS = 0x5101
+
+        /** 新消息通知通道（见 [MessageNotifier]）。 */
+        private const val NOTIFY_CHANNEL = "qqclient/notify"
     }
 
     /** 等待系统权限对话框结果的 MethodChannel result；null 表示没有挂起的请求。 */
     private var pendingPermissionResult: MethodChannel.Result? = null
+
+    /** 新消息通知通道；Dart 侧未就绪时先把会话 id 攒着，见 [handleChatIntent]。 */
+    private var notifyChannel: MethodChannel? = null
+
+    /** 应用冷启动时通知里带来的会话 id，等 Dart 侧装好通道再送过去。 */
+    private var pendingChatId: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -81,6 +91,65 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // 新消息通知通道。与保活分开：通知的"发/撤"和服务的"起/停"是两条
+        // 完全独立的生命周期。
+        notifyChannel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFY_CHANNEL)
+                .also { channel ->
+                    channel.setMethodCallHandler { call, result ->
+                        when (call.method) {
+                            "ensurePermission" -> ensureNotificationPermission(result)
+
+                            "notify" -> {
+                                val chatId = call.argument<String>("chatId")
+                                val title = call.argument<String>("title") ?: "新消息"
+                                val text = call.argument<String>("text") ?: ""
+                                val sender = call.argument<String>("sender") ?: ""
+                                val isGroup = call.argument<Boolean>("isGroup") ?: false
+                                val timeMs = (call.argument<Number>("timeMs"))?.toLong() ?: 0L
+                                if (chatId == null) {
+                                    result.error("bad_args", "chatId 不能为空", null)
+                                } else {
+                                    try {
+                                        MessageNotifier.notify(
+                                            this,
+                                            chatId,
+                                            title,
+                                            text,
+                                            sender,
+                                            isGroup,
+                                            timeMs,
+                                        )
+                                        result.success(null)
+                                    } catch (e: Exception) {
+                                        result.error(
+                                            "notify_failed",
+                                            e.message,
+                                            e.javaClass.simpleName,
+                                        )
+                                    }
+                                }
+                            }
+
+                            "cancelAll" -> {
+                                MessageNotifier.cancelAll(this)
+                                result.success(null)
+                            }
+
+                            // 冷启动点通知：Dart 侧就绪后主动来取，避免 invoke 早于 handler 被丢。
+                            "takePendingChatId" -> {
+                                val v = pendingChatId
+                                pendingChatId = null
+                                result.success(v)
+                            }
+
+                            else -> result.notImplemented()
+                        }
+                    }
+                    // 通道就绪不主动 invoke（Dart 的 handler 此刻可能还没装），
+                    // 由 Dart 侧 takePendingChatId 主动来取。
+                }
+
         // 设备信息通道。刻意与保活分成两个 channel：
         // 两者生命周期完全无关（保活是常驻状态机，设备信息是一次性只读），
         // 合在一起会让「只想读一次设备」也必须先经过保活的状态判断。
@@ -113,6 +182,43 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // 冷启动：如果这次启动是被通知点开的，intent 里已经带着 chat_id。
+        handleChatIntent(intent)
+    }
+
+    /**
+     * 通知点击入口。
+     *
+     * 为什么不能只重写 onNewIntent：应用**冷启动**时走的是 configureFlutterEngine
+     * 里拿到的那个 intent，onNewIntent 根本不会调。两边都要收，
+     * 逻辑统一在 handleChatIntent。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleChatIntent(intent)
+    }
+
+    /**
+     * 把通知里的会话 id 交给 Dart 侧。
+     *
+     * 时序陷阱：通知点击可能发生在 Dart 通道就绪之前（冷启动），也可能之后
+     * （应用在后台被唤起）。前者先存到 pendingChatId，由通道注册处补发；
+     * 后者直接 invoke。取完就删 extra，避免重进 activity 时又打开一次。
+     */
+    private fun handleChatIntent(intent: Intent?) {
+        // 先落到非空局部变量：`intent?.x ?: return` 不会把 intent 智能转换成非空，
+        // 后面的 intent.removeExtra(...) 会报 Unresolved reference。
+        val i = intent ?: return
+        val chatId = i.getStringExtra(MessageNotifier.EXTRA_CHAT_ID) ?: return
+        i.removeExtra(MessageNotifier.EXTRA_CHAT_ID)
+        val channel = notifyChannel
+        if (channel == null) {
+            pendingChatId = chatId
+        } else {
+            channel.invokeMethod("opened", chatId)
+        }
     }
 
     /**

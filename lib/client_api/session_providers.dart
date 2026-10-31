@@ -457,6 +457,14 @@ final connectionControllerProvider =
 final activeQq8BackendProvider =
     StateProvider<({Session session, ChatStore store})?>((ref) => null);
 
+/// "点通知要打开的会话"。
+///
+/// 为什么用 provider 而不是直接调 UI：点通知时应用可能刚从后台被拉起，
+/// HomePage 的那棵树可能还没建好；而选中态只存在于 HomePage 内部。
+/// 把"要打开谁"放进一个状态口，作用域（[MessageNotifyScope]）只管写，
+/// HomePage 建好后自己消费——两边都不需要知道对方的生命周期。
+final pendingOpenChatProvider = StateProvider<String?>((ref) => null);
+
 /// 当前会话实例；连接成功后才非 null。
 ///
 /// **两条后端取并集**：OneBot（[ConnectionController]）与协议线
