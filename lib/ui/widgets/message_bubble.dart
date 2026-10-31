@@ -52,6 +52,11 @@ class MessageBubble extends StatelessWidget {
   /// 存在，测试里也就能直接传一个假的解析器。
   final String? Function(Segment segment)? localMedia;
 
+  /// 「确保这段媒体在本地」的钩子（[ChatStore.ensureMedia]）。
+  ///
+  /// 与 [localMedia] 配套：拿不到本地文件时由图片块补一次下载（缺陷3）。
+  final Future<String?> Function(Segment segment)? ensureMedia;
+
   /// 点文件块时的动作（下载/另存）。为 null = 只展示，不可点。
   final void Function(FileSegment segment)? onOpenFile;
 
@@ -64,6 +69,7 @@ class MessageBubble extends StatelessWidget {
     this.avatarVisible = false,
     this.onReveal,
     this.localMedia,
+    this.ensureMedia,
     this.onOpenFile,
   });
 
@@ -185,6 +191,7 @@ class MessageBubble extends StatelessWidget {
                       message: message,
                       isOut: isOut,
                       localMedia: localMedia,
+                      ensureMedia: ensureMedia,
                       onOpenFile: onOpenFile,
                       trailing: _inlineMeta ? _metaInline(isOut) : null,
                     ),

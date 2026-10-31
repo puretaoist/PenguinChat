@@ -28,6 +28,7 @@ import 'package:qqclient/kernel/wlogin8/qq8_image.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_list.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
+import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
 import 'package:qqclient/kernel/wlogin8/qq8_push.dart';
@@ -325,8 +326,8 @@ Uint8List _successFrame(int seq, {Uint8List? key}) {
 }
 
 /// 注册成功帧（`cReplyCode(tag 2) = 0`）。
-Uint8List _registerFrame(int seq) {
-  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 2: 0});
+Uint8List _registerFrame(int seq, {int replyCode = 0}) {
+  final struct = Qq8Jce.encodeStruct(<int, Object?>{0: 10001, 2: replyCode});
   final payload = Qq8Jce.encode(<int, Object?>{
     0: <Object?, Object?>{'SvcRespRegister': struct},
   });
@@ -965,7 +966,7 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
-  section('4f. P5：A1 对（子命令 15）真能发出去，tgtgt 取自 A1 尾部 16B');
+  section('4f. P5：A1 对（子命令 15）真能发出去，tgtgt 取自 A1 尾部 16B（实验分支，需显式开启）');
   {
     // 依据 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/z.java：
     // 0x106 原样塞 A1 密文；0x119 票据块用 A1 尾部 16B（tgtgt）加密，
@@ -998,6 +999,9 @@ Future<void> main() async {
       transportBuilder: () => scripted,
       reportOnlineChecks: false,
       reportOnlineStatus: false,
+      // A1 对属于**未经真机验证**的恢复材料，产品默认不自动试；
+      // 这条测的是分支本身的发包正确性，所以显式开启实验开关。
+      allowExperimentalRecovery: true,
       timeout: const Duration(seconds: 5),
     );
     // onDiagnostic 是可写字段，不是构造参数。
@@ -1027,7 +1031,7 @@ Future<void> main() async {
   }
 
   // ----------------------------------------------------------------
-  section('4g. P6：A2+A2KEY（3 元组）真能发出去，tgtgt 直接取 A2KEY 原样');
+  section('4g. P6：A2+A2KEY（3 元组）真能发出去，tgtgt 直接取 A2KEY 原样（实验分支，需显式开启）');
   {
     // 依据 analysis/_decompiled/jadx-main/sources/oicq/wlogin_sdk/request/WtloginHelper.java:607-690：
     // A2/A2KEY 3 元组形态把 A2KEY **原样**当 tgtgt（`tVarA.b = bArr2[2]`，不做 MD5），
@@ -1059,6 +1063,8 @@ Future<void> main() async {
       transportBuilder: () => scripted,
       reportOnlineChecks: false,
       reportOnlineStatus: false,
+      // A2+A2KEY 同样未经真机验证，默认不走；这里显式开启以测分支发包。
+      allowExperimentalRecovery: true,
       timeout: const Duration(seconds: 5),
     );
     svc.onDiagnostic = (tag, frame, parsed) => diagTags.add(tag);
@@ -1101,6 +1107,80 @@ Future<void> main() async {
     await svc.loginWithToken(uin: 10001);
     check('无可续期材料：一个包都不发', scripted.sent.isEmpty, '${scripted.sent.length}');
     await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('4h. 默认策略：只剩未验证材料时停在 sessionExpired，一个包都不发');
+  {
+    // 产品默认只自动走 qq8VerifiedRecoveryMaterials（当前只有 d2Key）。
+    // A1 对 / A2+A2KEY 都没有真机成功记录，所以默认必须**停在需要重验**，
+    // 不能拿用户的账号去试未验证的分支。
+    final a1Tail = Uint8List.fromList(List<int>.filled(16, 0xc7));
+    final a1 = Uint8List.fromList(<int>[...List<int>.filled(48, 0x5a), ...a1Tail]);
+    final a1Store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: Uint8List(0),
+        d2: Uint8List(0),
+        d2key: Uint8List(0),
+        sigKey: Uint8List(0),
+        ticketKey: Uint8List(0),
+        srmToken: Uint8List(0),
+        a1: a1,
+        noPicSig: Uint8List.fromList(List<int>.filled(40, 0x6b)),
+      );
+    final a1Transport = Qq8ScriptedTransport(<Uint8List>[]);
+    final a1Svc = Qq8LoginService(
+      tokenStore: a1Store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => a1Transport,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await a1Svc.loginWithToken(uin: 10001);
+    check('A1 默认：停在 sessionExpired 而不是 failed',
+        a1Svc.snapshot.stage == Qq8LoginStage.sessionExpired,
+        a1Svc.snapshot.stage.name);
+    check('A1 默认：文案提示重新登录',
+        (a1Svc.snapshot.error ?? '').contains('重新登录'),
+        a1Svc.snapshot.error ?? '');
+    check('A1 默认：一个包都没发', a1Transport.sent.isEmpty,
+        '${a1Transport.sent.length}');
+    await a1Svc.close();
+
+    final a2Key = Uint8List.fromList(List<int>.filled(16, 0x7c));
+    final a2Store = _MemStore()
+      ..data = Qq8TokenData(
+        uin: 10001,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: Uint8List(0),
+        d2key: Uint8List(0),
+        sigKey: Uint8List(0),
+        ticketKey: Uint8List(0),
+        srmToken: Uint8List(0),
+        a2Key: a2Key,
+      );
+    final a2Transport = Qq8ScriptedTransport(<Uint8List>[]);
+    final a2Svc = Qq8LoginService(
+      tokenStore: a2Store,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => a2Transport,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+    );
+    await a2Svc.loginWithToken(uin: 10001);
+    check('A2KEY 默认：停在 sessionExpired',
+        a2Svc.snapshot.stage == Qq8LoginStage.sessionExpired,
+        a2Svc.snapshot.stage.name);
+    check('A2KEY 默认：一个包都没发', a2Transport.sent.isEmpty,
+        '${a2Transport.sent.length}');
+    await a2Svc.close();
   }
 
   // ----------------------------------------------------------------
@@ -1617,7 +1697,160 @@ Future<void> main() async {
     check('bundle 无 0x106 时 a1 为空', noA1.a1.isEmpty);
   }
 
-  stdout.writeln('\n${'=' * 62}');
-  stdout.writeln('通过 $_pass 项，失败 $_fail 项');
+  // ----------------------------------------------------------------
+  section('10. 缺陷2：连接断开走统一恢复入口（单飞、幂等、代际隔离）');
+  {
+    final t1 = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+      _registerFrame(1),
+    ]);
+    final t2 = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+      _registerFrame(1),
+    ]);
+    var built = 0;
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore()
+        ..data = Qq8TokenData(
+          uin: 10001,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        ),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () {
+        final t = built == 0 ? t1 : t2;
+        built++;
+        return t;
+      },
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      heartbeatInterval: const Duration(minutes: 5),
+      timeout: const Duration(seconds: 2),
+    );
+    svc.reconnectBaseDelay = const Duration(milliseconds: 20);
+    final stages = <Qq8LoginStage>[];
+    svc.states.listen((s) => stages.add(s.stage));
+
+    await svc.loginWithToken(uin: 10001);
+    check('先在线', svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+
+    // 传输层直接报断开（不需要等心跳周期）：连报两次，只应恢复一次。
+    t1.emitDisconnect();
+    t1.emitDisconnect();
+    final deadline = DateTime.now().add(const Duration(seconds: 6));
+    while (svc.snapshot.stage != Qq8LoginStage.online &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    check('断开后自动恢复到 online', svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+    check('状态流经历过 disconnected',
+        stages.contains(Qq8LoginStage.disconnected), stages.map((s) => s.name).join('>'));
+    check('只重建了两条连接（单飞 + 幂等）', built == 2, '$built');
+    await svc.close();
+  }
+
+  // ----------------------------------------------------------------
+  section('11. 缺陷1：注册三态分类（确认 / 被拒 / 无回执）');
+  {
+    Qq8LoginService build(List<Uint8List> frames, {bool checks = false}) =>
+        Qq8LoginService(
+          tokenStore: _MemStore()
+            ..data = Qq8TokenData(
+              uin: 10001,
+              savedAt: 'test',
+              tgt: _hex('1122334455667788'),
+              d2: _hex('a2' * 64),
+              d2key: _hex('a3' * 16),
+              sigKey: _hex('a4' * 48),
+              ticketKey: _hex('a5' * 16),
+              srmToken: _hex('a6' * 56),
+            ),
+          deviceBuilder: _fixtureDevice,
+          ecdhBuilder: () => _fixedEcdh,
+          transportBuilder: () => Qq8ScriptedTransport(frames),
+          reportOnlineChecks: checks,
+          reportOnlineStatus: false,
+          primeGroupSeqs: false,
+          startupPullDelay: const Duration(seconds: 30),
+          heartbeatInterval: const Duration(minutes: 5),
+          timeout: const Duration(seconds: 2),
+          registerTimeout: const Duration(milliseconds: 250),
+        );
+
+    // A. 确认：cReplyCode == 0
+    {
+      final svc = build(<Uint8List>[
+        _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+        _registerFrame(1),
+      ]);
+      await svc.loginWithToken(uin: 10001);
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (svc.lastRegisterOutcome == null &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      check('注册确认 → lastRegisterOutcome=confirmed',
+          svc.lastRegisterOutcome == Qq8RegisterOutcome.confirmed,
+          '${svc.lastRegisterOutcome}');
+      check('注册确认 → 推送通道不标未确认', !svc.pushChannelUnconfirmed);
+      check('注册确认 → 状态仍是 online',
+          svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+      await svc.close();
+    }
+
+    // B. 被拒：回执 cReplyCode != 0
+    {
+      final svc = build(<Uint8List>[
+        _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+        _registerFrame(1, replyCode: 100),
+      ]);
+      await svc.loginWithToken(uin: 10001);
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (svc.snapshot.stage != Qq8LoginStage.failed &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      check('注册被拒 → 状态 failed',
+          svc.snapshot.stage == Qq8LoginStage.failed, svc.snapshot.stage.name);
+      check('注册被拒 → 文案说清是被拒',
+          (svc.snapshot.error ?? '').contains('注册'), '${svc.snapshot.error}');
+      await svc.close();
+    }
+
+    // C. 无回执：超时 → 不算失败、不打死 online、检查降级
+    {
+      final svc = build(<Uint8List>[
+        _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+        // 故意不回 register，让它超时
+      ], checks: true);
+      await svc.loginWithToken(uin: 10001);
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      while (svc.lastRegisterOutcome == null &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      check('无回执 → lastRegisterOutcome=unconfirmed',
+          svc.lastRegisterOutcome == Qq8RegisterOutcome.unconfirmed,
+          '${svc.lastRegisterOutcome}');
+      check('无回执 → online 保持不变',
+          svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+      check('无回执 → 标推送通道未确认', svc.pushChannelUnconfirmed);
+      // 再等一小会儿：两条在线检查若真发了，会各补一个包（这里应保持 2 个）
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      check('无回执 → 跳过两条在线检查（没多发包）',
+          svc.snapshot.stage == Qq8LoginStage.online, svc.snapshot.stage.name);
+      await svc.close();
+    }
+  }
+
+  stdout.writeln('\n${'=' * 62}');  stdout.writeln('通过 $_pass 项，失败 $_fail 项');
   exit(_fail == 0 ? 0 : 1);
 }

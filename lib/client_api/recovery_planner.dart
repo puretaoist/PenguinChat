@@ -83,16 +83,25 @@ class Qq8RecoveryAvailability {
   });
 
   /// 从票据推出可用材料。**null 票据 → 全 false**（不抛）。
+  ///
+  /// 2026-10-31：除「有字节」外，还要排除**服务端已判该条材料失效**的那种。
+  /// 失效结论可能只针对本次实际发出的分支（`Qq8TokenData.invalidatedMaterial`），
+  /// 此时另一条材料仍算可用——否则一次 D2 链的 16 就会把 A1 对一起判死。
   factory Qq8RecoveryAvailability.fromToken(Qq8TokenData? t) {
     if (t == null) return const Qq8RecoveryAvailability();
+    // A2 = _TGT = 0x10a（`t.tgt`）；D2 = 0x143（`t.d2`）。两者是不同材料。
+    // A2 被 d2Key/a2Key/a2Only 三条共用，因此不按单条材料的失效去否它，
+    // 逐条排除由 hasD2/hasD2Key/hasA2Key/hasA1/hasNoPicSig 各自负责。
+    final d2KeyInvalid = t.materialKnownInvalid(Qq8TokenData.materialD2Key);
+    final a1Invalid = t.materialKnownInvalid(Qq8TokenData.materialA1NoPicSig);
     return Qq8RecoveryAvailability(
-      // A2 = _TGT = 0x10a（`t.tgt`）；D2 = 0x143（`t.d2`）。两者是不同材料。
       hasA2: _nonEmpty(t.tgt),
-      hasD2: _nonEmpty(t.d2),
-      hasD2Key: _nonEmpty(t.d2key),
-      hasA2Key: _nonEmpty(t.a2Key),
-      hasA1: _nonEmpty(t.a1),
-      hasNoPicSig: _nonEmpty(t.noPicSig),
+      hasD2: _nonEmpty(t.d2) && !d2KeyInvalid,
+      hasD2Key: _nonEmpty(t.d2key) && !d2KeyInvalid,
+      hasA2Key: _nonEmpty(t.a2Key) &&
+          !t.materialKnownInvalid(Qq8TokenData.materialA2Key),
+      hasA1: _nonEmpty(t.a1) && !a1Invalid,
+      hasNoPicSig: _nonEmpty(t.noPicSig) && !a1Invalid,
     );
   }
 
@@ -167,6 +176,18 @@ const List<Qq8RecoveryMaterial> qq8RecoveryOrderedMaterials =
 List<Qq8RecoveryMaterial> get orderedMaterials =>
     qq8RecoveryOrderedMaterials;
 
+/// **已经过真机证据确认可用**的恢复材料集合。
+///
+/// 只有 D2 链（子命令 11 + `MD5(d2key)`）有真机成功记录（2026-10-24/25/26 多次
+/// type=0）。A2KEY 与 A1+noPicSig 两条虽然代码已接线、离线组包有依据，但**没有
+/// 一次真机成功**；A2-only 官方连 tgtgt 填什么都没给死。
+///
+/// 因此产品默认只自动走这一条：证据不足的分支默认关闭，需要显式打开
+/// （[planNext] 的 allowUnverifiedMaterials）才参与自动选择——不为了"看起来
+/// 全路径覆盖"而让没有验证过的分支去撞真实服务端。
+const Set<Qq8RecoveryMaterial> qq8VerifiedRecoveryMaterials =
+    <Qq8RecoveryMaterial>{Qq8RecoveryMaterial.d2Key};
+
 /// 规划下一步。**纯函数**：同样的入参永远同样的出参。
 ///
 /// 规则（顺序即优先级，必须能被单测穷举）：
@@ -181,6 +202,8 @@ Qq8RecoveryDecision planNext({
   required Set<Qq8RecoveryMaterial> tried,
   required bool networkError,
   required bool challengeActive,
+  // 默认 false：只自动走 [qq8VerifiedRecoveryMaterials] 里已证可用的分支。
+  bool allowUnverifiedMaterials = false,
 }) {
   if (networkError) {
     return const Qq8RecoveryStop(
@@ -194,13 +217,27 @@ Qq8RecoveryDecision planNext({
       message: '需要人工完成验证（滑块/短信/设备锁），不做自动重试',
     );
   }
+  var sawUnverified = false;
   for (final m in qq8RecoveryOrderedMaterials) {
     if (tried.contains(m)) continue;
     if (!a.has(m)) continue;
+    // 材料在手上、但这条分支没有真机证据：默认不选它，记下来用于区分
+    // "真没料"(exhausted) 与"有料但不敢自动试"(unverified)。
+    if (!allowUnverifiedMaterials &&
+        !qq8VerifiedRecoveryMaterials.contains(m)) {
+      sawUnverified = true;
+      continue;
+    }
     return Qq8RecoveryAttempt(
       material: m,
       attempt: tried.length + 1,
       why: _whyFor(m, a, tried.length),
+    );
+  }
+  if (sawUnverified) {
+    return const Qq8RecoveryStop(
+      code: 'unverified',
+      message: '手上只有未经真机验证的恢复材料，默认不自动试；请重新登录一次',
     );
   }
   return const Qq8RecoveryStop(
@@ -208,6 +245,15 @@ Qq8RecoveryDecision planNext({
     message: '登录凭证不足，请重新登录一次',
   );
 }
+
+/// 材料名（与 `Qq8TokenData.materialD2Key` 等字符串常量一一对应）。
+/// 用于把失效结论写进票据，跨模块不反向 import 枚举。
+String qq8RecoveryMaterialName(Qq8RecoveryMaterial m) => switch (m) {
+      Qq8RecoveryMaterial.d2Key => Qq8TokenData.materialD2Key,
+      Qq8RecoveryMaterial.a2Key => Qq8TokenData.materialA2Key,
+      Qq8RecoveryMaterial.a1NoPicSig => Qq8TokenData.materialA1NoPicSig,
+      Qq8RecoveryMaterial.a2Only => Qq8TokenData.materialA2Only,
+    };
 
 String _whyFor(
   Qq8RecoveryMaterial m,

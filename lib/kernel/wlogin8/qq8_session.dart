@@ -111,6 +111,16 @@ class Qq8ServerRetcodeException implements Exception {
       '${resent ? '，已自动重发一次' : ''}）';
 }
 
+/// 上线注册的三种结果（见 Qq8Session.registerWithOutcome）。
+enum Qq8RegisterOutcome {
+  /// 服务端回执 cReplyCode == 0（官方判据 msf/core/push/e.java:196-235）。
+  confirmed,
+  /// 收到回执但被明确拒绝（票据/设备信息不符）。
+  rejected,
+  /// 没有任何回执（超时或等回应时断线）：推送通道是否已建立未知。
+  unconfirmed,
+}
+
 /// 长连接会话：路由（seq 配对/推送）、注册与心跳。
 class Qq8Session {
   final Qq8Transport transport;
@@ -149,8 +159,20 @@ class Qq8Session {
   /// 排查「解析丢帧 / seq 对不上」这类问题。
   void Function(Uint8List frame)? onRawFrame;
 
-  /// 心跳连失败两次（视为掉线）时的回调。
+  /// 心跳连失败两次（视为掉线）时的回调（旧接口，保留给工具与自测）。
   void Function()? onOffline;
+
+  /// 连接**非预期断开**时统一回调一次（传输层断开 / 心跳判坏）。
+  ///
+  /// 与 [onOffline] 的区别：这里带原因，且由会话层保证「一条连接只报一次」。
+  /// 产品层（L3）只接这一条，别再各写一套。
+  void Function(Object error)? onConnectionLost;
+
+  /// 本条连接是否已判定断开：保证 [onOffline]/[onConnectionLost] 只报一次。
+  bool _down = false;
+
+  /// [close] 是否已执行过（重复关闭要安全）。
+  bool _closed = false;
 
   final Map<int, Completer<Qq8SsoResponse>> _pending =
       <int, Completer<Qq8SsoResponse>>{};
@@ -189,7 +211,33 @@ class Qq8Session {
     if (_started) return;
     await transport.connect();
     transport.onFrame = _onFrame;
+    transport.onDisconnected = _handleTransportDown;
     _started = true;
+  }
+
+  /// 传输层报「非预期断开」：立即终结所有挂起请求、停心跳、上报一次。
+  void _handleTransportDown(Object error) {
+    if (_closed || _down) return;
+    _down = true;
+    _online = false;
+    stopHeartbeat();
+    // 统一成一句话再往上传：上层日志不该出现 "Bad state: ..." 这种泄漏。
+    final wrapped = error is Qq8TransportException
+        ? error
+        : Qq8TransportException('连接已断开', error);
+    _failAllPending(wrapped);
+    onConnectionLost?.call(wrapped);
+    onOffline?.call();
+  }
+
+  /// 把挂起请求全部以同一原因失败——不要留它们等到各自超时。
+  void _failAllPending(Object error) {
+    if (_pending.isEmpty) return;
+    final waiting = List<Completer<Qq8SsoResponse>>.of(_pending.values);
+    _pending.clear();
+    for (final c in waiting) {
+      if (!c.isCompleted) c.completeError(error);
+    }
   }
 
   /// 登录成功后的票据映射（[Qq8SigBundle] → 会话内 [Qq8SigInfo]）。
@@ -249,9 +297,22 @@ class Qq8Session {
     Duration timeout,
   ) async {
     var resends = 0;
+    // 总时限跨「首发 + 重发」只算一次：重发不能把超时预算翻倍。
+    final deadline = DateTime.now().add(timeout);
     while (true) {
-      final r = await _awaitResponse(seq, packet, timeout);
-      if (r.retcode == 0) return r;
+      if (_down) {
+        throw Qq8TransportException('连接已断开（seq=$seq）');
+      }
+      final left = deadline.difference(DateTime.now());
+      if (left <= Duration.zero) {
+        throw Qq8TransportException(
+            '等待响应超时（seq=$seq，${timeout.inSeconds}s）');
+      }
+      final r = await _awaitResponse(seq, packet, left);
+      if (r.retcode == 0) {
+        _resendStreak = 0;
+        return r;
+      }
       // -10008 = 服务端要求重发（官方 `msf/core/ag.java:1782-1793` 的
       // `D.reSendMsg(toServiceMsgC)` 会自动重发一次）。真机 2026-10-26 21:46
       // 连着回了 -10008，我们每条都当超时丢掉，请求全部石沉大海。
@@ -265,12 +326,42 @@ class Qq8Session {
         ));
         continue;
       }
+      if (r.retcode == qq8RetcodeResend) _noteResendExhausted();
       throw Qq8ServerRetcodeException(
         retcode: r.retcode,
         seq: seq,
         cmd: r.cmd,
       );
     }
+  }
+
+  /// 记一次「重发预算耗尽」，用于识别断网期的重发风暴（见 [resendStormSuspected]）。
+  void _noteResendExhausted() {
+    final now = DateTime.now();
+    final at = _resendAt;
+    if (at == null || now.difference(at) > qq8ResendStormWindow) {
+      _resendStreak = 1;
+    } else {
+      _resendStreak++;
+    }
+    _resendAt = now;
+  }
+
+  DateTime? _resendAt;
+  int _resendStreak = 0;
+
+  /// 短窗口内多个请求都耗尽重发预算 ⇒ 连接大概率已经不可用。
+  ///
+  /// 仅用于让上层**暂停非必要的轮询**，绝不据此判定凭证失效
+  /// （凭证失效有专门的 retcode 集合）。阈值与窗口是本地策略，不是协议常量。
+  static const int qq8ResendStormThreshold = 3;
+  static const Duration qq8ResendStormWindow = Duration(seconds: 30);
+
+  bool get resendStormSuspected {
+    final at = _resendAt;
+    if (at == null) return false;
+    return _resendStreak >= qq8ResendStormThreshold &&
+        DateTime.now().difference(at) <= qq8ResendStormWindow;
   }
 
   /// 发一次包、等一次应答（[retcode] 非 0 也照常返回，由 [_send] 判读）。
@@ -281,16 +372,26 @@ class Qq8Session {
   ) async {
     final c = Completer<Qq8SsoResponse>();
     _pending[seq] = c;
-    try {
+    // 超时必须覆盖「写出去 + 等回来」整段：只罩 c.future 的话，写本身
+    // 卡住（断网时 socket 不退不报）就永远等不到超时。
+    // 立即开始写（async 闭包在第一个 await 前是同步执行的，与旧行为一致：
+    // 调用方 await 之前包就已经进了 socket，测试能同步断言"发了几个包"）。
+    final work = () async {
       await transport.write(packet);
+      return c.future;
+    }();
+    try {
+      return await work.timeout(timeout, onTimeout: () {
+        throw Qq8TransportException(
+            '等待响应超时（seq=$seq，${timeout.inSeconds}s）');
+      });
     } on Object {
       _pending.remove(seq);
       rethrow;
+    } finally {
+      // 超时/关闭后底层 work 才失败时，不要再冒成"未捕获异常"。
+      work.ignore();
     }
-    return c.future.timeout(timeout, onTimeout: () {
-      _pending.remove(seq);
-      throw Qq8TransportException('等待响应超时（seq=$seq，${timeout.inSeconds}s）');
-    });
   }
 
   /// 登录层请求（命令字 + 信封 type=0/1）。
@@ -375,6 +476,24 @@ class Qq8Session {
   /// 超时 **30 秒**：官方 `msf/core/push/e.java` 对这条请求
   /// `setTimeout(30000L)`，比业务请求（10 秒）宽——注册要等服务端在
   /// push 通道上落一次记录，10 秒偏紧（真机多份日志都是 10s 超时）。
+  /// 上线注册的结果分类（真机缺陷1）。
+  ///
+  /// 以前 register() 只有 bool：false = 被拒、抛异常 = 「无应答」。
+  /// 但真机 2026-10-31 装的是「发出去 30 秒没有任何回执」——那既不能当成功
+  /// （推送通道没落记录），也不该当被拒（会把上线状态打回 failed）。
+  Future<Qq8RegisterOutcome> registerWithOutcome({
+    bool logout = false,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    try {
+      final ok = await register(logout: logout, timeout: timeout);
+      return ok ? Qq8RegisterOutcome.confirmed : Qq8RegisterOutcome.rejected;
+    } on Object {
+      // 超时 / 等回应期间连接断开：请求可能到了、也可能没到，无法判断。
+      return Qq8RegisterOutcome.unconfirmed;
+    }
+  }
+
   Future<bool> register({
     bool logout = false,
     Duration timeout = const Duration(seconds: 30),
@@ -499,9 +618,8 @@ class Qq8Session {
         await _maybeReportStatus();
         return true;
       } on Object {
-        _online = false;
-        stopHeartbeat();
-        onOffline?.call();
+        // 心跳连败 = 这条连接不可用：走与传输层断开同一条上报路径。
+        _handleTransportDown(Qq8TransportException('心跳连续失败，连接已断开'));
         return false;
       }
     }
@@ -527,10 +645,13 @@ class Qq8Session {
 
   /// 结束会话：停心跳、关推送流、关连接。
   Future<void> close() async {
+    if (_closed) return; // 重复关闭必须安全（teardown 与 UI 都会调）
+    _closed = true;
     stopHeartbeat();
     _online = false;
     _started = false;
-    await _pushes.close();
+    _failAllPending(Qq8TransportException('会话已关闭'));
+    if (!_pushes.isClosed) await _pushes.close();
     await transport.close();
   }
 

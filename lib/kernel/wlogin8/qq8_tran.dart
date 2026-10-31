@@ -250,6 +250,13 @@ abstract class Qq8Transport {
   /// 被投递两次）。
   set onFrame(void Function(Uint8List frame)? cb);
 
+  /// 连接**非预期断开**时回调一次（读错误、对端关闭、写失败）。
+  ///
+  /// 会话层靠它把挂起的请求立即终结、停心跳并交给统一恢复入口——
+  /// 没有这条线时，断链只能等每个请求各自的 10s 超时，断网期间日志里
+  /// 就只剩一串「等待响应超时」。主动 [close] 不算断开，不回调。
+  set onDisconnected(void Function(Object error)? cb);
+
   /// 关闭连接。
   Future<void> close();
 
@@ -294,6 +301,12 @@ class Qq8TcpTransport implements Qq8Transport {
 
   /// 流式消费回调（设置后 [send] 的配对逻辑不再生效）。
   void Function(Uint8List frame)? _onFrame;
+
+  /// 非预期断开回调（见 [Qq8Transport.onDisconnected]）。
+  void Function(Object error)? _onDisconnected;
+
+  /// 本条连接是否已经报过断开：一次连接最多回调一次。
+  bool _disconnectNotified = false;
 
   /// 本次连接实际连上的端点；未连接时为 null。
   ///
@@ -372,6 +385,7 @@ class Qq8TcpTransport implements Qq8Transport {
 
     _socket!.setOption(SocketOption.tcpNoDelay, true);
     _decoder.reset();
+    _disconnectNotified = false;
 
     _socket!.listen(
       (chunk) {
@@ -405,12 +419,16 @@ class Qq8TcpTransport implements Qq8Transport {
       onError: (Object e) {
         _socket = null;
         connectedEndpoint = null;
-        _failPending(Qq8TransportException('读取失败', e));
+        final err = Qq8TransportException('读取失败', e);
+        _failPending(err);
+        _notifyDisconnected(err);
       },
       onDone: () {
         _socket = null;
         connectedEndpoint = null;
-        _failPending(Qq8TransportException('连接被对端关闭'));
+        final err = Qq8TransportException('连接被对端关闭');
+        _failPending(err);
+        _notifyDisconnected(err);
       },
       cancelOnError: true,
     );
@@ -436,8 +454,20 @@ class Qq8TcpTransport implements Qq8Transport {
     if (p != null && !p.isCompleted) p.completeError(error);
   }
 
+  /// 报一次「连接非预期断开」；同一连接只报一次。
+  void _notifyDisconnected(Object error) {
+    if (_disconnectNotified) return;
+    _disconnectNotified = true;
+    final cb = _onDisconnected;
+    _onDisconnected = null;
+    cb?.call(error);
+  }
+
   @override
   set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) => _onDisconnected = cb;
 
   @override
   Future<void> write(Uint8List packet) async {
@@ -462,7 +492,9 @@ class Qq8TcpTransport implements Qq8Transport {
         _socket = null;
         connectedEndpoint = null;
       }
-      throw Qq8TransportException('发送失败', e);
+      final err = Qq8TransportException('发送失败', e);
+      _notifyDisconnected(err);
+      throw err;
     }
   }
 
@@ -496,7 +528,9 @@ class Qq8TcpTransport implements Qq8Transport {
         _socket = null;
         connectedEndpoint = null;
       }
-      throw Qq8TransportException('发送失败', e);
+      final err = Qq8TransportException('发送失败', e);
+      _notifyDisconnected(err);
+      throw err;
     }
 
     return completer.future.timeout(
@@ -559,8 +593,19 @@ class Qq8ScriptedTransport implements Qq8Transport {
   @override
   set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
 
+  void Function(Object error)? _onDisconnected;
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) => _onDisconnected = cb;
+
   /// 手动投递一个帧（模拟服务端主动推送；测试用）。
   void emit(Uint8List frame) => _onFrame?.call(frame);
+
+  /// 手动模拟「连接非预期断开」（读错误/对端关闭）。
+  void emitDisconnect([Object? error]) {
+    _connected = false;
+    _onDisconnected?.call(error ?? Qq8TransportException('连接被对端关闭'));
+  }
 
   @override
   Future<void> write(Uint8List packet) async {

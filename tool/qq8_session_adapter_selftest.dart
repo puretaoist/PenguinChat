@@ -480,7 +480,6 @@ Future<void> main() async {
         page.messages.map((m) => m.text).join('|'));
     check('next 是 seq 游标（begin-1 = 980）', page.next?.seq == 980, '${page.next?.seq}');
   }
-
   // ----------------------------------------------------------------
   section('6. 多元素推送 → ChatMessage（语音/卡片/认不出/引用）');
   {
@@ -921,6 +920,41 @@ Future<void> main() async {
         split('普通一句话').join('|'));
   }
 
+  // ----------------------------------------------------------------
+  section('5b. 删除占位过滤（缺陷4：time=0 / sender=0 / 正文 [已删除]）');
+  {
+    Qq8IncomingMessage msg(
+            {int from = 0, int time = 0, String text = '[已删除]'}) =>
+        Qq8IncomingMessage(
+          kind: Qq8IncomingKind.group,
+          fromUin: from,
+          toUin: _me,
+          groupCode: 987654321,
+          seq: 1,
+          rand: 0,
+          time: time,
+          msgType: 82,
+          c2cCmd: 0,
+          text: text,
+          atTargets: const <int>[],
+          atAll: false,
+          font: 'unknown',
+          pktNum: 1,
+          pkgIndex: 0,
+          divSeq: 0,
+          elemKinds: const <String>[],
+        );
+
+    check('三条件齐（time=0 + sender=0 + [已删除]）→ 判为占位',
+        Qq8SessionAdapter.isDeletedPlaceholder(msg()));
+    check('真人发同样文案（sender 非 0）→ 不丢',
+        !Qq8SessionAdapter.isDeletedPlaceholder(msg(from: 33333)));
+    check('time=0 但正文正常 → 不丢',
+        !Qq8SessionAdapter.isDeletedPlaceholder(msg(text: '正常一条')));
+    check('有正常时间与发送者的 [已删除] → 不丢',
+        !Qq8SessionAdapter.isDeletedPlaceholder(
+            msg(from: 33333, time: 1700000500)));
+  }
   // ----------------------------------------------------------------
   section('10. 戳一戳（OidbSvc.0xed3）与释放');
   {

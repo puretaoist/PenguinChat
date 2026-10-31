@@ -4062,3 +4062,18 @@ sub  = data.substring(4).toInt(16)      // 810_9 -> 9, 810_2 -> 2, _a -> 10, _d 
 
 **验收**：`tool/qq8_login_selftest.dart` 新增【2c1】段（d2=null 时 0x143 整条不发、0x10a 仍进包、d2 非空时逐字节不变）→ 192 项；`tool/token_validity_selftest.dart` 新增【8】段（0x10d→a2Key、recoveryUsable、JSON 往返、旧文件缺键为 null）→ 42 项；`tool/qq8_login_service_selftest.dart` 新增【4g】段（真发包 / diagTag=token / A2KEY 解开 0x119 后 online / 新票落盘）+ 4e 第二块改写 → 118 项；`tool/recovery_planner_selftest.dart` 新增 4 条 A2 语义断言 → 50 项。全量 50 个 selftest 全绿 + flutter test 194 全过。
 
+
+
+## C84 五缺陷实施：断链要「立即终结 + 只报一次」，注册要「三态」，占位要「双轨」（2026-10-31，W1–W6）
+
+**四个必须记住的机制坑**：
+1. **写必须在第一个 await 之前同步发出**。`_awaitResponse` 若写成 `Future(() async { ... write ... })`，写会被推迟到微任务，立刻破坏「await 返回前包已进 socket」的同步断言（自测第 1 节「发了 3 个包」直接变 2）。正确写法是 IIFE：`final work = () async { await transport.send(...); return await completer.future; }();` 然后 `await work.timeout(timeout)`。
+2. **`close()` / 断链里 fail pending 必须配 `work.ignore()`**。否则超时或关闭之后迟到的 `Qq8TransportException: 会话已关闭` 会作为未捕获异常弹出，打断 `tool/qq8_qrcode_selftest.dart` 与 `tool/qq8_login_service_selftest.dart`。
+3. **断链错误要换成自己的异常文案**（`Qq8TransportException("连接已断开")`）再 `_failAllPending` / 传 `onConnectionLost`。直接透传内层错误，测试与日志里看到的是 `Bad state: ...`，人根本认不出这是断链。
+4. **注册「无回执」不等于失败**。`register()` 返回 false 才是服务端拒绝（rejected）；超时/异常是 unconfirmed——此时**必须继续上线**并保底轮询，不能把它当 failed（否则一次静默丢包就把整个登录判死）。反过来说，`_pushChannelUnconfirmed` 之后还去跑那两条 8s 回放检查纯属空等，直接跳过并写明「回放仅作诊断」。
+
+**缺陷4 的核心不是「过滤」，是「双轨」**：丢弃 `[已删除]` 占位后，历史分页「还有更早」的判据必须回到**原始页**（`page.messages.isNotEmpty`）。用过滤后的列表判，整页都是占位时会被误判成「到头」，游标停滞、旧消息永久拉不回来——比幽灵气泡严重得多。判据也只能是三条件齐全（`time<=0 && fromUin==0 && text=="[已删除]"`），不能只匹配那五个汉字。
+
+**缺陷3 的教训：预取是尽力而为，展示层要有自愈**。`_prefetchMedia` 只在「插入」和「打开会话加载」两个时机跑，错过就没有第二次；展示层原来纯展示 ⇒ 只能重启。现在图片块拿到 `ensureMedia` 钩子后会补一次（每条媒体一次，失败也算试过，避免滚动重建刷 404）。同理：`ChatStore.ensureMedia` 内部已在成功后 `_emit(media)`，`messagesProvider` 监听 `media` 事件重发列表——**这条链路本来就是对的**，缺的只是「谁来发起」。
+
+**测试写法坑**：`tool/qq8_session_adapter_selftest.dart` 共享一条 scripted 队列，凡发请求的用例，响应帧的 seq 必须等于请求 seq（会话按 seq 配对、传输按 FIFO）。把新用例插在中间会连锁错位 ⇒ 新用例做成**纯函数**、放在适配器 dispose 之前。

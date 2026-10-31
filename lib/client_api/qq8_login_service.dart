@@ -311,6 +311,11 @@ class Qq8LoginService {
   /// 会让后面每一帧的 seq 错位一格（与 [reportOnlineStatus] 同一个道理）。
   final bool reportOnlineChecks;
 
+  /// 是否允许自动尝试**未经真机验证**的恢复分支（A2KEY / A1+noPicSig / A2-only）。
+  /// 默认 false：产品只自动走 [qq8VerifiedRecoveryMaterials]（当前仅 D2 链）。
+  /// 自测或显式实验时才打开，避免把没有真机成功记录的分支拿去撞真实服务端。
+  final bool allowExperimentalRecovery;
+
   final bool reportOnlineStatus;
 
   final Duration heartbeatInterval;
@@ -347,6 +352,12 @@ class Qq8LoginService {
   /// 网络层超时（连接/单请求）。
   final Duration timeout;
 
+  /// 上线注册（StatSvc.register）的单次等待上限。
+  ///
+  /// 官方是 30 秒（msf/core/push/e.java setTimeout(30000L)）。测试里调小，
+  /// 免得一条"无回执"用例挂 30 秒。
+  final Duration registerTimeout;
+
   final StreamController<Qq8LoginSnapshot> _states =
       StreamController<Qq8LoginSnapshot>.broadcast();
   Qq8LoginSnapshot _snapshot = const Qq8LoginSnapshot(stage: Qq8LoginStage.idle);
@@ -367,6 +378,12 @@ class Qq8LoginService {
   Duration reconnectBaseDelay = const Duration(seconds: 2);
 
   bool _reconnecting = false;
+
+  /// 会话代际：每建一次新会话 / 拆一次连接就 +1。
+  ///
+  /// 异步任务（注册、在线检查、延迟补拉）在写回状态前必须核对自己拿到
+  /// 的 epoch——断线重连后旧会话的回调不能踩新会话的状态。
+  int _sessionEpoch = 0;
   /// 收消息兜底轮询（PushNotify 不可靠时的补拉）。
   Timer? _pullTimer;
   Qq8Session? _session;
@@ -375,6 +392,11 @@ class Qq8LoginService {
   /// 本次登录是不是**续期**（`loginWithToken` 进来的）。只用于区分
   /// 「首次登录」与「续期」两套时间戳，成功保存票据后立刻清掉。
   bool _loginIsRenewal = false;
+
+  /// 本次免密恢复实际用的是哪条材料（[Qq8TokenData.materialD2Key] 等）。
+  /// 只用于把 16/155 的失效结论**限定到这一条材料**上，不整体判死其它材料。
+  /// 口令链（不是免密恢复）时为 null。
+  String? _attemptMaterial;
 
   /// 增量拉消息的游标（`PbGetMsgResp.sync_cookie`，服务端靠它算增量）。
   Uint8List? _syncCookie;
@@ -514,7 +536,9 @@ class Qq8LoginService {
     this.primeGroupSeqs = true,
     this.reportOnlineChecks = true,
     this.reportOnlineStatus = true,
+    this.allowExperimentalRecovery = false,
     this.timeout = const Duration(seconds: 15),
+    this.registerTimeout = const Duration(seconds: 30),
   })  : profile = profile ?? qq8DefaultProfile,
         tokenStore = tokenStore ?? _MemoryTokenStore(),
         transportBuilder = transportBuilder ?? (() => Qq8TcpTransport());
@@ -644,6 +668,8 @@ class Qq8LoginService {
       tried: const <Qq8RecoveryMaterial>{},
       networkError: false,
       challengeActive: false,
+      // 默认只自动走已证可用的 D2 链；实验分支要显式打开才参与。
+      allowUnverifiedMaterials: allowExperimentalRecovery,
     );
     if (decision is Qq8RecoveryStop) {
       _log.w('免密恢复停止 code=${decision.code}（${decision.message}）'
@@ -651,12 +677,16 @@ class Qq8LoginService {
       _emit(Qq8LoginSnapshot(
         stage: Qq8LoginStage.sessionExpired,
         uin: uin,
-        error: '登录凭证不足，请重新登录一次',
+        error: decision.code == 'unverified'
+            ? '登录凭证不足以自动恢复（只剩未验证的恢复材料），请重新登录一次'
+            : '登录凭证不足，请重新登录一次',
         resultType: token.invalidatedType,
       ));
       return;
     }
     final material = (decision as Qq8RecoveryAttempt).material;
+    // 记下这次实际走的材料：一旦服务端回 16/155，失效结论只限定在这一条上。
+    _attemptMaterial = qq8RecoveryMaterialName(material);
     _log.i('免密恢复选择材料=$material（${decision.why}）');
     switch (material) {
       case Qq8RecoveryMaterial.d2Key:
@@ -743,6 +773,9 @@ class Qq8LoginService {
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     _loginIsRenewal = token != null || a1 != null || a2Key != null;
+    // 口令链（含短信续跑）不是免密恢复：清掉材料标记，让这类 16/155 仍按
+    // 整票失效处理（没有"某条材料"可归因）。
+    if (!_loginIsRenewal) _attemptMaterial = null;
     // 材料不足**不硬发**：空 A2KEY 既装不上 tgtgt，又不该退到口令链去发一个
     // 全零口令包（那就等于静默降级成密码登录）。planner 侧 `hasA2Key` 已保证
     // 非空，这里只是最后一层防线，直接报"凭证不足"让用户重登。
@@ -2854,6 +2887,7 @@ class Qq8LoginService {
   /// 断线恢复用它：要换一条新连接，但不能因此把 `_states`/`_events` 关掉——
   /// 那会连带 UI 的 provider 一起结束。关闭失败吞掉：这条连接本来就已经坏了。
   Future<void> _teardownConnection() async {
+    _sessionEpoch++; // 旧会话的异步任务从此作废
     _pullTimer?.cancel();
     _pullTimer = null;
     await _pushSub?.cancel();
@@ -2958,7 +2992,9 @@ class Qq8LoginService {
         if (cmd == 'StatSvc.QueryHB' && _session != null &&
             _snapshot.stage == Qq8LoginStage.online) {
           _log.i('QueryHB → 重新注册推送（官方语义）并补拉');
-          unawaited(_session!.register().then((_) {}).catchError((Object e) {
+          unawaited(_registerOnce(_session!).then((Qq8RegisterOutcome o) {
+            _log.d('QueryHB 触发的重注册完成：${o.name}');
+          }).catchError((Object e) {
             _log.d('QueryHB 触发的重注册失败', error: e);
           }));
           unawaited(_pullNewMessages(reason: 'QueryHB 补拉'));
@@ -3550,6 +3586,8 @@ class Qq8LoginService {
         lifetimeTlvHex: lifetimeHex,
       ).copyWith(renewedAtMs: _loginIsRenewal ? nowMs : null));
       _loginIsRenewal = false;
+      // 成功换票后材料标记用完即清（新票是全新的，不带任何失效结论）。
+      _attemptMaterial = null;
       // 服务端下发的「本次登录出口」记录（0x537）→ 交给上层落进 pd2.dat，
       // 下次登录的 0x525/0x536 就能带上真实历史（官方 oicq_request.java:1632
       // 在**同一步**调 ProtocolDet.setLoginExtraData）。记录失败不影响登录。
@@ -3723,11 +3761,15 @@ class Qq8LoginService {
       try {
         final old = await tokenStore.load(uin);
         if (old != null) {
-          await tokenStore.save(old.copyWith(
-            invalidatedAtMs: DateTime.now().millisecondsSinceEpoch,
-            invalidatedType: r.type,
+          // 失效范围**只记到本次实际走的那条材料**（_attemptMaterial）。
+          // 口令链为 null → legacy 整票语义（见 Qq8TokenData.materialKnownInvalid）。
+          await tokenStore.save(old.markInvalidated(
+            atMs: DateTime.now().millisecondsSinceEpoch,
+            type: r.type,
+            material: _attemptMaterial,
           ));
-          _log.w('票据已标记失效（type=${r.type}），冷启动将跳过它');
+          _log.w('票据已标记失效（type=${r.type} 材料=${_attemptMaterial ?? '整票'}），'
+              '冷启动将跳过该材料');
         }
       } catch (e) {
         _log.w('标记票据失效失败（不影响本次结论）', error: e);
@@ -3764,17 +3806,15 @@ class Qq8LoginService {
       ),
       randomKey: _randomKey!,
     )..onError = (e) => _log.w('收包解析失败', error: e);
-    // 掉线必须让上层看见：会话层心跳连败两次会回调这里，UI 才能提示"已断开"。
+    // 掉线必须让上层看见。**唯一入口**：传输层读错误 / 对端关闭 / 写失败 /
+    // 心跳连败，会话层都收敛成这一条回调，服务层只在这里决定恢复。
     // 曾在真机前漏掉这条线——服务一直是 online，用户却什么都收不到。
-    session.onOffline = () {
-      _log.w('心跳连续失败，连接已断开');
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.disconnected,
-        uin: uin,
-        error: '连接已断开（心跳连续失败），正在尝试自动恢复',
-      ));
-      unawaited(reconnect(uin: uin));
-    };
+    _sessionEpoch++;
+    final epoch = _sessionEpoch;
+    session.onConnectionLost = (Object error) =>
+        _handleConnectionLost(session, epoch, error);
+    // 旧接口保留兼容：不要在这里重复触发恢复（单飞会挡，但语义要干净）。
+    session.onOffline = () {};
     _session = session;
     _pushSub?.cancel();
     _pushSub = session.pushes.listen(
@@ -3796,11 +3836,11 @@ class Qq8LoginService {
     // 只有「拿到应答且 cReplyCode 非 0」（明确被拒）才把状态改回 failed。
     // 判据出处：SvcRespRegister.java:63-85 的 tag2 = cReplyCode，官方
     // msf/core/push/e.java:196-235 判 `cReplyCode == 0`。
-    unawaited(_registerInBackground(session, uin));
+    unawaited(_registerInBackground(session, uin, epoch));
     // 官方登录后立刻发这两个 JCE 检查（见 [Qq8OnlineCheck] 的注释）。
     // 我们从不发它们时，服务端只推配置类推送——`OnlinePush.*` /
     // `MessageSvc.PushNotify` 一条都不来（真机全量日志 0 命中）。
-    if (reportOnlineChecks) unawaited(_runOnlineChecks(session, uin));
+    if (reportOnlineChecks) unawaited(_runOnlineChecks(session, uin, epoch));
     session.startHeartbeat(interval: heartbeatInterval);
 
     // 上线后立刻上报一次在线状态（`StatSvc.SetStatusFromClient`，0x0B 外壳）。
@@ -3828,13 +3868,37 @@ class Qq8LoginService {
     // 立刻再打一个 PbGetMsg 会让「按序吃应答」的测试夹具错位。
     Future.delayed(startupPullDelay, () {
       // 2 秒里可能已经断线/重登——只在这个 session 还在线时拉
-      if (_session == session && _snapshot.stage == Qq8LoginStage.online) {
+      if (_session == session &&
+          epoch == _sessionEpoch &&
+          _snapshot.stage == Qq8LoginStage.online) {
         unawaited(_pullNewMessages(reason: '上线补拉'));
       }
     });
     // 兜底轮询：推送不来时靠拉（真机 11:41 一条 PushNotify 都没收到）。
     // 间隔取心跳的 1/3，错开心跳的节奏。
     _restartPullTimer();
+  }
+
+  /// 连接非预期断开后的**统一恢复入口**（单飞）。
+  ///
+  /// 只认当前会话与当前代际；断开时立刻停轮询，避免断网期间继续空转
+  /// 出一串「等待响应超时」。
+  void _handleConnectionLost(Qq8Session session, int epoch, Object error) {
+    if (!identical(_session, session) || epoch != _sessionEpoch) return;
+    if (_authLost) return; // 凭证失效已走专门路径，别再重连
+    final stage = _snapshot.stage;
+    if (stage != Qq8LoginStage.online && stage != Qq8LoginStage.connecting) {
+      return; // 已在恢复/失败态，不重复触发
+    }
+    _pullTimer?.cancel();
+    _pullTimer = null;
+    _log.w('连接已断开，进入统一恢复入口', error: error);
+    _emit(Qq8LoginSnapshot(
+      stage: Qq8LoginStage.disconnected,
+      uin: session.uin,
+      error: '连接已断开，正在尝试自动恢复',
+    ));
+    unawaited(reconnect(uin: session.uin));
   }
 
   /// 当前生效的轮询间隔（前台/后台不同）。
@@ -3884,6 +3948,42 @@ class Qq8LoginService {
   /// 一个 `PbUnReadMsgSeq` 批量覆盖所有群，成本是一次往返，不值得省。
   static const int _groupResyncEvery = 2;
 
+  /// 注册是否已确认（confirmed）。false 时在线检查降级为诊断。
+  bool _pushChannelUnconfirmed = false;
+
+  /// 最近一次注册分类（诊断用）。
+  Qq8RegisterOutcome? _lastRegisterOutcome;
+
+  /// 最近一次注册结果（只读，供测试与界面诊断）。
+  Qq8RegisterOutcome? get lastRegisterOutcome => _lastRegisterOutcome;
+
+  /// 推送通道是否已知不可用/未确认。
+  bool get pushChannelUnconfirmed => _pushChannelUnconfirmed;
+
+  /// 在途的注册请求（single-flight）。
+  Future<Qq8RegisterOutcome>? _registerInFlight;
+
+  /// 注册 single-flight：同一时刻只允许一条 `StatSvc.register` 在途。
+  ///
+  /// 真机缺陷1：上线注册 30 秒超时的同时，`StatSvc.QueryHB` 每 3 分钟又
+  /// 触发一次重注册，两条请求各自等 30 秒、日志里叠成一团。复用同一次
+  /// 结果即可——重注册本来就是这个意思。
+  Future<Qq8RegisterOutcome> _registerOnce(
+    Qq8Session session, {
+    Duration timeout = const Duration(seconds: 30),
+  }) {
+    final inFlight = _registerInFlight;
+    if (inFlight != null) {
+      _log.d('注册已在途，复用这次结果');
+      return inFlight;
+    }
+    final f = session.registerWithOutcome(timeout: timeout);
+    _registerInFlight = f;
+    return f.whenComplete(() {
+      if (identical(_registerInFlight, f)) _registerInFlight = null;
+    });
+  }
+
   /// 后台发 `StatSvc.register`，不挡上线。
   ///
   /// 三态判据：`true` = 收到且 `SvcRespRegister.cReplyCode == 0`（官方判据，
@@ -3891,15 +3991,33 @@ class Qq8LoginService {
   /// （明确被拒）；抛异常（超时）= 等价 icqq 的 `-2`，继续当成功。
   /// 只有明确被拒才回退状态——那时会话确实不可用，藏起来只会让用户
   /// 以为在线却什么都收不到。
-  Future<void> _registerInBackground(Qq8Session session, int uin) async {
-    bool ok;
+  Future<void> _registerInBackground(
+      Qq8Session session, int uin, int epoch) async {
+    final Qq8RegisterOutcome outcome;
     try {
-      ok = await session.register();
+      outcome = await _registerOnce(session, timeout: registerTimeout);
     } on Object catch (e) {
+      if (epoch != _sessionEpoch) return; // 旧会话的失败不算新会话的
       _log.w('上线注册无应答（等价 icqq -2），继续上线', error: e);
       return;
     }
-    if (ok) return;
+    if (epoch != _sessionEpoch) return;
+    _lastRegisterOutcome = outcome;
+    switch (outcome) {
+      case Qq8RegisterOutcome.confirmed:
+        _log.i('上线注册已确认（cReplyCode=0）');
+        return;
+      case Qq8RegisterOutcome.unconfirmed:
+        // 真机现场：30 秒一个字都没回来。这时服务端到底有没有把推送通道
+        // 挂上我们不知道——既不能当成功，也不该把 online 打回 failed（用户
+        // 明明能收发消息，全是靠轮询）。标记成「推送未确认」，让后面的
+        // 在线检查降级为诊断，省掉 2×8 秒的空等。
+        _pushChannelUnconfirmed = true;
+        _log.w('上线注册无回执（等价 icqq -2）：推送通道未确认，继续上线并保底轮询');
+        return;
+      case Qq8RegisterOutcome.rejected:
+        break;
+    }
     // 期间可能已经断线/重登，别把新会话的状态踩掉
     if (!identical(_session, session) || _snapshot.stage != Qq8LoginStage.online) {
       return;
@@ -3924,13 +4042,21 @@ class Qq8LoginService {
   ///
   /// 用 [Qq8LoginType.login]（= 2）发：与官方包同形（全零密钥加密 SSO 层）。
   /// 任何一条失败都只记日志——它们不是上线的前置条件，不该拖垮登录。
-  Future<void> _runOnlineChecks(Qq8Session session, int uin) async {
+  Future<void> _runOnlineChecks(Qq8Session session, int uin, int epoch) async {
+    if (_pushChannelUnconfirmed) {
+      // 注册都没回执，说明推送通道压根没谈成；这两条只是"试探服务端会不会
+      // 因为见过它们就开始推"，此刻发只会各空等 8 秒。降级为诊断：跳过。
+      _log.i('注册未确认：跳过两条在线检查（回放仅作诊断，省 16s 空等）');
+      return;
+    }
     const checks = <String>[
       Qq8OnlineCheck.cmdPhSigLcId,
       Qq8OnlineCheck.cmdGrayUinPro,
     ];
     for (final cmd in checks) {
-      if (!identical(_session, session)) return; // 期间断线/重登，别再发
+      if (!identical(_session, session) || epoch != _sessionEpoch) {
+        return; // 期间断线/重登，别再发
+      }
       final body = cmd == Qq8OnlineCheck.cmdPhSigLcId
           ? Qq8OnlineCheck.phSigLcIdPayload(uin)
           : Qq8OnlineCheck.grayUinProPayload(uin);
@@ -3988,6 +4114,13 @@ class Qq8LoginService {
     // 身份失效后定时器已被取消，但可能在取消前又入队了一次。
     if (_authLost) return;
     if (_session == null || _snapshot.stage != Qq8LoginStage.online) return;
+    // 断网期重发风暴：暂停**非必要**的轮询，让统一恢复入口去处理。
+    // 用户触发的补拉（上线补拉/前台恢复/ReqPush）不受此限。
+    final voluntary = reason != '轮询' && reason != '后台轮询';
+    if (!voluntary && _session!.resendStormSuspected) {
+      _log.d('重发风暴中，暂停本轮轮询（reason=$reason）');
+      return;
+    }
     // 防重入：定时器、上线补拉、QueryHB 触发的补拉可能撞在一起。
     // 真机 2026-10-25 11:52:29 日志里同一秒出现两组完全相同的群历史请求
     // （`拉新消息` 与 7 个 `群历史` 各打了两遍），就是并发进来的——

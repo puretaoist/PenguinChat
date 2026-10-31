@@ -58,12 +58,15 @@ Qq8RecoveryDecision _plan(
   Set<Qq8RecoveryMaterial> tried = const <Qq8RecoveryMaterial>{},
   bool networkError = false,
   bool challengeActive = false,
+  // 默认 false（= planner 默认）：只自动走已证可用的 D2 链。
+  bool allowUnverified = false,
 }) =>
     planNext(
       a: a,
       tried: tried,
       networkError: networkError,
       challengeActive: challengeActive,
+      allowUnverifiedMaterials: allowUnverified,
     );
 
 String _code(Qq8RecoveryDecision d) {
@@ -101,48 +104,82 @@ Future<void> main() async {
       _code(_plan(all, networkError: true, challengeActive: true)) ==
           'network');
 
-  stdout.writeln('[3] 按顺序挑第一个可用且没试过的材料');
+  stdout.writeln('[3] 按顺序挑第一个可用且没试过的材料（显式允许未验证分支）');
   final d1 = _plan(all);
   check('材料齐全 -> 先 d2Key', _mat(d1) == Qq8RecoveryMaterial.d2Key);
   check('attempt 从 1 起', d1 is Qq8RecoveryAttempt && d1.attempt == 1);
   check('why 非空（能进日志）', d1 is Qq8RecoveryAttempt && d1.why.isNotEmpty);
-  final d2 = _plan(all, tried: {Qq8RecoveryMaterial.d2Key});
+  final d2 = _plan(all, tried: {Qq8RecoveryMaterial.d2Key}, allowUnverified: true);
   check('试过 d2Key -> a2Key', _mat(d2) == Qq8RecoveryMaterial.a2Key);
   check('attempt = tried+1 = 2', d2 is Qq8RecoveryAttempt && d2.attempt == 2);
   final d3 = _plan(all, tried: {
     Qq8RecoveryMaterial.d2Key,
     Qq8RecoveryMaterial.a2Key,
-  });
+  }, allowUnverified: true);
   check('再试过 a2Key -> a1NoPicSig', _mat(d3) == Qq8RecoveryMaterial.a1NoPicSig);
   final d4 = _plan(all, tried: {
     Qq8RecoveryMaterial.d2Key,
     Qq8RecoveryMaterial.a2Key,
     Qq8RecoveryMaterial.a1NoPicSig,
-  });
+  }, allowUnverified: true);
   check('只剩 a2Only 时给 a2Only', _mat(d4) == Qq8RecoveryMaterial.a2Only);
   final d5 = _plan(all, tried: Qq8RecoveryMaterial.values.toSet());
   check('全试过 -> Stop(exhausted)', _code(d5) == 'exhausted');
   check('exhausted 文案提示重新登录',
       d5 is Qq8RecoveryStop && d5.message.contains('重新登录'));
 
+  stdout.writeln('[3b] 默认只自动走已证可用的材料（D2 链）');
+  check('已验证集合当前只有 d2Key',
+      qq8VerifiedRecoveryMaterials.length == 1 &&
+          qq8VerifiedRecoveryMaterials.contains(Qq8RecoveryMaterial.d2Key));
+  check('材料齐全、默认模式 -> 仍选 d2Key', _mat(_plan(all)) == Qq8RecoveryMaterial.d2Key);
+  final def2 = _plan(all, tried: {Qq8RecoveryMaterial.d2Key});
+  check('试过 d2Key、默认模式 -> Stop(unverified) 而不是继续撞 a2Key',
+      _code(def2) == 'unverified');
+  check('unverified 文案提示重新登录并说明未验证',
+      def2 is Qq8RecoveryStop &&
+          def2.message.contains('未') &&
+          def2.message.contains('重新登录'));
+  check('只剩未验证材料（d2 空、只有 A1 对）默认 -> Stop(unverified)',
+      _code(_plan(Qq8RecoveryAvailability.fromToken(
+              _token(d2: false, d2key: false, a1: true, noPicSig: true)))) ==
+          'unverified');
+  check('显式 allowUnverified 后同一票据可选 a1NoPicSig',
+      _mat(_plan(
+              Qq8RecoveryAvailability.fromToken(
+                  _token(d2: false, d2key: false, a1: true, noPicSig: true)),
+              allowUnverified: true)) ==
+          Qq8RecoveryMaterial.a1NoPicSig);
+  check('材料名映射与 token_store 常量一致',
+      qq8RecoveryMaterialName(Qq8RecoveryMaterial.d2Key) == Qq8TokenData.materialD2Key &&
+          qq8RecoveryMaterialName(Qq8RecoveryMaterial.a2Key) == Qq8TokenData.materialA2Key &&
+          qq8RecoveryMaterialName(Qq8RecoveryMaterial.a1NoPicSig) == Qq8TokenData.materialA1NoPicSig &&
+          qq8RecoveryMaterialName(Qq8RecoveryMaterial.a2Only) == Qq8TokenData.materialA2Only);
+
   stdout.writeln('[4] 材料不足时的降级路径');
   final onlyD2key = Qq8RecoveryAvailability.fromToken(_token());
   check('有 A2+D2KEY -> d2Key', _mat(_plan(onlyD2key)) == Qq8RecoveryMaterial.d2Key);
   final a1Only = Qq8RecoveryAvailability.fromToken(
       _token(d2: false, d2key: false, a1: true, noPicSig: true));
-  check('只有 A1+noPicSig -> a1NoPicSig',
-      _mat(_plan(a1Only)) == Qq8RecoveryMaterial.a1NoPicSig);
+  check('只有 A1+noPicSig -> a1NoPicSig（显式允许实验分支）',
+      _mat(_plan(a1Only, allowUnverified: true)) ==
+          Qq8RecoveryMaterial.a1NoPicSig);
+  check('只有 A1+noPicSig 且默认模式 -> Stop(unverified)',
+      _code(_plan(a1Only)) == 'unverified');
   final a1WithoutSig = Qq8RecoveryAvailability.fromToken(
       _token(d2: false, d2key: false, a1: true));
   // A1 缺 noPicSig ⇒ a1NoPicSig 不可用；但 tgt（A2）在，所以退到 a2Only
   // （a2Only 只要求有 A2；能不能真发由 loginWithToken 的入口闸门管）。
-  check('有 A1 但没 noPicSig -> 不走 a1NoPicSig，退到 a2Only',
-      _plan(a1WithoutSig) is Qq8RecoveryAttempt &&
-          _mat(_plan(a1WithoutSig)) == Qq8RecoveryMaterial.a2Only);
+  check('有 A1 但没 noPicSig -> 不走 a1NoPicSig，退到 a2Only（显式允许）',
+      _plan(a1WithoutSig, allowUnverified: true) is Qq8RecoveryAttempt &&
+          _mat(_plan(a1WithoutSig, allowUnverified: true)) ==
+              Qq8RecoveryMaterial.a2Only);
   check('A1 缺 noPicSig 时 a1NoPicSig 明确不可用',
       !a1WithoutSig.has(Qq8RecoveryMaterial.a1NoPicSig));
   final onlyA2 = Qq8RecoveryAvailability.fromToken(_token(d2: true, d2key: false));
-  check('只有 A2 -> a2Only', _mat(_plan(onlyA2)) == Qq8RecoveryMaterial.a2Only);
+  check('只有 A2 -> a2Only（显式允许）',
+      _mat(_plan(onlyA2, allowUnverified: true)) == Qq8RecoveryMaterial.a2Only);
+  check('只有 A2 且默认模式 -> Stop(unverified)', _code(_plan(onlyA2)) == 'unverified');
   final nothing = Qq8RecoveryAvailability.fromToken(null);
   check('null 票据 -> 全 false',
       !nothing.hasA2 && !nothing.hasD2Key && !nothing.hasA2Key &&
@@ -154,8 +191,11 @@ Future<void> main() async {
   // A2 = _TGT（0x10a），不是 d2 —— 2026-11 语义修正后的边界
   final a2keyOnly = Qq8RecoveryAvailability.fromToken(
       _token(d2: false, d2key: false, a2key: true));
-  check('只有 A2+A2KEY（无 d2/d2key）-> a2Key',
-      _mat(_plan(a2keyOnly)) == Qq8RecoveryMaterial.a2Key);
+  check('只有 A2+A2KEY（无 d2/d2key）-> a2Key（显式允许）',
+      _mat(_plan(a2keyOnly, allowUnverified: true)) ==
+          Qq8RecoveryMaterial.a2Key);
+  check('只有 A2+A2KEY 且默认模式 -> Stop(unverified)',
+      _code(_plan(a2keyOnly)) == 'unverified');
   check('A2KEY 材料不要求 hasD2', a2keyOnly.has(Qq8RecoveryMaterial.a2Key));
   check('tgt 非空即 hasA2（与 d2 无关）',
       Qq8RecoveryAvailability.fromToken(_token(d2: false, d2key: false)).hasA2);

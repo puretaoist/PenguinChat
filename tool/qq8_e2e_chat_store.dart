@@ -131,6 +131,10 @@ class _FlakyTransport implements Qq8Transport {
   set onFrame(void Function(Uint8List frame)? cb) => inner.onFrame = cb;
 
   @override
+  set onDisconnected(void Function(Object error)? cb) =>
+      inner.onDisconnected = cb;
+
+  @override
   Future<void> close() async {
     dead = true;
     await inner.close();

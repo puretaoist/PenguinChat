@@ -35,6 +35,13 @@ class MessageContent extends StatelessWidget {
   /// 老测试因此不用改。
   final String? Function(Segment segment)? localMedia;
 
+  /// 「确保这段媒体已在本地，返回路径」的钩子（来自 [ChatStore.ensureMedia]）。
+  ///
+  /// 为 null 时图片块只做「本地有就显示 / 没有就直链或占位」，不主动下载。
+  /// 传进来之后，图片块在首帧没有本地文件时会自己补一次下载（缺陷3：首屏
+  /// 只显示文件名占位卡、非要重启才出图——预取时机错过就再没人触发过）。
+  final Future<String?> Function(Segment segment)? ensureMedia;
+
   /// 点文件块时要做什么（下载/另存）。
   ///
   /// 为 null 时文件块只是静态展示——**气泡自己不做网络请求**：它不知道
@@ -52,6 +59,7 @@ class MessageContent extends StatelessWidget {
     required this.message,
     required this.isOut,
     this.localMedia,
+    this.ensureMedia,
     this.onOpenFile,
     this.trailing,
   });
@@ -128,6 +136,7 @@ class MessageContent extends StatelessWidget {
             seg: s,
             isOut: isOut,
             localMedia: localMedia,
+            ensureMedia: ensureMedia,
           ));
         case RecordSegment():
           flush();
@@ -332,25 +341,91 @@ class _MediaRow extends StatelessWidget {
 }
 
 /// 图片块：能加载就显示，不能就显示占位（带文件名与尺寸，便于排查）。
-class _ImageBlock extends StatelessWidget {
+///
+/// 有 [ensureMedia] 时会在首帧补一次下载（每条媒体只补一次）：
+/// 预取（[ChatStore._prefetchMedia]）是尽力而为的，插入时机不对——比如消息
+/// 在缓存索引就绪之前就落库——那一次失败之后再没人重试，表现就是「首屏
+/// 只有文件名占位卡，重启才出图」（真机缺陷3）。补这一次，气泡自己就自愈了。
+class _ImageBlock extends StatefulWidget {
   final ImageSegment seg;
   final bool isOut;
   final String? Function(Segment segment)? localMedia;
+  final Future<String?> Function(Segment segment)? ensureMedia;
 
   const _ImageBlock({
     required this.seg,
     required this.isOut,
     this.localMedia,
+    this.ensureMedia,
   });
+
+  @override
+  State<_ImageBlock> createState() => _ImageBlockState();
+}
+
+class _ImageBlockState extends State<_ImageBlock> {
+  ImageSegment get seg => widget.seg;
+  bool get isOut => widget.isOut;
+  String? Function(Segment segment)? get localMedia => widget.localMedia;
+  Future<String?> Function(Segment segment)? get ensureMedia =>
+      widget.ensureMedia;
+
+  /// 已经补过下载的那条媒体的键；同一个键只补一次，失败也不无限重试。
+  String? _ensureTried;
+  bool _ensureInFlight = false;
+
+  String get _mediaKey => seg.file.isNotEmpty ? seg.file : (seg.url ?? '');
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleEnsure();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ImageBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.seg.file != widget.seg.file) {
+      _ensureTried = null;
+      _ensureInFlight = false;
+    }
+    _scheduleEnsure();
+  }
+
+  /// 首帧没有本地文件时补一次下载。放在帧后跑：`initState` 里不能直接拿
+  /// 异步结果，而且 `build` 必须保持同步。
+  void _scheduleEnsure() {
+    final ensure = ensureMedia;
+    if (ensure == null || seg.flash) return;
+    if (_ensureInFlight || _ensureTried == _mediaKey) return;
+    if (_localPath() != null) return;
+    final key = _mediaKey;
+    _ensureInFlight = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _ensureInFlight = false;
+        return;
+      }
+      // 失败也算试过：缓存里确实没有就是没有，重建一次重试一次会把
+      // CDN 404 刷成流量。
+      ensure(seg).whenComplete(() {
+        if (!mounted) return;
+        setState(() {
+          _ensureInFlight = false;
+          _ensureTried = key;
+        });
+      });
+    });
+  }
 
   /// 已经落到本地的文件路径（没有或已不存在则为 null）。
   ///
   /// 存在性检查不能省：清理缓存后索引会自愈，但 `build` 可能先于自愈跑，
   /// 那时路径还在、文件已经没了，`Image.file` 会抛异常刷屏。
   String? _localPath() {
-    final p = localMedia?.call(seg);
-    if (p == null || p.isEmpty) return null;
     try {
+      final p = localMedia?.call(seg);
+      if (p == null || p.isEmpty) return null;
       return File(p).existsSync() ? p : null;
     } catch (_) {
       return null;

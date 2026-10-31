@@ -106,6 +106,15 @@ class Qq8TokenData {
   final int? invalidatedAtMs;
   final int? invalidatedType;
 
+  /// 这次失效结论**只针对哪条恢复材料**（[materialD2Key] 等）；null = 旧的
+  /// 整票语义（服务端判这张票整体不可用，或来自没有该字段的旧票据文件）。
+  ///
+  /// 为什么要它：成功响应里同时可能有 D2 链和 A1 对两套材料，服务端回的
+  /// 16/155 只对我们这次**实际发出去的那条分支**成立。旧实现在任何一次
+  /// 16/155 上都把整张票标死，导致"另一条材料其实还能试"被一起否掉——
+  /// 这是把"某条分支失效"错记成"所有材料都被服务端作废"。
+  final String? invalidatedMaterial;
+
   Qq8TokenData({
     required this.uin,
     required this.savedAt,
@@ -125,6 +134,7 @@ class Qq8TokenData {
     this.lifetimeTlvHex,
     this.invalidatedAtMs,
     this.invalidatedType,
+    this.invalidatedMaterial,
   }) : a1 = a1 ?? Uint8List(0);
 
   bool get usable => d2.isNotEmpty && d2key.isNotEmpty;
@@ -147,6 +157,55 @@ class Qq8TokenData {
   /// 服务端是否已经判过这张票失效（冷启动别白试）。
   bool get invalidated => invalidatedAtMs != null;
 
+  /// 失效/恢复材料的名字常量。用字符串而不是反向 import
+  /// `recovery_planner.dart` 的枚举：planner 依赖本文件，反向依赖会成环。
+  static const String materialD2Key = 'd2Key';
+  static const String materialA2Key = 'a2Key';
+  static const String materialA1NoPicSig = 'a1NoPicSig';
+  static const String materialA2Only = 'a2Only';
+
+  /// 这次失效结论是否覆盖 [material] 这条恢复材料。
+  ///
+  /// * 旧票（[invalidatedMaterial] == null）：按整票失效处理，对任何材料都
+  ///   返回 true —— 没有证据时宁可保守，绝不无端洗白旧结论去自动发包；
+  /// * 带材料范围：只有那一条材料为 true，其它材料仍可尝试。
+  bool materialKnownInvalid(String material) {
+    if (invalidatedAtMs == null) return false;
+    if (invalidatedMaterial == null) return true; // legacy 整票语义
+    return invalidatedMaterial == material;
+  }
+
+  /// 记下"服务端判这张票失效"，并且**精确写入失效范围**。
+  ///
+  /// 不用 [copyWith]：它把 null 当成"保持原值"，无法把上一次的材料范围清成
+  /// 整票语义，会把两次不同的失效结论叠在一起。
+  Qq8TokenData markInvalidated({
+    required int atMs,
+    required int type,
+    String? material,
+  }) =>
+      Qq8TokenData(
+        uin: uin,
+        savedAt: savedAt,
+        tgt: tgt,
+        d2: d2,
+        d2key: d2key,
+        sigKey: sigKey,
+        ticketKey: ticketKey,
+        srmToken: srmToken,
+        a1: a1,
+        a2Key: a2Key,
+        noPicSig: noPicSig,
+        issuedAtMs: issuedAtMs,
+        renewedAtMs: renewedAtMs,
+        expireAtMs: expireAtMs,
+        serverTimeMs: serverTimeMs,
+        lifetimeTlvHex: lifetimeTlvHex,
+        invalidatedAtMs: atMs,
+        invalidatedType: type,
+        invalidatedMaterial: material,
+      );
+
   /// 复制并覆盖部分字段。**传 null 表示保持原值**——不引入哨兵值。
   Qq8TokenData copyWith({
     String? savedAt,
@@ -166,6 +225,7 @@ class Qq8TokenData {
     String? lifetimeTlvHex,
     int? invalidatedAtMs,
     int? invalidatedType,
+    String? invalidatedMaterial,
   }) =>
       Qq8TokenData(
         uin: uin,
@@ -186,6 +246,8 @@ class Qq8TokenData {
         lifetimeTlvHex: lifetimeTlvHex ?? this.lifetimeTlvHex,
         invalidatedAtMs: invalidatedAtMs ?? this.invalidatedAtMs,
         invalidatedType: invalidatedType ?? this.invalidatedType,
+        invalidatedMaterial:
+            invalidatedMaterial ?? this.invalidatedMaterial,
       );
 
   /// 这张票现在还能用吗。**纯函数**（时间由调用方给，便于自测）。
@@ -193,7 +255,11 @@ class Qq8TokenData {
   /// 原则：只认服务端明确告诉我们的东西。没给到期时间就是 [Qq8TokenValidity.unknown]，
   /// 而 unknown **仍然要去试**——服务端才是最终裁决者，本地不许猜 TTL。
   Qq8TokenValidity evaluateValidity(DateTime now) {
-    if (invalidated) return Qq8TokenValidity.invalidated;
+    // 只有 legacy 整票失效才在这里一刀切判死；带材料范围的失效不拦整票，
+    // 具体某条材料是否可用由 planner 的 availability 逐条判断。
+    if (invalidated && invalidatedMaterial == null) {
+      return Qq8TokenValidity.invalidated;
+    }
     final expire = expireAtMs;
     if (expire != null) {
       final nowMs = now.millisecondsSinceEpoch;
@@ -252,6 +318,8 @@ class Qq8TokenData {
         if (lifetimeTlvHex != null) 'lifetime_tlv': lifetimeTlvHex,
         if (invalidatedAtMs != null) 'invalidated_at_ms': invalidatedAtMs,
         if (invalidatedType != null) 'invalidated_type': invalidatedType,
+        if (invalidatedMaterial != null)
+          'invalidated_material': invalidatedMaterial,
       };
 
   static Qq8TokenData fromJson(Map<String, dynamic> j) {
@@ -268,6 +336,13 @@ class Qq8TokenData {
       final v = j[k];
       if (v is int) return v;
       if (v is num) return v.toInt();
+      return null;
+    }
+
+    /// 宽松读取可选字符串：缺键 / 空串 / 非字符串 → null（旧文件兼容）。
+    String? stringField(String k) {
+      final v = j[k];
+      if (v is String && v.isNotEmpty) return v;
       return null;
     }
 
@@ -304,6 +379,7 @@ class Qq8TokenData {
       lifetimeTlvHex: lifetime is String && lifetime.isNotEmpty ? lifetime : null,
       invalidatedAtMs: intField('invalidated_at_ms'),
       invalidatedType: intField('invalidated_type'),
+      invalidatedMaterial: stringField('invalidated_material'),
     );
   }
 }
@@ -350,7 +426,23 @@ class FileQq8TokenStore implements Qq8TokenStore {
   @override
   Future<void> save(Qq8TokenData data) async {
     await dir.create(recursive: true);
-    await _file(data.uin).writeAsString(jsonEncode(data.toJson()), flush: true);
+    // 原子落盘：先写临时文件再 rename 覆盖。直接 writeAsString 到目标文件时，
+    // 写到一半被杀进程/断电会留下半截 JSON，下次 load 解析失败 → 用户被当成
+    // "没有票据"再走一遍登录，还可能把旧的有效票覆盖掉。
+    final target = _file(data.uin);
+    final tmp = File('${target.path}.tmp');
+    try {
+      await tmp.writeAsString(jsonEncode(data.toJson()), flush: true);
+      await tmp.rename(target.path);
+    } on Object {
+      // 失败不留半截临时文件（目标文件保持原样）。
+      try {
+        if (await tmp.exists()) await tmp.delete();
+      } on Object {
+        // 清理失败也不掩盖原始异常
+      }
+      rethrow;
+    }
   }
 
   @override
@@ -432,15 +524,29 @@ class EncryptedFileQq8TokenStore implements Qq8TokenStore {
       utf8.encode(jsonEncode(data.toJson())),
       secretKey: key,
     );
-    await _file(data.uin).writeAsString(
-      jsonEncode(<String, Object?>{
-        'v': 1,
-        'nonce': base64Encode(box.nonce),
-        'ct': base64Encode(box.cipherText),
-        'mac': base64Encode(box.mac.bytes),
-      }),
-      flush: true,
-    );
+    // 原子落盘（同 FileQq8TokenStore.save 的理由）：半截密文文件解密必失败，
+    // 会让用户被误判成"没有票据"。先写 .tmp 再 rename。
+    final target = _file(data.uin);
+    final tmp = File('${target.path}.tmp');
+    try {
+      await tmp.writeAsString(
+        jsonEncode(<String, Object?>{
+          'v': 1,
+          'nonce': base64Encode(box.nonce),
+          'ct': base64Encode(box.cipherText),
+          'mac': base64Encode(box.mac.bytes),
+        }),
+        flush: true,
+      );
+      await tmp.rename(target.path);
+    } on Object {
+      try {
+        if (await tmp.exists()) await tmp.delete();
+      } on Object {
+        // 清理失败也不掩盖原始异常
+      }
+      rethrow;
+    }
   }
 
   @override

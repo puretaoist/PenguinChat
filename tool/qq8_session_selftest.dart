@@ -10,6 +10,7 @@
 /// ```
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -167,6 +168,79 @@ Uint8List _registerResp(int replyCode) {
     // 不做强断言，避免测试自身算错；由 body 回读兜底
   }
   return (cmd: cmd, body: body);
+}
+
+/// 只发不收的传输层：write 成功但永不投递响应（模拟"断网但 socket 没报错"）。
+class _HangingTransport implements Qq8Transport {
+  final List<Uint8List> sent = <Uint8List>[];
+  void Function(Uint8List frame)? _onFrame;
+  void Function(Object error)? _onDisconnected;
+  bool _connected = false;
+
+  @override
+  Future<void> connect() async => _connected = true;
+
+  @override
+  Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async {
+    sent.add(payload);
+    return Completer<Uint8List>().future; // 永不返回
+  }
+
+  @override
+  Future<void> write(Uint8List packet) async => sent.add(packet);
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) => _onDisconnected = cb;
+
+  void emitDisconnect([Object? error]) =>
+      _onDisconnected?.call(error ?? StateError('对端关闭'));
+
+  @override
+  Future<void> close() async => _connected = false;
+
+  @override
+  bool get isConnected => _connected;
+}
+
+/// 第 n 次写慢 delays[n]，并按 frameOf(n) 投递响应（null = 永不投递）。
+/// 用来验证「首发+重发共享一个总时限」。
+class _SlowResendTransport implements Qq8Transport {
+  _SlowResendTransport(this.delays, this.frameOf);
+  final List<Duration> delays;
+  final Uint8List? Function(int index) frameOf;
+  int _i = 0;
+  void Function(Uint8List frame)? _onFrame;
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async =>
+      frameOf(_i++) ?? Completer<Uint8List>().future;
+
+  @override
+  Future<void> write(Uint8List packet) async {
+    final i = _i++;
+    final d = i < delays.length ? delays[i] : delays.last;
+    await Future<void>.delayed(d);
+    final f = frameOf(i);
+    if (f != null) _onFrame?.call(f);
+  }
+
+  @override
+  set onFrame(void Function(Uint8List frame)? cb) => _onFrame = cb;
+
+  @override
+  set onDisconnected(void Function(Object error)? cb) {}
+
+  @override
+  Future<void> close() async {}
+
+  @override
+  bool get isConnected => true;
 }
 
 Future<void> main() async {
@@ -347,6 +421,132 @@ Future<void> main() async {
 
   await session.close();
   checkEq('关闭后 isOnline = false', session.isOnline, false);
+
+  // ------------------------------------------------------------------
+  // 7. 断链统一收敛（缺陷2）：挂起请求立即终结、上报幂等、close 幂等
+  // ------------------------------------------------------------------
+  section('7. 断链统一收敛（缺陷2）');
+  final hang = _HangingTransport();
+  final s2 = Qq8Session(
+    transport: hang,
+    profile: qq8ProfileQQ8950,
+    uin: 10001,
+    device: _device(),
+    sessionId: hex('01020304'),
+    ecdhPublicKey: hex('04${'11' * 64}'),
+    ecdhShareKey: hex('f3df7dfb6d55b17975d908d8228dee11'),
+    sig: Qq8SigInfo(d2key: _d2key),
+  );
+  await s2.start();
+  var lost = 0;
+  Object? lostErr;
+  var offlineCount = 0;
+  s2.onConnectionLost = (Object e) {
+    lost++;
+    lostErr = e;
+  };
+  s2.onOffline = () => offlineCount++;
+
+  var pulled = s2.sendUni('MessageSvc.PbGetMsg', Uint8List(0), seq: 901,
+      timeout: const Duration(seconds: 30));
+  final sw = Stopwatch()..start();
+  await Future<void>.delayed(const Duration(milliseconds: 30));
+  hang.emitDisconnect();
+  var pullOutcome = '没有抛出';
+  try {
+    await pulled;
+  } on Object catch (e) {
+    pullOutcome = e.toString();
+  }
+  sw.stop();
+  checkEq('挂起请求被立即终结（不等 30s 超时）', sw.elapsedMilliseconds < 2000, true,
+      );
+  checkEq('终结原因是「连接已断开」', pullOutcome.contains('连接已断开'), true);
+  checkEq('断链上报带原因', lostErr != null, true);
+  checkEq('onConnectionLost 已触发', lost, 1);
+  // 再来一次断开事件：必须幂等
+  hang.emitDisconnect();
+  await Future<void>.delayed(const Duration(milliseconds: 10));
+  checkEq('重复断开事件幂等（只报一次）', lost, 1);
+  checkEq('兼容回调 onOffline 也只触发一次', offlineCount, 1);
+  // 断链后再发包：立刻失败，不再写进 socket
+  final afterCount = hang.sent.length;
+  var afterOutcome = '没有抛出';
+  try {
+    await s2.sendUni('MessageSvc.PbGetMsg', Uint8List(0), seq: 902,
+        timeout: const Duration(seconds: 5));
+  } on Object catch (e) {
+    afterOutcome = e.toString();
+  }
+  checkEq('断链后新请求立即失败', afterOutcome.contains('连接已断开'), true);
+  checkEq('断链后不再写 socket', hang.sent.length, afterCount);
+  await s2.close();
+  await s2.close(); // 重复关闭必须安全
+  ok('重复 close 安全');
+
+  // 总时限：两次应答都慢 40ms，单请求 timeout 60ms；
+  // 重发必须共享同一预算，总耗时不能逼近 80ms+。
+  // 第 1 次 40ms 回 -10008；第 2 次永不回。
+  // 旧语义：第二次还会再等满 100ms（总 140ms）。新语义：共享 100ms 预算。
+  final slow = _SlowResendTransport(
+    const <Duration>[Duration(milliseconds: 40), Duration(seconds: 10)],
+    (int i) => i == 0
+        ? _frame(seq: 911, cmd: 'OidbSvc.0x480_9_IMCore', retcode: -10008)
+        : null,
+  );
+  final s3 = Qq8Session(
+    transport: slow,
+    profile: qq8ProfileQQ8950,
+    uin: 10001,
+    device: _device(),
+    sessionId: hex('01020304'),
+    ecdhPublicKey: hex('04${'11' * 64}'),
+    ecdhShareKey: hex('f3df7dfb6d55b17975d908d8228dee11'),
+    sig: Qq8SigInfo(d2key: _d2key),
+  );
+  await s3.start();
+  final sw2 = Stopwatch()..start();
+  var timeoutOutcome = '没有抛出';
+  try {
+    await s3.sendUni('OidbSvc.0x480_9_IMCore', Uint8List(0), seq: 911,
+        timeout: const Duration(milliseconds: 100));
+  } on Object catch (e) {
+    timeoutOutcome = e.toString();
+  }
+  sw2.stop();
+  checkEq('重发共享总时限（不把 100ms 翻成 140ms）',
+      sw2.elapsedMilliseconds < 125, true);
+  checkEq('总时限耗尽按超时上报', timeoutOutcome.contains('超时'), true);
+  await s3.close();
+
+  // 重发风暴：连续 3 个请求都耗尽重发预算 ⇒ resendStormSuspected
+  final stormFrames = <Uint8List>[
+    for (var i = 0; i < 6; i++)
+      _frame(seq: 921, cmd: 'OidbSvc.0x480_9_IMCore', retcode: -10008),
+  ];
+  final stormTran = Qq8ScriptedTransport(stormFrames);
+  final s4 = Qq8Session(
+    transport: stormTran,
+    profile: qq8ProfileQQ8950,
+    uin: 10001,
+    device: _device(),
+    sessionId: hex('01020304'),
+    ecdhPublicKey: hex('04${'11' * 64}'),
+    ecdhShareKey: hex('f3df7dfb6d55b17975d908d8228dee11'),
+    sig: Qq8SigInfo(d2key: _d2key),
+  );
+  await s4.start();
+  checkEq('风暴前不判风暴', s4.resendStormSuspected, false);
+  for (var i = 0; i < 3; i++) {
+    try {
+      await s4.sendUni('OidbSvc.0x480_9_IMCore', Uint8List(0), seq: 921,
+          timeout: const Duration(seconds: 5));
+    } on Object {
+      // 预期：三次都耗尽重发预算后抛出
+    }
+  }
+  checkEq('连续 3 次耗尽重发预算 → 疑云置位', s4.resendStormSuspected, true);
+  await s4.close();
 
   stdout.writeln('\n${'=' * 62}');
   stdout.writeln('通过 $_pass 项，失败 $_fail 项');

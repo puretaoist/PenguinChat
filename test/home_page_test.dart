@@ -32,6 +32,8 @@ import 'package:qqclient/client_api/session_providers.dart';
 import 'package:qqclient/kernel/onebot/backend_profile.dart';
 import 'package:qqclient/kernel/safety/safety_gate.dart';
 import 'package:qqclient/ui/pages/home_page.dart';
+import 'package:qqclient/ui/widgets/chat_header.dart';
+import 'package:qqclient/ui/widgets/chat_input_bar.dart';
 import 'package:qqclient/ui/widgets/message_bubble.dart';
 
 import 'support/fake_session.dart';
@@ -68,7 +70,7 @@ Future<void> _makeStore() async {
   await store.bootstrap();
 }
 
-Widget _wrap() => ProviderScope(
+Widget _wrap({EdgeInsets safePadding = EdgeInsets.zero}) => ProviderScope(
       overrides: <Override>[
         dataDirProvider.overrideWithValue(Directory.systemTemp),
         backendRegistryProvider.overrideWithValue(
@@ -79,7 +81,18 @@ Widget _wrap() => ProviderScope(
           (ref) => (session: session, store: store),
         ),
       ],
-      child: const MaterialApp(home: HomePage()),
+      child: MaterialApp(
+        home: const HomePage(),
+        // 把状态栏/刘海/手势条伪装出来：真机上这些值来自系统，
+        // widget 测试里只能用 MediaQuery 覆盖。
+        builder: (BuildContext context, Widget? child) {
+          final MediaQueryData mq = MediaQuery.of(context);
+          return MediaQuery(
+            data: mq.copyWith(padding: safePadding, viewPadding: safePadding),
+            child: child ?? const SizedBox.shrink(),
+          );
+        },
+      ),
     );
 
 /// 收尾：卸载 widget 树（让 provider 退订）→ 顺手释放 store/session → 删临时目录。
@@ -108,6 +121,37 @@ void _wideScreen(WidgetTester tester) {
 
 void main() {
   setUp(_makeStore);
+
+  testWidgets('竖屏：顶部/底部安全区都让开（缺陷5：标题压状态栏）', (tester) async {
+    // 360x800 逻辑像素的竖屏手机，状态栏 44、手势条 34。
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    const EdgeInsets insets = EdgeInsets.only(top: 44, bottom: 34);
+    await tester.pumpWidget(_wrap(safePadding: insets));
+    await tester.pumpAndSettle();
+
+    // 列表页：第一行会话不能被状态栏压住
+    final double listTop =
+        tester.getTopLeft(find.byKey(const ValueKey('chat-row-private_20002'))).dy;
+    expect(listTop, greaterThanOrEqualTo(insets.top),
+        reason: '会话行要落在状态栏下面');
+
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+
+    final double headerTop = tester.getTopLeft(find.byType(ChatHeader)).dy;
+    expect(headerTop, greaterThanOrEqualTo(insets.top),
+        reason: '聊天标题不能在状态栏里');
+
+    // 输入栏背景可以铺到屏幕底（edge-to-edge），但**内容**（输入框）必须让开
+    // 手势条，而且只让一次。
+    expect(find.byType(ChatInputBar), findsOneWidget);
+    final double inputBottom = tester.getBottomLeft(find.byType(TextField)).dy;
+    expect(inputBottom, lessThanOrEqualTo(800 - insets.bottom),
+        reason: '输入框要避开手势条，而且不能把留白算两遍');
+  });
 
   testWidgets('发图片：点 📎 → 填路径 → 真的发出一个 ImageSegment', (tester) async {
     await tester.pumpWidget(_wrap());

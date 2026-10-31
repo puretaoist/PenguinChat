@@ -532,31 +532,40 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 键盘每一帧动画都会把整个主页（列表+消息+头像）重建一遍——
     // 这就是「键盘呼出变卡」的来源。sizeOf 只在窗口尺寸真变时重建。
     final wide = MediaQuery.sizeOf(context).width >= 720;
+    // 顶部/左右安全区在**根布局**统一消费一次（缺陷5：竖屏时聊天标题
+    // 会和系统状态栏的时间/日期叠在一起）。底部不在这里管——输入栏自己
+    // 有 SafeArea(top:false)，两层都加会把底部留白算两遍。
     if (wide) {
       return Scaffold(
         backgroundColor: TelegramColors.bgApp,
-        body: Row(
-          children: [
-            SizedBox(
-              width: TelegramMetrics.sidebarWidth,
-              child: sidebar,
-            ),
-            Container(width: 1, color: TelegramColors.divider),
-            Expanded(child: _buildChatPane(chats, store)),
-          ],
+        body: SafeArea(
+          bottom: false,
+          child: Row(
+            children: [
+              SizedBox(
+                width: TelegramMetrics.sidebarWidth,
+                child: sidebar,
+              ),
+              Container(width: 1, color: TelegramColors.divider),
+              Expanded(child: _buildChatPane(chats, store)),
+            ],
+          ),
         ),
       );
     }
     // 窄屏（手机）：列表与对话二选一
     return Scaffold(
       backgroundColor: TelegramColors.bgApp,
-      body: _showChatList
-          ? sidebar
-          : _buildChatPane(
-              chats,
-              store,
-              onBack: () => setState(() => _showChatList = true),
-            ),
+      body: SafeArea(
+        bottom: false,
+        child: _showChatList
+            ? sidebar
+            : _buildChatPane(
+                chats,
+                store,
+                onBack: () => setState(() => _showChatList = true),
+              ),
+      ),
     );
   }
 
@@ -1485,6 +1494,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                     child: MessageBubble(
                                       message: m,
                                       localMedia: store?.mediaPathOf,
+                                      ensureMedia: store?.ensureMedia,
                                       onOpenFile: (seg) =>
                                           unawaited(_downloadFileMessage(seg)),
                                       onRetry:

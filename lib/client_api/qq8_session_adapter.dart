@@ -221,12 +221,15 @@ class Qq8SessionAdapter implements Session {
             : before!.time!.millisecondsSinceEpoch ~/ 1000,
         count: count,
       );
+      // 游标看**原始页**有没有消息，不看过滤后的可见条数：一页全是
+      // 删除占位时，可见列表为空但历史远没到头。
       final messages = <ChatMessage>[
-        for (final m in page.messages) _toChatMessage(m),
+        for (final m in page.messages.map(_toChatMessage).whereType<ChatMessage>())
+          m,
       ]..sort((a, b) => b.time.compareTo(a.time));
       return HistoryPage(
         messages,
-        next: (page.isComplete != true && messages.isNotEmpty)
+        next: (page.isComplete != true && page.messages.isNotEmpty)
             ? HistoryCursor(time: messages.last.time)
             : null,
       );
@@ -246,11 +249,13 @@ class Qq8SessionAdapter implements Session {
       endSeq: end,
     );
     final messages = <ChatMessage>[
-      for (final m in page.messages) _toChatMessage(m),
+      for (final m in page.messages.map(_toChatMessage).whereType<ChatMessage>())
+        m,
     ]..sort((a, b) => b.time.compareTo(a.time));
     return HistoryPage(
       messages,
-      next: (begin > 1 && messages.isNotEmpty)
+      // 同上：用原始页判"还有更早的"，别让全占位页把游标误判成到头。
+      next: (begin > 1 && page.messages.isNotEmpty)
           ? HistoryCursor(seq: begin - 1)
           : null,
     );
@@ -624,7 +629,8 @@ class Qq8SessionAdapter implements Session {
         }
         final nick = message.fromNick;
         if (nick != null && nick.isNotEmpty) _nickCache[message.fromUin] = nick;
-        _emit(SessionMessage(_toChatMessage(message)));
+        final cm = _toChatMessage(message);
+        if (cm != null) _emit(SessionMessage(cm));
       case Qq8KickPush(:final hint):
         _log('warn', '被服务端踢下线：$hint');
       // 唤醒类推送：只说明"那边有新消息"、不带正文，正文靠一轮拉取拿。
@@ -652,8 +658,24 @@ class Qq8SessionAdapter implements Session {
       ? 'https://p.qlogo.cn/gh/$id/$id/100'
       : 'https://q1.qlogo.cn/g?b=qq&nk=$id&s=100';
 
-  ChatMessage _toChatMessage(Qq8IncomingMessage m) {
+  /// 内核消息 → 可展示的 [ChatMessage]；不可展示的"幽灵占位"返回 null。
+  ///
+  /// 真机缺陷4：群历史里混进了 13 条 time=0、senderId=0、正文「[已删除]」的记录，
+  /// 被原样入库后渲染成 1970 年 1 月 1 日的气泡。判定必须**三个条件同时成立**
+  /// （时间、发送者、正文），不能只按中文文案删——文案是服务端给的，可能变、
+  /// 也可能是真人发的同一句话。
+  /// 服务端的「已删除」占位：三个条件同时成立才算（见 [_toChatMessage]）。
+  ///
+  /// 单独拎出来是为了能纯函数测试——不必造整条连接。
+  static bool isDeletedPlaceholder(Qq8IncomingMessage m) =>
+      m.time <= 0 && m.fromUin == 0 && m.text == '[已删除]';
+
+  ChatMessage? _toChatMessage(Qq8IncomingMessage m) {
     final self = service.snapshot.uin ?? 0;
+    if (isDeletedPlaceholder(m)) {
+      _log('debug', '丢弃服务端删除占位（time=0 sender=0 text=[已删除]）');
+      return null;
+    }
     // 判"是不是群消息"不能只看 kind：群临时会话（群成员私聊 / 群内临时消息）
     // 的内核 kind 仍是 c2c，但 msg_head 里带着 group_code。
     // 真机 2026-10-26 现场：这类消息按 c2c 取 chatId 会得到群号，
