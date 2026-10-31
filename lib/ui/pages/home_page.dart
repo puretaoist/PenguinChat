@@ -656,12 +656,19 @@ class _HomePageState extends ConsumerState<HomePage> {
       unawaited(_ensureOpened(_resolvedChatId!));
     }
 
+    // 用 sizeOf 而不是 of：of 订阅整个 MediaQuery（含 viewInsets），
+    // 键盘每一帧动画都会把整个主页（列表+消息+头像）重建一遍——
+    // 这就是「键盘呼出变卡」的来源。sizeOf 只在窗口尺寸真变时重建。
+    final wide = MediaQuery.sizeOf(context).width >= 720;
+
     // 侧栏抽成哑视图（ChatListPanel）：build 里组装一次，宽窄两态共用。
+    // 窄屏只有"列表/对话二选一"，列表页不存在"当前打开的会话"，所以不传
+    // 选中项——否则第一个会话会常年挂着一层选中底色，看起来像误选中。
     final sidebar = ChatListPanel(
       chats: chats,
       store: store,
       connecting: widget.connecting,
-      selectedChatId: _resolvedChatId,
+      selectedChatId: wide ? _resolvedChatId : null,
       onOpenChat: _openChat,
       onLongPressChat: _showChatActions,
       onRefresh: _refreshChats,
@@ -673,10 +680,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       onOpenQq8Login: _openQq8Login,
     );
 
-    // 用 sizeOf 而不是 of：of 订阅整个 MediaQuery（含 viewInsets），
-    // 键盘每一帧动画都会把整个主页（列表+消息+头像）重建一遍——
-    // 这就是「键盘呼出变卡」的来源。sizeOf 只在窗口尺寸真变时重建。
-    final wide = MediaQuery.sizeOf(context).width >= 720;
     // 顶部/左右安全区在**根布局**统一消费一次（缺陷5：竖屏时聊天标题
     // 会和系统状态栏的时间/日期叠在一起）。底部不在这里管——输入栏自己
     // 有 SafeArea(top:false)，两层都加会把底部留白算两遍。

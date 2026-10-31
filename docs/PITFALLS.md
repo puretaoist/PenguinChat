@@ -4322,3 +4322,18 @@ Dart 侧开销。
 **处理**：启动性能一律用 `bash scripts/build-local.sh release` 的产物量
 （`--split-per-abi`，装 `app-arm64-v8a-release.apk`）；debug 只用来验证功能。
 
+
+## C102 窄屏的会话列表不要传 `selectedChatId`，否则第一个会话常年"被选中"（2026-10-31）
+
+**现象**：手机（窄屏）会话列表里第一条一直带着一层紫色选中底色，看着像误点。
+
+**根因**：`HomePage` 把 `selectedChatId: _resolvedChatId` 两个断点共用，而
+`_resolveSelected()`（lib/ui/pages/home_page.dart:739-745）在没有用户点选时会
+**默认取主列表第一个**（为宽屏两栏的右侧对话面板准备）。窄屏是"列表/对话
+二选一"，列表页根本不存在"当前打开的会话"，于是这个默认选中变成了纯粹的
+视觉噪音。
+
+**处理**：`selectedChatId: wide ? _resolvedChatId : null`（`wide = MediaQuery.sizeOf(context).width >= 720`，
+并把 `wide` 的计算提前到 sidebar 组装之前）。注意 `_resolvedChatId` 本身仍要
+保留——窄屏的 `_send/_ensureOpened` 依赖它。
+
