@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_online_check.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_jce.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_online_check.dart';
 
 /// 校验 [Qq8OnlineCheck] 里那两个「抓包回放」请求体没有抄错。
 ///

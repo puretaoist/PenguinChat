@@ -15,13 +15,13 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/qq8_login_service.dart';
-import 'package:qqclient/client_api/qq8_providers.dart';
-import 'package:qqclient/client_api/session_providers.dart';
-import 'package:qqclient/kernel/onebot/backend_profile.dart';
-import 'package:qqclient/kernel/safety/safety_gate.dart';
-import 'package:qqclient/ui/pages/qq8_connect_page.dart';
-import 'package:qqclient/ui/widgets/real_server_panel.dart';
+import 'package:penguinchat/client_api/qq8_login_service.dart';
+import 'package:penguinchat/client_api/qq8_providers.dart';
+import 'package:penguinchat/client_api/session_providers.dart';
+import 'package:penguinchat/kernel/onebot/backend_profile.dart';
+import 'package:penguinchat/kernel/safety/safety_gate.dart';
+import 'package:penguinchat/ui/pages/qq8_connect_page.dart';
+import 'package:penguinchat/ui/widgets/real_server_panel.dart';
 
 Widget _wrapView(Qq8ConnectView view) =>
     MaterialApp(home: Scaffold(body: view));

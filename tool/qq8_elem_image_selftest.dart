@@ -16,8 +16,8 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_elem.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_elem.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_pb.dart';
 
 int _pass = 0;
 int _fail = 0;

@@ -21,13 +21,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/session_providers.dart';
-import 'package:qqclient/kernel/onebot/backend_profile.dart';
-import 'package:qqclient/kernel/safety/safety_gate.dart';
-import 'package:qqclient/ui/pages/connect_page.dart';
-import 'package:qqclient/ui/pages/home_page.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/theme/theme_mode.dart';
+import 'package:penguinchat/client_api/session_providers.dart';
+import 'package:penguinchat/kernel/onebot/backend_profile.dart';
+import 'package:penguinchat/kernel/safety/safety_gate.dart';
+import 'package:penguinchat/ui/pages/connect_page.dart';
+import 'package:penguinchat/ui/pages/home_page.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/theme/theme_mode.dart';
 
 /// 与 `main.dart` 相同的三处 override，只是注入测试用的路径。
 ///

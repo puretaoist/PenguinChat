@@ -8,10 +8,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/widgets/chat_header.dart';
-import 'package:qqclient/ui/widgets/telegram_avatar.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/widgets/chat_header.dart';
+import 'package:penguinchat/ui/widgets/telegram_avatar.dart';
 
 final bool goldenSkip = !Platform.isWindows;
 

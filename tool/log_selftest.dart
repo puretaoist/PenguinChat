@@ -11,8 +11,8 @@ library;
 
 import 'dart:io';
 
-import 'package:qqclient/infra/log/log_file.dart';
-import 'package:qqclient/infra/log/logger.dart';
+import 'package:penguinchat/infra/log/log_file.dart';
+import 'package:penguinchat/infra/log/logger.dart';
 
 int _passed = 0;
 int _failed = 0;

@@ -33,7 +33,7 @@ class ForegroundKeepAlive implements KeepAlive {
   /// 常驻通知正文。
   final String text;
 
-  static const MethodChannel _channel = MethodChannel('qqclient/keepalive');
+  static const MethodChannel _channel = MethodChannel('penguinchat/keepalive');
 
   @override
   Future<void> start() => _channel.invokeMethod<void>('start', <String, Object?>{

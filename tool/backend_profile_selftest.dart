@@ -17,8 +17,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/kernel/onebot/backend_profile.dart';
-import 'package:qqclient/kernel/onebot/json_path.dart';
+import 'package:penguinchat/kernel/onebot/backend_profile.dart';
+import 'package:penguinchat/kernel/onebot/json_path.dart';
 
 // ---------------------------------------------------------------------------
 // 断言工具

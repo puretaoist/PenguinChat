@@ -53,7 +53,7 @@ const List<Layer> kLayers = <Layer>[
 
 /// 从源码文本里抽出所有 `import '...'` 的目标路径。
 ///
-/// 只处理相对路径与 `package:qqclient/...`；`dart:` / `package:flutter/`
+/// 只处理相对路径与 `package:penguinchat/...`；`dart:` / `package:flutter/`
 /// / 第三方包一律跳过（它们不属于本项目的层）。
 List<String> importsOf(String source) {
   final out = <String>[];
@@ -69,8 +69,8 @@ List<String> importsOf(String source) {
 /// 返回 null 表示「不是本项目的文件」（dart: / package:flutter / 其它包）。
 String? resolve(String fromFile, String target) {
   if (target.startsWith('dart:')) return null;
-  if (target.startsWith('package:qqclient/')) {
-    return 'lib/${target.substring('package:qqclient/'.length)}';
+  if (target.startsWith('package:penguinchat/')) {
+    return 'lib/${target.substring('package:penguinchat/'.length)}';
   }
   if (target.startsWith('package:')) return null;
   // 相对路径：以 fromFile 所在目录为基准做归一化
@@ -209,9 +209,9 @@ void main() {
     resolve('lib/client_api/x.dart', '../kernel/y.dart') ?? '(null)',
   );
   check(
-    'package: 路径归一化：package:qqclient/x/y.dart → lib/x/y.dart',
-    resolve('lib/a/b.dart', 'package:qqclient/x/y.dart') == 'lib/x/y.dart',
-    resolve('lib/a/b.dart', 'package:qqclient/x/y.dart') ?? '(null)',
+    'package: 路径归一化：package:penguinchat/x/y.dart → lib/x/y.dart',
+    resolve('lib/a/b.dart', 'package:penguinchat/x/y.dart') == 'lib/x/y.dart',
+    resolve('lib/a/b.dart', 'package:penguinchat/x/y.dart') ?? '(null)',
   );
   check(
     'dart: 与第三方包返回 null（不参与分层判定）',

@@ -13,7 +13,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_t544.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_t544.dart';
 
 int _pass = 0;
 int _fail = 0;

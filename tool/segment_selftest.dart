@@ -21,8 +21,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
 
 // ---------------------------------------------------------------------------
 // 断言

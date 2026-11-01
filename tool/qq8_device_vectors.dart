@@ -16,7 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
 
 const int _randomFill = 0xAB;
 

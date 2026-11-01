@@ -7,8 +7,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/widgets/group_settings_panel.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/widgets/group_settings_panel.dart';
 
 final bool goldenSkip = !Platform.isWindows;
 

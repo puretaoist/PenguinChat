@@ -10,8 +10,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/client_api/chat_index_preview.dart';
-import 'package:qqclient/client_api/objects.dart';
+import 'package:penguinchat/client_api/chat_index_preview.dart';
+import 'package:penguinchat/client_api/objects.dart';
 
 int _pass = 0;
 int _fail = 0;

@@ -5,10 +5,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/chat_store.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/ui/pages/search_page.dart';
+import 'package:penguinchat/client_api/chat_store.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/ui/pages/search_page.dart';
 
 /// 一个只有消息、没有网络的假 store（搜索只读内存，够用）。
 class _FakeStore implements ChatStore {

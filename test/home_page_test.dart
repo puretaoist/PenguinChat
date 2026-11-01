@@ -24,17 +24,17 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/chat_store.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/client_api/session.dart';
-import 'package:qqclient/client_api/session_providers.dart';
-import 'package:qqclient/kernel/onebot/backend_profile.dart';
-import 'package:qqclient/kernel/safety/safety_gate.dart';
-import 'package:qqclient/ui/pages/home_page.dart';
-import 'package:qqclient/ui/widgets/chat_header.dart';
-import 'package:qqclient/ui/widgets/chat_input_bar.dart';
-import 'package:qqclient/ui/widgets/message_bubble.dart';
+import 'package:penguinchat/client_api/chat_store.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/client_api/session.dart';
+import 'package:penguinchat/client_api/session_providers.dart';
+import 'package:penguinchat/kernel/onebot/backend_profile.dart';
+import 'package:penguinchat/kernel/safety/safety_gate.dart';
+import 'package:penguinchat/ui/pages/home_page.dart';
+import 'package:penguinchat/ui/widgets/chat_header.dart';
+import 'package:penguinchat/ui/widgets/chat_input_bar.dart';
+import 'package:penguinchat/ui/widgets/message_bubble.dart';
 
 import 'support/fake_session.dart';
 

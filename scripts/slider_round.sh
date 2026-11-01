@@ -52,14 +52,14 @@ echo "   验证地址 $(wc -c < tmp_url.txt) 字节 -> tmp_url.txt"
 
 echo "== 2/5 用探针 WebView 打开验证页"
 export MSYS_NO_PATHCONV=1
-"$ADB" shell am force-stop com.example.qqclient.test
+"$ADB" shell am force-stop com.puretaoist31.penguinchat.test
 "$ADB" logcat -c
-"$ADB" shell "run-as com.example.qqclient.test rm -f files/js_msgs.txt"
+"$ADB" shell "run-as com.puretaoist31.penguinchat.test rm -f files/js_msgs.txt"
 "$ADB" push tmp_url.txt /data/local/tmp/web_url.txt >/dev/null 2>&1
-"$ADB" shell "run-as com.example.qqclient.test cp /data/local/tmp/web_url.txt files/web-url.txt"
-"$ADB" shell am start -n com.example.qqclient.test/com.example.qqclient.TimCoreProbeActivity --es only web --ei nosubmit 1 >/dev/null
+"$ADB" shell "run-as com.puretaoist31.penguinchat.test cp /data/local/tmp/web_url.txt files/web-url.txt"
+"$ADB" shell am start -n com.puretaoist31.penguinchat.test/com.puretaoist31.penguinchat.TimCoreProbeActivity --es only web --ei nosubmit 1 >/dev/null
 sleep 6
-PID=$("$ADB" shell pidof com.example.qqclient.test | tr -d '\r')
+PID=$("$ADB" shell pidof com.puretaoist31.penguinchat.test | tr -d '\r')
 "$ADB" forward --remove-all >/dev/null 2>&1
 "$ADB" forward tcp:9222 localabstract:webview_devtools_remote_$PID >/dev/null
 echo "   devtools pid=$PID"
@@ -77,7 +77,7 @@ fi
 
 echo "== 5/5 等票"
 for i in $(seq 1 60); do
-  "$ADB" shell run-as com.example.qqclient.test cat files/js_msgs.txt 2>/dev/null > tmp_jsmsgs.txt
+  "$ADB" shell run-as com.puretaoist31.penguinchat.test cat files/js_msgs.txt 2>/dev/null > tmp_jsmsgs.txt
   if node tool/cdp_captcha.mjs ticket tmp_jsmsgs.txt 2>/dev/null; then break; fi
   sleep 2
 done

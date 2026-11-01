@@ -1,4 +1,4 @@
-package com.example.qqclient
+package com.puretaoist31.penguinchat
 
 import android.util.Log
 import oicq.wlogin_sdk.request.WUserSigInfo

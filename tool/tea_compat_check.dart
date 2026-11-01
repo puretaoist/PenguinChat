@@ -33,7 +33,7 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/crypto/tea.dart';
+import 'package:penguinchat/kernel/crypto/tea.dart';
 
 int _pass = 0;
 int _fail = 0;

@@ -3,10 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/infra/net/media_fetcher.dart';
-import 'package:qqclient/ui/widgets/message_content.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/infra/net/media_fetcher.dart';
+import 'package:penguinchat/ui/widgets/message_content.dart';
 
 // 缺陷3（图片首屏只显示文件名占位卡，重启才出图）的回归测试：
 // 图片块在首帧拿不到本地文件时应当自己补一次 ensureMedia，成功后换成真图；

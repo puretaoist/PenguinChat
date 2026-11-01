@@ -16,9 +16,9 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/client_api/session_providers.dart';
-import 'package:qqclient/kernel/onebot/backend_profile.dart';
-import 'package:qqclient/kernel/safety/safety_gate.dart';
+import 'package:penguinchat/client_api/session_providers.dart';
+import 'package:penguinchat/kernel/onebot/backend_profile.dart';
+import 'package:penguinchat/kernel/safety/safety_gate.dart';
 import 'package:riverpod/riverpod.dart';
 
 // ---------------------------------------------------------------------------

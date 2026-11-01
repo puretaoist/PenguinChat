@@ -9,9 +9,9 @@ library;
 
 import 'dart:async';
 
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/client_api/session.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/client_api/session.dart';
 
 class FakeSession implements Session {
   FakeSession({this.selfId = '10001'});

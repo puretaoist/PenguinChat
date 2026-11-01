@@ -19,10 +19,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/client_api/chat_store.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/client_api/session.dart';
+import 'package:penguinchat/client_api/chat_store.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/client_api/session.dart';
 
 // ---------------------------------------------------------------------------
 // 断言工具（与 tool/onebot_selftest.dart 同款）

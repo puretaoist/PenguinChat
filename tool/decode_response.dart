@@ -10,8 +10,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_recv.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_login.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_recv.dart';
 
 Uint8List _hex(String s) {
   final out = Uint8List(s.length ~/ 2);

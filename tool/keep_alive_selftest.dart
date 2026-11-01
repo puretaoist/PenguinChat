@@ -9,7 +9,7 @@
 // 表现就是「切后台一会儿消息就不来了」这种极难复现的问题）。
 import 'dart:io';
 
-import 'package:qqclient/infra/lifecycle/keep_alive.dart';
+import 'package:penguinchat/infra/lifecycle/keep_alive.dart';
 
 int passed = 0;
 int failed = 0;

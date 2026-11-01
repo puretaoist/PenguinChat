@@ -1,4 +1,4 @@
-package com.example.qqclient
+package com.puretaoist31.penguinchat
 
 import android.Manifest
 import android.content.Intent
@@ -10,7 +10,7 @@ import io.flutter.plugin.common.MethodChannel
 
 /**
  * 唯一的原生入口。除了 Flutter 默认行为，只多一件事：
- * 把「后台保活」暴露成 `MethodChannel('qqclient/keepalive')`。
+ * 把「后台保活」暴露成 `MethodChannel('penguinchat/keepalive')`。
  *
  * ## 为什么原生代码这么少
  *
@@ -32,16 +32,16 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
 
     companion object {
-        private const val CHANNEL = "qqclient/keepalive"
+        private const val CHANNEL = "penguinchat/keepalive"
 
         /** 设备信息通道（见 [DeviceProbe]）。 */
-        private const val DEVICE_CHANNEL = "qqclient/device"
+        private const val DEVICE_CHANNEL = "penguinchat/device"
 
         /** 通知权限请求码。任意值，只要与别处不冲突。 */
         private const val REQUEST_NOTIFICATIONS = 0x5101
 
         /** 新消息通知通道（见 [MessageNotifier]）。 */
-        private const val NOTIFY_CHANNEL = "qqclient/notify"
+        private const val NOTIFY_CHANNEL = "penguinchat/notify"
     }
 
     /** 等待系统权限对话框结果的 MethodChannel result；null 表示没有挂起的请求。 */

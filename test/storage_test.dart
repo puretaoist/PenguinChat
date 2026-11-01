@@ -9,9 +9,9 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/infra/storage/blob_store.dart';
-import 'package:qqclient/infra/storage/cache_policy.dart';
-import 'package:qqclient/infra/storage/storage_manager.dart';
+import 'package:penguinchat/infra/storage/blob_store.dart';
+import 'package:penguinchat/infra/storage/cache_policy.dart';
+import 'package:penguinchat/infra/storage/storage_manager.dart';
 
 void main() {
   late Directory tmp;

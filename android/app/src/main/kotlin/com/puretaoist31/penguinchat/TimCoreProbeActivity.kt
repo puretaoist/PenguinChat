@@ -1,4 +1,4 @@
-package com.example.qqclient
+package com.puretaoist31.penguinchat
 
 import android.app.Application
 import android.content.Context
@@ -607,7 +607,7 @@ class TimCoreProbeActivity : android.app.Activity() {
             val msfCls = Class.forName("oicq.wlogin_sdk.request.WtloginMsfListener")
             val cf = msfCls.getDeclaredField("CLIENT_CLASSNAME")
             cf.isAccessible = true
-            cf.set(null, "com.example.qqclient.TimDataSenderBridge")
+            cf.set(null, "com.puretaoist31.penguinchat.TimDataSenderBridge")
             log("CLIENT_CLASSNAME=" + cf.get(null))
         } catch (t: Throwable) { log("CLIENT_CLASSNAME FAIL" + short(t)) }
         try {
@@ -665,7 +665,7 @@ class TimCoreProbeActivity : android.app.Activity() {
                 TimDataSenderBridge.respDir = filesDir.absolutePath
                 val uCls2 = Class.forName("oicq.wlogin_sdk.request.u")
                 val l0 = uCls2.getDeclaredField("l0"); l0.isAccessible = true
-                l0.set(null, "com.example.qqclient:MSF")
+                l0.set(null, "com.puretaoist31.penguinchat:MSF")
                 val pm = uCls2.getMethod("f").invoke(null)
                 log("u.l0 set, f()=" + pm)
             } catch (t: Throwable) { log("set l0 FAIL" + short(t)) }
@@ -769,7 +769,7 @@ class TimCoreProbeActivity : android.app.Activity() {
      * native libfekit；我们在 Dart 里造不出来，只能从这里取真值，再喂给
      * `tool/qq8_live_smoke.dart --t553=<hex>` 做 A/B。
      *
-     * 用法：am start -n <pkg>/com.example.qqclient.TimCoreProbeActivity
+     * 用法：am start -n <pkg>/com.puretaoist31.penguinchat.TimCoreProbeActivity
      *        --es only fekitattach --es uin <uin>
      * 产物：files/fekit-9.hex / fekit-2.hex / fekit-a.hex / fekit-f.hex + logcat。
      */

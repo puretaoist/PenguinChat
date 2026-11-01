@@ -12,13 +12,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_gfs.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_list.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/widgets/forward_picker.dart';
-import 'package:qqclient/ui/widgets/group_files_panel.dart';
-import 'package:qqclient/ui/widgets/group_members_panel.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_gfs.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_list.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/widgets/forward_picker.dart';
+import 'package:penguinchat/ui/widgets/group_files_panel.dart';
+import 'package:penguinchat/ui/widgets/group_members_panel.dart';
 
 final bool goldenSkip = !Platform.isWindows;
 

@@ -1,4 +1,4 @@
-package com.example.qqclient
+package com.puretaoist31.penguinchat
 
 import android.content.Context
 import android.content.pm.PackageManager

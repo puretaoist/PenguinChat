@@ -22,10 +22,10 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/crypto/tea.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_tlv.dart';
+import 'package:penguinchat/kernel/crypto/tea.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_sso.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tlv.dart';
 
 // ---------------------------------------------------------------------------
 

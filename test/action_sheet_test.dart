@@ -9,12 +9,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/widgets/action_sheet.dart';
-import 'package:qqclient/ui/widgets/chat_actions.dart';
-import 'package:qqclient/ui/widgets/message_actions.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/widgets/action_sheet.dart';
+import 'package:penguinchat/ui/widgets/chat_actions.dart';
+import 'package:penguinchat/ui/widgets/message_actions.dart';
 
 ChatMessage _msg() => ChatMessage(
       id: 'm1',

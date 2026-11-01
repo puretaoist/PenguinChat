@@ -3,7 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/ui/pages/startup_splash.dart';
+import 'package:penguinchat/ui/pages/startup_splash.dart';
 
 void main() {
   testWidgets('默认状态：品牌名 + 默认状态行 + 一根进度条', (tester) async {

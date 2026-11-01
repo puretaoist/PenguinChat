@@ -17,11 +17,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/infra/coder.dart';
-import 'package:qqclient/kernel/crypto/tea.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_recv.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_session.dart' show qq8RetcodeResend;
+import 'package:penguinchat/infra/coder.dart';
+import 'package:penguinchat/kernel/crypto/tea.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_login.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_recv.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_session.dart' show qq8RetcodeResend;
 
 int _pass = 0;
 int _fail = 0;

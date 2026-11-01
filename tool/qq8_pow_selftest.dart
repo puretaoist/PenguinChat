@@ -15,7 +15,7 @@ import 'dart:typed_data';
 
 import 'package:pointycastle/export.dart';
 
-import 'package:qqclient/kernel/wlogin8/qq8_pow.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_pow.dart';
 
 int _pass = 0;
 int _fail = 0;

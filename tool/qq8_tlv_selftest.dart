@@ -18,11 +18,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/infra/coder.dart';
-import 'package:qqclient/kernel/crypto/digest.dart';
-import 'package:qqclient/kernel/crypto/tea.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_tlv.dart';
+import 'package:penguinchat/infra/coder.dart';
+import 'package:penguinchat/kernel/crypto/digest.dart';
+import 'package:penguinchat/kernel/crypto/tea.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tlv.dart';
 
 // ---------------------------------------------------------------------------
 

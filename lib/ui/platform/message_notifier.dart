@@ -27,7 +27,7 @@ class MessageNotifier {
       : _channel = channel ?? const MethodChannel(channelName);
 
   /// 通道名。写成常量是为了真机排障时能在 `dumpsys`/`logcat` 里搜到。
-  static const String channelName = 'qqclient/notify';
+  static const String channelName = 'penguinchat/notify';
 
   final MethodChannel _channel;
 

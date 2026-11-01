@@ -190,7 +190,7 @@ class HttpMediaFetcher implements MediaFetcher {
   HttpClient get _http => _client ??= HttpClient()
     ..connectionTimeout = connectTimeout
     ..autoUncompress = true
-    ..userAgent = 'Mozilla/5.0 (Linux; Android 13) qqclient/0.1';
+    ..userAgent = 'Mozilla/5.0 (Linux; Android 13) penguinchat/1.0';
 
   @override
   Future<Uint8List?> fetch(String url,

@@ -12,10 +12,10 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_protocol_det.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_tlv.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_profiles.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_protocol_det.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tlv.dart';
 
 int passed = 0;
 int failed = 0;

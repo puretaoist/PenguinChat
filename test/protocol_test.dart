@@ -10,8 +10,8 @@ library;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/infra/coder.dart';
-import 'package:qqclient/kernel/crypto/tea.dart';
+import 'package:penguinchat/infra/coder.dart';
+import 'package:penguinchat/kernel/crypto/tea.dart';
 
 void main() {
   group('L1 字节读写器', () {

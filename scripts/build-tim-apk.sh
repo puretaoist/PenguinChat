@@ -1,5 +1,5 @@
 set -e
-# 实验包（带 TIM 官方 so/dex）：包名 com.example.qqclient.test，可与纯净包共存。
+# 实验包（带 TIM 官方 so/dex）：包名 com.puretaoist31.penguinchat.test，可与纯净包共存。
 #
 # 为什么这里用 gradlew 而不是 flutter build apk：
 #   flutter build apk 不会把 ORG_GRADLE_PROJECT_withTimLibs 传进 Gradle 子进程

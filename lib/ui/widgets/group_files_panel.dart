@@ -7,9 +7,9 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_gfs.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/widgets/telegram_list_item.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_gfs.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/widgets/telegram_list_item.dart';
 
 class GroupFilesPanel extends StatefulWidget {
   const GroupFilesPanel({

@@ -1,4 +1,4 @@
-package com.example.qqclient
+package com.puretaoist31.penguinchat
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -35,7 +35,7 @@ class KeepAliveService : Service() {
 
     companion object {
         /** 通知渠道 id。渠道一旦创建，其重要性就不能再改——改名要换 id。 */
-        private const val CHANNEL_ID = "qqclient.keepalive"
+        private const val CHANNEL_ID = "penguinchat.keepalive"
 
         /** 固定通知 id。固定值保证重复 start 时不会堆出多条通知。 */
         private const val NOTIFICATION_ID = 0x5100

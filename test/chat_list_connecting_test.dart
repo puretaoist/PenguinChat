@@ -9,9 +9,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
-import 'package:qqclient/ui/widgets/chat_list_panel.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/widgets/chat_list_panel.dart';
 
 Future<void> _pump(
   WidgetTester tester, {

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/ui/widgets/telegram_avatar.dart';
+import 'package:penguinchat/ui/widgets/telegram_avatar.dart';
 
 // 头像真图的重试约定：
 //  - 失败不再**永久**钉成首字母（旧实现一次 CDN 超时就固定到重建为止）；

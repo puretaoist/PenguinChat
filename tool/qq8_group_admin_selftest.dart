@@ -13,7 +13,7 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_group_admin.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_group_admin.dart';
 
 int _pass = 0;
 int _fail = 0;

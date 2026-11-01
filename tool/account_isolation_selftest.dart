@@ -14,13 +14,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/client_api/account_scope.dart';
-import 'package:qqclient/client_api/chat_store.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/client_api/session.dart';
-import 'package:qqclient/client_api/session_providers.dart';
-import 'package:qqclient/kernel/onebot/backend_profile.dart';
+import 'package:penguinchat/client_api/account_scope.dart';
+import 'package:penguinchat/client_api/chat_store.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/client_api/session.dart';
+import 'package:penguinchat/client_api/session_providers.dart';
+import 'package:penguinchat/kernel/onebot/backend_profile.dart';
 import 'package:riverpod/riverpod.dart';
 
 // ---------------------------------------------------------------------------

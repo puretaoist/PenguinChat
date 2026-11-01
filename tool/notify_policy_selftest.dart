@@ -7,7 +7,7 @@
 // 部分：弹多了是骚扰（尤其上线补拉的几十条历史），弹少了是漏消息。
 import 'dart:io';
 
-import 'package:qqclient/client_api/notify_policy.dart';
+import 'package:penguinchat/client_api/notify_policy.dart';
 
 int passed = 0;
 int failed = 0;

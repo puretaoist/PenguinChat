@@ -9,9 +9,9 @@ library;
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/kernel/safety/attempt_limiter.dart';
-import 'package:qqclient/kernel/safety/environment_probe.dart';
-import 'package:qqclient/kernel/safety/safety_gate.dart';
+import 'package:penguinchat/kernel/safety/attempt_limiter.dart';
+import 'package:penguinchat/kernel/safety/environment_probe.dart';
+import 'package:penguinchat/kernel/safety/safety_gate.dart';
 
 /// 完整的风险确认内容（覆盖全部要点）。
 const _fullAck = [

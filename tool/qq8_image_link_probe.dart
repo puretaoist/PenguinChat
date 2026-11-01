@@ -21,17 +21,17 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:qqclient/infra/log/log_file.dart';
-import 'package:qqclient/infra/log/logger.dart';
-import 'package:qqclient/kernel/crypto/ecdh.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_config.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_elem.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_history.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
+import 'package:penguinchat/infra/log/log_file.dart';
+import 'package:penguinchat/infra/log/logger.dart';
+import 'package:penguinchat/kernel/crypto/ecdh.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_config.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_elem.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_history.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_profiles.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_session.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_sso.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tran.dart';
 
 const String kConfirm = 'I_UNDERSTAND_THE_RISK';
 

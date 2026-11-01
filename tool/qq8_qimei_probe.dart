@@ -8,10 +8,10 @@
 // 判读：打印 q16/q36 与命中的端点 = 成功；两个端点都失败会被 fetch 抛异常。
 import 'dart:io';
 
-import 'package:qqclient/kernel/crypto/digest.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_qimei.dart';
+import 'package:penguinchat/kernel/crypto/digest.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_profiles.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_qimei.dart';
 
 Future<void> main(List<String> argv) async {
   // 用**固定**设备（同一个 guid 每次得到同一个 QIMEI，便于复跑比对）。

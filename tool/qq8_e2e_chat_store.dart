@@ -42,19 +42,19 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/client_api/chat_store.dart';
-import 'package:qqclient/client_api/objects.dart';
-import 'package:qqclient/client_api/qq8_login_service.dart';
-import 'package:qqclient/client_api/qq8_session_adapter.dart';
-import 'package:qqclient/client_api/segment.dart';
-import 'package:qqclient/client_api/session.dart';
-import 'package:qqclient/infra/log/log_file.dart';
-import 'package:qqclient/infra/log/logger.dart';
-import 'package:qqclient/kernel/safety/environment_probe.dart';
-import 'package:qqclient/kernel/safety/safety_gate.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
+import 'package:penguinchat/client_api/chat_store.dart';
+import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/client_api/qq8_login_service.dart';
+import 'package:penguinchat/client_api/qq8_session_adapter.dart';
+import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/client_api/session.dart';
+import 'package:penguinchat/infra/log/log_file.dart';
+import 'package:penguinchat/infra/log/logger.dart';
+import 'package:penguinchat/kernel/safety/environment_probe.dart';
+import 'package:penguinchat/kernel/safety/safety_gate.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_profiles.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tran.dart';
 
 const String kConfirmToken = 'I_UNDERSTAND_THE_RISK';
 

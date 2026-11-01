@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqclient/ui/prefs/ui_prefs.dart';
+import 'package:penguinchat/ui/prefs/ui_prefs.dart';
 
 void main() {
   group('UiPrefs 值对象', () {

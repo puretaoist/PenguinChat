@@ -14,7 +14,7 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_jce.dart';
 
 import 'qq8_jce_diff_vectors.dart';
 

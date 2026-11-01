@@ -15,17 +15,17 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/infra/coder.dart';
-import 'package:qqclient/kernel/crypto/tea.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_jce.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_msg.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_pb.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_profiles.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_register.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_session.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_sso.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
+import 'package:penguinchat/infra/coder.dart';
+import 'package:penguinchat/kernel/crypto/tea.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_jce.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_msg.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_pb.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_profiles.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_register.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_session.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_sso.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tran.dart';
 
 int _pass = 0;
 int _fail = 0;

@@ -1,4 +1,4 @@
-package com.example.qqclient
+package com.puretaoist31.penguinchat
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -44,8 +44,8 @@ import androidx.core.app.Person
  */
 object MessageNotifier {
 
-    /** 消息通知渠道。与保活渠道(qqclient.keepalive)刻意分开。 */
-    const val CHANNEL_ID = "qqclient.messages"
+    /** 消息通知渠道。与保活渠道(penguinchat.keepalive)刻意分开。 */
+    const val CHANNEL_ID = "penguinchat.messages"
 
     /** 通知里携带"要打开哪个会话"。 */
     const val EXTRA_CHAT_ID = "chat_id"
@@ -54,7 +54,7 @@ object MessageNotifier {
     private const val SUMMARY_ID = 1
 
     /** 分组键：所有会话通知 + 汇总通知同组，系统才会折叠成一个通知组。 */
-    private const val GROUP_KEY = "qqclient.messages.group"
+    private const val GROUP_KEY = "penguinchat.messages.group"
 
     /** 单个会话最多记住多少条（MessagingStyle 展开后能看到的行数）。 */
     private const val MAX_LINES_PER_CHAT = 6

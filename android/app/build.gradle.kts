@@ -40,10 +40,10 @@ val buildTime: String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).for
 //   一个都不需要 —— 但它们在模块目录里时**每次 flutter build 都会被打进包**
 //   （181MB，装到用户手机上毫无必要）。
 // 所以：
-//   * 默认（不带属性）= **纯净包**：包名 com.example.qqclient，不含任何腾讯 so，
+//   * 默认（不带属性）= **纯净包**：包名 com.puretaoist31.penguinchat，不含任何腾讯 so，
 //     jniLibs 目录整个不参与打包；
 //   * -PwithTimLibs=true（或环境变量 ORG_GRADLE_PROJECT_withTimLibs=true）= **实验包**：
-//     包名加 .test 后缀（com.example.qqclient.test，可与纯净包共存），带上 jniLibs-tim。
+//     包名加 .test 后缀（com.puretaoist31.penguinchat.test，可与纯净包共存），带上 jniLibs-tim。
 // 为什么不走 product flavor：本仓库已有 scripts/build-local.sh 与 CI 文档里的
 //   flutter build apk（不带 --flavor）。一旦定义 flavor，所有不带 --flavor 的
 //   构建都会直接报错，等于把现有构建链全部打断。属性开关对现有命令零影响。
@@ -52,10 +52,10 @@ val withTimLibs: Boolean =
 
 // 把结果打进构建日志：装错包（纯净包当实验包用）时第一眼就能在 flutter build
 // 的输出里看到这一行，不用去解包数 so。
-logger.lifecycle("[qqclient] withTimLibs=$withTimLibs" + if (withTimLibs) " -> com.example.qqclient.test" else " -> com.example.qqclient")
+logger.lifecycle("[penguinchat] withTimLibs=$withTimLibs" + if (withTimLibs) " -> com.puretaoist31.penguinchat.test" else " -> com.puretaoist31.penguinchat")
 
 android {
-    namespace = "com.example.qqclient"
+    namespace = "com.puretaoist31.penguinchat"
     compileSdk = flutter.compileSdkVersion
     // NDK 用途说明（重要，别删）：
     //   本项目是纯 Dart 实现，没有任何 C/C++ 源码，**不需要编译 native 代码**。
@@ -79,7 +79,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.qqclient"
+        applicationId = "com.puretaoist31.penguinchat"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

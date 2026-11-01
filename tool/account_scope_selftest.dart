@@ -11,7 +11,7 @@ library;
 
 import 'dart:io';
 
-import 'package:qqclient/client_api/account_scope.dart';
+import 'package:penguinchat/client_api/account_scope.dart';
 
 int passed = 0;
 int failed = 0;

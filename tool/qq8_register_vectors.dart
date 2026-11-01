@@ -15,8 +15,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_device.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_register.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_register.dart';
 
 /// 固定时间戳（与 `analysis/scripts/gen_pb_vector.cjs` 一致）。
 const int _ts = 1700000000000;

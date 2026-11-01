@@ -4,7 +4,7 @@
 /// `import 'package:flutter/services.dart'` —— 而 L1/L2 要能在纯 Dart 里跑自测。
 /// 注入方式与 `path_provider` / [ForegroundKeepAlive] 一致：`main.dart` 里 override。
 ///
-/// ## 通道协议（与 `MainActivity.kt` 的 `qqclient/device` 一一对应）
+/// ## 通道协议（与 `MainActivity.kt` 的 `penguinchat/device` 一一对应）
 ///
 /// ```text
 ///   snapshot → Map<String, Object?>（字段名与 identity.json 的键完全一致，
@@ -30,7 +30,7 @@ import '../../infra/device/device_info.dart';
 class AndroidDeviceInfo implements DeviceInfo {
   AndroidDeviceInfo();
 
-  static const MethodChannel _channel = MethodChannel('qqclient/device');
+  static const MethodChannel _channel = MethodChannel('penguinchat/device');
 
   /// 原生侧构建标识。仅用于让日志自证「装的是哪一版采集代码」。
   ///

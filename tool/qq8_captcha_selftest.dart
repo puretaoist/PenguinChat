@@ -17,7 +17,7 @@ library;
 
 import 'dart:io';
 
-import 'package:qqclient/kernel/wlogin8/qq8_captcha.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_captcha.dart';
 
 int _pass = 0;
 int _fail = 0;

@@ -2,7 +2,7 @@
 //
 // 前置（真机）：
 //   1) 探针 Activity 已调 WebView.setWebContentsDebuggingEnabled(true)（TimCoreProbeActivity.submitWithUrl）
-//   2) adb forward --remove-all; adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.example.qqclient.test)
+//   2) adb forward --remove-all; adb forward tcp:9222 localabstract:webview_devtools_remote_$(adb shell pidof com.puretaoist31.penguinchat.test)
 //
 // 用法（node 22 直跑，无第三方依赖）：
 //   node tool/cdp_captcha.mjs get            # 打印题干/图片URL，并把合成图存成 tmp_capimg.bin

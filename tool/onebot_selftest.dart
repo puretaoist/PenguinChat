@@ -28,7 +28,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:qqclient/kernel/onebot/onebot_client.dart';
+import 'package:penguinchat/kernel/onebot/onebot_client.dart';
 
 // ---------------------------------------------------------------------------
 // 断言工具

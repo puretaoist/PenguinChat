@@ -10,7 +10,7 @@
 library;
 
 import 'package:flutter/material.dart';
-import 'package:qqclient/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/theme/telegram_theme.dart';
 
 class GroupSettingsPanel extends StatefulWidget {
   const GroupSettingsPanel({

@@ -21,7 +21,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/kernel/wlogin8/qq8_tran.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_tran.dart';
 
 int _passed = 0;
 int _failed = 0;

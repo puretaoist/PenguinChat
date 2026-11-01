@@ -12,9 +12,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/client_api/qq8_token_store.dart';
-import 'package:qqclient/client_api/recovery_coordinator.dart';
-import 'package:qqclient/client_api/recovery_planner.dart';
+import 'package:penguinchat/client_api/qq8_token_store.dart';
+import 'package:penguinchat/client_api/recovery_coordinator.dart';
+import 'package:penguinchat/client_api/recovery_planner.dart';
 
 int _pass = 0;
 int _fail = 0;

@@ -16,8 +16,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:qqclient/client_api/qq8_token_store.dart';
-import 'package:qqclient/kernel/wlogin8/qq8_login.dart';
+import 'package:penguinchat/client_api/qq8_token_store.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_login.dart';
 
 int _pass = 0;
 int _fail = 0;
