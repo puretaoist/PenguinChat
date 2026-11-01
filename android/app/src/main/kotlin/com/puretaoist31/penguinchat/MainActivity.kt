@@ -309,6 +309,11 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // 录音权限的申请由 AudioBridge 自己发起并持有那个 MethodChannel result，
+        // 这里只是转发；命中就结束，别继续走通知权限那条分支。
+        if (audioBridge?.onRequestPermissionsResult(requestCode, grantResults) == true) {
+            return
+        }
         if (requestCode != REQUEST_NOTIFICATIONS) return
         val result = pendingPermissionResult ?: return
         pendingPermissionResult = null

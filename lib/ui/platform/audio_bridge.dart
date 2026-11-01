@@ -15,6 +15,7 @@
 ///   seek {positionMs}                    -> Int（落点毫秒）
 ///   position                             -> Int（当前毫秒）
 ///   setSpeed {speed:Double}              -> Bool
+///   ensureRecordPermission               -> Bool（没有就弹系统授权框）
 ///   recordStart {sampleRate=16000}       -> null
 ///   recordStop                           -> {path, durationMs, size} 或 null
 ///   recordCancel                         -> null
@@ -202,6 +203,18 @@ class AudioBridge {
   }
 
   /// 开始录音（单声道 PCM16），写入 cacheDir 临时文件。
+  /// 申请录音权限（运行期）。已授权返回 true；用户拒绝返回 false。
+  ///
+  /// 只有真正要录音时才调用——启动时就弹麦克风权限框会吓到用户。
+  Future<bool> ensureRecordPermission() async {
+    try {
+      final v = await _invoke<bool>('ensureRecordPermission');
+      return v ?? false;
+    } on UnsupportedError {
+      return false;
+    }
+  }
+
   Future<void> recordStart({int sampleRate = 16000}) async {
     await _invoke<Object?>('recordStart', <String, Object?>{'sampleRate': sampleRate});
   }

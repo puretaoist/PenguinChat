@@ -73,6 +73,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:penguinchat/infra/coder.dart';
+import 'package:penguinchat/kernel/crypto/digest.dart';
 import 'package:penguinchat/infra/log/log_file.dart';
 import 'package:penguinchat/infra/log/logger.dart';
 import 'package:penguinchat/kernel/crypto/ecdh.dart';
@@ -80,12 +81,16 @@ import 'package:penguinchat/kernel/wlogin8/qq8_config.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_device.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_elem.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_image.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_file.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_msg.dart';
+import 'package:penguinchat/kernel/wlogin8/qq8_ptt.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_profiles.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_push.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_session.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_sso.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_tran.dart';
+
+import 'tmp/ptt_probe.dart';
 
 final Logger _log = Log.get('SESSION-LIVE');
 
@@ -388,7 +393,8 @@ Future<void> main(List<String> argv) async {
     final toGroup = int.tryParse(args['to-group'] ?? '');
     final imagePath = args['image'];
     final textArg = args['text'];
-    if (toUin != null || toGroup != null) {
+    if ((toUin != null || toGroup != null) &&
+        (imagePath != null || textArg != null)) {
       stdout.writeln('');
       stdout.writeln('--- 3.5 发消息（${toUin != null ? '私聊 $toUin' : '群 $toGroup'}）---');
       try {
@@ -417,6 +423,26 @@ Future<void> main(List<String> argv) async {
       stdout.writeln('');
       stdout.writeln('  ⚠ 给了 --image/--text 但没给 --to-uin / --to-group，'
           '不知道发给谁，跳过');
+    }
+
+    // 3.6) 语音上传探针（--ptt=<.slk> + --to-uin）：验证 highway 通道
+    final pttPath = args['ptt'];
+    if (pttPath != null && pttPath.isNotEmpty && toUin != null) {
+      stdout.writeln('');
+      stdout.writeln('--- 3.6 语音 highway 上传探针 ---');
+      try {
+        await runPttProbe(
+          session: session,
+          uid: toUin,
+          silkPath: pttPath,
+          variant: int.tryParse(args['variant'] ?? '0') ?? 0,
+          out: stdout,
+        );
+      } on Object catch (e, st) {
+        failed = true;
+        stdout.writeln('  ✗ 语音探针失败: $e');
+        _log.e('语音探针失败', error: e, stack: st);
+      }
     }
 
     // 4) 可选下线

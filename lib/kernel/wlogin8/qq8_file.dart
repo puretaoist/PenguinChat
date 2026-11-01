@@ -201,35 +201,130 @@ abstract final class Qq8File {
         },
       });
 
-  /// 解析 bigdata 通道响应：`{1281: {1: ticket, 3: [{2: [{2: ip(u32), 3: port}]}]}}`。
+  /// 解析 bigdata 通道响应，返回 ticket 与**全部**候选节点。
   ///
-  /// ⚠️ **未在真机验证过**（2026-10-28 起设备离线）：`3` 的层级结构是按
-  /// 参考实现 `rsp[3][2][0][2]` / `rsp[3][2][0][3]` 与 PushReq 里
-  /// `1281.3` 的形态推出来的，两种都试，取第一个「port 在 1..65535」的候选。
-  /// 找不到时抛异常并把原始 hex 打出来，方便真机第一轮直接定位。
-  static ({Uint8List ticket, String host, int port})? parseBigdataChannel(
-      Uint8List payload) {
-    final root = Qq8Pb.decode(payload);
+  /// 真机实测形态（2026-11-01，`HttpConn.0x6ff_501`）：
+  /// `{1281: {1: ticket(104B), 2: 16B, 2: [{1,2: ip(fixed32),3: port,4,5}],
+  ///          5: [{1,2: ipv6(16B),3: port,4,5}], 4,5,6:...,7:...,8:...,9:...}}`
+  /// 旧的 `{3: [{2: [{2: ip, 3: port}]}]}` 形态也保留兼容（参考实现推的）。
+  static ({Uint8List ticket, List<({String host, int port})> candidates})?
+      parseBigdataChannelFull(Uint8List payload) {
+    final Map<int, List<Object>> root;
+    try {
+      root = Qq8Pb.decode(payload);
+    } on Object {
+      return null;
+    }
     final raw = Qq8Pb.bytesAt(root, 1281);
     if (raw == null) return null;
-    final m = Qq8Pb.decode(raw);
+    final Map<int, List<Object>> m;
+    try {
+      m = Qq8Pb.decode(raw);
+    } on Object {
+      return null;
+    }
     final ticket = Qq8Pb.bytesAt(m, 1) ?? Uint8List(0);
-    for (final e in m[3] ?? const <Object>[]) {
-      if (e is! Uint8List) continue;
-      final em = Qq8Pb.decode(e);
-      // 形态 A：{1: 10, 2: [{2: ip, 3: port}]}
-      // 形态 B：{2: [{2: ip, 3: port}]}
-      for (final l in em[2] ?? const <Object>[]) {
-        if (l is! Uint8List) continue;
-        final hm = Qq8Pb.decode(l);
-        final ip = Qq8Pb.intAt(hm, 2);
-        final port = Qq8Pb.intAt(hm, 3);
-        if (ip != null && port != null && port > 0 && port <= 65535) {
-          return (ticket: ticket, host: u32ToIp(ip), port: port);
-        }
+    final out = <({String host, int port})>[];
+    void add(String host, int? port) {
+      if (port == null || port <= 0 || port > 65535) return;
+      final one = (host: host, port: port);
+      if (out.any((e) => e.host == one.host && e.port == one.port)) return;
+      out.add(one);
+    }
+
+    // 形态 A（真机实测）：1281.2 = [{1, 2: ipv4(fixed32), 3: port}]
+    for (final e in m[2] ?? const <Object>[]) {
+      if (e is! Uint8List || e.length > 64) continue;
+      try {
+        final em = Qq8Pb.decode(e);
+        final ip = Qq8Pb.intAt(em, 2);
+        if (ip == null) continue;
+        add(_ipv4OfFixed32(ip), Qq8Pb.intAt(em, 3));
+      } on Object {
+        // 不是节点子消息（比如那种 16 字节的 key），跳过
       }
     }
-    return null;
+    // 形态 A'：1281.5 = [{1, 2: ipv6(16B), 3: port}]
+    for (final e in m[5] ?? const <Object>[]) {
+      if (e is! Uint8List) continue;
+      try {
+        final em = Qq8Pb.decode(e);
+        final ip = Qq8Pb.bytesAt(em, 2);
+        if (ip == null || ip.length != 16) continue;
+        add(_ipv6Of(ip), Qq8Pb.intAt(em, 3));
+      } on Object {
+        // 忽略
+      }
+    }
+    // 形态 B（真机实测主形态）：1281.3 = {1: 节点数, 2: [{2: ip(fixed32), 3: port, ...}]}
+    for (final e in m[3] ?? const <Object>[]) {
+      if (e is! Uint8List) continue;
+      try {
+        final em = Qq8Pb.decode(e);
+        for (final l in em[2] ?? const <Object>[]) {
+          if (l is! Uint8List) continue;
+          final hm = Qq8Pb.decode(l);
+          final ip = Qq8Pb.intAt(hm, 2);
+          if (ip == null) continue;
+          add(_ipv4OfFixed32(ip), Qq8Pb.intAt(hm, 3));
+        }
+      } on Object {
+        // 忽略
+      }
+    }
+    if (out.isEmpty) return (ticket: ticket, candidates: const <({String host, int port})>[]);
+    return (ticket: ticket, candidates: out);
+  }
+
+  /// 取第一个可用节点（老接口，保持兼容）。
+  static ({Uint8List ticket, String host, int port})? parseBigdataChannel(
+      Uint8List payload) {
+    final full = parseBigdataChannelFull(payload);
+    if (full == null || full.candidates.isEmpty) return null;
+    final first = full.candidates.first;
+    return (ticket: full.ticket, host: first.host, port: first.port);
+  }
+
+
+  /// protobuf fixed32 里的 IPv4 → 点分文本。
+  ///
+  /// 服务端把点分串按「第一段在最低字节」打包（0x52F05670 = 112.86.240.82），
+  /// 所以这里取**低字节优先**。用 `u32ToIp`（高字节优先）会得到整体反序的地址
+  /// （82.240.86.112），看着像境外/保留地址段，连接全部超时。
+  static String _ipv4OfFixed32(int v) {
+    final u = v & 0xFFFFFFFF;
+    return '${u & 0xFF}.${(u >> 8) & 0xFF}.${(u >> 16) & 0xFF}.${(u >> 24) & 0xFF}';
+  }
+  /// 16 字节 IPv6 → 标准写法（小写、按 4 位一组、压缩最长零段）。
+  static String _ipv6Of(Uint8List b) {
+    final groups = <String>[];
+    for (var i = 0; i < 16; i += 2) {
+      groups.add(((b[i] << 8) | b[i + 1]).toRadixString(16));
+    }
+    var bestStart = -1;
+    var bestLen = 0;
+    var curStart = -1;
+    var curLen = 0;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i] == '0') {
+        if (curStart < 0) {
+          curStart = i;
+          curLen = 0;
+        }
+        curLen++;
+        if (curLen > bestLen) {
+          bestLen = curLen;
+          bestStart = curStart;
+        }
+      } else {
+        curStart = -1;
+        curLen = 0;
+      }
+    }
+    if (bestLen < 2) return groups.join(':');
+    final head = groups.sublist(0, bestStart).join(':');
+    final tail = groups.sublist(bestStart + bestLen).join(':');
+    return '$head::$tail';
   }
 
   /// 参考实现写死的"手机上收到的目录"（服务端只把它当展示/落盘路径用）。

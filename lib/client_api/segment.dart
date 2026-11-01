@@ -338,6 +338,12 @@ class RecordSegment extends Segment {
   final int? seconds;
   final int? size;
 
+  /// 本地 SILK 文件路径——只有"要发出去的语音"才有。
+  ///
+  /// 收到的语音靠 [file]（服务端 md5）配 [url] 下载；发出去的语音必须有本地
+  /// 文件才能上传，所以单独一个字段，别和 [file] 混（那是对方的文件标识）。
+  final String? localPath;
+
   const RecordSegment(
     this.file, {
     this.url,
@@ -345,6 +351,7 @@ class RecordSegment extends Segment {
     this.magic = false,
     this.seconds,
     this.size,
+    this.localPath,
   });
 
   factory RecordSegment.fromData(Map<String, dynamic> data) => RecordSegment(
@@ -354,6 +361,7 @@ class RecordSegment extends Segment {
         magic: data['magic'] == true || data['magic'] == 1,
         seconds: _asInt(data['seconds'] ?? data['duration']),
         size: _asInt(data['size']),
+        localPath: data['localPath'] as String?,
       );
 
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
@@ -368,6 +376,7 @@ class RecordSegment extends Segment {
         if (seconds != null) 'seconds': seconds,
         if (size != null) 'size': size,
         if (magic) 'magic': '1',
+        if (localPath != null) 'localPath': localPath,
       };
 
   @override

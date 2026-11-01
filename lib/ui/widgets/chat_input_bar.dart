@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
+import 'voice_record_button.dart';
 
 /// 聊天输入栏。[replyTarget] 非空时在输入行上方显示"正在回复"条。
 class ChatInputBar extends StatelessWidget {
@@ -22,6 +23,7 @@ class ChatInputBar extends StatelessWidget {
     required this.onAttachFile,
     required this.onOpenFaces,
     required this.onCancelReply,
+    this.onVoiceRecorded,
   });
 
   /// false = 未连接：输入框禁用、发送钮变灰（提示文案换成"未连接"）。
@@ -35,6 +37,14 @@ class ChatInputBar extends StatelessWidget {
   final VoidCallback onAttachFile;
   final VoidCallback onOpenFaces;
   final VoidCallback onCancelReply;
+
+  /// 录音完成（裸 PCM 文件路径 + 时长 + 波形）。为空时麦克风键只提示"按住说话"，
+  /// 不做任何上行——widget 测试与未接线的场景都走这条路。
+  final Future<void> Function(
+    String pcmPath,
+    int durationMs,
+    List<double> waveform,
+  )? onVoiceRecorded;
 
   @override
   Widget build(BuildContext context) {
@@ -129,7 +139,28 @@ class ChatInputBar extends StatelessWidget {
                   valueListenable: controller,
                   builder: (context, value, _) {
                     final hasText = value.text.trim().isNotEmpty;
-                    final active = enabled && hasText;
+                    if (!hasText) {
+                      // 空输入 = 麦克风（按住说话），同 TG。
+                      final onVoice = onVoiceRecorded;
+                      return VoiceRecordButton(
+                        key: const ValueKey('send-or-mic'),
+                        enabled: enabled,
+                        onRecorded: (pcm, waveform) async {
+                          if (onVoice == null) return;
+                          await onVoice(pcm.path, pcm.durationMs, waveform);
+                        },
+                        onError: (message) {
+                          final messenger = ScaffoldMessenger.maybeOf(context);
+                          messenger?.showSnackBar(
+                            SnackBar(
+                              content: Text(message),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      );
+                    }
+                    final active = enabled;
                     return GestureDetector(
                       key: const ValueKey('send-or-mic'),
                       onTap: active ? onSend : null,
@@ -143,7 +174,7 @@ class ChatInputBar extends StatelessWidget {
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
-                          active ? Icons.send : Icons.mic_none,
+                          Icons.send,
                           color: active
                               ? Colors.white
                               : TelegramColors.textMuted,

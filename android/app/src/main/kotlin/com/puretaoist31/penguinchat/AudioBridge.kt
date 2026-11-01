@@ -1,6 +1,7 @@
 package com.puretaoist31.penguinchat
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioFormat
@@ -71,6 +72,9 @@ class AudioBridge(private val context: Context) {
         const val RECORD_CHANNEL = "penguinchat/audio/record"
 
         private const val DEFAULT_SAMPLE_RATE = 16000
+
+        /** 录音权限申请的 requestCode（与 Activity 转发时比对）。 */
+        const val RECORD_PERM_CODE = 0x9C01
 
         /** 事件推送间隔，约 50ms。 */
         private const val EVENT_INTERVAL_MS = 50L
@@ -190,6 +194,10 @@ class AudioBridge(private val context: Context) {
                     startRecording(sampleRate)
                     result.success(null)
                 }
+
+                // 录音前必须先拿运行期权限。单独做成一个方法，让 UI 在
+                // 「用户按下麦克风」那一刻申请，而不是启动时弹框。
+                "ensureRecordPermission" -> ensureRecordPermission(result)
 
                 "recordStop" -> result.success(stopRecording())
                 "recordCancel" -> {
@@ -736,4 +744,47 @@ class AudioBridge(private val context: Context) {
         if (rate <= 0) return 0
         return ((frames * 1000L) / rate).toInt()
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  录音权限（运行期）
+    // ══════════════════════════════════════════════════════════════════════
+
+    /** 等待用户点「允许/拒绝」的那个 MethodChannel 回调。 */
+    private var pendingPermissionResult: MethodChannel.Result? = null
+
+    private fun ensureRecordPermission(result: MethodChannel.Result) {
+        if (hasRecordPermission()) {
+            result.success(true)
+            return
+        }
+        val activity = context as? Activity
+        if (activity == null) {
+            result.success(false)
+            return
+        }
+        // MethodChannel 的 result 只能完成一次：已经有一个在等就直接返回 false，
+        // 否则前一个永远不完成（Dart 侧 Future 永不 resolve）。
+        if (pendingPermissionResult != null) {
+            result.success(false)
+            return
+        }
+        pendingPermissionResult = result
+        activity.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), RECORD_PERM_CODE)
+    }
+
+    /** 由 Activity.onRequestPermissionsResult 转发进来。 */
+    fun onRequestPermissionsResult(
+        requestCode: Int,
+        grantResults: IntArray,
+    ): Boolean {
+        if (requestCode != RECORD_PERM_CODE) return false
+        val result = pendingPermissionResult ?: return true
+        pendingPermissionResult = null
+        result.success(
+            grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+        )
+        return true
+    }
+
 }

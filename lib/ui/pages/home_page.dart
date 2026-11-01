@@ -28,6 +28,7 @@ import '../../client_api/segment.dart';
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
 import '../../client_api/session.dart';
+import '../../infra/audio/silk_encoder.dart';
 import '../../infra/log/logger.dart';
 import '../../kernel/wlogin8/qq8_file.dart';
 import '../../kernel/wlogin8/qq8_gfs.dart';
@@ -454,6 +455,41 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
     if (path == null || path.isEmpty) return;
     await store.send(chatId, <Segment>[ImageSegment(path)]);
+  }
+
+  /// 🎤：录完的语音（裸 PCM）→ 编成 SILK v3 → 交给协议层上传发送。
+  ///
+  /// 编码放在 L1（[SilkVoiceEncoder]）而不是这里：UI 只负责把"录到了什么"
+  /// 交出去。编码失败/发不出去都只弹一条提示，不打断会话。
+  Future<void> _sendVoice(
+    String pcmPath,
+    int durationMs,
+    List<double> waveform,
+  ) async {
+    final store = ref.read(chatStoreProvider);
+    final chatId = _resolvedChatId;
+    if (store == null || chatId == null) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final encoder = SilkVoiceEncoder();
+    String? slk;
+    try {
+      slk = await encoder.encodeFile(pcmPath);
+    } finally {
+      encoder.dispose();
+    }
+    if (slk == null) {
+      messenger?.showSnackBar(const SnackBar(content: Text('语音编码失败，没发出去')));
+      return;
+    }
+    final seconds = (durationMs / 1000).round().clamp(1, 60);
+    final size = File(slk).lengthSync();
+    try {
+      await store.send(chatId, <Segment>[
+        RecordSegment('', localPath: slk, seconds: seconds, size: size),
+      ]);
+    } catch (e) {
+      messenger?.showSnackBar(SnackBar(content: Text('语音发送失败：$e')));
+    }
   }
 
   /// 📄：发本地**文件**（离线文件）。同样用"填路径"的对话框，读文件在适配器里做。
@@ -1746,6 +1782,7 @@ class _HomePageState extends ConsumerState<HomePage> {
           onAttachFile: () => unawaited(_sendFileFromPath()),
           onOpenFaces: _openFacePicker,
           onCancelReply: _cancelReply,
+          onVoiceRecorded: _sendVoice,
         ),
       ],
     );

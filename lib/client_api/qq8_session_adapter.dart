@@ -356,6 +356,42 @@ int _seenActionSerial = -1;
       );
     }
 
+    if (segments.any((s) => s is RecordSegment)) {
+      if (segments.length != 1 || segments.first is! RecordSegment) {
+        throw SessionException('语音暂时只能单独发（文字混排还没做）');
+      }
+      final seg = segments.first as RecordSegment;
+      final path = seg.localPath;
+      if (path == null || path.isEmpty || !File(path).existsSync()) {
+        throw SessionException('这条语音没有本地文件，发不出去：$path');
+      }
+      final bytes = await File(path).readAsBytes();
+      final r = await service.sendVoice(
+        bytes: bytes,
+        seconds: seg.seconds ?? 0,
+        uid: key.type == ChatType.private ? key.id : null,
+        gid: key.type == ChatType.group ? key.id : null,
+      );
+      if (!r.ok) {
+        throw SessionException('发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+      }
+      return key.type == ChatType.private
+          ? Qq8Msg.dmMessageId(
+              peerUin: key.id!,
+              seq: r.seq,
+              rand: r.rand,
+              time: r.time,
+              outgoing: true,
+            )
+          : Qq8Msg.groupMessageId(
+              gid: key.id!,
+              senderUin: self,
+              seq: r.seq,
+              rand: r.rand,
+              time: r.time,
+            );
+    }
+
     final elems = _elemsOf(segments);
     final reply = _replyOf(segments, chatId);
 

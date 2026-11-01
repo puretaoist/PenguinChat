@@ -335,8 +335,8 @@ void testBigdataChannel() {
     '8a50100880cdc8840d10001810200130033805',
   );
 
-  final rsp = hex('8a50210a10404142434445464748494a4b4c4d4e4f'
-      '1a0d080a120910818080f80718903f');
+  final rsp = hex('8a50200a10404142434445464748494a4b4c4d4e4f'
+      '1a0c080a1208157f00000118903f');
   final ch = Qq8File.parseBigdataChannel(rsp);
   if (ch != null &&
       ch.host == '127.0.0.1' &&
@@ -363,6 +363,24 @@ void testBigdataChannel() {
     ok('u32ToIp（含有符号负数）', '4 组');
   } else {
     bad('u32ToIp', wrong.join('；'));
+  }
+
+  // 真机形态（2026-11-01）：节点在 `1281.2`，IP 是 protobuf **fixed32**（wiretype 5）。
+  // 线上字节是 `FC 60 60 7A`，服务端把点分串的**第一段放在最低字节**
+  // （0x7A6060FC 的低字节 0xFC=252 是第一段）⇒ 必须「低字节第一段」还原成
+  // 252.96.96.122。按高字节第一段（u32ToIp）会得到整体反序的 122.96.96.252，
+  // 看着像境外/保留地址，真机上 6 个节点全部连接超时。
+  final real = Qq8File.parseBigdataChannelFull(hex('8a501d0a10404142434445464748494a4b4c4d4e4f'
+      '1209080115fc60607a1850'));
+  if (real != null &&
+      real.candidates.length == 1 &&
+      real.candidates.first.host == '252.96.96.122' &&
+      real.candidates.first.port == 80 &&
+      toHex(real.ticket) == toHex(ticketBytes)) {
+    ok('通道 fixed32 节点（第一段在最低字节）',
+        '${real.candidates.first.host}:${real.candidates.first.port}');
+  } else {
+    bad('通道 fixed32 节点', '$real');
   }
 
   // 解析不出通道时必须是 null（调用方据此抛"没有上传通道"），不能瞎猜

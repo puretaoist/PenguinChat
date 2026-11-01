@@ -117,6 +117,32 @@ abstract final class Qq8Pb {
           }
           out.putIfAbsent(tag, () => <Object>[]).add(data.sublist(i, end));
           i = end;
+        case 5:
+          // fixed32：小端 4 字节。bigdata 通道回的 IPv4 就是这个形态。
+          if (i + 4 > data.length) {
+            throw Qq8PbException('fixed32 越界：tag=$tag 偏移 $i');
+          }
+          out
+              .putIfAbsent(tag, () => <Object>[])
+              .add(data[i] |
+                  (data[i + 1] << 8) |
+                  (data[i + 2] << 16) |
+                  (data[i + 3] << 24));
+          i += 4;
+        case 1:
+          // fixed64：小端 8 字节，按无符号累加（Dart int 在 VM 上是 64 位）。
+          if (i + 8 > data.length) {
+            throw Qq8PbException('fixed64 越界：tag=$tag 偏移 $i');
+          }
+          var v64 = 0;
+          for (var b = 7; b >= 4; b--) {
+            v64 = (v64 << 8) | data[i + b];
+          }
+          for (var b = 3; b >= 0; b--) {
+            v64 = (v64 << 8) | data[i + b];
+          }
+          out.putIfAbsent(tag, () => <Object>[]).add(v64);
+          i += 8;
         default:
           throw Qq8PbException('未支持的 wiretype $wire（tag=$tag）');
       }

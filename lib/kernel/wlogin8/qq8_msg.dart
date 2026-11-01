@@ -215,13 +215,19 @@ abstract final class Qq8Msg {
   /// 把有序的内容元素编成 `RichText`：`{2: [引用?, ...元素, 保留元素]}`。
   ///
   /// 顺序就是元素在消息里的顺序——文本和表情可以交替，别指望在这里排序。
-  static Uint8List richElems(List<Uint8List> elems, {Qq8ReplyInfo? reply}) =>
+  static Uint8List richElems(
+    List<Uint8List> elems, {
+    Qq8ReplyInfo? reply,
+    Uint8List? ptt,
+  }) =>
       Qq8Pb.encode(<int, Object?>{
         2: <Object?>[
           if (reply != null) srcMsgElem(reply),
           ...elems,
           pbReserver,
         ],
+        // 语音不是 elems 里的一项，而是 RichText 的第 4 个字段（与解析侧一致）。
+        4: ?ptt,
       });
 
   /// 纯文本的 `rich`（即 `{2: elems}` 编码后的字节）。
@@ -291,6 +297,7 @@ abstract final class Qq8Msg {
     required int syncR9,
     required int syncR11,
     Qq8ReplyInfo? reply,
+    Uint8List? ptt,
   }) =>
       Qq8Pb.encode(<int, Object?>{
         1: <int, Object?>{
@@ -298,7 +305,7 @@ abstract final class Qq8Msg {
         },
         2: pbContent,
         3: <int, Object?>{
-          1: richElems(elems, reply: reply),
+          1: richElems(elems, reply: reply, ptt: ptt),
         },
         4: seq,
         5: rand,
@@ -321,6 +328,7 @@ abstract final class Qq8Msg {
     required int rand16,
     required int rand32,
     Qq8ReplyInfo? reply,
+    Uint8List? ptt,
   }) =>
       Qq8Pb.encode(<int, Object?>{
         1: <int, Object?>{
@@ -329,7 +337,7 @@ abstract final class Qq8Msg {
         },
         2: pbContent,
         3: <int, Object?>{
-          1: richElems(elems, reply: reply),
+          1: richElems(elems, reply: reply, ptt: ptt),
         },
         4: rand16,
         5: rand32,

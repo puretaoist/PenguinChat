@@ -43,6 +43,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show HttpClient;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -63,6 +64,7 @@ import '../kernel/wlogin8/qq8_group_admin.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
+import '../kernel/wlogin8/qq8_ptt.dart';
 import '../kernel/wlogin8/qq8_multimsg.dart';
 import '../kernel/wlogin8/qq8_jce.dart';
 import '../kernel/wlogin8/qq8_push.dart';
@@ -1416,12 +1418,14 @@ class Qq8LoginService {
     required int uid,
     required List<Uint8List> elems,
     Qq8ReplyInfo? reply,
+    Uint8List? ptt,
   }) async {
     final s = _requireOnline();
     final seq = s.nextSeq();
     final rand = _randomU32();
     final body = Qq8Msg.buildC2cTextBody(
       reply: reply,
+      ptt: ptt,
       uid: uid,
       elems: elems,
       seq: seq,
@@ -1444,12 +1448,14 @@ class Qq8LoginService {
     required int gid,
     required List<Uint8List> elems,
     Qq8ReplyInfo? reply,
+    Uint8List? ptt,
   }) async {
     final s = _requireOnline();
     final rand16 = _randomU32() & 0xFFFF;
     final rand32 = _randomU32();
     final body = Qq8Msg.buildGroupTextBody(
       reply: reply,
+      ptt: ptt,
       gid: gid,
       elems: elems,
       rand16: rand16,
@@ -1566,6 +1572,205 @@ class Qq8LoginService {
     return dm
         ? sendC2c(uid: targetUid, elems: <Uint8List>[elem])
         : sendGroup(gid: targetGid!, elems: <Uint8List>[elem]);
+  }
+
+  // ------ 发语音（PTT：申请上传 → HTTP 传 SILK → RichText.ptt） ------
+
+  /// 发一条语音。**需已上线**；[uid]（私聊）与 [gid]（群）二选一。
+  ///
+  /// 链路（官方 8.2.11 `Layuw` 发 0x346_500、`Laynw` 做 HTTP 上传，
+  /// `MessageForPtt.getRichText()` 组 RichText.ptt）：先申请上传拿 ip/port/
+  /// uuid/upload_key，把 SILK 原文件 POST 上去，再把 uuid 填进 ptt 元素发消息。
+  ///
+  /// [seconds] 是时长（官方 uint32_time 用整秒）；[bytes] 必须是 SILK v3 文件
+  /// （`#!SILK_V3` 头，[SilkVoiceEncoder] 产出）。
+  Future<Qq8MsgSendResult> sendVoice({
+    required Uint8List bytes,
+    required int seconds,
+    int? uid,
+    int? gid,
+    void Function(double progress)? onProgress,
+    Duration? uploadTimeout,
+  }) async {
+    final s = _requireOnline();
+    if ((uid == null) == (gid == null)) {
+      throw Qq8PttException('sendVoice 必须且只能给 uid（私聊）或 gid（群）之一');
+    }
+    final targetUid = uid;
+    final targetGid = gid;
+    final dm = targetUid != null;
+    final info = Qq8FileInfo.of('', bytes);
+    // 官方 bytes_file_name = md5 + ".amr"（即使内容是 SILK，后缀也写 amr）。
+    final fileName = '${info.md5Hex}.amr';
+    final seq = s.nextSeq();
+    _log.i('发语音 ${dm ? '私聊 uid=$uid' : '群 gid=$gid'}：'
+        '${bytes.length} 字节 ${seconds}s md5=${info.md5Hex}');
+
+    // ① 申请上传：拿 ip/port/uuid/upload_key（C2C 回执没有 file_id）
+    final rsp = await s.sendUni(
+      Qq8Ptt.cmdApplyUpload,
+      Qq8Ptt.buildApplyUploadBody(
+        uin: s.uin,
+        peerUin: dm ? targetUid : targetGid!,
+        fileName: fileName,
+        fileSize: bytes.length,
+        md5: info.md5,
+        seq: seq,
+        voiceSeconds: seconds,
+      ),
+      seq: seq,
+      timeout: timeout,
+    );
+    _log.i('PTT 申请回包 retcode=${rsp.retcode} ${rsp.payload.length}B '
+        'hex=${hexOfBytes(rsp.payload.take(160).toList())}');
+    final ticket = Qq8Ptt.parseApplyUploadResponse(rsp.payload);
+    if (!ticket.ok) {
+      throw Qq8PttException(
+          'PTT 上传申请被拒：code=${ticket.code} ${ticket.message}');
+    }
+    _log.i('PTT 申请回执：$ticket');
+
+    // ② 传文件：服务端已有同 md5 就跳过（但 uuid 仍然要按新回执用）
+    if (ticket.fileExists) {
+      _log.i('服务端已有这条语音（md5 命中），跳过 HTTP 上传');
+      onProgress?.call(1);
+    } else {
+      if (!ticket.hasEndpoint || (ticket.uploadKey?.isEmpty ?? true)) {
+        throw Qq8PttException('PTT 上传申请缺地址或凭证：$ticket');
+      }
+      // 上传走 bigdata 通道 + httpconn（2026-11-01 真机实证）。
+      //
+      // 0x346 回执里的 `upload_ip` 是运营商边缘节点（11.180.x / 30.176.x），
+      // 在宽带 Wi-Fi 上完全不可达；真正的上传节点与 ticket 来自
+      // `HttpConn.0x6ff_501`（bigdata 通道），帧格式见 [Qq8PttHighway]。
+      if (!dm) {
+        throw Qq8PttException('群语音上传走 0x388 + BDH，暂未实现');
+      }
+      await _uploadPttViaHttpConn(
+        s,
+        data: bytes,
+        applyRspPayload: rsp.payload,
+        fileMd5: info.md5,
+        chunkLimit: ticket.packSize > 0
+            ? ticket.packSize
+            : Qq8PttHighway.defaultChunkLimit,
+        timeout: uploadTimeout ?? const Duration(seconds: 30),
+        onProgress: onProgress,
+      );
+    }
+
+    // ③ 组元素发消息（msgtype -2002 的等价物就是 RichText.ptt）
+    final ptt = Qq8Ptt.buildPttElem(
+      fileType: Qq8Ptt.elemFileType,
+      fileMd5: info.md5,
+      fileName: fileName,
+      fileSize: bytes.length,
+      fileUuid: ticket.uuid ?? Uint8List(0),
+      downPara: '',
+      seconds: seconds,
+      dm: dm,
+    );
+    return dm
+        ? sendC2c(uid: targetUid, elems: const <Uint8List>[], ptt: ptt)
+        : sendGroup(gid: targetGid!, elems: const <Uint8List>[], ptt: ptt);
+  }
+
+
+  /// 走 bigdata 通道（`HttpConn.0x6ff_501`）拿 ticket + 上传节点，再按 httpconn 帧上传。
+  ///
+  /// 为什么不用 0x346 回执里的 `upload_ip`：那是运营商边缘节点（11.180.x /
+  /// 30.176.x），在宽带 Wi-Fi 上完全不可达（2026-11-01 真机 6 个候选全部超时）。
+  /// 官方客户端同样向 bigdata 通道要「ticket + 一组可上传节点」。
+  Future<void> _uploadPttViaHttpConn(
+    Qq8Session s, {
+    required Uint8List data,
+    required Uint8List applyRspPayload,
+    required Uint8List fileMd5,
+    required int chunkLimit,
+    required Duration timeout,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ch = await s.sendUni(
+      Qq8PttHighway.cmdBigdataChannel,
+      Qq8File.buildBigdataChannelBody(uin: s.uin),
+      timeout: timeout,
+    );
+    _log.i('PTT 通道回包 ${ch.payload.length}B hex=${hexOfBytes(ch.payload.take(320).toList())}');
+    final parsed = Qq8File.parseBigdataChannelFull(ch.payload);
+    if (parsed == null || parsed.candidates.isEmpty) {
+      throw Qq8PttException(
+          'bigdata 通道没给可上传节点（回包 ${ch.payload.length} 字节）');
+    }
+    // 主形态：点分串第一段在最低字节（`_ipv4OfFixed32`）。若某个点的字节序
+    // 与我们推断相反，MB 形态会整体反序成 82.x/226.x 这类保留段，因此这里再
+    // 追一组「反序地址」作为兜底，主形态全部失败才会用到。
+    final nodes = <({String host, int port})>[
+      ...parsed.candidates,
+    ];
+    for (final n in parsed.candidates) {
+      final parts = n.host.split('.');
+      if (parts.length == 4) {
+        nodes.add((host: parts.reversed.join('.'), port: n.port));
+      }
+    }
+    _log.i('PTT 通道 ticket=${parsed.ticket.length}B 节点=${nodes.length} 个 '
+        '${nodes.map((c) => '${c.host}:${c.port}').join(', ')}');
+    final limit = chunkLimit <= 0 ? Qq8PttHighway.defaultChunkLimit : chunkLimit;
+    Object? lastError;
+    for (final node in nodes) {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4);
+      try {
+        var offset = 0;
+        var seq = s.nextSeq();
+        while (offset < data.length) {
+          final end = (offset + limit < data.length) ? offset + limit : data.length;
+          final chunk = Uint8List.sublistView(data, offset, end);
+          final frame = Qq8PttHighway.buildFrame(
+            seq: seq++,
+            uin: '${s.uin}',
+            totalSize: data.length,
+            offset: offset,
+            chunk: chunk,
+            ticket: parsed.ticket,
+            fileMd5: fileMd5,
+            ext: Qq8Pb.encode(<int, Object?>{6: applyRspPayload, 10: 1048576}),
+          );
+          final uri = Uri.parse('http://${node.host}:${node.port}/cgi-bin/httpconn'
+              '?htcmd=${Qq8PttHighway.htcmd}&uin=${s.uin}');
+          final req = await client.postUrl(uri).timeout(timeout);
+          req.headers.set('Accept', '*/*');
+          req.headers.set('Connection', 'Keep-Alive');
+          req.headers.set('Pragma', 'no-cache');
+          req.headers.set('Cache-Control', 'no-cache');
+          req.headers.set(
+              'User-Agent', 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2)');
+          req.headers.contentLength = frame.length;
+          req.add(frame);
+          final resp = await req.close().timeout(timeout);
+          final builder = BytesBuilder(copy: false);
+          await for (final part in resp.timeout(timeout)) {
+            builder.add(part);
+          }
+          final raw = builder.toBytes();
+          final code = Qq8PttHighway.ackCode(raw);
+          if (resp.statusCode != 200 || code != 0) {
+            throw Qq8PttException('httpconn 回包异常 status=${resp.statusCode} '
+                'code=$code 长度=${raw.length}');
+          }
+          offset = end;
+          onProgress?.call((offset / data.length).clamp(0.0, 1.0));
+        }
+        _log.i('PTT 上传完成：${data.length} 字节 → ${node.host}:${node.port}');
+        return;
+      } catch (e) {
+        lastError = e;
+        _log.w('PTT 上传节点失败：${node.host}:${node.port} → $e');
+      } finally {
+        client.close(force: true);
+      }
+    }
+    throw Qq8PttException('所有 httpconn 节点都失败：$lastError');
   }
 
   // ------------------------------------------------------------------
