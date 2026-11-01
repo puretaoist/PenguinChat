@@ -53,6 +53,7 @@ import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_list_panel.dart';
 import '../widgets/message_list_builder.dart';
 import '../widgets/telegram_avatar.dart';
+import '../widgets/pressable_scale.dart';
 import 'connect_page.dart';
 import 'qq8_connect_page.dart';
 import 'search_page.dart';
@@ -1667,7 +1668,12 @@ class _HomePageState extends ConsumerState<HomePage> {
                                         : null,
                                     onLongPress: () =>
                                         _showMessageActions(m, chat.id),
-                                    child: MessageBubble(
+                                    // 按住气泡轻微缩小（0.97）：TG 的按下反馈
+                                    // 主要靠整行高亮，这里给暗色气泡一点手感。
+                                    // PressableScale 用 Listener，不抢上面的
+                                    // onTap/onLongPress。
+                                    child: PressableScale(
+                                      child: MessageBubble(
                                       message: m,
                                       localMedia: store?.mediaPathOf,
                                       ensureMedia: store?.ensureMedia,
@@ -1686,6 +1692,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                           ? () => store?.revealMessage(
                                               chat.id, m.id)
                                           : null,
+                                      ),
                                     ),
                                   ),
                                 ),

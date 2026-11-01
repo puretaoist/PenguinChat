@@ -59,6 +59,7 @@ class TgListTile extends StatelessWidget {
     this.trailing,
     this.onTap,
     this.danger = false,
+    this.showChevron,
   });
 
   final IconData icon;
@@ -70,6 +71,10 @@ class TgListTile extends StatelessWidget {
   final Widget? trailing;
   final VoidCallback? onTap;
   final bool danger;
+
+  /// 是否显示右侧箭头。null = 自动：可点且没自带 trailing 时才显示
+  /// （TG 的设置行只要可点就带 chevron，纯开关行不带）。
+  final bool? showChevron;
 
   @override
   Widget build(BuildContext context) {
@@ -130,6 +135,13 @@ class TgListTile extends StatelessWidget {
             if (trailing != null) ...[
               const SizedBox(width: 8),
               trailing!,
+            ] else if (showChevron ?? (onTap != null)) ...[
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: TelegramColors.textMuted,
+              ),
             ],
           ],
         ),

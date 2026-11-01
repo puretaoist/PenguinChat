@@ -7,7 +7,12 @@
 /// 几何出处见 telegram_list_item.dart 的注释（HeaderCell/TextCell.java）。
 ///
 /// 分组顺序照 TG 的设置习惯：**账号在最上**（一眼知道现在是谁），
-/// 然后外观 → 消息 → 数据 → 连接 → 关于；越往后越少动。
+/// 然后通用 → 消息 → 数据 → 连接 → 关于；越往后越少动。
+///
+/// 本页带一层**入场错落淡入**（每 60ms 一组，520ms 走完）：设置页是
+/// 从右侧滑进来的第二条路径，整页"啪"一下出现显得生硬；错落幅度很小
+/// （12dp / 0.55 曲线），只是让视线有个从上到下的落点。**必须有限时长**，
+/// 无限动画会让 pumpAndSettle 永远等不到静止。
 ///
 /// 本文件是 Flutter 层（L4）。
 library;
@@ -24,18 +29,65 @@ import '../../infra/device/device_info.dart';
 import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
+import '../widgets/pressable_scale.dart';
 import '../widgets/storage_dialog.dart';
 import '../widgets/telegram_avatar.dart';
 import '../widgets/telegram_list_item.dart';
 import 'connect_page.dart';
 import 'qq8_connect_page.dart';
 
-/// 设置页：账号状态 / 外观 / 消息 / 数据 / 连接 / 关于。
-class SettingsPage extends ConsumerWidget {
+/// 设置页：账号卡 / 通用 / 消息 / 数据 / 连接 / 关于。
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage>
+    with SingleTickerProviderStateMixin {
+  /// 整页共用一条时间线：每组用 [Interval] 取自己那段，避免 6 个
+  /// AnimationController（每帧都要 tick，纯浪费）。
+  late final AnimationController _entrance;
+
+  @override
+  void initState() {
+    super.initState();
+    _entrance = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+    )..forward();
+  }
+
+  @override
+  void dispose() {
+    _entrance.dispose();
+    super.dispose();
+  }
+
+  /// 第 [index] 组的入场包装（淡入 + 12dp 上浮）。
+  Widget _enter(int index, Widget child) {
+    final start = (index * 0.1).clamp(0.0, 0.6);
+    final end = (start + 0.55).clamp(0.0, 1.0);
+    final curved = CurvedAnimation(
+      parent: _entrance,
+      curve: Interval(start, end, curve: Curves.easeOutCubic),
+    );
+    return FadeTransition(
+      opacity: curved,
+      child: AnimatedBuilder(
+        animation: curved,
+        builder: (_, Widget? c) => Transform.translate(
+          offset: Offset(0, 12 * (1 - curved.value)),
+          child: c,
+        ),
+        child: child,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // watch 了 themeModeProvider 的 build 必须先 applyThemePalette
     // （切暗色时本页要跟着整页重画，见 theme_mode.dart 的约定）。
     final dark = applyThemePalette(ref);
@@ -43,6 +95,10 @@ class SettingsPage extends ConsumerWidget {
     final status = ref.watch(connectionControllerProvider);
     final account = ref.watch(accountProvider);
     final store = ref.watch(chatStoreProvider);
+    // 协议线（自实现 QQ）在线时 activeQq8Backend 非 null：账号卡不能只看
+    // OneBot 的 ConnectionStatus，否则"协议线明明在线"却写"当前未连接"
+    // （真机上就这么自相矛盾过，见 _accountCard 的注释）。
+    final qq8Online = ref.watch(activeQq8BackendProvider) != null;
     // 断开只在"确实连着"时有意义；busy 中等控制器自己收尾，避免重复拆链。
     final canDisconnect =
         status.sessionState != SessionState.closed && !status.busy;
@@ -55,159 +111,215 @@ class SettingsPage extends ConsumerWidget {
         bottom: false,
         child: Column(
           children: [
-          // 页头与主页空态同款（headerHeight + bgHeader），不引 AppBar，
-          // 免得主题里的 AppBarTheme 又多一套独立出处。
-          Container(
-            height: TelegramMetrics.headerHeight,
-            color: TelegramColors.bgHeader,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            alignment: Alignment.centerLeft,
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: () => Navigator.of(context).maybePop(),
-                  icon: Icon(
-                    Icons.arrow_back,
-                    color: TelegramColors.textSecondary,
+            _header(context),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.only(top: 8, bottom: 24),
+                children: [
+                  _enter(0, _accountCard(context, account, status, qq8Online)),
+                  _enter(
+                    1,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const TelegramSectionHeader(text: '通用'),
+                        TelegramTileGroup(children: [
+                          TgListTile(
+                            icon: Icons.dark_mode_outlined,
+                            title: '外观',
+                            subtitle: dark ? '暗色（当前）' : '亮色（当前）',
+                            trailing: Switch(
+                              // v3.31 起 activeColor 弃用，activeThumbColor 同值同义
+                              activeThumbColor: TelegramColors.accent,
+                              value: dark,
+                              onChanged: (value) => unawaited(
+                                ref
+                                    .read(themeModeProvider.notifier)
+                                    .setDark(value),
+                              ),
+                            ),
+                          ),
+                          TgListTile(
+                            key: const ValueKey('settings-font-scale'),
+                            icon: Icons.format_size,
+                            title: '文字大小',
+                            subtitle: UiPrefs.fontScaleLabel(prefs.fontScale),
+                            onTap: () => _pickFontScale(context, ref),
+                          ),
+                        ]),
+                      ],
+                    ),
                   ),
-                ),
-                Text(
-                  '设置',
-                  // ActionBar.java:654：手机竖屏页面标题 20dp
-                  style: TextStyle(
-                    color: TelegramColors.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w600,
+                  _enter(
+                    2,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const TelegramSectionHeader(text: '消息'),
+                        TelegramTileGroup(children: [
+                          TgListTile(
+                            icon: Icons.notifications_active_outlined,
+                            title: '消息通知',
+                            subtitle: '应用在后台时收到新消息弹系统通知',
+                            trailing: Switch(
+                              activeThumbColor: TelegramColors.accent,
+                              value: prefs.notifications,
+                              onChanged: (value) => unawaited(
+                                ref
+                                    .read(uiPrefsProvider.notifier)
+                                    .setNotifications(value),
+                              ),
+                            ),
+                          ),
+                          TgListTile(
+                            icon: Icons.animation,
+                            title: '消息入场动画',
+                            subtitle: '新消息气泡淡入并轻微上浮',
+                            trailing: Switch(
+                              activeThumbColor: TelegramColors.accent,
+                              value: prefs.messageAnimations,
+                              onChanged: (value) => unawaited(
+                                ref
+                                    .read(uiPrefsProvider.notifier)
+                                    .setMessageAnimations(value),
+                              ),
+                            ),
+                          ),
+                        ]),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                  _enter(
+                    3,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const TelegramSectionHeader(text: '数据'),
+                        TelegramTileGroup(children: [
+                          TgListTile(
+                            icon: Icons.storage_outlined,
+                            title: '存储与缓存',
+                            subtitle: store == null ? '连接后可用' : null,
+                            onTap: store == null
+                                ? null
+                                : () => _openStorageDialog(context, store),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+                  _enter(
+                    4,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const TelegramSectionHeader(text: '连接'),
+                        TelegramTileGroup(children: [
+                          TgListTile(
+                            icon: Icons.dns_outlined,
+                            title: '连接设置（OneBot 后端）',
+                            subtitle: status.stateLabel,
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const ConnectPage(),
+                              ),
+                            ),
+                          ),
+                          TgListTile(
+                            icon: Icons.key_rounded,
+                            title: 'QQ 账号登录（自实现协议）',
+                            subtitle: '口令 / 短信 / 扫码 / 票据，四选一',
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const Qq8ConnectPage(),
+                              ),
+                            ),
+                          ),
+                          TgListTile(
+                            icon: Icons.link_off,
+                            title: '断开连接',
+                            danger: true,
+                            showChevron: false,
+                            onTap: canDisconnect
+                                ? () => unawaited(
+                                    ref
+                                        .read(connectionControllerProvider
+                                            .notifier)
+                                        .disconnect(),
+                                  )
+                                : null,
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+                  _enter(
+                    5,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const TelegramSectionHeader(text: '关于'),
+                        TelegramTileGroup(children: [
+                          TgListTile(
+                            icon: Icons.info_outline,
+                            title: '关于 QQ Client',
+                            subtitle: '版本、两条线路与合规声明',
+                            onTap: () => _showAbout(context, ref),
+                          ),
+                        ]),
+                      ],
+                    ),
+                  ),
+                  // 页脚：TG 设置页底部也是这么一行灰字（版本 + 说明），
+                  // 不做成可点行，纯装饰。
+                  _enter(
+                    6,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+                      child: Text(
+                        'QQ Client · 自实现协议线路仅供学习用途',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: TelegramColors.textMuted,
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              children: [
-                _accountCard(account, status),
-                const SizedBox(height: 12),
-                const TelegramSectionHeader(text: '外观'),
-                TelegramTileGroup(children: [
-                  TgListTile(
-                    icon: Icons.dark_mode_outlined,
-                    title: '外观：亮色 / 暗色',
-                    subtitle: '保存在本机，下次启动照旧',
-                    trailing: Switch(
-                      // v3.31 起 activeColor 弃用，activeThumbColor 同值同义
-                      activeThumbColor: TelegramColors.accent,
-                      value: dark,
-                      onChanged: (value) => unawaited(
-                        ref.read(themeModeProvider.notifier).setDark(value),
-                      ),
-                    ),
-                  ),
-                  TgListTile(
-                    icon: Icons.format_size,
-                    title: '文字大小',
-                    subtitle: UiPrefs.fontScaleLabel(prefs.fontScale),
-                    trailing: Icon(
-                      Icons.chevron_right,
-                      size: 20,
-                      color: TelegramColors.textMuted,
-                    ),
-                    onTap: () => _pickFontScale(context, ref),
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                const TelegramSectionHeader(text: '消息'),
-                TelegramTileGroup(children: [
-                  TgListTile(
-                    icon: Icons.notifications_active_outlined,
-                    title: '消息通知',
-                    subtitle: '应用在后台时收到新消息弹系统通知',
-                    trailing: Switch(
-                      activeThumbColor: TelegramColors.accent,
-                      value: prefs.notifications,
-                      onChanged: (value) => unawaited(
-                        ref.read(uiPrefsProvider.notifier).setNotifications(value),
-                      ),
-                    ),
-                  ),
-                  TgListTile(
-                    icon: Icons.animation,
-                    title: '消息入场动画',
-                    subtitle: '新消息气泡淡入并轻微上浮',
-                    trailing: Switch(
-                      activeThumbColor: TelegramColors.accent,
-                      value: prefs.messageAnimations,
-                      onChanged: (value) => unawaited(
-                        ref
-                            .read(uiPrefsProvider.notifier)
-                            .setMessageAnimations(value),
-                      ),
-                    ),
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                const TelegramSectionHeader(text: '数据'),
-                TelegramTileGroup(children: [
-                  TgListTile(
-                    icon: Icons.storage_outlined,
-                    title: '存储与缓存',
-                    subtitle: store == null ? '连接后可用' : null,
-                    onTap: store == null
-                        ? null
-                        : () => _openStorageDialog(context, store),
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                const TelegramSectionHeader(text: '连接'),
-                TelegramTileGroup(children: [
-                  TgListTile(
-                    icon: Icons.dns_outlined,
-                    title: '连接设置（OneBot 后端）',
-                    subtitle: status.stateLabel,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const ConnectPage(),
-                      ),
-                    ),
-                  ),
-                  TgListTile(
-                    icon: Icons.key_rounded,
-                    title: 'QQ 账号登录（自实现协议）',
-                    subtitle: '口令 / 短信 / 扫码 / 票据，四选一',
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => const Qq8ConnectPage(),
-                      ),
-                    ),
-                  ),
-                  TgListTile(
-                    icon: Icons.link_off,
-                    title: '断开连接',
-                    danger: true,
-                    onTap: canDisconnect
-                        ? () => unawaited(
-                            ref
-                                .read(connectionControllerProvider.notifier)
-                                .disconnect(),
-                          )
-                        : null,
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                const TelegramSectionHeader(text: '关于'),
-                TelegramTileGroup(children: [
-                  TgListTile(
-                    icon: Icons.info_outline,
-                    title: '关于 QQ Client',
-                    onTap: () => _showAbout(context, ref),
-                  ),
-                ]),
-              ],
-            ),
-          ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// 页头与主页空态同款（headerHeight + bgHeader），不引 AppBar，
+  /// 免得主题里的 AppBarTheme 又多一套独立出处。
+  Widget _header(BuildContext context) {
+    return Container(
+      height: TelegramMetrics.headerHeight,
+      color: TelegramColors.bgHeader,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => Navigator.of(context).maybePop(),
+            icon: Icon(Icons.arrow_back, color: TelegramColors.textSecondary),
+          ),
+          Text(
+            '设置',
+            // ActionBar.java:654：手机竖屏页面标题 20dp
+            style: TextStyle(
+              color: TelegramColors.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -279,91 +391,134 @@ class SettingsPage extends ConsumerWidget {
     }
   }
 
-  /// 账号卡：TG 设置页顶部的「头像 + 名字 + 状态」。
-  Widget _accountCard(AccountInfo? account, ConnectionStatus status) {
+  /// 账号卡：TG 设置页顶部的「头像 + 名字 + 状态」，**整卡可点**直接去
+  /// 登录/管理页（TG 里点头像卡进 EditProfile，这里进账号页）。
+  Widget _accountCard(
+    BuildContext context,
+    AccountInfo? account,
+    ConnectionStatus status,
+    bool qq8Online,
+  ) {
     final nickname = account?.nickname;
     final hasName = nickname != null && nickname.isNotEmpty;
     // 昵称空时不写「未登录」：这张卡读的是 OneBot 后端的账号，协议线在线时
     // 写「未登录」会自相矛盾（真机上就这么显示过），退成 QQ 号更诚实。
     final title =
         hasName ? nickname : (account == null ? '未登录' : 'QQ ${account.uin}');
+    final connected = status.isConnected || qq8Online;
+    // 同一张卡要能说清"哪条线在通"：协议线在线时地址是空的，不能说"已连接"。
+    final String onlineLabel = status.isConnected
+        ? (status.address ?? '已连接')
+        : '自实现协议线路已上线';
     final subtitle = account == null
-        ? '先在「连接」里连上 OneBot 后端，或登录 QQ 账号'
-        : (status.address ?? 'OneBot 后端');
-    final connected = status.isConnected;
+        ? '点按登录 QQ 账号，或连接 OneBot 后端'
+        : connected
+            ? onlineLabel
+            : '账号已缓存，当前未连接';
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        // 与 TelegramTileGroup 同一观感：圆角 12 卡片
-        decoration: BoxDecoration(
+      child: PressableScale(
+        child: Material(
           color: TelegramColors.bgSidebar,
           borderRadius: BorderRadius.circular(12),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            TelegramAvatar(name: title, size: 52),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: const ValueKey('account-card'),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const Qq8ConnectPage()),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
                 children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: TelegramColors.textPrimary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                  TelegramAvatar(name: title, size: 56),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: TelegramColors.textPrimary,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            // 在线小绿点：比整段文字更快的"通没通"信号。
+                            if (connected) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                width: 7,
+                                height: 7,
+                                decoration: BoxDecoration(
+                                  color: TelegramColors.online,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: TelegramColors.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                        // 状态胶囊只在真正连通时出现：没连时写「未连接」会和
+                        // 「协议线其实是通的」矛盾，宁可不显示。
+                        if (connected) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: TelegramColors.accent
+                                  .withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              status.isConnected ? status.stateLabel : '已上线',
+                              style: TextStyle(
+                                color: TelegramColors.accent,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: TelegramColors.textSecondary,
-                      fontSize: 13,
-                    ),
+                  Icon(
+                    Icons.chevron_right,
+                    size: 22,
+                    color: TelegramColors.textMuted,
                   ),
                 ],
               ),
             ),
-            // 状态胶囊只在真正连通时出现：没连时写「未连接」会和
-            // 「协议线其实是通的」矛盾，宁可不显示。
-            if (connected)
-              Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: connected
-                    ? TelegramColors.accent.withValues(alpha: 0.15)
-                    : TelegramColors.bgHover,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                status.stateLabel,
-                style: TextStyle(
-                  color: connected
-                      ? TelegramColors.accent
-                      : TelegramColors.textSecondary,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
   /// 打开"存储与缓存"（原 home_page 的 _openStorageDialog 原样搬来）。
-  Future<void> _openStorageDialog(
-    BuildContext context,
-    ChatStore store,
-  ) async {
+  Future<void> _openStorageDialog(BuildContext context, ChatStore store) async {
     final stats = await store.storageStats();
     if (!context.mounted) return;
     await StorageDialog.show(

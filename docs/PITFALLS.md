@@ -4426,3 +4426,33 @@ Dart 侧开销。
 
 **同批踩到的小坑**：输入栏把「图片/文件」两个 IconButton 合并成一个回形针 + ActionSheet 后，`test/home_page_test.dart` 里直接 `tap(ValueKey('attach-file'))` 的用例失败——key 挂在 **ActionSheet 的菜单项**上，必须先点 `attach` 再点菜单项。可见「组件结构变了，测试的交互路径也要变」，不能只改 key。
 
+
+## C109 设置页/按压反馈的四条：无限动画、抢手势、懒构建、自动箭头（2026-11-01）
+
+**问题 1（会让测试永久挂住）**：给设置页加入场错落动画时，如果用
+`AnimationController.repeat()` 或 `AnimatedOpacity(... always animating)`，
+`pumpAndSettle()` 会一直等不到静止，widget 测试直接超时（不是失败，是挂死）。
+**处理**：入场动画用**有限时长**（520ms，`..forward()` 一次），
+并在测试里断言「中途 FadeTransition.opacity < 1 且 pumpAndSettle 能结束」。
+
+**问题 2（会让长按失效）**：气泡按压反馈最初想用 `GestureDetector(onTapDown/onTapUp)`
+包在外面，结果它进手势竞技场，内层已有的 `onLongPress`（长按菜单）被
+外层 `onTapDown` 抢掉。**处理**：按压反馈一律用 `Listener`
+（`onPointerDown/Up/Cancel`），它只旁听指针事件，不影响命中测试与内层手势。
+见 `lib/ui/widgets/pressable_scale.dart`。
+
+**问题 3（测试误报"控件不存在"）**：`ListView(children: [...])` 也是**懒构建**的，
+默认 800x600 的测试窗口里后几组（如「关于」）根本不在 widget 树上，
+`find.text('关于')` 报 `findsNothing`。**处理**：widget 测试里显式放大窗口
+（`tester.view.physicalSize = Size(420, 1500)`），或先 `drag` 滚进视口
+（`test/group_settings_test.dart` 就是这么做的）。
+
+**问题 4（箭头语义）**：给 `TgListTile` 加"可点即自动 chevron"之后，
+「断开连接」这种危险动作也会带箭头，暗示"进入下一页"，与实际行为
+（就地断开）不符。**处理**：`showChevron` 三态：`null` 自动 / `true` 强制 /
+`false` 强制不画；危险行显式 `showChevron: false`。
+
+**教训**：①动画要么有限时长，要么在测试里 `pump` 定长而不是 `pumpAndSettle`；
+②表现层的"手感"组件优先 `Listener`，别和业务手势抢竞技场；
+③UI 组件结构变化时，测试的**视口尺寸与交互路径**都是契约的一部分。
+
