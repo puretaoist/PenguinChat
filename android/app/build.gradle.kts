@@ -1,4 +1,5 @@
 import java.text.SimpleDateFormat
+import java.util.Properties
 import java.util.Date
 import java.util.Locale
 
@@ -140,23 +141,53 @@ android {
     // 保证任何来源（本机 / CI 任意一次构建）的 APK 都能覆盖安装上一版。
     // 背景：CI 每次跑在新 runner 上，AGP 自动生成的 debug 钥匙每次都不一样，
     // 不统一就会出现"签名不一致，无法升级安装"。
-    // 注意：这把钥匙与口令是**故意公开**的（课程项目，不做商店分发）；
-    // 真上架前必须换正式签名并改用密钥管理，不得沿用这里的口令。
+    //
+    // 2026-11-01：口令**不再写死在本文件**（本文件是公开仓库内容）。取值顺序：
+    //   1) android/key.properties（本机手写 / CI 由 Secrets 生成，已 gitignore）
+    //   2) 环境变量 ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_PASSWORD /
+    //      ANDROID_KEY_ALIAS / ANDROID_KEYSTORE_FILE
+    //   3) 都没有 => 打警告并退回 AGP 默认 debug 签名（能装，但签名可能随机器变化）
+    val signingProps = Properties().apply {
+        val f = rootProject.file("key.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+
+    fun signingValue(key: String, env: String): String? =
+        (signingProps.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() }
+
+    val storePasswordValue = signingValue("storePassword", "ANDROID_KEYSTORE_PASSWORD")
+    val keyPasswordValue = signingValue("keyPassword", "ANDROID_KEY_PASSWORD")
+    val keyAliasValue = signingValue("keyAlias", "ANDROID_KEY_ALIAS") ?: "qqclient"
+    val storeFileValue = signingValue("storeFile", "ANDROID_KEYSTORE_FILE") ?: "qqclient.p12"
+    val hasSigning = storePasswordValue != null && keyPasswordValue != null
+
+    if (!hasSigning) {
+        logger.warn(
+            "[penguinchat] 未找到签名口令（android/key.properties 或 ANDROID_KEYSTORE_PASSWORD / " +
+                "ANDROID_KEY_PASSWORD），本次构建使用 AGP 默认 debug 签名；" +
+                "产物可能与上一版签名不一致，覆盖安装会失败。",
+        )
+    }
+
     signingConfigs {
-        create("unified") {
-            storeFile = file("qqclient.p12")
-            storePassword = "qqclient123"
-            keyAlias = "qqclient"
-            keyPassword = "qqclient123"
+        if (hasSigning) {
+            create("unified") {
+                storeFile = file(storeFileValue)
+                storePassword = storePasswordValue
+                keyAlias = keyAliasValue
+                keyPassword = keyPasswordValue
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig = signingConfigs.getByName("unified")
+            signingConfig =
+                if (hasSigning) signingConfigs.getByName("unified") else signingConfigs.getByName("debug")
         }
         release {
-            signingConfig = signingConfigs.getByName("unified")
+            signingConfig =
+                if (hasSigning) signingConfigs.getByName("unified") else signingConfigs.getByName("debug")
         }
     }
 }

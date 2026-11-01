@@ -307,12 +307,14 @@ class MessageBubble extends StatelessWidget {
           ),
           if (isOut) ...[
             const SizedBox(width: 3),
+            // 单勾 = 服务端已接受。双勾（已读）需要对方的已读回执，
+            // QQ 官方协议不给普通消息这个信息（见 docs/已读回执-可行性-20261101.md）。
             Icon(
               message.isFailed
                   ? Icons.error_outline
                   : message.isSending
                       ? Icons.schedule
-                      : Icons.done_all,
+                      : Icons.done,
               size: 12,
               color: Colors.white70,
             ),
@@ -385,7 +387,7 @@ class MessageBubble extends StatelessWidget {
                     ? Icons.error_outline
                     : message.isSending
                         ? Icons.schedule
-                        : Icons.done_all,
+                        : Icons.done,
                 size: 14,
                 color: message.isFailed
                     ? TelegramColors.danger
@@ -432,7 +434,7 @@ class MessageBubble extends StatelessWidget {
                 ? Icons.error_outline
                 : message.isSending
                     ? Icons.schedule
-                    : Icons.done_all,
+                    : Icons.done,
             size: 14,
             color: message.isFailed
                 ? TelegramColors.danger

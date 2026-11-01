@@ -202,7 +202,7 @@ void main() {
       expect(retried, 1);
     });
 
-    testWidgets('未送达显示时钟、已送达显示双勾', (tester) async {
+    testWidgets('未送达显示时钟、已送达显示单勾（已读双勾协议不提供）', (tester) async {
       await tester.pumpWidget(_wrap(MessageBubble(
         message: _msg('1', 'a', time: day2,
             outgoing: true, sendState: MessageSendState.sending),
@@ -212,7 +212,7 @@ void main() {
       await tester.pumpWidget(_wrap(MessageBubble(
         message: _msg('2', 'b', time: day2, outgoing: true),
       )));
-      expect(find.byIcon(Icons.done_all), findsOneWidget);
+      expect(find.byIcon(Icons.done), findsOneWidget);
     });
 
     testWidgets('反撤回：默认只显示占位 + 「查看」，点开后显示原文', (tester) async {

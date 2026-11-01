@@ -93,3 +93,6 @@ a1_*.json
 android/app/src/main/jniLibs/
 android/app/jniLibs-tim/
 fekit_req.txt
+
+# 签名口令（2026-11-01 从 build.gradle.kts 移出；本地/CI 各自生成，绝不入库）
+android/key.properties

@@ -129,6 +129,24 @@ jobs:
           cat android/local.properties
           chmod +x android/gradlew
 
+      # ---------- 签名口令 ----------
+      # 2026-11-01 起 build.gradle.kts 不再写死口令，改读 android/key.properties。
+      # 仓库里留了 keystore（android/app/qqclient.p12），口令放 Secrets：
+      #   ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_PASSWORD（必需）
+      #   ANDROID_KEY_ALIAS（可选，默认 qqclient）
+      # 未配置 Secrets 时本步骤跳过，构建会退回 runner 的 debug 签名 ——
+      # 产物能装，但签名与上一版不同，无法覆盖安装（只适合临时验证）。
+      - name: Write signing config
+        if: ${{ secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
+        run: |
+          cat > android/key.properties <<EOF
+          storeFile=qqclient.p12
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS || 'qqclient' }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+          echo "android/key.properties 已生成（口令来自 Secrets）"
+
       # 预装 NDK：Flutter Gradle 插件需要它来 strip 引擎 .so 的调试符号。
       # ubuntu-latest 的 runner 通常已带，这里显式确保版本一致，避免构建中途触发下载。
       - name: Ensure NDK
