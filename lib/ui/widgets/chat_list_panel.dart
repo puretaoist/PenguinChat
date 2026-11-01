@@ -16,6 +16,7 @@ import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
 import 'message_bubble.dart' show formatTime;
 import 'telegram_avatar.dart';
+import 'tg_page_header.dart';
 
 /// 会话侧栏：搜索条 + 归档入口 + 会话列表（下拉刷新、空态、未读徽章）。
 class ChatListPanel extends StatelessWidget {
@@ -70,9 +71,40 @@ class ChatListPanel extends StatelessWidget {
     final visible = chats.where((c) => !c.archived).toList(growable: false);
     final archived = chats.where((c) => c.archived).toList(growable: false);
     return Container(
-      color: TelegramColors.bgSidebar,
+      // 与其他三个 Tab（联系人/设置/我的，都是 bgApp）统一：以前这里是
+      // bgSidebar #212121，切 Tab 时整块底色会跳一下（用户反馈第 5 条）。
+      color: TelegramColors.bgApp,
       child: Column(
         children: [
+          // 聊天 Tab 以前没有标题页头（只有一条搜索框），四个 Tab 里唯一
+          // 一个"没有名字"的页面。现在补上，并把切换主题/设置两个入口从
+          // 搜索框右侧挪到页头右侧（TG 也是 ActionBar 右侧放设置）。
+          TgPageHeader(
+            title: '聊天',
+            trailing: <Widget>[
+              IconButton(
+                key: const ValueKey('toggle-theme'),
+                onPressed: onToggleTheme,
+                icon: Icon(
+                  TelegramColors.current == TelegramPalette.dark
+                      ? Icons.light_mode
+                      : Icons.dark_mode,
+                  size: 20,
+                  color: TelegramColors.textSecondary,
+                ),
+                tooltip: '切换亮色 / 暗色',
+              ),
+              IconButton(
+                onPressed: onOpenSettings,
+                icon: Icon(
+                  Icons.settings,
+                  size: 20,
+                  color: TelegramColors.textSecondary,
+                ),
+                tooltip: '设置',
+              ),
+            ],
+          ),
           _buildSearchBar(),
           // 有预览列表但还没连上时，列表顶部压一条 2px 的强调色细线：提醒
           // "这些是缓存，正在后台恢复连接"。
@@ -171,30 +203,6 @@ class ChatListPanel extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 6),
-          IconButton(
-            key: const ValueKey('toggle-theme'),
-            onPressed: onToggleTheme,
-            icon: Icon(
-              TelegramColors.current == TelegramPalette.dark
-                  ? Icons.light_mode
-                  : Icons.dark_mode,
-              size: 20,
-              color: TelegramColors.textSecondary,
-            ),
-            tooltip: '切换亮色 / 暗色',
-          ),
-          // TG 顶栏右侧就是设置：存储/连接等二级操作全部收进设置页，
-          // 侧栏只留这一个入口。
-          IconButton(
-            onPressed: onOpenSettings,
-            icon: Icon(
-              Icons.settings,
-              size: 20,
-              color: TelegramColors.textSecondary,
-            ),
-            tooltip: '设置',
           ),
         ],
       ),

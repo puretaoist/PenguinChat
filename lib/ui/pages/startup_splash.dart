@@ -59,7 +59,7 @@ class StartupSplash extends StatelessWidget {
               ),
               const SizedBox(height: 22),
               Text(
-                'QQ Client',
+                'PenguinChat',
                 style: TextStyle(
                   color: TelegramColors.textPrimary,
                   fontSize: 22,

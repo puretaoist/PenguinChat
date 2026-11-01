@@ -99,9 +99,9 @@ class MessageBubble extends StatelessWidget {
       builder: (context, constraints) {
         // sizeOf：键盘动画帧（viewInsets）不触发重建
         final mediaLimit = MediaQuery.sizeOf(context).width * 0.78;
-        // 还要扣掉同一行里的兄弟：外层 Padding 的 8x2，以及高亮竖条（3 宽 + 4 外边距）。
-        // 不扣的话 Row 会溢出——widget 测试在 800px 宽的窗口下抓到了这 16px。
-        final chrome = 16.0 + (highlighted ? 7.0 : 0.0);
+        // 扣掉同一行里的兄弟：外层 Padding 的 8x2。不扣的话 Row 会溢出
+        // ——widget 测试在 800px 宽的窗口下抓到过这 16px。
+        const chrome = 16.0;
         // 宽度按 TG 的算法收：父宽 -80，画头像的那一侧再 -52
         // （messenger/MessageObject.java:8527-8531）。本组件拿到的
         // constraints 已经扣掉了头像槽（44dp），所以这里只补 20（= 80 - 44 - 16
@@ -137,7 +137,18 @@ class MessageBubble extends StatelessWidget {
     );
     final inner = Container(
         decoration: BoxDecoration(
-          color: isOut ? TelegramColors.bubbleOut : TelegramColors.bubbleIn,
+          // @我 的入站气泡：底色掺 12% 强调色（TG 用强调色表达"有人在叫我"，
+          // 但**不画气泡外的东西**）。以前这里在气泡外面挂了一根 3x28 的紫色
+          // 竖条，用户反馈"聊天气泡外部左侧的竖条是什么，怎么有的有有的没有"
+          // ——那根条只在 @我/回复 的消息上出现，纯属自造视觉。
+          color: isOut
+              ? TelegramColors.bubbleOut
+              : (highlighted
+                  ? Color.alphaBlend(
+                      TelegramColors.accent.withValues(alpha: 0.12),
+                      TelegramColors.bubbleIn,
+                    )
+                  : TelegramColors.bubbleIn),
           borderRadius: bubbleShape,
         ),
         // 内边距不是四边等宽：TG layoutTextXY 16626-16651 自己 +11、对方 +17
@@ -267,17 +278,6 @@ class MessageBubble extends StatelessWidget {
         mainAxisAlignment:
             isOut ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
-          if (highlighted) ...[
-            Container(
-              width: 3,
-              height: 28,
-              margin: const EdgeInsets.only(right: 4),
-              decoration: BoxDecoration(
-                color: TelegramColors.accent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ],
           body,
         ],
       ),

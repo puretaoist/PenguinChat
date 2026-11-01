@@ -25,20 +25,25 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../client_api/chat_store.dart';
 import '../../client_api/session.dart';
 import '../../client_api/session_providers.dart';
-import '../../infra/device/device_info.dart';
 import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
+import '../widgets/about_penguinchat.dart';
 import '../widgets/pressable_scale.dart';
 import '../widgets/storage_dialog.dart';
 import '../widgets/telegram_avatar.dart';
 import '../widgets/telegram_list_item.dart';
+import '../widgets/tg_page_header.dart';
 import 'connect_page.dart';
 import 'qq8_connect_page.dart';
 
 /// 设置页：账号卡 / 通用 / 消息 / 数据 / 连接 / 关于。
 class SettingsPage extends ConsumerStatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({super.key, this.embedded = false});
+
+  /// 作为 [HomeShell] 的底栏 tab 使用时为 true：页头不画返回箭头
+  /// （tab 是根视图，退回上一页没有意义），底部也给悬浮底栏留出空间。
+  final bool embedded;
 
   @override
   ConsumerState<SettingsPage> createState() => _SettingsPageState();
@@ -111,10 +116,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
         bottom: false,
         child: Column(
           children: [
-            _header(context),
+            TgPageHeader(title: '设置', showBack: !widget.embedded),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.only(top: 8, bottom: 24),
+                // 嵌在底栏里时多留 80（56 胶囊 + 8 边距 + 余量），否则最后
+                // 一行会被悬浮底栏压住点不到。
+                padding: EdgeInsets.only(
+                    top: 8, bottom: widget.embedded ? 96 : 24),
                 children: [
                   _enter(0, _accountCard(context, account, status, qq8Online)),
                   _enter(
@@ -262,7 +270,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                         TelegramTileGroup(children: [
                           TgListTile(
                             icon: Icons.info_outline,
-                            title: '关于 QQ Client',
+                            title: '关于 PenguinChat',
                             subtitle: '版本、两条线路与合规声明',
                             onTap: () => _showAbout(context, ref),
                           ),
@@ -277,7 +285,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                     Padding(
                       padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
                       child: Text(
-                        'QQ Client · 自实现协议线路仅供学习用途',
+                        'PenguinChat · 自实现协议线路仅供学习用途',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: TelegramColors.textMuted,
@@ -292,34 +300,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  /// 页头与主页空态同款（headerHeight + bgHeader），不引 AppBar，
-  /// 免得主题里的 AppBarTheme 又多一套独立出处。
-  Widget _header(BuildContext context) {
-    return Container(
-      height: TelegramMetrics.headerHeight,
-      color: TelegramColors.bgHeader,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      alignment: Alignment.centerLeft,
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: Icon(Icons.arrow_back, color: TelegramColors.textSecondary),
-          ),
-          Text(
-            '设置',
-            // ActionBar.java:654：手机竖屏页面标题 20dp
-            style: TextStyle(
-              color: TelegramColors.textPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -537,51 +517,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
   }
 
   /// 「关于」：版本信息 + 两条线路的定位 + SAFETY 声明（红线摘要）。
-  Future<void> _showAbout(BuildContext context, WidgetRef ref) async {
-    final BuildInfo info = await ref.read(deviceInfoProvider).buildInfo();
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('关于 QQ Client'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '版本 ${info.appVersion}',
-              style: const TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '提交 ${info.gitCommit} · 构建 ${info.buildTime}',
-              style: const TextStyle(fontSize: 13, height: 1.4),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              '两条线路：日用线走 OneBot（NapCat 等）；研究线是自实现 QQ '
-              '协议，只作课程学习用途。',
-              style: TextStyle(fontSize: 13, height: 1.5),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '注意：自实现协议线违反 QQ 用户协议，账号可能被永久封禁；'
-              '这是刻意保留的设计取舍，不做任何规避（详见 SAFETY.md）。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.5,
-                color: TelegramColors.danger,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
+  Future<void> _showAbout(BuildContext context, WidgetRef ref) =>
+      showAboutPenguinChat(context, ref);
+
 }

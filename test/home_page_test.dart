@@ -584,4 +584,24 @@ void main() {
     }
     await _teardownStore(tester);
   });
+
+  testWidgets('系统返回键：窄屏对话页先回列表，不直接退出应用', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ChatHeader), findsOneWidget);
+
+    // 模拟系统返回键：PopScope(canPop: _showChatList) 应拦下这次 pop。
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChatHeader), findsNothing, reason: '应当回到列表');
+    expect(find.byKey(const ValueKey('chat-row-private_20002')), findsOneWidget);
+    await _teardownStore(tester);
+  });
 }

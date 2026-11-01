@@ -64,6 +64,7 @@ class HomePage extends ConsumerStatefulWidget {
     super.key,
     this.connecting = false,
     this.previewChats = const <Chat>[],
+    this.onChatPaneVisibilityChanged,
   });
 
   /// 冷启动时从磁盘索引读出的会话快照（见 `chat_index_preview.dart`）。
@@ -79,6 +80,11 @@ class HomePage extends ConsumerStatefulWidget {
   /// 传入并随登录状态更新（它 watch 了 qq8LoginStateProvider，本页不 watch，
   /// 因为 widget 测试的 provider override 里没有协议线的依赖）。
   final bool connecting;
+
+  /// 窄屏下"是否正在看对话"（true=对话页，false=列表页）。
+  ///
+  /// 外壳（HomeShell）据此决定底栏显隐：进对话要让位给输入栏。
+  final ValueChanged<bool>? onChatPaneVisibilityChanged;
 
   @override
   ConsumerState<HomePage> createState() => _HomePageState();
@@ -354,6 +360,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       _selectedChatId = chat.id;
       _showChatList = false;
     });
+    widget.onChatPaneVisibilityChanged?.call(true);
     unawaited(_ensureOpened(chat.id));
     // 打开群会话顺手把成员名字补上（服务层 10 分钟限流）：群消息体里经常没有昵称，
     // 不补就只剩 QQ 号。失败静默，不影响打开会话。
@@ -702,8 +709,14 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       );
     }
-    // 窄屏（手机）：列表与对话二选一
-    return Scaffold(
+    // 窄屏（手机）：列表与对话二选一。
+    // 系统返回键：在对话页时先回列表，别直接退出应用（canPop=false 拦下）。
+    return PopScope(
+      canPop: _showChatList,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _backToChatList();
+      },
+      child: Scaffold(
       backgroundColor: TelegramColors.bgApp,
       body: SafeArea(
         bottom: false,
@@ -730,12 +743,19 @@ class _HomePageState extends ConsumerState<HomePage> {
                   child: _buildChatPane(
                     chats,
                     store,
-                    onBack: () => setState(() => _showChatList = true),
+                    onBack: _backToChatList,
                   ),
                 ),
         ),
       ),
+      ),
     );
+  }
+
+  /// 对话页返回列表：同时告诉外壳"对话关了"，底栏重新出现。
+  void _backToChatList() {
+    setState(() => _showChatList = true);
+    widget.onChatPaneVisibilityChanged?.call(false);
   }
 
   /// 选中哪个会话：优先用户点过的（归档里的也算，从归档入口点进去要能留住），
@@ -1750,7 +1770,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
                 ),
               Text(
-                'QQ Client',
+                'PenguinChat',
                 style: TextStyle(
                   color: TelegramColors.textPrimary,
                   fontSize: TelegramMetrics.fontTitle,

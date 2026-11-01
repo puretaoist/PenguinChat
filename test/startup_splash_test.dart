@@ -11,7 +11,7 @@ void main() {
     // 进度条是 indeterminate（永远在动），pumpAndSettle 会超时；固定推进 500ms 即可。
     await tester.pump(const Duration(milliseconds: 500));
 
-    expect(find.text('QQ Client'), findsOneWidget);
+    expect(find.text('PenguinChat'), findsOneWidget);
     expect(find.byKey(const ValueKey('startup-status')), findsOneWidget);
     expect(find.text('正在启动…'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);

@@ -29,7 +29,7 @@ import '../../client_api/objects.dart';
 import '../../client_api/qq8_login_service.dart';
 import '../../infra/log/logger.dart';
 import '../../client_api/qq8_providers.dart';
-import '../pages/home_page.dart';
+import '../pages/home_shell.dart';
 import '../pages/startup_splash.dart';
 
 class AppBootstrap extends ConsumerStatefulWidget {
@@ -174,7 +174,7 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
     // AnimatedSwitcher 淡入**：两棵全屏树交叉合成在 debug 帧率下会明显
     // 掉帧，而"淡入"本身没有任何信息量——官方两家也都不淡入。
     if (_revealed || _hasPreview) {
-      return HomePage(
+      return HomeShell(
         key: const ValueKey<String>('home'),
         connecting: connecting,
         previewChats: widget.preview?.chats ?? const <Chat>[],

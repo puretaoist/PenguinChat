@@ -50,6 +50,7 @@ import '../infra/device/device_info.dart';
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
 import '../kernel/wlogin8/qq8_device.dart';
+import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_login.dart';
 import '../kernel/wlogin8/qq8_profiles.dart';
 import '../kernel/wlogin8/qq8_protocol_det.dart';
@@ -432,6 +433,26 @@ final qq8PushesProvider = StreamProvider<Qq8SsoResponse>((ref) {
 /// 服务层始终在解析（"被踢下线"要改状态），所以这里不按阶段过滤。
 final qq8PushEventsProvider = StreamProvider<Qq8PushEvent>((ref) {
   return ref.watch(qq8LoginServiceProvider).events;
+});
+
+/// 好友列表（「联系人」页的数据源）。
+///
+/// 优先级：服务层已缓存 → 直接用（断网也能看）；没缓存且已上线 → 拉一次；
+/// 没缓存又没上线 → 空表（页面自己显示"未上线"引导，不假装有数据）。
+///
+/// 依赖 [qq8LoginStateProvider] 的阶段：换号/退出会让 stage 变化，
+/// 从而自动重算，不会把上一个号的好友留到新号界面上。
+final qq8FriendsProvider = FutureProvider<List<Qq8Friend>>((ref) async {
+  final svc = ref.watch(qq8LoginServiceProvider);
+  final stage = ref.watch(qq8LoginStateProvider).valueOrNull?.stage;
+  if (svc.friends.isNotEmpty) return svc.friends;
+  if (stage != Qq8LoginStage.online) return const <Qq8Friend>[];
+  try {
+    return (await svc.fetchFriendList()).friends;
+  } catch (_) {
+    // 拉好友失败不该炸掉联系人页：退回（可能为空的）缓存。
+    return svc.friends;
+  }
 });
 
 // ---------------------------------------------------------------------------

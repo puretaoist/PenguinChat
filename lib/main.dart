@@ -200,7 +200,7 @@ class QQClientApp extends ConsumerWidget {
     // 不需要每个 Text 各自算一遍。
     final fontScale = ref.watch(uiPrefsProvider).fontScale;
     return MaterialApp(
-      title: 'QQ Client',
+      title: 'PenguinChat',
       debugShowCheckedModeBanner: false,
       theme: buildTelegramTheme(dark: dark),
       builder: (BuildContext context, Widget? child) {

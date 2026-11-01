@@ -479,6 +479,43 @@ class Qq8LoginService {
   /// 群成员名单的最近拉取时间（同一个群 10 分钟内不重复拉）。
   final Map<int, DateTime> _groupNamesFetchedAt = <int, DateTime>{};
 
+  /// 最近一次拉到的好友列表（含分组），给「联系人」页当数据源。
+  ///
+  /// 刻意和 [_friendNames] 分开：那张表只是"名字查找缓存"，这张保留
+  /// 昵称/备注/分组/性别等原始字段。登录后 [fetchFriendList] 会填一次，
+  /// 断网时联系人页仍能显示上次的结果，不至于一断线就空白。
+  final List<Qq8Friend> _friends = <Qq8Friend>[];
+  final List<Qq8FriendClass> _friendClasses = <Qq8FriendClass>[];
+
+  /// 自己的昵称：登录协议不返回，只能从群成员名单里顺带认出自己。
+  String? _selfNickname;
+
+  /// [ensureSelfNickname] 是否已经试过（每账号只试一次；失败不重试，
+  /// 免得每次进「我的」页都白打一轮群列表+群成员）。
+  bool _selfNicknameTried = false;
+
+  /// 好友列表快照（空 = 还没拉过）。
+  List<Qq8Friend> get friends => List<Qq8Friend>.unmodifiable(_friends);
+
+  /// 好友分组快照。
+  List<Qq8FriendClass> get friendClasses =>
+      List<Qq8FriendClass>.unmodifiable(_friendClasses);
+
+  /// 分组 id → 分组名（未知返回 null）。
+  String? friendGroupNameOf(int? id) {
+    if (id == null || id == 0) return null;
+    for (final c in _friendClasses) {
+      if (c.id == id) return c.name;
+    }
+    return null;
+  }
+
+  /// 当前登录的 QQ 号（未登录返回 null）。
+  int? get uin => _snapshot.uin ?? _session?.uin;
+
+  /// 自己的昵称（未知返回 null）。
+  String? get selfNickname => _selfNickname;
+
   /// 查**私聊**显示名（好友备注优先）。没有就返回 null（回落交给调用方）。
   String? displayNameOf(int uin) {
     final n = _friendNames[uin];
@@ -492,6 +529,14 @@ class Qq8LoginService {
     return displayNameOf(uin);
   }
 
+  /// 换号时清掉上一个账号的列表缓存（联系人/分组/自己昵称）。
+  void _clearCachedLists() {
+    _friends.clear();
+    _friendClasses.clear();
+    _selfNickname = null;
+    _selfNicknameTried = false;
+  }
+
   void _rememberFriendName(int uin, String? name) {
     if (uin == 0 || name == null || name.isEmpty) return;
     _friendNames[uin] = name;
@@ -500,6 +545,11 @@ class Qq8LoginService {
   void _rememberGroupMemberName(int gid, int uin, String? name) {
     if (gid == 0 || uin == 0 || name == null || name.isEmpty) return;
     (_groupMemberNames[gid] ??= <int, String>{})[uin] = name;
+    // 群成员名单里出现自己 → 顺手记下自己的群名片（登录协议本身不返回昵称）。
+    if (uin == _session?.uin &&
+        (_selfNickname == null || _selfNickname!.isEmpty)) {
+      _selfNickname = name;
+    }
   }
 
   /// 确保某个群的成员名字已缓存（10 分钟内只拉一次，失败静默）。
@@ -515,6 +565,39 @@ class Qq8LoginService {
       await fetchGroupMembers(gid);
     } catch (_) {
       // 名字是装饰，拉不到就算了。
+    }
+  }
+
+  /// 尽量认出「自己的昵称」（登录协议不返回，只能从群成员名单里认）。
+  ///
+  /// 用户反馈「我的界面昵称是我」的根因：以前只有打开过群聊、恰好拉过成员
+  /// 名单时才会认出自己，冷启动没进过群就永远是「我」。这里在进入「我的」
+  /// 页时 best-effort 补一次：在群列表前 [maxGroups] 个群里找自己那条。
+  ///
+  /// 三条纪律：**只在已上线时发**；**每账号只试一次**；**全程静默**
+  /// （任何异常都吞掉，绝不影响界面与其他流程）。
+  Future<void> ensureSelfNickname({int maxGroups = 3}) async {
+    if (_selfNicknameTried) return;
+    final known = _selfNickname;
+    if (known != null && known.isNotEmpty) return;
+    if (!isOnline || _session == null) return;
+    _selfNicknameTried = true;
+    try {
+      final page = await fetchGroupList();
+      final groups = page.groups.take(maxGroups).toList();
+      for (final g in groups) {
+        if (_selfNickname != null && _selfNickname!.isNotEmpty) break;
+        if (!isOnline) break;
+        await fetchGroupMembers(g.gid);
+      }
+      final got = _selfNickname;
+      if (got != null && got.isNotEmpty) {
+        _log.i('已认出自己的昵称：$got');
+      } else {
+        _log.i('群成员里没认出自己（试了 ${groups.length} 个群），昵称保持未知');
+      }
+    } catch (e) {
+      _log.w('识别自己昵称失败（忽略）', error: e);
     }
   }
 
@@ -908,6 +991,8 @@ class Qq8LoginService {
     Uint8List? a2Key,
     bool smsLogin = false,
   }) async {
+    // 换号登录：先清掉上一个账号的联系人/分组缓存，避免串号显示。
+    if (_snapshot.uin != uin) _clearCachedLists();
     // 闸门：口令链（token == null 且没有 A1，含手机号验证登录）没有官方 native
     // 真签时默认禁止。理由见 lib/kernel/safety/login_policy.dart 与
     // docs/RESEARCH-code45.md。
@@ -1938,6 +2023,14 @@ class Qq8LoginService {
     }
     for (final fr in friends) {
       _rememberFriendName(fr.uin, fr.displayName);
+    }
+    if (result == 0 && friends.isNotEmpty) {
+      _friends
+        ..clear()
+        ..addAll(friends);
+      _friendClasses
+        ..clear()
+        ..addAll(classes);
     }
     _log.i('好友列表：${friends.length}/$total 人、${classes.length} 个分组'
         '（$pages 页，result=$result）');
