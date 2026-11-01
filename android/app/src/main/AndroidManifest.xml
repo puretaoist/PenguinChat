@@ -36,6 +36,12 @@
         android:label="PenguinChat"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- 通知栏直接回复的接收端（见 ReplyReceiver.kt）。
+             exported=false：只有本应用的 PendingIntent 能唤起它，外部应用无法伪造。 -->
+        <receiver
+            android:name=".ReplyReceiver"
+            android:exported="false"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

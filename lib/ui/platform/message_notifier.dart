@@ -14,7 +14,8 @@
 /// 反向调用（原生 → Dart）：
 ///
 /// ```text
-///   opened → chatId  用户点了某条消息通知，要打开对应会话
+///   opened → chatId                 用户点了某条消息通知，要打开对应会话
+///   reply  → {chatId, text} → bool  通知栏里直接回复；true = 已交给发送队列
 /// ```
 library;
 
@@ -32,6 +33,11 @@ class MessageNotifier {
   final MethodChannel _channel;
 
   final StreamController<String> _opened = StreamController<String>.broadcast();
+
+  /// 通知栏直接回复的落地回调。返回 true 表示已交给发送队列（原生会撤掉通知），
+  /// false 表示发不出去（原生换一条"回复未发送"）。
+  Future<bool> Function(String chatId, String text)? _onReply;
+
   bool _handlerInstalled = false;
 
   /// 用户点了通知要打开的会话 ID。
@@ -40,16 +46,37 @@ class MessageNotifier {
   /// "Stream has already been listened to"。
   Stream<String> get opened => _opened.stream;
 
-  /// 安装原生回调。重复调用是幂等的。
-  void install() {
+  /// 安装原生回调。重复调用是幂等的；[onReply] 可后补（重复 install 会更新它）。
+  void install({Future<bool> Function(String chatId, String text)? onReply}) {
+    if (onReply != null) _onReply = onReply;
     if (_handlerInstalled) return;
     _handlerInstalled = true;
     _channel.setMethodCallHandler((call) async {
-      if (call.method == 'opened') {
-        final chatId = call.arguments;
-        if (chatId is String && chatId.isNotEmpty && !_opened.isClosed) {
-          _opened.add(chatId);
-        }
+      switch (call.method) {
+        case 'opened':
+          final chatId = call.arguments;
+          if (chatId is String && chatId.isNotEmpty && !_opened.isClosed) {
+            _opened.add(chatId);
+          }
+          return null;
+        case 'reply':
+          // 原生在广播里等着这个返回值决定收尾动作，所以这里必须 await 到
+          // 发送动作真正提交（ChatStore.send 是乐观插入，提交很快返回）。
+          final args = call.arguments;
+          if (args is! Map) return false;
+          final chatId = args['chatId'];
+          final text = args['text'];
+          if (chatId is! String || text is! String || chatId.isEmpty) return false;
+          // 只有空白的输入等于没回复：不要因此给对方发一条空消息。
+          final trimmed = text.trim();
+          if (trimmed.isEmpty) return false;
+          final handler = _onReply;
+          if (handler == null) return false;
+          try {
+            return await handler(chatId, trimmed);
+          } catch (_) {
+            return false;
+          }
       }
       return null;
     });

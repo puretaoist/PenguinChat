@@ -22,6 +22,7 @@ import '../../client_api/notify_policy.dart';
 import '../../client_api/objects.dart';
 import '../../client_api/qq8_login_service.dart';
 import '../../client_api/qq8_providers.dart';
+import '../../client_api/segment.dart';
 import '../../client_api/session_providers.dart';
 import '../../infra/log/logger.dart';
 import '../platform/message_notifier.dart';
@@ -61,7 +62,8 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
   void initState() {
     super.initState();
     _notifier = widget.notifier ?? MessageNotifier();
-    _notifier.install();
+    // 通知栏直接回复：原生把文字送过来，这里走与聊天页完全相同的发送入口。
+    _notifier.install(onReply: _onReplyFromNotification);
     WidgetsBinding.instance.addObserver(this);
     _background = _isBackground(WidgetsBinding.instance.lifecycleState);
     _openSub = _notifier.opened.listen(_onOpenRequested);
@@ -101,6 +103,35 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
       },
     );
     return widget.child;
+  }
+
+  /// 通知栏「直接回复」的落地。
+  ///
+  /// 走 [ChatStore.send]——与聊天页点发送是同一条路径（乐观插入 + 异步确认），
+  /// 所以失败态、重试、落盘、群/私聊分流全都不用重写一遍。
+  ///
+  /// 返回 false 只有两种：会话存储未就绪（还没登录）、或 chatId 不认识。
+  /// 其余一律 true——哪怕当时断网，消息也已进队列并在气泡上显示失败，用户打开
+  /// 应用就能看到并重试。
+  Future<bool> _onReplyFromNotification(String chatId, String text) async {
+    final store = _store;
+    if (store == null) {
+      Log.get('Notify').w('通知栏回复失败：会话存储未就绪 chat=$chatId');
+      return false;
+    }
+    final known = store.chats.any((c) => c.id == chatId);
+    if (!known) {
+      Log.get('Notify').w('通知栏回复失败：未知会话 chat=$chatId');
+      return false;
+    }
+    try {
+      await store.send(chatId, <Segment>[TextSegment(text)]);
+      Log.get('Notify').i('通知栏回复已提交 chat=$chatId 长度=${text.length}');
+      return true;
+    } catch (e) {
+      Log.get('Notify').w('通知栏回复异常 chat=$chatId', error: e);
+      return false;
+    }
   }
 
   Future<void> _ensurePermission() async {

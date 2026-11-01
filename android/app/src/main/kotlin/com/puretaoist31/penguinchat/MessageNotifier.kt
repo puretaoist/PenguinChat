@@ -6,9 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 
 /**
  * 新消息通知。
@@ -165,9 +167,100 @@ object MessageNotifier {
             .setGroup(GROUP_KEY)
             .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
             .setContentIntent(pending)
+            // 通知栏直接回复（见 ReplyReceiver）。只有单会话通知带给输入框：
+            // 汇总通知没有 chatId，回复无从投递。
+            .addAction(replyAction(context, chatId))
 
         manager.notify(id, builder.build())
         notifySummary(context, manager)
+    }
+
+    /**
+     * 通知栏「回复」动作。
+     *
+     * RemoteInput 的 PendingIntent 在 Android 12+ 必须是 MUTABLE（系统要往里写
+     * 用户输入的文字），写成 IMMUTABLE 系统会直接丢弃这个 action。
+     *
+     * requestCode 用 chatId.hashCode() + 1，与「打开会话」的 PendingIntent
+     * （用 chatId.hashCode()）错开，避免两者互相覆盖 extras。
+     */
+    private fun replyAction(context: Context, chatId: String): NotificationCompat.Action {
+        val intent = Intent(context, ReplyReceiver::class.java).apply {
+            action = ReplyReceiver.ACTION_REPLY
+            // data 唯一化：同一个 requestCode 下不同会话的 PendingIntent 才不会撞。
+            data = Uri.parse("penguinchat://reply/" + chatId.hashCode())
+            putExtra(ReplyReceiver.EXTRA_CHAT_ID, chatId)
+        }
+        val pending = PendingIntent.getBroadcast(
+            context,
+            chatId.hashCode() + 1,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        val remote = RemoteInput.Builder(ReplyReceiver.KEY_REPLY_TEXT)
+            .setLabel("回复")
+            .build()
+        return NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "回复",
+            pending,
+        ).addRemoteInput(remote)
+            .setAllowGeneratedReplies(true)
+            .build()
+    }
+
+    /**
+     * 撤掉某个会话的通知（回复成功后的收尾）。
+     *
+     * 只撤这一条，不动汇总：别的会话还有未看的消息，汇总行要留着。
+     */
+    fun cancelChat(context: Context, chatId: String) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val id = chatId.hashCode()
+        manager.cancel(id)
+        posted.remove(id)
+        history.remove(id)
+        latest.remove(id)
+        notifySummary(context, manager)
+    }
+
+    /**
+     * 回复没送出去（Dart 通道不在：进程刚被回收/引擎没起）。
+     *
+     * 不静默丢弃——用户明明打了字，必须让他知道。这里把原通知换成一条
+     * 明确说明"未发送"，点击仍可进会话自己重发。
+     */
+    fun showReplyFailed(context: Context, chatId: String, text: String) {
+        ensureChannel(context)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val id = chatId.hashCode() + 2
+        val open = PendingIntent.getActivity(
+            context,
+            chatId.hashCode() + 2,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_CHAT_ID, chatId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val preview = if (text.length > 60) text.take(60) + "…" else text
+        val n = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle("回复未发送")
+            .setContentText("应用已关闭，无法发送「" + preview + "」；点按进入会话重发")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "应用已关闭，无法发送「" + preview + "」。点按进入会话，手动重发即可。",
+                ),
+            )
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(open)
+            .build()
+        manager.notify(id, n)
     }
 
     /**

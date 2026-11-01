@@ -150,6 +150,26 @@ class MainActivity : FlutterActivity() {
                     // 由 Dart 侧 takePendingChatId 主动来取。
                 }
 
+        // 通知栏直接回复：ReplyReceiver 拿到的文字从这里交给 Dart。
+        // 返回 false 表示通道不在（引擎已被回收），由 ReplyReceiver 提示"未发送"。
+        ReplyReceiver.dispatcher = { chatId, text ->
+            val ch = notifyChannel
+            if (ch == null) {
+                false
+            } else {
+                ch.invokeMethod(
+                    "reply",
+                    mapOf("chatId" to chatId, "text" to text),
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {}
+                        override fun error(code: String, message: String?, details: Any?) {}
+                        override fun notImplemented() {}
+                    },
+                )
+                true
+            }
+        }
+
         // 设备信息通道。刻意与保活分成两个 channel：
         // 两者生命周期完全无关（保活是常驻状态机，设备信息是一次性只读），
         // 合在一起会让「只想读一次设备」也必须先经过保活的状态判断。
@@ -198,6 +218,12 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleChatIntent(intent)
+    }
+
+    override fun onDestroy() {
+        // Activity 销毁后 Dart 通道随之失效：留着回调只会让广播误判"已投递"。
+        ReplyReceiver.dispatcher = null
+        super.onDestroy()
     }
 
     /**

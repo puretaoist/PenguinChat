@@ -4456,3 +4456,24 @@ Dart 侧开销。
 ②表现层的"手感"组件优先 `Listener`，别和业务手势抢竞技场；
 ③UI 组件结构变化时，测试的**视口尺寸与交互路径**都是契约的一部分。
 
+## C110 通知栏直接回复（RemoteInput）的硬约束
+
+1. **PendingIntent 必须 MUTABLE**（Android 12+）：
+   `PendingIntent.getBroadcast(ctx, rc, intent, FLAG_UPDATE_CURRENT or FLAG_MUTABLE)`。
+   写成 `FLAG_IMMUTABLE` 不会报错，但系统会**静默丢掉这个 action**——
+   `dumpsys notification` 里能看到 `actions=0`，通知栏没有回复按钮。
+2. **回复完必须收尾**：系统在等结果期间会给通知加
+   `LIFETIME_EXTENDED_BY_DIRECT_REPLY` 并显示"发送中"。成功要
+   `cancelChat(context, chatId)`（只撤该会话并重算汇总），失败要换成
+   「回复未发送」通知，否则通知栏会一直转圈。
+3. **接收器 exported=false**，只由本应用自己的 PendingIntent 唤起；
+   `MainActivity.onDestroy` 必须把投递回调置 null——Activity 没了通道就没了，
+   留着回调会让广播误判"已投递"从而静默丢消息。
+4. **验证"系统认出了直接回复"的最快办法**：
+   `adb shell dumpsys notification --noredact | grep -i remoteinput`，应出现
+   `[0] "回复" -> PendingIntent{... broadcastIntent}`，且 flags 含
+   `LIFETIME_EXTENDED_BY_DIRECT_REPLY`。不必先发真消息也能验证结构。
+5. **语义边界**：只在进程存活时可发（连接跑在 Dart 引擎里）。进程被杀时
+   通知也已经没了，所以不做"冷启动补发队列"——那会出现"隔一天替用户发出
+   昨天那条话"的情况，比失败更糟。空/纯空白输入一律拒绝，别把空消息发出去。
+
