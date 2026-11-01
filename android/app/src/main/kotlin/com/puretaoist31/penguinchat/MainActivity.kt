@@ -50,6 +50,9 @@ class MainActivity : FlutterActivity() {
     /** 新消息通知通道；Dart 侧未就绪时先把会话 id 攒着，见 [handleChatIntent]。 */
     private var notifyChannel: MethodChannel? = null
 
+    /** 音频平台通道（PCM 播放 + PCM 录音），见 [AudioBridge]。 */
+    private var audioBridge: AudioBridge? = null
+
     /** 应用冷启动时通知里带来的会话 id，等 Dart 侧装好通道再送过去。 */
     private var pendingChatId: String? = null
 
@@ -203,6 +206,10 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // 音频平台通道：PCM 播放与 PCM 录音，供语音消息使用。
+        // 与保活/设备同样是一次性装配，生命周期跟随本 Activity。
+        audioBridge = AudioBridge(this).also { it.attach(flutterEngine) }
+
         // 冷启动：如果这次启动是被通知点开的，intent 里已经带着 chat_id。
         handleChatIntent(intent)
     }
@@ -223,6 +230,10 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         // Activity 销毁后 Dart 通道随之失效：留着回调只会让广播误判"已投递"。
         ReplyReceiver.dispatcher = null
+        // 停掉播放/录音并释放 AudioTrack/AudioRecord，否则下次进页面播放会报
+        // "AudioTrack not initialized"。
+        audioBridge?.dispose()
+        audioBridge = null
         super.onDestroy()
     }
 

@@ -1548,7 +1548,10 @@ class ChatStore {
     var changed = false;
     final kept = <Segment>[];
     for (final s in segments) {
-      if (s is UnknownSegment && s.data['field'] == 9) {
+      // field=9 是 elem_flags2（旁路元数据，每条都带）；elem=empty 是空元素。
+      // 两者都不该显示，历史上却都写进了 jsonl，读取时统一丢掉。
+      if (s is UnknownSegment &&
+          (s.data['field'] == 9 || s.data['elem'] == 'empty')) {
         changed = true;
         continue;
       }
@@ -1604,7 +1607,10 @@ Chat? chatFromIndexJson(Map<String, dynamic> j) {
     pinned: j['pinned'] == true,
     muted: j['muted'] == true,
     priority: (j['priority'] as int?) ?? 3,
-    lastMessage: (j['lastMessage'] as String?) ?? '',
+    // 历史脏数据里可能带着空 Elem 生成的占位前缀（[不支持显示的消息]），
+    // 会话列表预览不该显示它 —— 解析器已修，这里顺手擦掉旧记录。
+    lastMessage: ((j['lastMessage'] as String?) ?? '')
+        .replaceFirst('[不支持显示的消息]', ''),
     lastSender: (j['lastSender'] as String?) ?? '',
     lastTime:
         lastTime is int ? DateTime.fromMillisecondsSinceEpoch(lastTime) : null,

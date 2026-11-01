@@ -59,14 +59,23 @@ android {
     namespace = "com.puretaoist31.penguinchat"
     compileSdk = flutter.compileSdkVersion
     // NDK 用途说明（重要，别删）：
-    //   本项目是纯 Dart 实现，没有任何 C/C++ 源码，**不需要编译 native 代码**。
-    //   但 Flutter Gradle 插件会调用 forceNdkDownload()，因为 AGP 需要 NDK
-    //   来 strip 掉 Flutter 引擎自带 .so 的调试符号。
-    //   所以 NDK 是必需的。
+    //   本项目业务代码是纯 Dart，但 **有 C 原生代码**：SILK v3 编解码底座
+    //   （vendor/silk，详见 android/app/src/main/cpp/CMakeLists.txt）会被编成
+    //   libsilkcodec.so，Dart 侧用 FFI 直接调用。其余 native 需求仅来自 AGP
+    //   对 Flutter 引擎自带 .so 的 strip。
     //   GitHub Actions 的 runner 预装了 NDK，这里能正常解析；
     //   本地若报 sdkmanager 下载失败，用代理装一次即可：
     //     sdkmanager --install "ndk;28.2.13676358"
     ndkVersion = flutter.ndkVersion
+
+    // SILK 编解码底座（vendor/silk -> libsilkcodec.so）。单一 CMakeLists 同时
+    // 服务列表里的每个 ABI；ABI 由 NDK toolchain 决定。
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -91,6 +100,12 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // 这里**不要**写 ndk { abiFilters += ... }：本工程用 apk splits（见
+        // splits.abi），AGP 不允许 splits 的 abiFilters 与 defaultConfig 的
+        // ndk.abiFilters 同时存在，会直接报 "Conflicting configuration ...
+        // cannot be present when splits abi filters are set"。ABI 集合由
+        // splits 唯一决定，CMake 会为每个 split ABI 各编一份 libsilkcodec.so。
 
         // 三个字段都用 BuildConfigField 注入：Kotlin 侧读 `BuildConfig.XXX`，
         // 再经 MethodChannel 交给 Dart。**不写进 versionName**——那会让

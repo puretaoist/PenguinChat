@@ -32,6 +32,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
 
+    <!-- 语音消息录制（见 AudioBridge.kt 的 AudioRecord）。这是**运行时**权限：
+         只声明不弹框，真正录音前必须在 UI 里 requestPermissions 并处理拒绝。
+         没授权时 AudioRecord 抛 SecurityException，原生转成 code=permission_denied，
+         Dart 侧表现为 UnsupportedError —— 不会静默录出空文件。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+
     <application
         android:label="PenguinChat"
         android:name="${applicationName}"

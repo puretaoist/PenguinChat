@@ -18,11 +18,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../client_api/chat_store.dart';
+import '../../client_api/media_refs.dart';
 import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
 import '../../infra/net/media_fetcher.dart';
 import '../../kernel/wlogin8/qq8_elem.dart';
 import '../theme/telegram_theme.dart';
+import 'voice_message.dart';
 
 class MessageContent extends StatelessWidget {
   final ChatMessage message;
@@ -168,14 +170,15 @@ class MessageContent extends StatelessWidget {
           ));
         case RecordSegment():
           flush();
-          blocks.add(_MediaRow(
-            icon: Icons.mic_none,
-            title: '语音',
-            detail: _withSize(
-              s.seconds == null ? '' : '${s.seconds}″',
-              s.size,
-            ),
+          // 语音有自己的气泡内容（播放键 + 波形 + 时长），不再是「假装不能播」
+          // 的元数据行。下载沿用同一套媒体缓存钩子，键也取同一个
+          // （ChatStore.mediaRefOf 的 voice:<md5>）。
+          blocks.add(VoiceMessage(
+            segment: s,
             isOut: isOut,
+            mediaKey: mediaRefOf(s)?.key,
+            ensureMedia: ensureMedia,
+            retryMedia: retryMedia,
           ));
         case VideoSegment():
           flush();

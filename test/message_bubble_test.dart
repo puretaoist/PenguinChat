@@ -13,6 +13,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguinchat/client_api/chat_store.dart';
 import 'package:penguinchat/client_api/objects.dart';
@@ -65,13 +66,16 @@ ChatMessage _msg(
       revealed: revealed,
     );
 
-Widget _wrap(Widget child) => MaterialApp(
-      theme: buildTelegramTheme(),
-      home: Scaffold(
-        backgroundColor: TelegramColors.bgChat,
-        body: ListView(padding: const EdgeInsets.symmetric(vertical: 12), children: [
-          child,
-        ]),
+Widget _wrap(Widget child) => ProviderScope(
+      child: MaterialApp(
+        theme: buildTelegramTheme(),
+        home: Scaffold(
+          backgroundColor: TelegramColors.bgChat,
+          body:
+              ListView(padding: const EdgeInsets.symmetric(vertical: 12), children: [
+            child,
+          ]),
+        ),
       ),
     );
 
@@ -449,17 +453,17 @@ void main() {
   });
 
   group('多元素渲染：语音 / 视频 / 文件 / 卡片 / 认不出', () {
-    testWidgets('语音：显示时长与体积（不假装能播）', (tester) async {
+    testWidgets('语音：显示时长与波形（点击播放的入口）', (tester) async {
       final msg = _msg('voice1', '[语音]', time: day2, segments: <Segment>[
         const RecordSegment('abc', seconds: 12, size: 8192),
       ]);
       await tester.pumpWidget(_wrap(_row(singleOf(msg))));
       await tester.pumpAndSettle();
 
-      expect(find.text('语音'), findsOneWidget);
-      expect(find.textContaining('12″'), findsOneWidget);
-      expect(find.textContaining('8.0 KB'), findsOneWidget);
-      expect(find.byIcon(Icons.mic_none), findsOneWidget);
+      // 语音不再是「占位行」：一条可点的语音气泡，带时长和播放键。
+      expect(find.text('12″'), findsOneWidget);
+      expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.mic_none), findsNothing);
     });
 
     testWidgets('视频：文件名 + 时长', (tester) async {
@@ -611,21 +615,23 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
-      await tester.pumpWidget(MaterialApp(
-        theme: buildTelegramTheme(dark: dark),
-        home: Scaffold(
-          backgroundColor: TelegramColors.bgChat,
-          body: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            children: [
-              for (final item in items)
-                item.isDay
-                    // 固定基准时间：金样不能随"今天是几号"变（跨零点就红）。
-                    ? DateChip(day: item.day!, now: DateTime(2026, 9, 12, 15))
-                    : item.isUnread
-                        ? const UnreadDivider()
-                        : _row(item, onReveal: () {}, onRetry: () {}),
-            ],
+      await tester.pumpWidget(ProviderScope(
+        child: MaterialApp(
+          theme: buildTelegramTheme(dark: dark),
+          home: Scaffold(
+            backgroundColor: TelegramColors.bgChat,
+            body: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              children: [
+                for (final item in items)
+                  item.isDay
+                      // 固定基准时间：金样不能随"今天是几号"变（跨零点就红）。
+                      ? DateChip(day: item.day!, now: DateTime(2026, 9, 12, 15))
+                      : item.isUnread
+                          ? const UnreadDivider()
+                          : _row(item, onReveal: () {}, onRetry: () {}),
+              ],
+            ),
           ),
         ),
       ));

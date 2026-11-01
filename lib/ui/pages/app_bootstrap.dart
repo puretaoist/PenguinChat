@@ -20,6 +20,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,10 +28,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../client_api/chat_index_preview.dart';
 import '../../client_api/objects.dart';
 import '../../client_api/qq8_login_service.dart';
+import '../audio/voice_native.dart';
 import '../../infra/log/logger.dart';
+import '../platform/audio_bridge.dart';
 import '../../client_api/qq8_providers.dart';
 import '../pages/home_shell.dart';
 import '../pages/startup_splash.dart';
+import '../providers/voice_playback_provider.dart';
 
 class AppBootstrap extends ConsumerStatefulWidget {
   const AppBootstrap({
@@ -84,12 +88,34 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
         // 真机上不会失败；万一 provider 缺依赖，也别把启动页卡死。
         _reveal();
       }
+      unawaited(_initVoice());
     });
     // 有预览就不需要计时器：第一帧已经是列表，登录完成后 store 接管，
     // 列表内容不变（同一份索引、同一套排序），所以没有"切换"要等。
     if (!_hasPreview) {
       _ticker =
           Timer.periodic(const Duration(milliseconds: 100), (_) => _check());
+    }
+  }
+
+  /// 装配语音播放通道（SILK 解码 + AudioTrack）。
+  ///
+  /// 只装配、不预热：真机上如果音频通道初始化失败（例如系统缺组件），
+  /// 绝不能因此卡住启动 —— 只记一条警告，点语音时界面会显示
+  /// 「音频组件未就绪」并可重试。
+  Future<void> _initVoice() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final bridge = AudioBridge();
+      final engine = BridgeVoiceEngine(bridge);
+      await engine.init();
+      ref.read(voicePlaybackProvider).configure(
+            preparer: SilkVoicePreparer(),
+            engine: engine,
+          );
+      _log.i('语音通道已就绪');
+    } catch (e) {
+      _log.w('语音通道初始化失败（不影响启动）', error: e);
     }
   }
 

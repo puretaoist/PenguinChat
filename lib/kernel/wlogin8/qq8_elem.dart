@@ -358,10 +358,13 @@ class Qq8ElemScan {
   void scan(Uint8List elem) {
     final m = Qq8Pb.decode(elem);
     if (m.isEmpty) {
-      // 空元素（理论上不该出现）：给占位，别让气泡空着
+      // 空元素：**不产生任何可见内容**。
+      //
+      // 真机上语音消息就带一个这样的 Elem（解出来是空 map），以前这里给
+      // 「[不支持显示的消息]」占位，结果语音气泡上面多出一行 [unknown]、
+      // 会话列表预览也变成「[不支持显示的消息][语音]」。空元素本身没有任何
+      // 信息，跳过即可；只留一个 kinds 标记，方便日志里看出服务端发过它。
       kinds.add('empty');
-      text.write(Qq8UnsupportedElem.preview);
-      elems.add(const Qq8UnsupportedElem(field: 0, name: 'empty'));
       return;
     }
     final field = m.keys.first;

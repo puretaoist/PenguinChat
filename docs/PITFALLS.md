@@ -4498,3 +4498,31 @@ Dart 侧开销。
    find.descendant(of: find.byKey(ValueKey('main-tab-bar')), matching: find.text('聊天'))。
 
 （另注：本仓库不是 dart format 干净的，**禁止对已有文件跑 dart format** —— 会得到几百行纯格式噪音，见 C109 附注。）
+
+
+## C112 语音 V1（SILK 播放）落地时的六个坑（2026-11-01）
+
+1. **`lib/infra/` 不能 import Flutter，这是硬门禁**（`tool/layering_selftest.dart` 第 4 条）。
+   第一版把 `AudioBridge`（flutter/services）与 `VoicePlaybackController`（ChangeNotifier）
+   放进 `lib/infra/`，门禁立刻红。正确分层：
+   * `lib/infra/audio/voice_engine.dart` —— 纯 Dart 抽象（PreparedVoice/VoiceEngine/VoicePreparer）；
+   * `lib/ui/platform/audio_bridge.dart` —— 平台通道（本来就是 UI 层的东西，和 message_notifier 同级）；
+   * `lib/ui/audio/voice_native.dart`、`lib/ui/audio/voice_playback_controller.dart` —— 实现与状态机。
+   **判据**：只要一个文件 `import 'package:flutter`，它就不许待在 infra/kernel/client_api。
+2. **ChangeNotifierProvider 已经替你 dispose 了，别再 `ref.onDispose(controller.dispose)`**。
+   双重 dispose 在 widget 测试里会抛
+   `A VoicePlaybackController was used after being disposed`，而且只有挂上 ProviderScope 才暴露。
+3. **AGP 不允许 `defaultConfig.ndk.abiFilters` 与 `splits.abi` 同时存在**：
+   `Conflicting configuration : 'arm64-v8a' in ndk abiFilters cannot be present when splits abi filters are set`。
+   本工程用 splits，所以 defaultConfig 里**不要**写 abiFilters；CMake 会为每个 split ABI 各编一份 `.so`。
+4. **空 Elem 不能给「不支持显示的消息」占位**。QQ 语音消息的第一个 Elem 常常解出空 map，
+   旧逻辑把它变成一行可见文本，于是气泡上方多一行 `[unknown]`、会话列表预览成
+   `[不支持显示的消息][语音]`。空元素就**什么都不产生**（`kinds.add('empty')` 后 return），
+   并在读盘迁移时把历史里的 `UnknownSegment(elem=='empty')` 一并丢掉。
+5. **`adb shell cat` 会把二进制按文本转码**：5873 字节的 SILK 样本经重定向变成 5892 字节，
+   解析报 `SILK 帧被截断：声明 7887 字节，仅余 5570`。要核对二进制样本必须
+   `su -c cp` 到 /sdcard/Download 再 `adb pull`（`export MSYS_NO_PATHCONV=1`）。
+6. **uiautomator 的 bounds 与截图预览比例不一致，且气泡不在行的最左**：语音气泡左侧有
+   42dp 头像槽 + 12dp 内边距，x 必须 ≥ 头像槽宽度（真机约 190px）；y 要落在气泡本体
+   （行中部），点行下方的「时间」或行上方的「发送者名」都不会触发播放。
+   点错了不会报错，只会**看起来没反应** —— 先 dump 出 bounds，再按 bounds 算中心。

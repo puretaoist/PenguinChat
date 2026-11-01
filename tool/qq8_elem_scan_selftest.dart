@@ -137,6 +137,16 @@ void main() {
     }
   }
 
+  // ---- 6. 空 Elem（解出来是空 map）不产生任何可见内容 -------------------
+  // 真机语音消息的第一个 Elem 就是空的：以前这里给「[不支持显示的消息]」占位，
+  // 结果语音气泡上面多一行 [unknown]、会话列表预览变成「[不支持显示的消息][语音]」。
+  {
+    final s = _scan(<Uint8List>[Uint8List(0)]);
+    checkEq('空 Elem：text 为空', s.text.toString(), '');
+    checkEq('空 Elem：不产生内容元素', _nonText(s).length, 0);
+    check('空 Elem：kinds 记为 empty', s.kinds.contains('empty'), '实际 ${s.kinds}');
+  }
+
   stdout.writeln('\n=== 结果: $_pass 通过, $_fail 失败 ===');
   if (_fail > 0) throw StateError('$_fail 项失败');
 }
