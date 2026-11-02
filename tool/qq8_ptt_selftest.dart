@@ -213,4 +213,31 @@ void main() {
   stdout.writeln('');
   stdout.writeln('PTT SELFTEST pass=$_pass fail=$_fail');
   if (_fail > 0) exitCode = 1;
+
+  // ── 申请下载（1200）：换直链 ──────────────────────────────
+  {
+    final uuid = Uint8List.fromList(List<int>.generate(36, (i) => 0x41 + i % 26));
+    final body = Qq8Pb.decode(
+        Qq8Ptt.buildApplyDownloadBody(uin: 12345, uuid: uuid, seq: 7));
+    final sub = Qq8Pb.decode(Qq8Pb.bytesAt(body, 14)!);
+    checkEq('申请下载 1=1200', Qq8Pb.intAt(body, 1), 1200);
+    checkEq('申请下载 2=seq', Qq8Pb.intAt(body, 2), 7);
+    checkEq('申请下载 14.10=uin', Qq8Pb.intAt(sub, 10), 12345);
+    checkEq('申请下载 14.20=uuid', Qq8Pb.bytesAt(sub, 20)!.length, uuid.length);
+    checkEq('申请下载 14.30=owner(1)', Qq8Pb.intAt(sub, 30), 1);
+    checkEq('申请下载 14.50=filetype(4)', Qq8Pb.intAt(sub, 50), 4);
+    checkEq('申请下载 101=business(17)', Qq8Pb.intAt(body, 101), 17);
+    checkEq('申请下载 102=client(104)', Qq8Pb.intAt(body, 102), 104);
+    const url = 'http://36.248.11.116/download?appid=1402&fileid=&format=amr&rkey=CAI';
+    final rsp = Qq8Pb.encode(<int, Object?>{
+      14: <int, Object?>{
+        10: 0,
+        2: 'success',
+        30: <int, Object?>{50: url},
+      },
+    });
+    checkEq('解析直链 14.30.50', Qq8Ptt.parseApplyDownloadUrl(rsp), url);
+    checkEq('解析直链：没有 14 时 null',
+        Qq8Ptt.parseApplyDownloadUrl(Qq8Pb.encode(<int, Object?>{1: 1200})), null);
+  }
 }

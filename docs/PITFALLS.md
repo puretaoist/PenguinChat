@@ -4560,3 +4560,63 @@ Dart 侧开销。
    它往往来自另一条通道；②同一个数值在不同协议层可能有不同的字节序语义，IP 这种肉眼可验的
    字段一定要在真机上对一次（顺序反了比乱码更容易被忽略）；③凡是「容器/字段号靠推断」的地方，
    都用官网级别的一次性探针先跑通再落产品代码。
+
+## C114 语音发出去了、对端却显示「消息已过期」：缺的是 down_para（2026-11-01）
+
+> **2026-11-02 更正：本节结论是错的，见 C115。** 1200 回包里那条 `fileid=` 空的 URL
+> 不是「靠 rkey 定位的可用直链」，而是 BDH 下载地址（普通 GET 必得 400），把它填进
+> `down_para` 才是对端显示「消息已过期」的直接原因。
+
+
+**现象**：真机 `私聊发送 code=0`、服务端接受，但接收端（另一台上是官方 QQ 的大号）显示「消息已过期」。
+第一反应会怀疑「上传没成功/文件没落地」，但探针回读否证了这一点：
+
+```
+APPLY_DOWNLOAD-1200（0x346 子命令 1200，tag14=ApplyDownloadReq）
+  → ret_code=0, str_ret_msg=success
+  → DownloadInfo.50 = http://36.248.11.116/download?appid=1402&fileid=&format=amr&rkey=CAISONPsN0nS…
+```
+
+文件确实在服务器上（`fileid=` 空是正常的，这条 URL 靠 `rkey` 定位）。真正缺的是：
+**没有把这条带 rkey 的直链写进 `RichText.ptt.20(down_para)`**。
+官方客户端在上传完成回调里做这件事（`MessageForPtt.getRichText()` 的 `urlAtServer` 只在此时有值），
+接收端拿到空 down_para 又不主动申请下载，就只能判「已过期」。
+
+**修法**：`sendVoice` 上传完成后多一步 1200 换直链，作为 `downPara` 传入 `buildPttElem`；
+取字段路径 `RspBody.14(ApplyDownloadRsp).30(DownloadInfo).50(str_download_url)`。
+
+**教训**：①「对端说文件过期」不等于文件没上传成功——先用 1200 回读证明文件在不在，
+   再谈是哪一侧的字段缺失；②协议里凡是「发送时该带上、但服务端**不会**主动补」的字段，
+   都要在真机两侧对一遍（自己发自己收不算，自己收的一侧我们本来就读 down_para，
+   所以只有让**官方客户端**收才暴露）；③`fileid` 为空并不代表 URL 无效。
+Open objectives: 让对端能播放我方语音（m51846）；第二批长按气泡浮层(m49071)；原生日常登录可用性(m16818,m33765)。
+
+## C115 语音「消息已过期」的真正根因：ApplyDownloadReq 字段号写错 + down_para 填了坏直链（2026-11-02）
+
+**现象**：按 C114 的做法把 1200 回包的 URL 写进 `RichText.ptt.20(down_para)` 后，
+对端（官方 QQ）仍然显示「消息已过期」。
+
+**取证（PC 直连探针，不依赖手机）**：
+1. 反编译 `tencent/im/cs/cmd0x346/cmd0x346$ReqBody$ApplyDownloadReq` 的 FieldMap 是：
+   `uint64_uin=10`、`bytes_uuid=20`、`uint32_owner_type=30`、`uint32_filetype=50`、
+   `str_fileidcrc=60`、`uint32_ext_uintype=500`、`uint32_need_https_url=501`、`str_fileid=600`。
+   我方旧代码写成 `2: uuid, 50: filetype, 501: 1` ⇒ **uuid 发在了一个不存在的字段 2 上**，
+   服务端因此根本不知道要拿哪个文件。
+2. 字段写错时，1200 回 `ret=0` 但 URL 是 `http://x/download?appid=1402&fileid=&format=amr&rkey=…`，
+   立刻 GET 它 → `HTTP 400 {"retcode":-5503023,"retmsg":"appid is not match"}`（appid 与 fileid 对不上）。
+3. 把 uuid 改到字段 20、owner_type 改到 30 后，回包变成
+   `http://<ip>:80/?ver=2&rkey=<170B DER base64>&voice_codec=0&filetype=0` —— 这是 **BDH 下载地址**，
+   只能配 httpconn 的 PicDown 帧；普通 GET 仍然 400，但服务端已能认出这条文件
+  （`bytes_uuid` 换成 bigdata 的 16B id 则回 `-20001`，证明 uuid 才是键）。
+
+**修法（已落地）**：
+- `lib/kernel/wlogin8/qq8_ptt.dart`：`buildApplyDownloadBody` 改成 `{10: uin, 20: uuid, 30: ownerType, 50: filetype}`，
+  新增常量 `ownerTypeSelf=1 / ownerTypePeer=2`。
+- `lib/client_api/qq8_login_service.dart` 的 `sendVoice`：**删掉 1200 换直链这一步**，`downPara: ''`。
+  官方发送端也只填 `ptt.3`（uuid/urlAtServer），下行消息里的 directUrl 是**服务端投递时补的**，
+  客户端造不出来；塞一条自己造的坏 URL 反而让对端直接判过期。
+
+**教训**：①字段号必须对着生成的 PB FieldMap 核（`initFieldMap` 的 int[] 是 wire tag，
+`114` 就是 field 14，别把 tag 当字段号）；②「1200 回 ret=0」只说明请求被接受，
+**URL 能不能用要当场 GET 一次**；③不属于自己该填的字段（服务端会补的）宁可不填，
+填错比留空更难查；④C114 的教训「对端说过期 ≠ 文件没上传」仍成立，但它给出的修法是错的。

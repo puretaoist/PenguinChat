@@ -162,6 +162,9 @@ String hexOfBytes(List<int> bytes) =>
 
 abstract final class Qq8Ptt {
   /// 申请上传（C2C/群共用；群另有 BDH 路径，本实现先走这条）。
+  static const String cmdApplyDownload =
+      'PttCenterSvr.pb_pttCenter_CMD_REQ_APPLY_DOWNLOAD-1200';
+
   static const String cmdApplyUpload =
       'PttCenterSvr.pb_pttCenter_CMD_REQ_APPLY_UPLOAD-500';
 
@@ -248,6 +251,54 @@ abstract final class Qq8Ptt {
     );
   }
 
+  /// 申请下载（1200）：拿这条语音的可下载地址。
+  ///
+  /// 字段号出处（2026-11-02 核对 8.2.11 反编译
+  /// tencent/im/cs/cmd0x346/cmd0x346$ReqBody$ApplyDownloadReq 的 FieldMap）：
+  /// uint64_uin=10、**bytes_uuid=20**、**uint32_owner_type=30**、
+  /// uint32_filetype=50、str_fileidcrc=60、uint32_ext_uintype=500、
+  /// uint32_need_https_url=501、str_fileid=600。
+  /// 早期版本把 bytes_uuid 写成 2、把 owner_type 写成 501，
+  /// 服务端因此找不到文件，回包里只会是 fileid= 空的坏直链
+  /// （GET 它必得 400 -5503023 appid is not match）。
+  static Uint8List buildApplyDownloadBody({
+    required int uin,
+    required Uint8List uuid,
+    int seq = 0,
+    int filetype = elemFileType,
+    int ownerType = ownerTypeSelf,
+  }) =>
+      Qq8Pb.encode(<int, Object?>{
+        1: 1200,
+        2: seq,
+        14: <int, Object?>{
+          10: uin,
+          20: uuid,
+          30: ownerType,
+          50: filetype,
+        },
+        101: businessId,
+        102: clientType,
+      });
+
+  /// ApplyDownloadReq.uint32_owner_type：1=自己（发送方回读），2=对方。
+  static const int ownerTypeSelf = 1;
+  static const int ownerTypePeer = 2;
+
+  /// 从 1200 的回包里取直链：`RspBody.14(ApplyDownloadRsp).30(DownloadInfo).50`。
+  static String? parseApplyDownloadUrl(Uint8List payload) {
+    try {
+      final root = Qq8Pb.decode(payload);
+      final rsp = Qq8Pb.bytesAt(root, 14);
+      if (rsp == null) return null;
+      final info = Qq8Pb.bytesAt(Qq8Pb.decode(rsp), 30);
+      if (info == null) return null;
+      final url = Qq8Pb.textAt(Qq8Pb.decode(info), 50);
+      return (url == null || url.isEmpty) ? null : url;
+    } on Object {
+      return null;
+    }
+  }
   /// 构造 RichText.ptt。
   ///
   /// [dm] 为 true 走私聊（官方不填 server_ip/port/time）；群聊要 file_id、

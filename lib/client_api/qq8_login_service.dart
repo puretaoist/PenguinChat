@@ -1659,6 +1659,15 @@ class Qq8LoginService {
       );
     }
 
+    // ②' ptt.20（down_para）**刻意留空**。
+    //
+    // 2026-11-02 实测：我们自己调 1200 拿到的地址是 BDH 下载地址
+    // （`http://<ip>:80/?ver=2&rkey=<170B DER>`），它只能配 httpconn
+    // 的 PicDown 帧下载，普通 GET 一律 400（`-5503023 appid is not match`
+    // 或空 body）。把这种地址塞进 down_para，对端会直接判「消息已过期」。
+    // 官方发送端也只填 ptt.3（uuid/urlAtServer），由服务端在投递时补
+    // directUrl —— 收方拿到的下行消息里 fileid 是服务端生成的，客户端造不出来。
+
     // ③ 组元素发消息（msgtype -2002 的等价物就是 RichText.ptt）
     final ptt = Qq8Ptt.buildPttElem(
       fileType: Qq8Ptt.elemFileType,
