@@ -137,6 +137,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 正在还原/贴底定位的会话：这期间滚动回调不许写缓存（否则把中间值记进去）。
   String? _restoringChatId;
 
+  /// 正在把列表钉在底部（打开会话/发送后的一小段时间）。
+  bool _pinningBottom = false;
+  int _pinFrames = 0;
+
   /// 切会话时要还原到的位置（null = 没有记录 → 贴底）。
   double? _pendingRestore;
 
@@ -216,6 +220,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _saveScrollOffset();
     _flushDraft();
     _draftTimer?.cancel();
+    _stopBottomPin();
     _scrollController.removeListener(_onScroll);
     _inputController.removeListener(_onInputChanged);
     _inputController.dispose();
@@ -287,9 +292,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     final atBottom = pos.maxScrollExtent - pos.pixels <= 40;
     if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
     if (atBottom) _markReadIfUnread();
+    // 钉底期间位置被拉离底部 = 用户自己往上翻了：立刻放开，别跟他抢。
+    // （内容长高不会改变 pixels，所以这里不会误判。）
+    if (_pinningBottom && !atBottom) _stopBottomPin();
 
     final owner = _scrollOwnerChatId;
-    if (owner != null && !_restoringScroll) _scrollOffsets[owner] = pos.pixels;
+    if (owner != null &&
+        !_restoringScroll &&
+        _restoringChatId == null &&
+        !_pinningBottom) {
+      _scrollOffsets[owner] = atBottom ? double.infinity : pos.pixels;
+    }
     if (pos.pixels > 24) return;
     unawaited(_loadMore());
   }
@@ -639,6 +652,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     setState(() => _replyTarget = null);
     unawaited(store.send(chatId, segments));
     _scrollToBottom();
+    _startBottomPin();
   }
 
   /// 取消"正在回复"（输入栏 ✕ 的回调；状态在宿主，视图只上报）。
@@ -701,26 +715,73 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
       final pos = _scrollController.position;
       final double max = pos.maxScrollExtent;
-      if (target != null && max <= 0 && tries < 20) {
+      final bool toBottom = target == null || !target.isFinite;
+      _restoringChatId = null;
+      if (toBottom) {
+        // 贴底不能只做一次 jumpTo/animateTo：`maxScrollExtent` 是**估算值**
+        // （SliverList 用已布局子项的平均高度推未布局的部分），而且图片/语音
+        // 解码完还会把内容撑高。只跳一次的结果是"停在了估算出来的旧底部"，
+        // 用户看到的就是"明明看到最新，再进来却不在最新"（真机 m63531）。
+        // 所以贴底改成连续若干帧一直钉住底部，直到用户自己拖动/换会话。
+        _startBottomPin();
+        return;
+      }
+      if (max <= 0 && tries < 20) {
         // 列表在，但内容还没铺开：此时无法夹取目标位置，等下一帧
         _applyScroll(target, tries + 1);
         return;
       }
-      final bool toBottom = target == null || !target.isFinite;
-      final double goal = toBottom ? max : target.clamp(0.0, max);
+      final double goal = target.clamp(0.0, max);
       _restoringScroll = true;
-      if (toBottom) {
-        // 贴底用动画，和"打开会话"的观感一致；还原用瞬移
-        pos.animateTo(goal,
-            duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
-      } else {
-        pos.jumpTo(goal);
-      }
+      pos.jumpTo(goal);
       _restoringScroll = false;
-      _restoringChatId = null;
       final bool atBottom = max - goal <= 40;
       if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
     });
+  }
+
+  /// 钉住底部：连续若干帧把 pixels 顶到 maxScrollExtent。
+  ///
+  /// 为什么需要"连续"：打开会话的那一刻，列表只布局了可见的十几行，
+  /// `maxScrollExtent` 是按平均行高外推的；图片/语音/长文本解码完，真实高度
+  /// 才会长出来。跳一次就停，位置会留在"外推出来的假底部"上。
+  /// 帧数上限 ~1.5s，用户一拖动就立刻停（见 build 里的 NotificationListener）。
+  void _startBottomPin() {
+    _stopBottomPin();
+    _pinningBottom = true;
+    _pinFrames = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _pinTick());
+    WidgetsBinding.instance.scheduleFrame();
+  }
+
+  void _pinTick() {
+    if (!mounted || !_pinningBottom) return;
+    final chatId = _scrollOwnerChatId;
+    _pinFrames++;
+    if (!_scrollController.hasClients) {
+      if (_pinFrames < 90) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _pinTick());
+        WidgetsBinding.instance.scheduleFrame();
+      } else {
+        _stopBottomPin();
+      }
+      return;
+    }
+    final pos = _scrollController.position;
+    final double max = pos.maxScrollExtent;
+    if (max > 0 && (pos.pixels - max).abs() > 1) pos.jumpTo(max);
+    if (_pinFrames < 90 && _scrollOwnerChatId == chatId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _pinTick());
+      WidgetsBinding.instance.scheduleFrame();
+      return;
+    }
+    final bool atBottom = pos.maxScrollExtent - pos.pixels <= 40;
+    _stopBottomPin();
+    if (atBottom != _atBottom && mounted) setState(() => _atBottom = atBottom);
+  }
+
+  void _stopBottomPin() {
+    _pinningBottom = false;
   }
 
   void _scrollToBottom() {

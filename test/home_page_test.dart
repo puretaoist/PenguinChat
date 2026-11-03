@@ -728,4 +728,63 @@ void main() {
         reason: '回到会话应回到原来的位置，而不是贴顶/贴底');
     await _teardownStore(tester);
   });
+
+  testWidgets('竖屏：离开时在最新，之后来了新消息，再进来仍是最新', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    // 40 条历史：够长，能滚
+    session.historyPages.add(HistoryPage(<ChatMessage>[
+      for (int i = 0; i < 40; i++)
+        ChatMessage(
+          id: 'h$i',
+          text: '历史消息 $i',
+          segments: <Segment>[TextSegment('历史消息 $i')],
+          time: DateTime(2026, 9, 12, 9).add(Duration(minutes: i)),
+          chatId: 'private_20002',
+          senderId: '20002',
+          senderName: '小明',
+        ),
+    ]));
+
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+
+    ScrollableState list = tester.state<ScrollableState>(
+        find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)));
+    expect(list.position.pixels, closeTo(list.position.maxScrollExtent, 1),
+        reason: '打开会话应贴最新一条');
+
+    // 返回列表
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    // 期间又来了 30 条新消息（列表变高；真机上图片/语音解码也会这样长高）
+    for (int i = 0; i < 30; i++) {
+      session.emit(SessionMessage(ChatMessage(
+        id: 'n$i',
+        text: '新消息 $i',
+        segments: <Segment>[TextSegment('新消息 $i')],
+        time: DateTime(2026, 9, 12, 11).add(Duration(minutes: i)),
+        chatId: 'private_20002',
+        senderId: '20002',
+        senderName: '小明',
+      )));
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+
+    list = tester.state<ScrollableState>(
+        find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)));
+    expect(list.position.pixels, closeTo(list.position.maxScrollExtent, 1),
+        reason: '再进来必须贴最新，不能停在离开时的旧底部');
+    expect(find.textContaining('新消息 29'), findsOneWidget, reason: '最新一条要在屏幕上');
+    await _teardownStore(tester);
+  });
 }

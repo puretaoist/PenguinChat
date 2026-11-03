@@ -4758,3 +4758,21 @@ body=\x02#!SILK_V3!`。所以链路本身是通的，**过一天失效只是 rke
 2. 验收滚动记忆不能只走一条路径 —— 至少覆盖「刚进会话就返回」「停在底部离开」「上翻后离开」「切到别的会话再回来」；
 3. 断言要取 `find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable))`，
    直接 `find.byType(Scrollable)` 会因为输入框也是 Scrollable 而 `Bad state: Too many elements`。
+
+## C122 贴底不能只跳一次：maxScrollExtent 是估算值（2026-11-03）
+
+**现象**：用户已经把会话滑到最新，返回列表再点进来，位置却**不在**最新，还差几条；
+上一轮修的「还原落空停顶部」是另一个问题，这次是「还原到了旧的底部」。
+
+**根因**：`ListView.builder` 的 `maxScrollExtent` 是 SliverList 用**已布局子项平均高度外推**出来的；
+打开会话时只布局了十来行，而图片/语音/长文本解码后行高会继续变大。只跳一次 `jumpTo(max)`，
+停下的位置是「外推出来的假底部」。
+
+**处理**：`_startBottomPin()/_pinTick()` 连续 90 帧每帧把 `pixels` 顶到 `maxScrollExtent`（差 >1px 就补），
+钉底期间禁止写滚动缓存；用户一拖动（`_onScroll` 里 `!atBottom`）立刻 `_stopBottomPin()`。
+
+**教训**：
+1. 凡是「贴到最新」这种需求，**跳一次是不够的**，要有一小段时间持续校正；帧数要有上限，
+   并且必须能被用户的操作打断；
+2. 布局高度不确定（图片/语音/富文本）的列表，`maxScrollExtent` 只能当近似值用，不能当契约；
+3. 单测用等高文本消息**测不出**这类漂移 —— 别用绿的单测去宣称真机行为已修好。
