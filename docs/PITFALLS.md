@@ -4739,3 +4739,22 @@ body=\x02#!SILK_V3!`。所以链路本身是通的，**过一天失效只是 rke
 现象：`ui_test` 的「默认暗色」时红时绿。根因：`ui_settings.json`/`ui_prefs.json` 写进了
 真 `/tmp`，上一次跑留下的 `{"dark":false}` 被下一次读到。处理：测试里 `setUp` 建独立临时目录、
 `tearDown` 删掉；不要把 `Directory.systemTemp` 当数据目录塞给 provider。
+
+## C121 滚动位置还原：一次 postFrame 不够，且「在底部」不能记像素（2026-11-03）
+
+**现象**：真机上「回到会话」永远停在顶部，用户说滚动记忆无效；但某些路径（先上翻、返回、进别的会话、再回来）
+又恰好正常，所以首轮验收漏了。
+
+**根因**：`_restoreScroll()` 只注册一次 `addPostFrameCallback`。会话打开时消息是异步来的：
+要么 `hasClients == false`（空列表画占位、没有 ListView），要么 `maxScrollExtent == 0`（内容没铺开）。
+此时 `jumpTo(target.clamp(0, 0))` 要么不执行、要么被夹成 0，**没有任何重试**。
+
+**处理**：`_applyScroll(target, tries)` 每帧看一次，`!hasClients || max <= 0` 就重试（上限 20 帧）；
+`_restoringChatId` 在还原期间禁止 `_onScroll` 写缓存。另外「离开时在底部」要记 `double.infinity`：
+记具体像素的话，离开后新到的消息会让还原落到旧位置（最新消息被显示成历史）。
+
+**教训**：
+1. 任何「还原到某个滚动位置」的代码都必须假设**列表还没准备好**，用重试直到 `maxScrollExtent > 0`；
+2. 验收滚动记忆不能只走一条路径 —— 至少覆盖「刚进会话就返回」「停在底部离开」「上翻后离开」「切到别的会话再回来」；
+3. 断言要取 `find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable))`，
+   直接 `find.byType(Scrollable)` 会因为输入框也是 Scrollable 而 `Bad state: Too many elements`。

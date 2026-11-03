@@ -682,4 +682,50 @@ void main() {
         reason: '长按不该再弹菜单');
     await _teardownStore(tester);
   });
+
+  testWidgets('竖屏：聊天页记住上次滚动位置（切走再回来不清零）', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    // 60 条历史：远大于一屏，才有"上翻过"这回事
+    session.historyPages.add(HistoryPage(<ChatMessage>[
+      for (int i = 0; i < 60; i++)
+        ChatMessage(
+          id: 'h$i',
+          text: '历史消息 $i',
+          segments: <Segment>[TextSegment('历史消息 $i')],
+          time: DateTime(2026, 9, 12, 9).add(Duration(minutes: i)),
+          chatId: 'private_20002',
+          senderId: '20002',
+          senderName: '小明',
+        ),
+    ]));
+
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ListView), findsOneWidget, reason: '会话里应有消息列表');
+
+    // 上翻（非 reverse 列表：手指往下拖 = 看更早的消息）
+    await tester.drag(find.byType(ListView), const Offset(0, 400));
+    await tester.pumpAndSettle();
+    final ScrollableState before = tester.state<ScrollableState>(
+        find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)));
+    final double offsetBefore = before.position.pixels;
+    expect(offsetBefore, greaterThan(100), reason: '先要真的滚上去了');
+
+    // 返回列表再进来
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('chat-row-private_20002')));
+    await tester.pumpAndSettle();
+
+    final ScrollableState after =
+        tester.state<ScrollableState>(find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)));
+    expect(after.position.pixels, closeTo(offsetBefore, 1),
+        reason: '回到会话应回到原来的位置，而不是贴顶/贴底');
+    await _teardownStore(tester);
+  });
 }

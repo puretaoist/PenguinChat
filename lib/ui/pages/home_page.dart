@@ -134,6 +134,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 当前 _scrollController 记录的是哪个会话的位置。
   String? _scrollOwnerChatId;
 
+  /// 正在还原/贴底定位的会话：这期间滚动回调不许写缓存（否则把中间值记进去）。
+  String? _restoringChatId;
+
   /// 切会话时要还原到的位置（null = 没有记录 → 贴底）。
   double? _pendingRestore;
 
@@ -653,31 +656,69 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 把当前会话的滚动位置存进 map（切会话 / 返回列表 / dispose 前调用）。
   void _saveScrollOffset() {
     final owner = _scrollOwnerChatId;
-    if (owner == null || _restoringScroll) return;
+    if (owner == null || _restoringScroll || _restoringChatId != null) return;
     if (!_scrollController.hasClients) return;
-    _scrollOffsets[owner] = _scrollController.position.pixels;
+    // 停在底部就记 +inf：还原时直接贴最新一条。记具体像素会在"离开后又有新消息"时
+    // 落到旧位置（明明是最新消息却显示成历史），是另一类"记忆不对"。
+    _scrollOffsets[owner] = _atBottom
+        ? double.infinity
+        : _scrollController.position.pixels;
   }
 
   /// 切回一个会话时还原它上次的滚动位置；没有记录就贴底。
   ///
   /// 为什么用 jumpTo 而不是 animateTo：还原是"回到原样"，不是一次滚动动作；
-  /// 动画会让用户先看到底部再被拉上去。放在 post-frame 里是因为 ListView
-  /// 要等这一帧布局完才有正确的 maxScrollExtent。
+  /// 动画会让用户先看到底部再被拉上去。
+  ///
+  /// 为什么要在 post-frame 里 **反复重试**：会话刚打开的那几帧里，消息列表可能
+  /// 还没上树（消息是异步从磁盘/服务端来的，空列表画的是占位而不是 ListView），
+  /// 也可能已经上树但内容还没铺开（`maxScrollExtent == 0`）。这时 `jumpTo`
+  /// 要么没有 clients、要么被 `clamp(0, 0)` 夹成 0 —— 表现就是"回到会话永远
+  /// 停在顶部"（真机 m63305）。所以每帧再看一眼，直到列表真的有滚动范围。
   void _restoreScroll() {
     final target = _pendingRestore;
     _pendingRestore = null;
-    if (target == null) {
-      _scrollToBottom();
-      return;
-    }
+    _restoringChatId = _scrollOwnerChatId;
+    _applyScroll(target, 0);
+  }
+
+  /// [target] 为 null 表示"没有记录，贴底"。
+  void _applyScroll(double? target, int tries) {
+    final chatId = _scrollOwnerChatId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients) return;
-      final max = _scrollController.position.maxScrollExtent;
-      final clamped = target.clamp(0.0, max);
+      if (!mounted || _scrollOwnerChatId != chatId) {
+        _restoringChatId = null;
+        return;
+      }
+      if (!_scrollController.hasClients) {
+        // 列表还没上树（消息为空时画的是占位）
+        if (tries < 20) {
+          _applyScroll(target, tries + 1);
+        } else {
+          _restoringChatId = null;
+        }
+        return;
+      }
+      final pos = _scrollController.position;
+      final double max = pos.maxScrollExtent;
+      if (target != null && max <= 0 && tries < 20) {
+        // 列表在，但内容还没铺开：此时无法夹取目标位置，等下一帧
+        _applyScroll(target, tries + 1);
+        return;
+      }
+      final bool toBottom = target == null || !target.isFinite;
+      final double goal = toBottom ? max : target.clamp(0.0, max);
       _restoringScroll = true;
-      _scrollController.jumpTo(clamped);
+      if (toBottom) {
+        // 贴底用动画，和"打开会话"的观感一致；还原用瞬移
+        pos.animateTo(goal,
+            duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+      } else {
+        pos.jumpTo(goal);
+      }
       _restoringScroll = false;
-      final atBottom = max - clamped <= 40;
+      _restoringChatId = null;
+      final bool atBottom = max - goal <= 40;
       if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
     });
   }
