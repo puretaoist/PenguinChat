@@ -57,6 +57,8 @@ Future<void> _pump(
   WidgetTester tester, {
   String? selected,
   Size size = const Size(360, 560),
+  Future<void> Function(Chat chat)? onArchiveChat,
+  Future<void> Function(Chat chat)? onToggleMuteChat,
 }) async {
   TelegramColors.use(TelegramPalette.dark);
   addTearDown(() => TelegramColors.use(TelegramPalette.dark));
@@ -81,6 +83,8 @@ Future<void> _pump(
         onOpenArchive: (_, _) {},
         onOpenConnect: () {},
         onOpenQq8Login: () {},
+        onArchiveChat: onArchiveChat,
+        onToggleMuteChat: onToggleMuteChat,
       ),
     ),
   ));
@@ -156,6 +160,39 @@ void main() {
     await _pump(tester, selected: 'private_2');
     final title = tester.widget<Text>(find.text('李四'));
     expect(title.style?.color, Colors.white);
+  });
+
+  testWidgets('左滑一行 = 归档、右滑一行 = 静音（TG 的 DialogCell 滑动动作）',
+      (tester) async {
+    Chat? archived;
+    Chat? muted;
+    await _pump(
+      tester,
+      onArchiveChat: (chat) async => archived = chat,
+      onToggleMuteChat: (chat) async => muted = chat,
+    );
+
+    // 左滑（endToStart）→ 归档
+    await tester.drag(
+      find.byKey(const ValueKey('chat-row-private_2')),
+      const Offset(-300, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(archived?.id, 'private_2', reason: '左滑要回调归档');
+    expect(muted, isNull, reason: '左滑不该同时触发静音');
+
+    // 右滑（startToEnd）→ 静音
+    await tester.drag(
+      find.byKey(const ValueKey('chat-row-private_3')),
+      const Offset(300, 0),
+    );
+    await tester.pumpAndSettle();
+    expect(muted?.id, 'private_3', reason: '右滑要回调静音');
+  });
+
+  testWidgets('没有滑动回调时不挂 Dismissible（纯展示场景不受影响）', (tester) async {
+    await _pump(tester);
+    expect(find.byType(Dismissible), findsNothing);
   });
 
   testWidgets('金样：会话侧栏长什么样', (tester) async {

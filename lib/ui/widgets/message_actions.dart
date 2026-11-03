@@ -11,6 +11,11 @@
 ///
 /// 拆成"哑弹层"（消息 + 回调）是为了能离线测：每个状态下该出现/不该出现
 /// 哪个动作，是这类菜单最容易出错的地方。版面统一由 [ActionSheet] 画。
+///
+/// 2026-11-03：**动作清单**（[itemsFor]）与**版面**分开 —— TG 里单击气泡弹的
+/// 是气泡旁的 popup（`message_action_popup.dart`），长按直接进多选。这个类
+/// 保留为"清单生成器 + 底部弹层"两种用途：清单给 popup，弹层仍是无法锚定
+/// 气泡时的兜底版面（测试也用它断言每个状态下该有哪些动作）。
 library;
 
 import 'package:flutter/material.dart';
@@ -73,7 +78,7 @@ class MessageActionsSheet extends StatelessWidget {
       ActionSheet.show(
         context,
         preview: _preview(message),
-        items: _items(
+        items: itemsFor(
           context,
           message: message,
           canRecall: canRecall,
@@ -116,10 +121,14 @@ class MessageActionsSheet extends StatelessWidget {
         ],
       );
 
-  static List<ActionSheetItem> _items(
+  static List<ActionSheetItem> itemsFor(
     BuildContext context, {
     required ChatMessage message,
     required bool canRecall,
+    bool includeSelect = true,
+    // 底部弹层用得到「取消」这一行；气泡旁 popup 不要（TG 是点空白处关），
+    // 所以给调用方一个开关，而不是两处各维护一份清单。
+    bool includeCancel = true,
     VoidCallback? onCopy,
     VoidCallback? onReply,
     VoidCallback? onRecall,
@@ -156,12 +165,13 @@ class MessageActionsSheet extends StatelessWidget {
         label: '转发',
         onTap: onForward,
       ),
-      ActionSheetItem(
-        key: const ValueKey('action-select'),
-        icon: Icons.check_circle_outline,
-        label: '多选',
-        onTap: onSelect,
-      ),
+      if (includeSelect)
+        ActionSheetItem(
+          key: const ValueKey('action-select'),
+          icon: Icons.check_circle_outline,
+          label: '多选',
+          onTap: onSelect,
+        ),
       if (showReveal)
         ActionSheetItem(
           key: const ValueKey('action-reveal'),
@@ -184,12 +194,13 @@ class MessageActionsSheet extends StatelessWidget {
         danger: true,
         onTap: onDelete,
       ),
-      ActionSheetItem(
-        key: const ValueKey('action-cancel'),
-        icon: Icons.close,
-        label: '取消',
-        onTap: () {},
-      ),
+      if (includeCancel)
+        ActionSheetItem(
+          key: const ValueKey('action-cancel'),
+          icon: Icons.close,
+          label: '取消',
+          onTap: () {},
+        ),
     ];
   }
 
@@ -197,7 +208,7 @@ class MessageActionsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return ActionSheet(
       preview: _preview(message),
-      items: _items(
+      items: itemsFor(
         context,
         message: message,
         canRecall: canRecall,

@@ -16,6 +16,7 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
@@ -74,6 +75,19 @@ class MessageBubble extends StatelessWidget {
   /// 点文件块时的动作（下载/另存）。为 null = 只展示，不可点。
   final void Function(FileSegment segment)? onOpenFile;
 
+  /// 把**气泡自己**（不含左右各 8dp 的行内留白）的 RenderBox 交给调用方。
+  ///
+  /// 单击气泡要贴着气泡弹菜单（TG 的 popup），而本组件的根是 Padding+Row，
+  /// 宽高是整行——直接拿它的 RenderBox 会把菜单钉到屏幕边上。
+  /// 交出 RenderBox 而不是 Rect：Rect 是布局时的快照，滚动后不重排就会过期，
+  /// 调用方在点击那一刻 localToGlobal 才永远是最新位置。
+  final void Function(RenderBox box)? onBubbleBox;
+
+  /// 气泡从树上摘下来时回调，把那份引用传回去，让调用方按**身份**删掉
+  /// 自己记的那一条（否则会记住已经脱离树的 RenderBox；只按消息 id 删会
+  /// 在切会话、id 重复时误删新气泡的那份引用）。
+  final ValueChanged<RenderBox>? onBubbleBoxGone;
+
   const MessageBubble({
     super.key,
     required this.message,
@@ -88,6 +102,8 @@ class MessageBubble extends StatelessWidget {
     this.mediaFailure,
     this.retryMedia,
     this.onOpenFile,
+    this.onBubbleBox,
+    this.onBubbleBoxGone,
   });
 
   @override
@@ -272,13 +288,22 @@ class MessageBubble extends StatelessWidget {
           pureImage ? ClipRRect(borderRadius: bubbleShape, child: inner) : inner,
     );
 
+    // 交出自己的 RenderBox（弹菜单定位用）。用回调而不是 GlobalKey：
+    // 每屏有几十个气泡，调用方得逐个建 key 再逐个清理，回调省掉这一层。
+    final bubble = onBubbleBox == null
+        ? body
+        : BubbleBoxReporter(
+            onBox: onBubbleBox!,
+            onGone: onBubbleBoxGone,
+            child: body,
+          );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       child: Row(
         mainAxisAlignment:
             isOut ? MainAxisAlignment.end : MainAxisAlignment.start,
         children: [
-          body,
+          bubble,
         ],
       ),
     );
@@ -553,5 +578,52 @@ class DateChip extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 把子级（气泡）自己的 RenderBox 交给调用方，并在摘树时通知回收。
+///
+/// 这里必须用 RenderObject 而不是 Builder：Builder 拿到的 context 位于
+/// 父级（Row）之下，取到的是撑满整行的 box，气泡宽度反而拿不到。
+class BubbleBoxReporter extends SingleChildRenderObjectWidget {
+  const BubbleBoxReporter({
+    super.key,
+    required this.onBox,
+    this.onGone,
+    required super.child,
+  });
+
+  final ValueChanged<RenderBox> onBox;
+  final ValueChanged<RenderBox>? onGone;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _BubbleBoxRender(onBox, onGone);
+
+  @override
+  void updateRenderObject(BuildContext context, RenderBox renderObject) {
+    final r = renderObject as _BubbleBoxRender;
+    r
+      ..onBox = onBox
+      ..onGone = onGone;
+  }
+}
+
+class _BubbleBoxRender extends RenderProxyBox {
+  _BubbleBoxRender(this.onBox, this.onGone);
+
+  ValueChanged<RenderBox> onBox;
+  ValueChanged<RenderBox>? onGone;
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    onBox(this);
+  }
+
+  @override
+  void detach() {
+    onGone?.call(this);
+    super.detach();
   }
 }

@@ -35,6 +35,8 @@ class ChatListPanel extends StatelessWidget {
     required this.onOpenConnect,
     this.connecting = false,
     required this.onOpenQq8Login,
+    this.onArchiveChat,
+    this.onToggleMuteChat,
   });
 
   /// 会话列表快照（含归档；归档行只出现在顶部入口）。
@@ -64,6 +66,14 @@ class ChatListPanel extends StatelessWidget {
   final void Function(List<Chat> archived, ChatStore? store) onOpenArchive;
   final VoidCallback onOpenConnect;
   final VoidCallback onOpenQq8Login;
+
+  /// 左滑一行 = 归档（TG Android 的 swipe-to-archive）。
+  ///
+  /// 传 null 表示不提供滑动手势（widget 测试与纯展示场景）。
+  final Future<void> Function(Chat chat)? onArchiveChat;
+
+  /// 右滑一行 = 静音/取消静音（TG 的 swipe action 之一）。
+  final Future<void> Function(Chat chat)? onToggleMuteChat;
 
   @override
   Widget build(BuildContext context) {
@@ -134,11 +144,13 @@ class ChatListPanel extends StatelessWidget {
                       itemBuilder: (_, i) {
                         final total =
                             visible.length + (archived.isEmpty ? 0 : 1);
-                        final row = (archived.isNotEmpty && i == 0)
-                            ? _archivedRow(archived)
-                            : _chatTile(
-                                visible[i - (archived.isEmpty ? 0 : 1)],
-                              );
+                        final Widget row;
+                        if (archived.isNotEmpty && i == 0) {
+                          row = _archivedRow(archived);
+                        } else {
+                          final chat = visible[i - (archived.isEmpty ? 0 : 1)];
+                          row = _swipeable(chat, _chatTile(chat));
+                        }
                         // 行间 1px 分隔线：TG `Cells/DialogCell.java` 的
                         // needDivider 画法——从文字起点（messagePaddingStart
                         // = 72 = 11 + 52 + 9）画到右缘，最后一行不画。
@@ -366,6 +378,57 @@ class ChatListPanel extends StatelessWidget {
       ]),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  /// 滑动手势：左滑归档、右滑静音（TG Android 的 DialogCell 滑动动作）。
+  ///
+  /// 归档会让这一行从主列表消失，所以 [Dismissible] 直接吃掉；
+  /// 静音只改字段不改列表成员，必须回弹（返回 false），否则 Dismissible
+  /// 会因为"已 dismiss 但还在树里"报错。
+  Widget _swipeable(Chat chat, Widget child) {
+    final canArchive = onArchiveChat != null;
+    final canMute = onToggleMuteChat != null;
+    if (!canArchive && !canMute) return child;
+    return Dismissible(
+      key: ValueKey<String>('swipe-${chat.id}'),
+      direction: DismissDirection.horizontal,
+      background: _swipeBackground(
+        alignment: Alignment.centerLeft,
+        icon: chat.muted ? Icons.notifications_active : Icons.notifications_off,
+        color: TelegramColors.textSecondary,
+      ),
+      secondaryBackground: _swipeBackground(
+        alignment: Alignment.centerRight,
+        icon: Icons.archive_outlined,
+        color: TelegramColors.accent,
+      ),
+      // 两个动作都返回 false（回弹）：列表成员只由 store 的变更驱动重建。
+      // 返回 true 会让 Dismissible 自己摘掉这一行，而数据层此时可能还没刷新，
+      // 下一帧就会丢出 "A dismissed Dismissible widget is still part of the
+      // tree" —— 归档也一样，交给 chatsProvider 重建才是一条真相。
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.endToStart) {
+          await onArchiveChat?.call(chat);
+        } else {
+          await onToggleMuteChat?.call(chat);
+        }
+        return false;
+      },
+      child: child,
+    );
+  }
+
+  Widget _swipeBackground({
+    required Alignment alignment,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      color: TelegramColors.bgHover,
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Icon(icon, size: 22, color: color),
     );
   }
 

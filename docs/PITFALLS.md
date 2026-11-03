@@ -4689,3 +4689,31 @@ body=\x02#!SILK_V3!`。所以链路本身是通的，**过一天失效只是 rke
    再看成功/失败两种样本的数值差异；
 2. 上传类协议的 `range`/`offset` 是最好用的旁证：服务端回了 full-size 才算真收到；
 3. 假成功比失败更贵：它会掩盖真因（这次掩盖了将近两天）。
+
+## C119 气泡旁 popup 与会话滑动：四个结构坑（2026-11-03）
+
+**坑 1：拿「外层」RenderBox 当锚点，等于拿整行。**
+`MessageBubble` 的根是 `Padding(child: Row(...))`，`Row` 撑满可用宽度，
+所以包在 `GestureDetector`/`Builder` 外面那层的 box 宽度是**整行**。
+真机现象：点一条左对齐的短气泡，菜单被顶到屏幕最右（x 从 1332 起，气泡右缘才 610）。
+正确做法是把**气泡自己**（`ConstrainedBox`）的 box 交出来，见 `BubbleBoxReporter`。
+
+**坑 2：`Rect` 是布局快照，滚动后会过期。**
+`RenderSliver` 滚动只改 paint offset，不触发子级 `performLayout`，
+所以缓存的 `Rect` 会留在旧位置，菜单飘走。要传 `RenderBox`、
+在**点击那一刻** `localToGlobal(Offset.zero) & size` 现算。
+
+**坑 3：回调清理必须按身份，不能只按消息 id。**
+`onBubbleBoxGone` 若只 `remove(m.id)`，切会话时「新气泡先 attach、旧气泡后 detach」
+会把新气泡那份引用删掉（消息 id 在不同会话里可能重名）。所以回调要把 box 自身传回来，
+调用方 `if (identical(map[id], box)) map.remove(id)`。
+（用 `GlobalKey` 也行，但每屏几十个气泡要逐个建 key、逐个清理，回调更省。）
+
+**坑 4：`Dismissible` 的 `confirmDismiss` 必须返回 `false`。**
+返回 `true` 会让 `Dismissible` 自己把子级移出树，随后 store 改状态重建又发现
+「A dismissed Dismissible widget is still part of the tree」而崩。
+正确姿势：`confirmDismiss` 里 await 回调后一律 `return false`，列表成员只由 store 驱动。
+
+**附带（测试）**：`find.textContaining('...')` 常常命中多处（会话列表摘要里也有同一句），
+`tester.getRect` 要求唯一目标，必须 `.first` 或用 `find.descendant(of: find.byType(MessageBubble), ...)` 限定。
+

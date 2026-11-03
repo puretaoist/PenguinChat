@@ -48,6 +48,7 @@ import '../widgets/group_settings_panel.dart';
 import '../widgets/action_sheet.dart';
 import '../widgets/telegram_list_item.dart';
 import '../widgets/chat_header.dart';
+import '../widgets/message_action_popup.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
 import '../widgets/chat_input_bar.dart';
@@ -136,6 +137,11 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 多选模式里选中的消息 id（空 = 不在多选模式）。
   final Set<String> _selected = <String>{};
+
+  /// 每个气泡自己的 RenderBox（消息 id → box），由 [MessageBubble.onBubbleBox]
+  /// 在挂树时写入、摘树时删除。单击气泡弹菜单要贴着**气泡**，而不是整行或
+  /// 屏幕边；存 box 而不是 Rect，点击那一刻再算位置才不会因滚动而过期。
+  final Map<String, RenderBox> _bubbleBoxes = <String, RenderBox>{};
 
   /// 已经播过入场动画的消息 id。
   ///
@@ -722,6 +728,19 @@ class _HomePageState extends ConsumerState<HomePage> {
       onOpenArchive: _openArchiveSheet,
       onOpenConnect: _openConnectPage,
       onOpenQq8Login: _openQq8Login,
+      // 左滑归档 / 右滑静音（TG Android 的滑动动作）。
+      onArchiveChat: (chat) async {
+        final s = ref.read(chatStoreProvider);
+        if (s == null) return;
+        await s.setChatArchived(chat.id, true);
+        if (mounted) _toast('已归档');
+      },
+      onToggleMuteChat: (chat) async {
+        final s = ref.read(chatStoreProvider);
+        if (s == null) return;
+        await s.setChatMuted(chat.id, !chat.muted);
+        if (mounted) _toast(chat.muted ? '已取消静音' : '已静音');
+      },
     );
 
     // 顶部/左右安全区在**根布局**统一消费一次（缺陷5：竖屏时聊天标题
@@ -887,8 +906,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     unawaited(ref.read(themeModeProvider.notifier).toggle());
   }
 
-  /// 长按消息：复制 / 查看原文 / 撤回（只放真能用的动作）。
-  Future<void> _showMessageActions(ChatMessage m, String chatId) async {
+  /// 单击气泡：在气泡旁弹出操作菜单（TG 的 popup）。
+  ///
+  /// 锚点是气泡自己的 RenderBox；万一拿不到（理论上不会）就退回屏幕中心，
+  /// 绝不因为定位失败就不弹菜单。
+  Future<void> _showMessagePopup(
+    BuildContext bubbleCtx,
+    ChatMessage m,
+    String chatId,
+  ) async {
     final store = ref.read(chatStoreProvider);
     final session = ref.read(sessionProvider);
     final canRecall =
@@ -897,23 +923,57 @@ class _HomePageState extends ConsumerState<HomePage> {
     final canPoke = !m.outgoing &&
         m.senderId.isNotEmpty &&
         (session?.supports('poke') ?? false);
-    await MessageActionsSheet.show(
+
+    final box = bubbleCtx.findRenderObject();
+    final size = MediaQuery.sizeOf(context);
+    // 优先用气泡自己的 box（点击这一刻现算，滚动过也不会飘）；拿不到才退回
+    // 外层 Box（整行宽，会把菜单顶到屏幕边），最后才退屏幕中心。
+    final bubbleBox = _bubbleBoxes[m.id];
+    Rect? bubbleRect;
+    if (bubbleBox != null && bubbleBox.attached && bubbleBox.hasSize) {
+      bubbleRect = bubbleBox.localToGlobal(Offset.zero) & bubbleBox.size;
+    }
+    final anchor = bubbleRect ??
+        (box is RenderBox && box.hasSize
+            ? box.localToGlobal(Offset.zero) & box.size
+            : Rect.fromLTWH(size.width / 2, size.height / 2, 1, 1));
+
+    await showMessageActionPopup(
       context,
-      message: m,
-      canRecall: canRecall,
-      onCopy: () {
-        // 不 await：写剪贴板走平台通道，慢/无实现时不该把 UI 与提示一起拖住
-        unawaited(Clipboard.setData(ClipboardData(text: m.text)));
-        _toast('已复制');
-      },
-      onReveal: () => store?.revealMessage(chatId, m.id),
-      onReply: () => setState(() => _replyTarget = m),
-      onRecall: () => _recall(store, chatId, m.id),
-      onPoke: canPoke ? () => _poke(m) : null,
-      onDelete: () => _deleteMessage(store, chatId, m),
-      onForward: () => _forwardMessages(chatId, <String>[m.id]),
-      onSelect: () => setState(() => _selected.add(m.id)),
+      anchor: anchor,
+      outgoing: m.outgoing,
+      // 「多选」不作为弹层项：TG 里多选是长按进入的独立模式。
+      items: MessageActionsSheet.itemsFor(
+        context,
+        message: m,
+        canRecall: canRecall,
+        includeSelect: false,
+        // popup 里不放「取消」：点空白遮罩即可关，TG 也没有这一行。
+        includeCancel: false,
+        onCopy: () {
+          // 不 await：写剪贴板走平台通道，慢/无实现时不该把 UI 与提示一起拖住
+          unawaited(Clipboard.setData(ClipboardData(text: m.text)));
+          _toast('已复制');
+        },
+        onReveal: () => store?.revealMessage(chatId, m.id),
+        onReply: () => setState(() => _replyTarget = m),
+        onRecall: () => _recall(store, chatId, m.id),
+        onPoke: canPoke ? () => _poke(m) : null,
+        onDelete: () => _deleteMessage(store, chatId, m),
+        onForward: () => _forwardMessages(chatId, <String>[m.id]),
+      ),
     );
+  }
+
+  /// 长按气泡 → 进多选并选中这一条（TG 的 action mode，没有菜单过渡）。
+  void _enterMessageSelection(ChatMessage m) {
+    // TG 单次多选上限 100 条（ActionMode 的常量），超了就提示而不是静默失败。
+    if (!_selected.contains(m.id) && _selected.length >= 100) {
+      _toast('一次最多选 100 条');
+      return;
+    }
+    unawaited(HapticFeedback.mediumImpact());
+    setState(() => _selected.add(m.id));
   }
 
   /// 戳一戳这条消息的发送者（群戳对方 uin，私聊戳会话对端）。
@@ -1714,16 +1774,23 @@ class _HomePageState extends ConsumerState<HomePage> {
                                         : null,
                                   ),
                                 Expanded(
-                                  child: GestureDetector(
-                                    // 多选模式里点击 = 勾选/取消勾选（长按仍出菜单）
+                                  // Builder 只为拿到气泡自己的 RenderBox：单击
+                                  // 弹菜单要贴着气泡定位（TG 的 popup 锚在气泡
+                                  // 边上，不是屏幕正中）。
+                                  child: Builder(
+                                    builder: (bubbleCtx) => GestureDetector(
+                                    // 多选模式里单击 = 勾选/取消勾选；非多选时
+                                    // 单击弹气泡旁的操作菜单（TG 的 popup）。
                                     onTap: _selecting
                                         ? () => setState(() => _selected
                                             .contains(m.id)
                                             ? _selected.remove(m.id)
                                             : _selected.add(m.id))
-                                        : null,
+                                        : () => _showMessagePopup(
+                                            bubbleCtx, m, chat.id),
+                                    // 长按直接进多选（TG：长按 = 多选，不弹菜单）。
                                     onLongPress: () =>
-                                        _showMessageActions(m, chat.id),
+                                        _enterMessageSelection(m),
                                     // 按住气泡轻微缩小（0.97）：TG 的按下反馈
                                     // 主要靠整行高亮，这里给暗色气泡一点手感。
                                     // PressableScale 用 Listener，不抢上面的
@@ -1741,6 +1808,14 @@ class _HomePageState extends ConsumerState<HomePage> {
                                           m.isFailed ? () => _retry(m.id) : null,
                                       showSenderName: item.showSenderName,
                                       senderLabel: _senderLabelOf(m, chat),
+                                      onBubbleBox: (b) =>
+                                          _bubbleBoxes[m.id] = b,
+                                      onBubbleBoxGone: (b) {
+                                        if (identical(
+                                            _bubbleBoxes[m.id], b)) {
+                                          _bubbleBoxes.remove(m.id);
+                                        }
+                                      },
                                       avatarVisible: item.showAvatar,
                                       highlighted:
                                           m.atMe || m.replyToId != null,
@@ -1749,6 +1824,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                                               chat.id, m.id)
                                           : null,
                                       ),
+                                    ),
                                     ),
                                   ),
                                 ),

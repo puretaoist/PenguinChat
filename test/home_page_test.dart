@@ -328,7 +328,7 @@ void main() {
     await _teardownStore(tester);
   });
 
-  testWidgets('转发：长按消息 → 转发 → 选目标会话 → 目标会话收到同一条内容',
+  testWidgets('转发：单击消息 → 转发 → 选目标会话 → 目标会话收到同一条内容',
       (tester) async {
     _wideScreen(tester);
     session.emit(SessionMessage(ChatMessage(
@@ -345,7 +345,8 @@ void main() {
     await tester.pumpWidget(_wrap());
     await tester.pumpAndSettle();
 
-    await tester.longPress(find.descendant(
+    // 单击气泡弹菜单（TG 的 popup）；长按现在是进多选。
+    await tester.tap(find.descendant(
       of: find.byType(MessageBubble),
       matching: find.textContaining('要转发的原话', findRichText: true),
     ));
@@ -399,7 +400,6 @@ void main() {
       matching: find.textContaining('第一条', findRichText: true),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('action-select')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('ms-count')), findsOneWidget);
@@ -453,7 +453,6 @@ void main() {
       matching: find.textContaining('甲', findRichText: true),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('action-select')));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
       of: find.byType(MessageBubble),
@@ -494,7 +493,6 @@ void main() {
       matching: find.textContaining('要合并的', findRichText: true),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('action-select')));
     await tester.pumpAndSettle();
 
     final sentBefore = session.sent.length;
@@ -535,7 +533,7 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.longPress(find.descendant(
+    await tester.tap(find.descendant(
       of: find.byType(MessageBubble),
       matching: find.textContaining('这条要删掉', findRichText: true),
     ));
@@ -602,6 +600,86 @@ void main() {
 
     expect(find.byType(ChatHeader), findsNothing, reason: '应当回到列表');
     expect(find.byKey(const ValueKey('chat-row-private_20002')), findsOneWidget);
+    await _teardownStore(tester);
+  });
+
+  testWidgets('单击气泡 → 气泡旁 popup（不是底部弹层，也没有多选项）', (tester) async {
+    _wideScreen(tester);
+    session.emit(SessionMessage(ChatMessage(
+      id: 'p-1',
+      text: '单击弹菜单',
+      segments: <Segment>[const TextSegment('单击弹菜单')],
+      time: DateTime(2026, 9, 12, 13),
+      chatId: 'private_20002',
+      senderId: '20002',
+      senderName: '小明',
+    )));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.descendant(
+      of: find.byType(MessageBubble),
+      matching: find.textContaining('单击弹菜单', findRichText: true),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('action-copy')), findsOneWidget,
+        reason: '单击要弹 TG 的 popup');
+    expect(find.byType(BottomSheet), findsNothing,
+        reason: 'popup 是 Overlay，不是底部弹层');
+    expect(find.byKey(const ValueKey('action-select')), findsNothing,
+        reason: '多选改由长按进入，不再作为菜单项');
+    expect(find.byKey(const ValueKey('action-cancel')), findsNothing,
+        reason: 'popup 点空白即关，没有「取消」这一行（TG 也没有）');
+
+    // 菜单必须贴着**气泡**（不是整行、更不是屏幕边）：对方气泡在左，
+    // 菜单左缘就在气泡右缘外侧一点点。曾经用过外层整行 Box 当锚点，
+    // 菜单会被顶到屏幕右侧，这里把它钉死。
+    final textRect = tester.getRect(find
+        .descendant(
+          of: find.byType(MessageBubble),
+          matching: find.textContaining('单击弹菜单', findRichText: true),
+        )
+        .first);
+    final menuRect = tester.getRect(find.byKey(const ValueKey('action-copy')));
+    expect(menuRect.left, greaterThan(textRect.right), reason: '菜单在气泡右侧');
+    expect(menuRect.left - textRect.right, lessThan(96),
+        reason: '菜单要贴着气泡，不能跑到屏幕边上');
+
+    // 点遮罩关闭，不执行动作
+    await tester.tap(find.byKey(const ValueKey('message-popup-barrier')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('action-copy')), findsNothing);
+    await _teardownStore(tester);
+  });
+
+  testWidgets('长按气泡 → 直接进多选（不再先弹菜单）', (tester) async {
+    _wideScreen(tester);
+    session.emit(SessionMessage(ChatMessage(
+      id: 'lp-1',
+      text: '长按多选',
+      segments: <Segment>[const TextSegment('长按多选')],
+      time: DateTime(2026, 9, 12, 14),
+      chatId: 'private_20002',
+      senderId: '20002',
+      senderName: '小明',
+    )));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+
+    await tester.longPress(find.descendant(
+      of: find.byType(MessageBubble),
+      matching: find.textContaining('长按多选', findRichText: true),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('ms-count')), findsOneWidget,
+        reason: '长按应立即进入多选工具条');
+    expect(find.text('已选 1 条'), findsOneWidget);
+    expect(find.byKey(const ValueKey('action-copy')), findsNothing,
+        reason: '长按不该再弹菜单');
     await _teardownStore(tester);
   });
 }
