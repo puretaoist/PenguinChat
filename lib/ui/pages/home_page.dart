@@ -53,6 +53,7 @@ import '../widgets/message_actions.dart';
 import '../widgets/jump_to_latest.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_list_panel.dart';
+import '../widgets/chat_wallpaper.dart';
 import '../widgets/message_list_builder.dart';
 import '../widgets/telegram_avatar.dart';
 import '../widgets/pressable_scale.dart';
@@ -126,6 +127,20 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 消息列表是不是贴在底部（决定要不要显示"跳到最新"按钮）。
   bool _atBottom = true;
 
+  /// 每个会话记住的滚动位置（像素）。切走时存、切回时还原——TG 就是这样，
+  /// 回到一个旧会话应该停在离开的地方，而不是被拽到底部。
+  final Map<String, double> _scrollOffsets = <String, double>{};
+
+  /// 当前 _scrollController 记录的是哪个会话的位置。
+  String? _scrollOwnerChatId;
+
+  /// 切会话时要还原到的位置（null = 没有记录 → 贴底）。
+  double? _pendingRestore;
+
+  /// 正在程序化还原位置：此时 _onScroll 的写回要跳过，否则会把中间值
+  /// 覆盖进记录，下次再回来就偏了。
+  bool _restoringScroll = false;
+
   /// 当前输入框里装着哪个会话的草稿（换会话时要靠它判断"要不要先存上一份"）。
   String? _draftChatId;
   Timer? _draftTimer;
@@ -195,6 +210,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   void dispose() {
     // 退出前把没落盘的草稿写回去（防抖计时器可能还挂着）
+    _saveScrollOffset();
     _flushDraft();
     _draftTimer?.cancel();
     _scrollController.removeListener(_onScroll);
@@ -269,6 +285,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
     if (atBottom) _markReadIfUnread();
 
+    final owner = _scrollOwnerChatId;
+    if (owner != null && !_restoringScroll) _scrollOffsets[owner] = pos.pixels;
     if (pos.pixels > 24) return;
     unawaited(_loadMore());
   }
@@ -363,6 +381,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 预览期（store 还没建好）点会话没有意义：没有历史可拉、也发不出去。
     // 让这一下"什么都没发生"，比切到一个空对话面板更像话。
     if (ref.read(chatStoreProvider) == null) return;
+    // 先把上一个会话的位置存下来，再把"这次要还原到哪"定好。
+    _saveScrollOffset();
+    _scrollOwnerChatId = chat.id;
+    _pendingRestore = _scrollOffsets[chat.id];
     setState(() {
       _selectedChatId = chat.id;
       _showChatList = false;
@@ -391,10 +413,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     final chat = store.chats.where((c) => c.id == chatId).firstOrNull;
     _unreadAnchorId =
         (chat != null && chat.unreadCount > 0) ? chat.lastReadId : null;
-    if (!_opened.add(chatId)) return;
+    if (!_opened.add(chatId)) {
+      // 会话早就打开过（数据在内存里）：直接还原上次的位置，不重拉历史。
+      _restoreScroll();
+      return;
+    }
     await store.openChat(chatId);
-    // 拉完历史贴到底：新消息在末尾，用户开会话要看的就是它们。
-    if (mounted) _scrollToBottom();
+    // 第一次打开：有记录就还原，没有就贴底。
+    if (mounted) _restoreScroll();
   }
 
   /// 停在底部就等于"已经看到最新"——顺手把已读位置推到最后一条，
@@ -624,6 +650,38 @@ class _HomePageState extends ConsumerState<HomePage> {
     unawaited(store.retry(chatId, messageId));
   }
 
+  /// 把当前会话的滚动位置存进 map（切会话 / 返回列表 / dispose 前调用）。
+  void _saveScrollOffset() {
+    final owner = _scrollOwnerChatId;
+    if (owner == null || _restoringScroll) return;
+    if (!_scrollController.hasClients) return;
+    _scrollOffsets[owner] = _scrollController.position.pixels;
+  }
+
+  /// 切回一个会话时还原它上次的滚动位置；没有记录就贴底。
+  ///
+  /// 为什么用 jumpTo 而不是 animateTo：还原是"回到原样"，不是一次滚动动作；
+  /// 动画会让用户先看到底部再被拉上去。放在 post-frame 里是因为 ListView
+  /// 要等这一帧布局完才有正确的 maxScrollExtent。
+  void _restoreScroll() {
+    final target = _pendingRestore;
+    _pendingRestore = null;
+    if (target == null) {
+      _scrollToBottom();
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final max = _scrollController.position.maxScrollExtent;
+      final clamped = target.clamp(0.0, max);
+      _restoringScroll = true;
+      _scrollController.jumpTo(clamped);
+      _restoringScroll = false;
+      final atBottom = max - clamped <= 40;
+      if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
+    });
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -809,6 +867,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 对话页返回列表：同时告诉外壳"对话关了"，底栏重新出现。
   void _backToChatList() {
+    _saveScrollOffset();
     setState(() => _showChatList = true);
     widget.onChatPaneVisibilityChanged?.call(false);
   }
@@ -1697,8 +1756,9 @@ class _HomePageState extends ConsumerState<HomePage> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: Container(
-                  color: TelegramColors.bgChat,
+                child: ChatWallpaperBackground(
+                  wallpaperId: ref.watch(uiPrefsProvider.select(
+                      (UiPrefs p) => p.wallpaperId)),
                   child: messages.isEmpty
                       ? _buildMessagesEmpty(store)
                       : ListView.builder(
@@ -1894,8 +1954,9 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
         ),
         Expanded(
-          child: Container(
-            color: TelegramColors.bgChat,
+          child: ChatWallpaperBackground(
+            wallpaperId: ref.watch(uiPrefsProvider.select(
+                (UiPrefs p) => p.wallpaperId)),
             child: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,

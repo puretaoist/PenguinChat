@@ -11,11 +11,14 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show Color;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../client_api/session_providers.dart';
+import '../prefs/ui_prefs.dart';
 import 'telegram_theme.dart';
+import 'theme_accent.dart';
 
 /// 主题模式的读写。落盘 `<dataDir>/ui_settings.json`（与
 /// `connection.json` 同一套路：L4 不碰 `shared_preferences`，它依赖平台通道，
@@ -80,6 +83,15 @@ final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, bool>((ref) {
 /// 才依赖 riverpod：金样测试直接 pump 气泡时不需要 ProviderScope。
 bool applyThemePalette(WidgetRef ref) {
   final dark = ref.watch(themeModeProvider);
-  TelegramColors.use(dark ? TelegramPalette.dark : TelegramPalette.light);
+  // 主题色也在这里 watch：调 applyThemePalette 的页面（HomeShell/各 Tab/设置页）
+  // 因此都会订阅 accentId，改主题色时整棵界面自动重建，不用挨个接线。
+  final accentId =
+      ref.watch(uiPrefsProvider.select((UiPrefs p) => p.accentId));
+  final Color? accent = accentColorOrNull(accentId);
+  // '跟随主题' 直接用调色板自带的强调色（否则亮色会被套上暗色紫）；
+  // 只有选了具体颜色才派生一套。
+  TelegramColors.use(accent == null
+      ? (dark ? TelegramPalette.dark : TelegramPalette.light)
+      : paletteWithAccent(dark: dark, accent: accent));
   return dark;
 }

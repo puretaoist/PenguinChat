@@ -105,6 +105,37 @@ void main() {
     expect(container.read(uiPrefsProvider).fontScale, 1.1);
   });
 
+  testWidgets('主题色弹层选择后落到 uiPrefs', (tester) async {
+    await _pump(tester);
+    final container = _container(tester);
+    expect(container.read(uiPrefsProvider).accentId, 'default');
+
+    await tester.tap(find.byKey(const ValueKey('settings-accent')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('accent-violet')), findsOneWidget);
+    expect(find.byKey(const ValueKey('accent-blue')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('accent-blue')));
+    await tester.pumpAndSettle();
+    expect(container.read(uiPrefsProvider).accentId, 'blue');
+    // 主题色换掉后调色板也要跟着变（强调色 = 选中的蓝）。
+    expect(TelegramColors.accent, const Color(0xFF3390EC));
+  });
+
+  testWidgets('聊天背景弹层选择后落到 uiPrefs', (tester) async {
+    await _pump(tester);
+    final container = _container(tester);
+    expect(container.read(uiPrefsProvider).wallpaperId, 'plain');
+
+    await tester.tap(find.byKey(const ValueKey('settings-wallpaper')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('wallpaper-dusk')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('wallpaper-dusk')));
+    await tester.pumpAndSettle();
+    expect(container.read(uiPrefsProvider).wallpaperId, 'dusk');
+  });
+
   testWidgets('入场动画是有限时长（pumpAndSettle 能静止）', (tester) async {
     tester.view.physicalSize = const Size(420, 1500);
     tester.view.devicePixelRatio = 1.0;

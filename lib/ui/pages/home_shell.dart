@@ -42,9 +42,30 @@ class HomeShell extends ConsumerStatefulWidget {
   ConsumerState<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends ConsumerState<HomeShell> {
+class _HomeShellState extends ConsumerState<HomeShell>
+    with SingleTickerProviderStateMixin {
   /// 0=聊天 1=联系人 2=设置 3=我的
   int _tab = 0;
+
+  /// 切 Tab 的入场动画：TG 的 MainTabsLayout 切换是 200ms 内的淡入 + 轻微上浮。
+  /// 只动透明度与 8dp 位移，不动布局，IndexedStack 的页面状态仍然全部保留。
+  late final AnimationController _tabAnim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+    value: 1,
+  );
+  late final Animation<double> _tabFade = Tween<double>(begin: 0.75, end: 1)
+      .animate(CurvedAnimation(parent: _tabAnim, curve: Curves.easeOut));
+  late final Animation<Offset> _tabSlide = Tween<Offset>(
+    begin: const Offset(0, 0.02),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _tabAnim, curve: Curves.easeOut));
+
+  @override
+  void dispose() {
+    _tabAnim.dispose();
+    super.dispose();
+  }
 
   /// 聊天 tab 里是否正打开着某个会话（窄屏"列表/对话二选一"）。
   bool _chatPaneOpen = false;
@@ -57,6 +78,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void _selectTab(int index) {
     if (_tab == index) return;
     setState(() => _tab = index);
+    _tabAnim.forward(from: 0);
   }
 
   @override
@@ -90,28 +112,34 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           Positioned.fill(
             child: Padding(
               padding: EdgeInsets.only(bottom: contentBottom),
-              child: IndexedStack(
-                index: _tab,
-                children: <Widget>[
-                  HomePage(
-                    key: const ValueKey<String>('tab-chats'),
-                    connecting: widget.connecting,
-                    previewChats: widget.previewChats,
-                    onChatPaneVisibilityChanged: _onChatPaneVisibility,
+              child: FadeTransition(
+                opacity: _tabFade,
+                child: SlideTransition(
+                  position: _tabSlide,
+                  child: IndexedStack(
+                    index: _tab,
+                    children: <Widget>[
+                      HomePage(
+                        key: const ValueKey<String>('tab-chats'),
+                        connecting: widget.connecting,
+                        previewChats: widget.previewChats,
+                        onChatPaneVisibilityChanged: _onChatPaneVisibility,
+                      ),
+                      ContactsPage(
+                        key: const ValueKey<String>('tab-contacts'),
+                        onOpenChats: () => _selectTab(0),
+                      ),
+                      const SettingsPage(
+                        key: ValueKey<String>('tab-settings'),
+                        embedded: true,
+                      ),
+                      MyProfilePage(
+                        key: const ValueKey<String>('tab-profile'),
+                        onOpenSettings: () => _selectTab(2),
+                      ),
+                    ],
                   ),
-                  ContactsPage(
-                    key: const ValueKey<String>('tab-contacts'),
-                    onOpenChats: () => _selectTab(0),
-                  ),
-                  const SettingsPage(
-                    key: ValueKey<String>('tab-settings'),
-                    embedded: true,
-                  ),
-                  MyProfilePage(
-                    key: const ValueKey<String>('tab-profile'),
-                    onOpenSettings: () => _selectTab(2),
-                  ),
-                ],
+                ),
               ),
             ),
           ),

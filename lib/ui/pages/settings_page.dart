@@ -27,10 +27,12 @@ import '../../client_api/session.dart';
 import '../../client_api/session_providers.dart';
 import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
+import '../theme/theme_accent.dart';
 import '../theme/theme_mode.dart';
 import '../widgets/about_penguinchat.dart';
 import '../widgets/pressable_scale.dart';
 import '../widgets/storage_dialog.dart';
+import '../widgets/chat_wallpaper.dart';
 import '../widgets/telegram_avatar.dart';
 import '../widgets/telegram_list_item.dart';
 import '../widgets/tg_page_header.dart';
@@ -153,6 +155,38 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                             title: '文字大小',
                             subtitle: UiPrefs.fontScaleLabel(prefs.fontScale),
                             onTap: () => _pickFontScale(context, ref),
+                          ),
+                          TgListTile(
+                            key: const ValueKey('settings-accent'),
+                            icon: Icons.palette_outlined,
+                            title: '主题色',
+                            subtitle: UiPrefs.accentLabel(prefs.accentId),
+                            trailing: Container(
+                              width: 18,
+                              height: 18,
+                              decoration: BoxDecoration(
+                                color: accentChoiceOf(prefs.accentId).isDefault
+                                    ? null
+                                    : accentChoiceOf(prefs.accentId).color,
+                                gradient: accentChoiceOf(prefs.accentId).isDefault
+                                    ? const LinearGradient(
+                                        colors: <Color>[
+                                          Color(0xFF8774E1),
+                                          Color(0xFF3390EC),
+                                        ],
+                                      )
+                                    : null,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            onTap: () => _pickAccent(context, ref),
+                          ),
+                          TgListTile(
+                            key: const ValueKey('settings-wallpaper'),
+                            icon: Icons.wallpaper_outlined,
+                            title: '聊天背景',
+                            subtitle: UiPrefs.wallpaperLabel(prefs.wallpaperId),
+                            onTap: () => _pickWallpaper(context, ref),
                           ),
                         ]),
                       ],
@@ -368,6 +402,154 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
     );
     if (picked != null) {
       await ref.read(uiPrefsProvider.notifier).setFontScale(picked);
+    }
+  }
+
+  /// 主题色选择：底部弹层里铺全部色板。
+  Future<void> _pickAccent(BuildContext context, WidgetRef ref) async {
+    final current = ref.read(uiPrefsProvider).accentId;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: TelegramColors.bgSidebar,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Row(
+                children: [
+                  Text(
+                    '主题色',
+                    style: TextStyle(
+                      color: TelegramColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '立即生效',
+                    style: TextStyle(
+                      color: TelegramColors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: TelegramColors.divider),
+            for (final choice in accentChoices)
+              TgUserRow(
+                key: ValueKey<String>('accent-${choice.id}'),
+                leading: SizedBox(
+                  width: 28,
+                  child: Center(
+                    child: Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: choice.isDefault ? null : choice.color,
+                        gradient: choice.isDefault
+                            ? const LinearGradient(
+                                colors: <Color>[
+                                  Color(0xFF8774E1),
+                                  Color(0xFF3390EC),
+                                ],
+                              )
+                            : null,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+                title: choice.name,
+                trailing: choice.id == current
+                    ? Icon(Icons.check, size: 18, color: TelegramColors.accent)
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(choice.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) {
+      await ref.read(uiPrefsProvider.notifier).setAccentId(picked);
+    }
+  }
+
+  /// 聊天背景选择：每行左侧给一个小预览块。
+  Future<void> _pickWallpaper(BuildContext context, WidgetRef ref) async {
+    final current = ref.read(uiPrefsProvider).wallpaperId;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: TelegramColors.bgSidebar,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Row(
+                children: [
+                  Text(
+                    '聊天背景',
+                    style: TextStyle(
+                      color: TelegramColors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '立即生效',
+                    style: TextStyle(
+                      color: TelegramColors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: TelegramColors.divider),
+            for (final wall in wallpaperChoices)
+              TgUserRow(
+                key: ValueKey<String>('wallpaper-${wall.id}'),
+                leading: SizedBox(
+                  width: 28,
+                  child: Center(
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      decoration: BoxDecoration(
+                        color: wall.isPlain ? TelegramColors.bgChat : null,
+                        gradient: wall.isPlain
+                            ? null
+                            : LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: wall.colors,
+                              ),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: TelegramColors.divider),
+                      ),
+                    ),
+                  ),
+                ),
+                title: wall.name,
+                trailing: wall.id == current
+                    ? Icon(Icons.check, size: 18, color: TelegramColors.accent)
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(wall.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) {
+      await ref.read(uiPrefsProvider.notifier).setWallpaperId(picked);
     }
   }
 

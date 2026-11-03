@@ -11,11 +11,27 @@ import 'package:penguinchat/ui/prefs/ui_prefs.dart';
 
 void main() {
   group('UiPrefs 值对象', () {
-    test('默认值：标准字号、通知开、动画开', () {
+    test('默认值：标准字号、通知开、动画开、紫色主题、纯色背景', () {
       const p = UiPrefs();
       expect(p.fontScale, 1.0);
       expect(p.notifications, isTrue);
       expect(p.messageAnimations, isTrue);
+      expect(p.accentId, 'default');
+      expect(p.wallpaperId, 'plain');
+    });
+
+    test('九档主题色、五档聊天背景都有中文名，未知值退默认', () {
+      expect(UiPrefs.accentIds.length, 9);
+      expect(UiPrefs.accentIds.first, 'default');
+      expect(UiPrefs.accentLabel('default'), '跟随主题');
+      expect(UiPrefs.accentLabel('violet'), '紫色');
+      expect(UiPrefs.accentLabel('blue'), '蓝色');
+      expect(UiPrefs.accentLabel('nope'), '紫色');
+      expect(UiPrefs.wallpaperIds.length, 5);
+      expect(UiPrefs.wallpaperIds.first, 'plain');
+      expect(UiPrefs.wallpaperLabel('plain'), '默认');
+      expect(UiPrefs.wallpaperLabel('dusk'), '黄昏');
+      expect(UiPrefs.wallpaperLabel('nope'), UiPrefs.wallpaperLabel('plain'));
     });
 
     test('四档字号都有中文名，未知值退标准', () {
@@ -32,6 +48,8 @@ void main() {
         fontScale: 1.1,
         notifications: false,
         messageAnimations: false,
+        accentId: 'orange',
+        wallpaperId: 'ocean',
       );
       expect(UiPrefs.fromJson(p.toJson()), p);
       final decoded = jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>;
@@ -59,11 +77,25 @@ void main() {
       expect(q.messageAnimations, isTrue);
     });
 
+    test('主题色/背景白名单外的值只回该字段', () {
+      final p = UiPrefs.fromJson(<String, Object?>{
+        'accent': 'rainbow',
+        'wallpaper': 42,
+        'font_scale': 1.2,
+      });
+      expect(p.accentId, 'default');
+      expect(p.wallpaperId, 'plain');
+      expect(p.fontScale, 1.2);
+    });
+
     test('copyWith 只改指定字段', () {
       const p = UiPrefs();
       expect(p.copyWith(fontScale: 1.2).fontScale, 1.2);
       expect(p.copyWith(fontScale: 1.2).notifications, isTrue);
       expect(p.copyWith(notifications: false).fontScale, 1.0);
+      expect(p.copyWith(accentId: 'red').wallpaperId, 'plain');
+      expect(p.copyWith(wallpaperId: 'forest').accentId, 'default');
+      expect(p.copyWith(accentId: 'red'), isNot(p.copyWith(accentId: 'gray')));
     });
   });
 
@@ -98,6 +130,23 @@ void main() {
       expect(b.state.fontScale, 1.2);
       expect(b.state.notifications, isFalse);
       expect(b.state.messageAnimations, isTrue);
+    });
+
+    test('改主题色/背景也立即写盘，重新构造能读回', () async {
+      final target = prefsFile('look.json');
+      final a = UiPrefsNotifier(target);
+      await a.setAccentId('green');
+      await a.setWallpaperId('sunset');
+      final saved =
+          jsonDecode(target.readAsStringSync()) as Map<String, Object?>;
+      expect(saved['accent'], 'green');
+      expect(saved['wallpaper'], 'sunset');
+
+      final b = UiPrefsNotifier(target);
+      await b.load();
+      expect(b.state.accentId, 'green');
+      expect(b.state.wallpaperId, 'sunset');
+      expect(b.state.fontScale, 1.0);
     });
 
     test('文件不存在时不抛，保持默认', () async {

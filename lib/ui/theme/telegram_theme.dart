@@ -43,6 +43,13 @@ class TelegramPalette {
   final Color badge;
   final Color danger;
 
+  /// 是不是暗色基调。
+  ///
+  /// 不能再用 identical(_p, TelegramPalette.dark) 判暗色：主题色可配置后，
+  /// 调色板是 paletteWithAccent 派生出来的新对象，那份常量比较会恒为 false，
+  /// 暗色下会错误地走亮色分支（日期胶囊、群名颜色都会错）。
+  final bool isDark;
+
   const TelegramPalette({
     required this.bgApp,
     required this.bgSidebar,
@@ -64,6 +71,7 @@ class TelegramPalette {
     required this.online,
     required this.badge,
     required this.danger,
+    this.isDark = false,
   });
 
   /// 暗色（Night，现行版）。
@@ -88,6 +96,7 @@ class TelegramPalette {
     online: Color(0xFF0AC630),
     badge: Color(0xFF8774E1),
     danger: Color(0xFFFF5C5C),
+    isDark: true,
   );
 
   /// 亮色（Day，现行版）。
@@ -112,6 +121,63 @@ class TelegramPalette {
     online: Color(0xFF0AC630),
     badge: Color(0xFF3390EC),
     danger: Color(0xFFE53935),
+    isDark: false,
+  );
+
+  /// 复制一份并按需替换少数字段（其余沿用当前调色板）。
+  TelegramPalette copyWith({
+    Color? accent,
+    Color? accentHover,
+    Color? bgSelected,
+    Color? bubbleOut,
+    Color? bubbleOutTime,
+    Color? badge,
+  }) =>
+      TelegramPalette(
+        bgApp: bgApp,
+        bgSidebar: bgSidebar,
+        bgChat: bgChat,
+        bgHeader: bgHeader,
+        bgInput: bgInput,
+        bgHover: bgHover,
+        bgSelected: bgSelected ?? this.bgSelected,
+        bubbleOut: bubbleOut ?? this.bubbleOut,
+        bubbleIn: bubbleIn,
+        bubbleOutText: bubbleOutText,
+        bubbleOutTime: bubbleOutTime ?? this.bubbleOutTime,
+        accent: accent ?? this.accent,
+        accentHover: accentHover ?? this.accentHover,
+        textPrimary: textPrimary,
+        textSecondary: textSecondary,
+        textMuted: textMuted,
+        divider: divider,
+        online: online,
+        badge: badge ?? this.badge,
+        danger: danger,
+        isDark: isDark,
+      );
+}
+
+/// 按主题色派生一套调色板。
+///
+/// 跟 TG 的做法一致：暗色下自己气泡就跟着主题色走（默认紫，换蓝就变蓝）；
+/// 亮色下自己气泡仍是浅绿（#EEFFDE），主题色只影响强调色/未读徽标/选中行。
+TelegramPalette paletteWithAccent({
+  required bool dark,
+  required Color accent,
+}) {
+  final TelegramPalette base =
+      dark ? TelegramPalette.dark : TelegramPalette.light;
+  final Color hover = Color.lerp(accent, Colors.white, 0.22)!;
+  final Color selected = dark
+      ? Color.alphaBlend(accent.withValues(alpha: 0.30), base.bgApp)
+      : accent;
+  return base.copyWith(
+    accent: accent,
+    accentHover: hover,
+    bgSelected: selected,
+    badge: accent,
+    bubbleOut: dark ? accent : null,
   );
 }
 
@@ -128,7 +194,7 @@ class TelegramColors {
   static TelegramPalette get current => _p;
 
   /// 是否暗色（少数需要按明暗分叉画的地方用它，比如日期胶囊的底色）。
-  static bool get isDark => identical(_p, TelegramPalette.dark);
+  static bool get isDark => _p.isDark;
 
   static Color get bgApp => _p.bgApp;
   static Color get bgSidebar => _p.bgSidebar;
@@ -171,9 +237,7 @@ class TelegramColors {
     final n = int.tryParse(senderId);
     if (n == null) return accent;
     final c = nameColors[n.abs() % nameColors.length];
-    return current == TelegramPalette.dark
-        ? Color.lerp(c, Colors.white, 0.18)!
-        : c;
+    return current.isDark ? Color.lerp(c, Colors.white, 0.18)! : c;
   }
 }
 

@@ -33,8 +33,15 @@ import 'package:penguinchat/ui/theme/theme_mode.dart';
 ///
 /// **刻意照抄 `main.dart` 的构造方式**：如果哪天 `main.dart` 少 override 一个，
 /// 这里也会一起失败，而不是被一份"更宽松的测试配置"掩盖过去。
+/// 每个测试一份新的空目录。
+///
+/// 不能直接用 Directory.systemTemp：ui_settings.json / ui_prefs.json 会写在那里，
+/// 上一次跑测试留下的 `{"dark":false}` 会让「默认是暗色」这条断言随机变红
+/// （真踩过）。
+late Directory _dataDir;
+
 List<Override> _overrides() => <Override>[
-      dataDirProvider.overrideWithValue(Directory.systemTemp),
+      dataDirProvider.overrideWithValue(_dataDir),
       backendRegistryProvider.overrideWithValue(
         BackendProfileRegistry.fromJsonStrings(const <String>[]),
       ),
@@ -50,6 +57,18 @@ Widget _wrap(Widget child) => ProviderScope(
     );
 
 void main() {
+  setUp(() {
+    _dataDir = Directory.systemTemp.createTempSync('qqclient_ui_');
+  });
+
+  tearDown(() {
+    try {
+      if (_dataDir.existsSync()) _dataDir.deleteSync(recursive: true);
+    } on FileSystemException {
+      // Windows 上句柄可能还没放开；临时目录留给系统清。
+    }
+  });
+
   group('DI 接线', () {
     test('三个必须 override 的 provider 都能解析', () {
       final container = ProviderContainer(overrides: _overrides());
@@ -138,8 +157,11 @@ void main() {
       await tester.pump();
 
       // 默认暗色：provider 为 true，且页面构建时把调色板设成了暗色。
+      // 注意不能断言 same(TelegramPalette.dark)：主题色可配置后调色板是
+      // 由 base 派生出来的副本（paletteWithAccent），只保证「暗色 + 默认紫」。
       expect(container.read(themeModeProvider), isTrue);
-      expect(TelegramColors.current, same(TelegramPalette.dark));
+      expect(TelegramColors.isDark, isTrue);
+      expect(TelegramColors.current.accent, TelegramPalette.dark.accent);
       expect(find.byIcon(Icons.light_mode), findsOneWidget,
           reason: '暗色下按钮应提示"切到亮色"');
 
@@ -147,14 +169,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(container.read(themeModeProvider), isFalse);
-      expect(TelegramColors.current, same(TelegramPalette.light));
+      expect(TelegramColors.isDark, isFalse);
+      expect(TelegramColors.current.accent, TelegramPalette.light.accent);
       expect(find.byIcon(Icons.dark_mode), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('toggle-theme')));
       await tester.pumpAndSettle();
 
       expect(container.read(themeModeProvider), isTrue);
-      expect(TelegramColors.current, same(TelegramPalette.dark));
+      expect(TelegramColors.isDark, isTrue);
+      expect(TelegramColors.current.accent, TelegramPalette.dark.accent);
     });
 
     test('assets/theme.json 与 TelegramPalette 颜色一致（防两边各改一半）', () {

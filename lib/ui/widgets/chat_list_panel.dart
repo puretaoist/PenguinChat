@@ -96,7 +96,7 @@ class ChatListPanel extends StatelessWidget {
                 key: const ValueKey('toggle-theme'),
                 onPressed: onToggleTheme,
                 icon: Icon(
-                  TelegramColors.current == TelegramPalette.dark
+                  TelegramColors.isDark
                       ? Icons.light_mode
                       : Icons.dark_mode,
                   size: 20,

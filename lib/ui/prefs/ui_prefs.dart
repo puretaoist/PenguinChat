@@ -27,6 +27,8 @@ class UiPrefs {
     this.fontScale = 1.0,
     this.notifications = true,
     this.messageAnimations = true,
+    this.accentId = 'default',
+    this.wallpaperId = 'plain',
   });
 
   /// 全局字号倍率（作用在 MaterialApp 的 MediaQuery.textScaler 上）。
@@ -37,6 +39,59 @@ class UiPrefs {
 
   /// 新消息气泡是否播入场动画（淡入 + 轻微上浮）。
   final bool messageAnimations;
+
+  /// 主题色 id（颜色表在 lib/ui/theme/theme_accent.dart 的 accentChoices，
+  /// 这里只存 id：本文件必须保持纯 Dart，不能 import Flutter 的 Color）。
+  final String accentId;
+
+  /// 聊天背景 id（预设表在 lib/ui/widgets/chat_wallpaper.dart）。
+  /// 'plain' = 跟随主题的纯色底（暗色近黑 / 亮色浅灰），也是默认值。
+  final String wallpaperId;
+
+  /// 可选主题色 id（顺序即设置页里的展示顺序）。'default' = 跟随主题
+  /// （暗色紫 #8774E1 / 亮色蓝 #3390EC），也是默认值。
+  static const List<String> accentIds = <String>[
+    'default',
+    'violet',
+    'blue',
+    'cyan',
+    'green',
+    'orange',
+    'pink',
+    'red',
+    'gray',
+  ];
+
+  /// 可选聊天背景 id（'plain' 排第一 = 默认）。
+  static const List<String> wallpaperIds = <String>[
+    'plain',
+    'dusk',
+    'forest',
+    'ocean',
+    'sunset',
+  ];
+
+  /// 主题色的人话名（设置页副标题用；认不出的 id 一律说「紫色」）。
+  static String accentLabel(String id) => switch (id) {
+        'default' => '跟随主题',
+        'blue' => '蓝色',
+        'cyan' => '青色',
+        'green' => '绿色',
+        'orange' => '橙色',
+        'pink' => '粉色',
+        'red' => '红色',
+        'gray' => '灰色',
+        _ => '紫色',
+      };
+
+  /// 聊天背景的人话名。
+  static String wallpaperLabel(String id) => switch (id) {
+        'dusk' => '黄昏',
+        'forest' => '森林',
+        'ocean' => '海洋',
+        'sunset' => '晚霞',
+        _ => '默认',
+      };
 
   /// 可选的字号档位。刻意只给四档：自由滑块会让不同档位下的行高/气泡
   /// 全都落在没验证过的中间值上，反而更容易挤坏布局。
@@ -55,17 +110,23 @@ class UiPrefs {
     double? fontScale,
     bool? notifications,
     bool? messageAnimations,
+    String? accentId,
+    String? wallpaperId,
   }) =>
       UiPrefs(
         fontScale: fontScale ?? this.fontScale,
         notifications: notifications ?? this.notifications,
         messageAnimations: messageAnimations ?? this.messageAnimations,
+        accentId: accentId ?? this.accentId,
+        wallpaperId: wallpaperId ?? this.wallpaperId,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
         'font_scale': fontScale,
         'notifications': notifications,
         'message_animations': messageAnimations,
+        'accent': accentId,
+        'wallpaper': wallpaperId,
       };
 
   /// 读回时对每个字段单独兜底：某一项坏了不该把整份偏好打回默认。
@@ -81,10 +142,17 @@ class UiPrefs {
       return v is bool ? v : fallback;
     }
 
+    String readChoice(String key, List<String> allowed, String fallback) {
+      final Object? v = json[key];
+      return v is String && allowed.contains(v) ? v : fallback;
+    }
+
     return UiPrefs(
       fontScale: scale,
       notifications: readBool('notifications', true),
       messageAnimations: readBool('message_animations', true),
+      accentId: readChoice('accent', accentIds, 'default'),
+      wallpaperId: readChoice('wallpaper', wallpaperIds, 'plain'),
     );
   }
 
@@ -93,15 +161,19 @@ class UiPrefs {
       other is UiPrefs &&
       other.fontScale == fontScale &&
       other.notifications == notifications &&
-      other.messageAnimations == messageAnimations;
+      other.messageAnimations == messageAnimations &&
+      other.accentId == accentId &&
+      other.wallpaperId == wallpaperId;
 
   @override
-  int get hashCode => Object.hash(fontScale, notifications, messageAnimations);
+  int get hashCode => Object.hash(
+      fontScale, notifications, messageAnimations, accentId, wallpaperId);
 
   @override
   String toString() =>
       'UiPrefs(fontScale: $fontScale, notifications: $notifications, '
-      'messageAnimations: $messageAnimations)';
+      'messageAnimations: $messageAnimations, accentId: $accentId, '
+      'wallpaperId: $wallpaperId)';
 }
 
 /// 界面偏好的状态机。与 ThemeModeNotifier 同构：读一次、改就落盘。
@@ -132,6 +204,12 @@ class UiPrefsNotifier extends StateNotifier<UiPrefs> {
 
   Future<void> setMessageAnimations(bool value) =>
       _update(state.copyWith(messageAnimations: value));
+
+  Future<void> setAccentId(String value) =>
+      _update(state.copyWith(accentId: value));
+
+  Future<void> setWallpaperId(String value) =>
+      _update(state.copyWith(wallpaperId: value));
 
   Future<void> _update(UiPrefs next) async {
     if (next == state) return;

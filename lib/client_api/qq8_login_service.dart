@@ -496,6 +496,11 @@ class Qq8LoginService {
   /// 免得每次进「我的」页都白打一轮群列表+群成员）。
   bool _selfNicknameTried = false;
 
+  /// [_selfNickname] 是不是"真昵称"。从群成员名单里认出来的只是**群名片**，
+  /// 它和真实昵称可能完全不同（真机：我的界面显示成某个群的群名片）。
+  /// 有真昵称时群名片不得覆盖它，只在没有真昵称时兜底。
+  bool _selfNicknameIsReal = false;
+
   /// 好友列表快照（空 = 还没拉过）。
   List<Qq8Friend> get friends => List<Qq8Friend>.unmodifiable(_friends);
 
@@ -537,6 +542,7 @@ class Qq8LoginService {
     _friendClasses.clear();
     _selfNickname = null;
     _selfNicknameTried = false;
+    _selfNicknameIsReal = false;
   }
 
   void _rememberFriendName(int uin, String? name) {
@@ -544,12 +550,27 @@ class Qq8LoginService {
     _friendNames[uin] = name;
   }
 
-  void _rememberGroupMemberName(int gid, int uin, String? name) {
+  /// [realName] 是群成员资料里的**真实昵称**（QQ 昵称），[name] 是群名片。
+  /// 自己那条：真昵称优先且一旦写入就不再被群名片覆盖；群名片只做兜底。
+  void _rememberGroupMemberName(
+    int gid,
+    int uin,
+    String? name, {
+    String? realName,
+  }) {
     if (gid == 0 || uin == 0 || name == null || name.isEmpty) return;
     (_groupMemberNames[gid] ??= <int, String>{})[uin] = name;
-    // 群成员名单里出现自己 → 顺手记下自己的群名片（登录协议本身不返回昵称）。
-    if (uin == _session?.uin &&
-        (_selfNickname == null || _selfNickname!.isEmpty)) {
+    if (uin != _session?.uin) return;
+    final real = realName;
+    if (real != null && real.isNotEmpty) {
+      if (!_selfNicknameIsReal) {
+        _selfNickname = real;
+        _selfNicknameIsReal = true;
+      }
+      return;
+    }
+    // 没有真昵称：群名片仅在没有真昵称时兜底，且不覆盖已有的值。
+    if (!_selfNicknameIsReal && (_selfNickname == null || _selfNickname!.isEmpty)) {
       _selfNickname = name;
     }
   }
@@ -581,20 +602,21 @@ class Qq8LoginService {
   Future<void> ensureSelfNickname({int maxGroups = 3}) async {
     if (_selfNicknameTried) return;
     final known = _selfNickname;
-    if (known != null && known.isNotEmpty) return;
+    if (known != null && known.isNotEmpty && _selfNicknameIsReal) return;
     if (!isOnline || _session == null) return;
     _selfNicknameTried = true;
     try {
       final page = await fetchGroupList();
       final groups = page.groups.take(maxGroups).toList();
       for (final g in groups) {
-        if (_selfNickname != null && _selfNickname!.isNotEmpty) break;
+        if (_selfNicknameIsReal) break;
         if (!isOnline) break;
         await fetchGroupMembers(g.gid);
       }
       final got = _selfNickname;
       if (got != null && got.isNotEmpty) {
-        _log.i('已认出自己的昵称：$got');
+        final kind = _selfNicknameIsReal ? '昵称' : '群名片（兜底）';
+        _log.i('已认出自己的$kind：$got');
       } else {
         _log.i('群成员里没认出自己（试了 ${groups.length} 个群），昵称保持未知');
       }
@@ -2954,7 +2976,7 @@ class Qq8LoginService {
       if (next == 0 || pages >= maxPages) break;
     }
     for (final m in members) {
-      _rememberGroupMemberName(gid, m.uin, m.displayName);
+      _rememberGroupMemberName(gid, m.uin, m.displayName, realName: m.nick);
     }
     _log.i('群成员列表 gid=$gid：${members.length} 人（$pages 页，result=$result）');
     return Qq8GroupMemberPage(result: result, nextUin: next, members: members);

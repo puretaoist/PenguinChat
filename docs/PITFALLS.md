@@ -4717,3 +4717,25 @@ body=\x02#!SILK_V3!`。所以链路本身是通的，**过一天失效只是 rke
 **附带（测试）**：`find.textContaining('...')` 常常命中多处（会话列表摘要里也有同一句），
 `tester.getRect` 要求唯一目标，必须 `.first` 或用 `find.descendant(of: find.byType(MessageBubble), ...)` 限定。
 
+
+## C120 主题色可配置：三个坑（2026-11-03）
+
+**坑 1：给 `TelegramPalette` 加实例字段 `dark` 会跟 `static const dark` 撞名。**
+现象：`dart analyze lib` 报 `conflicting_static_and_instance`，同一文件里其余
+`TelegramPalette.dark` 用法全变成 `static_access_to_instance_member`。
+处理：实例字段叫 `isDark`（`TelegramColors.isDark` 也读它），静态常量仍叫 `dark`/`light`。
+
+**坑 2：调色板一旦派生（`paletteWithAccent`），`identical(p, TelegramPalette.dark)` 恒 false。**
+全仓原有 8 处「`current == TelegramPalette.dark` 判暗色」会静默失效（暗色界面按亮色画）。
+处理：判暗色一律用 `TelegramColors.isDark`（读调色板自带的 `isDark`），不要比对象身份；
+测试里也不要断言 `same(TelegramPalette.dark)`，改成断言 `isDark` + 强调色。
+
+**坑 3：「跟随主题」这一档绝不能覆盖 base 的强调色。**
+若把默认档写成「紫罗兰」并统一 `paletteWithAccent`，亮色主题会被套上暗色紫（#8774E1），
+而 TG 亮色默认是蓝 #3390EC —— 这是**行为回归**，`ui_test` 的 `TelegramColors.current.accent`
+断言当场抓到。处理：`accentColorOrNull('default')` 返回 `null`，调用方直接用 base 调色板。
+
+**附带（测试环境）：`dataDirProvider` 指向 `Directory.systemTemp` 会让偏好文件跨进程泄漏。**
+现象：`ui_test` 的「默认暗色」时红时绿。根因：`ui_settings.json`/`ui_prefs.json` 写进了
+真 `/tmp`，上一次跑留下的 `{"dark":false}` 被下一次读到。处理：测试里 `setUp` 建独立临时目录、
+`tearDown` 删掉；不要把 `Directory.systemTemp` 当数据目录塞给 provider。
