@@ -151,7 +151,11 @@ class Qq8VoiceElem extends Qq8Elem {
   final int? seconds;
   final String? url;
 
-  const Qq8VoiceElem({this.md5, this.size, this.seconds, this.url});
+  /// `ptt.3 = bytes_file_uuid`（36 字节 ASCII）。
+  /// 不带它就没法在 rkey 过期后发 1200 换新链（见 RecordSegment.uuid）。
+  final String? uuid;
+
+  const Qq8VoiceElem({this.md5, this.size, this.seconds, this.url, this.uuid});
 
   @override
   String toString() => 'Qq8VoiceElem(${seconds}s ${size ?? '?'}B)';
@@ -509,7 +513,8 @@ class Qq8ElemScan {
   /// 这一点由参考实现的两处对上：接收侧构造里 `if (rich[4]) parseExclusiveElem(0, rich[4])`，
   /// 发送侧 `record()` 里 `this.rich[4] = buf`。所以扫完 elems 之后要单独调它。
   ///
-  /// 字段号（ptt 本身）：`4 = md5（字节）6 = 大小 19 = 秒数 20 = 直链后缀`
+  /// 字段号（ptt 本身）：`3 = file_uuid（字节，36 字节 ASCII）`
+  /// `4 = md5（字节）6 = 大小 19 = 秒数 20 = 直链后缀`
   /// ——后缀不以 `http` 开头时前面补 `https://grouptalk.c2c.qq.com`。
   void scanPtt(Uint8List ptt) {
     final p = Qq8Pb.decode(ptt);
@@ -517,6 +522,7 @@ class Qq8ElemScan {
     kinds.add('voice');
     text.write('[语音]');
     elems.add(Qq8VoiceElem(
+      uuid: Qq8Pb.textAt(p, 3),
       md5: _hex(Qq8Pb.bytesAt(p, 4)),
       size: Qq8Pb.intAt(p, 6),
       seconds: Qq8Pb.intAt(p, 19),

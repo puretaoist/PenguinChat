@@ -147,6 +147,24 @@ void main() {
     check('空 Elem：kinds 记为 empty', s.kinds.contains('empty'), '实际 ${s.kinds}');
   }
 
+  // ---- 7. ptt.3 是 uuid：收语音必须把它带出来（rkey 过期后换链要用） -----
+  {
+    final ptt = Qq8Pb.encode(<int, Object?>{
+      3: _bs(utf8.encode('A8F5B0C1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6')),
+      4: _bs(List<int>.filled(16, 0x11)),
+      6: 3547,
+      19: 3,
+      20: 'http://x/download?appid=1402&fileid=abc&rkey=def',
+    });
+    final s = Qq8ElemScan()..scanPtt(ptt);
+    final v = s.elems.whereType<Qq8VoiceElem>().single;
+    checkEq('ptt.3 解析成 uuid', v.uuid, 'A8F5B0C1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6');
+    checkEq('ptt 秒数', v.seconds, 3);
+    checkEq('ptt 大小', v.size, 3547);
+    checkEq('ptt 直链后缀原样保留', v.url,
+        'http://x/download?appid=1402&fileid=abc&rkey=def');
+  }
+
   stdout.writeln('\n=== 结果: $_pass 通过, $_fail 失败 ===');
   if (_fail > 0) throw StateError('$_fail 项失败');
 }

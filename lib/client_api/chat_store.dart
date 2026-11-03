@@ -113,6 +113,7 @@ class ChatStore {
     this.keepMediaFor = const Duration(days: 30),
     this.mediaFetcher,
     this.imageUrlResolver,
+    this.voiceUrlResolver,
   }) : _log = logger ?? Log.get('ChatStore');
 
   /// 数据来源。ChatStore **不拥有**它的生命周期——不负责 connect / dispose，
@@ -161,6 +162,13 @@ class ChatStore {
     required String md5Hex,
     required int fileId,
   })? imageUrlResolver;
+
+  /// 语音换链：拿消息里的 `ptt.3` uuid 去发 1200 换一条新的 /download 直链。
+  ///
+  /// 语音 rkey 只有小时级寿命，过期后直链一律 400 `-5503007`。官方消息里的
+  /// `down_para` 也只装着当时的 rkey，所以历史语音必须重新申请。
+  /// null = 不换链（自测/离线，或这条消息没有 uuid）。
+  final Future<String?> Function({required String uuid})? voiceUrlResolver;
 
   /// 媒体缓存（`<dataDir>/media` + `<dataDir>/media_index.json`）。
   ///
@@ -575,10 +583,19 @@ class ChatStore {
     return path;
   }
 
-  /// 给 [MediaCache] 用的「换链」闭包：只有群图且 md5/fileId/群号齐全时才有。
+  /// 给 [MediaCache] 用的「换链」闭包。
+  ///
+  /// - 语音：只要有 `ptt.3` 的 uuid，就能发 1200 换新链（rkey 只有小时级寿命）；
+  /// - 群图：要 md5/fileId/群号齐全。
   ///
   /// 缺任一项都返回 null——宁可显示"链接已失效"，也不发一个注定回 206 的请求。
   Future<String?> Function()? _refresherFor(Segment seg) {
+    if (seg is RecordSegment) {
+      final voice = voiceUrlResolver;
+      final uuid = seg.uuid;
+      if (voice == null || uuid == null || uuid.isEmpty) return null;
+      return () => voice(uuid: uuid);
+    }
     final resolver = imageUrlResolver;
     if (resolver == null || seg is! ImageSegment) return null;
     final md5 = seg.md5;

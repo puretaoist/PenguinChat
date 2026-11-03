@@ -67,7 +67,11 @@ Future<HttpServer> _serve() async {
     } else if (req.uri.path == '/img/fresh.jpg') {
       // 群图"换链"之后服务端给的新地址
       res.add(Uint8List.fromList(List<int>.filled(64, 0xCC)));
-    } else if (req.uri.path == '/expired') {
+    } else if (req.uri.path == '/audio/fresh') {
+      // 语音"换链"之后服务端给的新地址
+      res.headers.contentType = ContentType('audio', 'mp3');
+      res.add(Uint8List.fromList(List<int>.filled(32, 0xDD)));
+    } else if (req.uri.path == '/expired' || req.uri.path == '/audio/expired') {
       res.statusCode = 400;
       res.write('{"retcode":-5503007,"retmsg":"download url has expired"}');
     } else {
@@ -234,6 +238,42 @@ Future<void> main() async {
 
     await store3.dispose();
     await session3.dispose();
+
+    // -------------------------------------------------------------
+    print('\n[语音换链] rkey 过期 -> 凭 ptt.3 uuid 换一条 -> 落盘');
+    final sessionV = FakeSession();
+    var voiceCalls = 0;
+    var voiceUuid = '';
+    final storeV = ChatStore(
+      session: sessionV,
+      dataDir: Directory('${tmp.path}/data4'),
+      mediaFetcher: HttpMediaFetcher(),
+      voiceUrlResolver: ({required String uuid}) async {
+        voiceCalls++;
+        voiceUuid = uuid;
+        return '$base/audio/fresh';
+      },
+    );
+    await storeV.bootstrap();
+
+    const u36 = 'A8F5B0C1D2E3F4A5B6C7D8E9F0A1B2C3D4E5F6';
+    final deadVoice = RecordSegment('vm5',
+        url: '$base/audio/expired', seconds: 3, size: 32, uuid: u36);
+    final vPath = await storeV.ensureMedia(deadVoice);
+    check('语音过期换链后拿到本地路径', vPath != null, '$vPath');
+    check('语音换链回调调用一次', voiceCalls == 1, '$voiceCalls');
+    check('回调参数：uuid', voiceUuid == u36, voiceUuid);
+    check('语音落盘后 mediaPathOf 命中', storeV.mediaPathOf(deadVoice) != null);
+
+    // 老消息没有 uuid：不许发注定失败的 1200。
+    final oldVoice =
+        RecordSegment('vm6', url: '$base/audio/expired', seconds: 2, size: 32);
+    final oldPath = await storeV.ensureMedia(oldVoice);
+    check('没有 uuid 时不换链', oldPath == null, '$oldPath');
+    check('没有 uuid 时回调没被调用', voiceCalls == 1, '$voiceCalls');
+
+    await storeV.dispose();
+    await sessionV.dispose();
   } finally {
     await server.close(force: true);
     await session.dispose();

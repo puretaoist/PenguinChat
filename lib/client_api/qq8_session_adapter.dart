@@ -837,8 +837,15 @@ int _seenActionSerial = -1;
               md5: md5,
               fileId: fileId,
               groupCode: group ? groupCode : null),
-        Qq8VoiceElem(:final md5, :final url, :final seconds, :final size) =>
-          RecordSegment(md5 ?? '', url: url, seconds: seconds, size: size),
+        Qq8VoiceElem(
+          :final md5,
+          :final url,
+          :final seconds,
+          :final size,
+          :final uuid
+        ) =>
+          RecordSegment(md5 ?? '',
+              url: url, seconds: seconds, size: size, uuid: uuid),
         Qq8VideoElem(
           :final fileId,
           :final md5,

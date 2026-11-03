@@ -1129,6 +1129,8 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
         // 群图直链过期（rkey 几小时）时，凭 fileid 向服务端换一条新链——
         // 这是历史图还能回看的唯一路径，见 ChatStore.imageUrlResolver。
         imageUrlResolver: service.resolveGroupImageUrl,
+        // 语音 rkey 过期后凭 ptt.3 uuid 换新链，见 ChatStore.voiceUrlResolver。
+        voiceUrlResolver: service.resolveVoiceUrl,
       );
     } on Object {
       await adapter.dispose();

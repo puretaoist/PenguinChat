@@ -344,6 +344,14 @@ class RecordSegment extends Segment {
   /// 文件才能上传，所以单独一个字段，别和 [file] 混（那是对方的文件标识）。
   final String? localPath;
 
+  /// 收消息时语音元素里的 `ptt.3`（36 字节 ASCII uuid）。
+  ///
+  /// 换链要用它：`/download?...rkey=` 只有小时级寿命，过期后必须拿这条 uuid 去发
+  /// 1200（owner_type=2）换一条新链。fileid 是另一回事，**不能由 fileid 反推 uuid**
+  ///（2026-11-02 实测：拿 fileid 里的字段 2 当 uuid 发过去，服务端回 ret=-1）。
+  /// 老消息没有这个字段，只能照实显示"已失效"。
+  final String? uuid;
+
   const RecordSegment(
     this.file, {
     this.url,
@@ -352,6 +360,7 @@ class RecordSegment extends Segment {
     this.seconds,
     this.size,
     this.localPath,
+    this.uuid,
   });
 
   factory RecordSegment.fromData(Map<String, dynamic> data) => RecordSegment(
@@ -362,6 +371,7 @@ class RecordSegment extends Segment {
         seconds: _asInt(data['seconds'] ?? data['duration']),
         size: _asInt(data['size']),
         localPath: data['localPath'] as String?,
+        uuid: data['uuid'] as String?,
       );
 
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
@@ -377,6 +387,7 @@ class RecordSegment extends Segment {
         if (size != null) 'size': size,
         if (magic) 'magic': '1',
         if (localPath != null) 'localPath': localPath,
+        if (uuid != null) 'uuid': uuid,
       };
 
   @override

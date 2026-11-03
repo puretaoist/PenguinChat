@@ -2059,6 +2059,38 @@ class Qq8LoginService {
     }
   }
 
+  /// 语音换链：rkey 过期后凭消息里的 `ptt.3` uuid 重新申请下载地址（1200）。
+  ///
+  /// owner_type 必须是 [Qq8Ptt.ownerTypePeer]（2）——这是"别人的文件"，
+  /// 用 1（自己）拿到的会是给上传方回读的 BDH 地址，普通 GET 拿不到音频。
+  /// 注意：**不能拿 fileid 反推 uuid**（2026-11-02 实测服务端回 ret=-1）。
+  Future<String?> resolveVoiceUrl({required String uuid}) async {
+    final s = _session;
+    if (s == null || !s.isOnline) return null;
+    if (uuid.isEmpty) return null;
+    try {
+      final rsp = await s.sendUni(
+        Qq8Ptt.cmdApplyDownload,
+        Qq8Ptt.buildApplyDownloadBody(
+          uin: s.uin,
+          uuid: Uint8List.fromList(utf8.encode(uuid)),
+          ownerType: Qq8Ptt.ownerTypePeer,
+        ),
+        timeout: timeout,
+      );
+      final url = Qq8Ptt.parseApplyDownloadUrl(rsp.payload);
+      if (url == null) {
+        _log.w('语音换链无地址 uuid=$uuid');
+        return null;
+      }
+      _log.i('语音换链成功 uuid=$uuid → $url');
+      return url;
+    } catch (e) {
+      _log.w('语音换链异常 uuid=$uuid：$e');
+      return null;
+    }
+  }
+
   /// 取一个离线文件的下载直链（1200）。需已上线。
   Future<Qq8FileLink> fetchFileLink({required String fid}) async {
     final s = _requireOnline();

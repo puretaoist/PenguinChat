@@ -4620,3 +4620,27 @@ Open objectives: 让对端能播放我方语音（m51846）；第二批长按气
 `114` 就是 field 14，别把 tag 当字段号）；②「1200 回 ret=0」只说明请求被接受，
 **URL 能不能用要当场 GET 一次**；③不属于自己该填的字段（服务端会补的）宁可不填，
 填错比留空更难查；④C114 的教训「对端说过期 ≠ 文件没上传」仍成立，但它给出的修法是错的。
+
+## C116 语音换链：fileid 反推不出 uuid，rkey 是小时级的（2026-11-03）
+
+**现象**：对端/自己隔一天打开语音，提示「消息已过期」；当天收到当天能播。
+
+**取证**：日志里 2026-11-01 有三次 `媒体下载成功 key=voice:… bytes=…`；pcap 里能看到我方
+`GET /download?appid=1402&fileid=…&rkey=…` → `200 OK, Content-Type: audio/mp3,
+body=\x02#!SILK_V3!`。所以链路本身是通的，**过一天失效只是 rkey 过期（小时级）**。
+
+**四个坑（都实际踩到了）**：
+1. 想用 `ApplyDownloadReq.str_fileid=600` 换链：回包形态对，但 `fileid=` 空、rkey 只有 **56 字节**
+   （合法 rkey 是 protobuf{1:4, 2:**168B**}），GET 必得 `400 -5503023 appid is not match`。
+2. 想从 fileid 反推 uuid：把 fileid protobuf 的字段 2（20B）当 `bytes_uuid` 发过去，
+   六组 owner×filetype 全部 `ret=-1`。**fileid 里只有 md5/size/appid/TTL，没有 uuid。**
+3. `owner_type` 必须是 **2（对方）**。用 1 拿到的是给上传方回读的 BDH 地址
+   （`http://<ip>:80/?ver=2&rkey=<170B DER>&voice_codec=0`），普通 GET 拿不到音频。
+4. 「1200 回 ret=0」只代表请求被接受，**URL 能不能用要当场 GET 一次**。
+
+**正解**：uuid 只能从消息元素 `ptt.3 = bytes_file_uuid`（36 字节 ASCII）来，收消息时就要落盘
+（`RecordSegment.uuid`），过期后凭它发 1200 换链。老消息没存 uuid 的，只能照实显示已失效。
+
+**教训**：①把「服务端给的直链」当永久地址是错的，所有带 rkey 的直链都要有换链路径；
+②判断"文件在不在"要看凭 uuid 换出来的链能不能 GET，不是看 ret=0；
+③能落盘的协议字段尽量落盘——**当时不存，事后无法重建**。

@@ -210,6 +210,13 @@ void testPlainText() {
   check('所有段类型都有非空预览', missing.isEmpty, '缺失=${missing.map((e) => e.type)}');
   check('文件预览带文件名',
       const FileSegment('f', name: 'g.zip').preview.contains('g.zip'));
+
+  // 语音的 ptt.3 uuid 必须能落盘再读回（rkey 过期后换链要用）
+  final recRound = RecordSegment.fromData(
+      RecordSegment('vm5', url: 'u', seconds: 3, size: 32, uuid: 'U36').toData());
+  checkEq('语音 uuid 往返', recRound.uuid, 'U36');
+  checkEq('没有 uuid 时往返为 null',
+      RecordSegment.fromData(RecordSegment('r').toData()).uuid, null);
 }
 
 void testMentions() {
