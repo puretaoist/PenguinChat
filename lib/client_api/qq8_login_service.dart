@@ -1646,7 +1646,27 @@ class Qq8LoginService {
       if (!dm) {
         throw Qq8PttException('群语音上传走 0x388 + BDH，暂未实现');
       }
-      await _uploadPttViaHttpConn(
+      // 先走官方 8.2.11 的 C2C 通道：HTTP POST /qqcommfileupload?ver=100。
+      //
+      // 官方 Layow.a([B) 拼的就是这个 URL（ukey=upload_key、filekey=md5hex、
+      // filesize、bmd5=MD5(body)、range=0、voice_codec=0），头只有
+      // Range/Accept-Encoding。**只有这条通道才会让服务端把 uuid 与文件绑定**，
+      // 对端才拿得到（2026-11-02 实测：走 highway 上传的文件落到了 BDH 存储，
+      // 对端点开一律「消息已过期」）。
+      //
+      // 2026-11-03 实测本机 Wi-Fi 到 11.180.x / 11.142.x / 11.187.x 的 80 端口
+      // 全部不通（PC SocketException、手机 nc 超时），因此这条大概率会失败，
+      // 失败后按历史原因回落到 bigdata 通道（至少消息能发出去）。
+      final ok = await _uploadPttOfficialFirst(
+        ticket: ticket,
+        data: bytes,
+        md5Hex: info.md5Hex,
+        timeout: uploadTimeout ?? const Duration(seconds: 120),
+        onProgress: onProgress,
+      );
+      if (!ok) {
+        _log.w('官方 HTTP 上传通道全部不可达，回落到 bigdata（对端可能显示已过期）');
+        await _uploadPttViaHttpConn(
         s,
         data: bytes,
         applyRspPayload: rsp.payload,
@@ -1654,9 +1674,10 @@ class Qq8LoginService {
         chunkLimit: ticket.packSize > 0
             ? ticket.packSize
             : Qq8PttHighway.defaultChunkLimit,
-        timeout: uploadTimeout ?? const Duration(seconds: 30),
-        onProgress: onProgress,
-      );
+          timeout: uploadTimeout ?? const Duration(seconds: 30),
+          onProgress: onProgress,
+        );
+      }
     }
 
     // ②' ptt.20（down_para）**刻意留空**。
@@ -1684,6 +1705,47 @@ class Qq8LoginService {
         : sendGroup(gid: targetGid!, elems: const <Uint8List>[], ptt: ptt);
   }
 
+
+  /// 官方 8.2.11 的 C2C 语音上传通道：HTTP POST `/qqcommfileupload?ver=100`。
+  ///
+  /// 依次试 `0x346` 回执给的 host、ip_list、dns；每个候选单独 catch，全部失败
+  /// 返回 false（由调用方回落到 bigdata）。只有这条通道才会把 uuid 与文件绑定。
+  Future<bool> _uploadPttOfficialFirst({
+    required Qq8PttUploadTicket ticket,
+    required Uint8List data,
+    required String md5Hex,
+    required Duration timeout,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ukey = hexOfBytes(ticket.uploadKey ?? Uint8List(0));
+    if (ukey.isEmpty) return false;
+    final port = ticket.port ?? 80;
+    final candidates = <({String host, int port})>[
+      if ((ticket.host ?? '').isNotEmpty) (host: ticket.host!, port: port),
+      for (final ip in ticket.ipList)
+        if (ip.isNotEmpty) (host: ip, port: port),
+      if ((ticket.dns ?? '').isNotEmpty) (host: ticket.dns!, port: port),
+    ];
+    if (candidates.isEmpty) return false;
+    for (final c in candidates) {
+      try {
+        await Qq8PttHttp.upload(
+          host: c.host,
+          port: c.port,
+          uploadKeyHex: ukey,
+          fileKeyHex: md5Hex,
+          data: data,
+          timeout: timeout,
+          onProgress: onProgress,
+        );
+        _log.i('PTT 官方 HTTP 上传成功 → ${c.host}:${c.port}');
+        return true;
+      } on Object catch (e) {
+        _log.w('PTT 官方 HTTP 上传失败 ${c.host}:${c.port}：$e');
+      }
+    }
+    return false;
+  }
 
   /// 走 bigdata 通道（`HttpConn.0x6ff_501`）拿 ticket + 上传节点，再按 httpconn 帧上传。
   ///
