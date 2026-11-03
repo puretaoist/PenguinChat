@@ -204,12 +204,27 @@ void main() {
   check('头2.8 = md5(片)', eqBytes(Qq8Pb.bytesAt(f2h, 8), md5Bytes(chunk)));
   check('头2.9 = md5(整)', eqBytes(Qq8Pb.bytesAt(f2h, 9), md5));
   checkEq('头4 = 0（时间戳不填）', Qq8Pb.intAt(fh, 4), 0);
-  // 2026-11-01 真机回包原文（HTTP 200 / 135 字节，f2.f1 = 0）。
+  // 2026-11-01 真机回包原文（HTTP 200 / 135 字节）。注意：
+  // 这条回包的 `f3 uint32_error_code` 实际是 **372**（失败），旧实现读的是
+  // `f2.f1`（SegHead.serviceid，恒 0）所以误判成功 —— 2026-11-03 已修正。
   const ackHex =
       '280000007d000000000a270801120a333838303135393438371a0c50696355702e446174615570200128003000381040ef071239080010db1b180020db1b42102dcc5048488ae1b33ec1a5d24d00b4b94a102dcc5048488ae1b33ec1a5d24d00b4b9509edef2a20b600068ce4218f4022000280030013a0040d985bfb5993448005000b2060029';
-  checkEq('ackCode(真机回包) = 0', Qq8PttHighway.ackCode(_hex(ackHex)), 0);
+  checkEq('ackCode(真机回包) = 372（服务端拒收，旧实现误判 0）',
+      Qq8PttHighway.ackCode(_hex(ackHex)), 372);
+  checkEq('ackExtendInfo(真机回包) = 空', Qq8PttHighway.ackExtendInfo(_hex(ackHex)), null);
+  // 成功帧：把 error_code 改成 0（`18 f4 02` → `18 00`），再验证解析。
+  final iErr = ackHex.lastIndexOf('18f402');
+  check('回包里能找到 error_code=372 的编码', iErr > 0);
+  // error_code 由 3 字节（18 f4 02）换成 2 字节（18 00），头长从 0x7d 减到 0x7c。
+  final okAck = _hex('280000007c' +
+      ackHex.substring(10, iErr) +
+      '1800' +
+      ackHex.substring(iErr + 6));
+  checkEq('ackCode(成功帧 error_code=0)', Qq8PttHighway.ackCode(okAck), 0);
   checkEq('ackCode(非法帧) = -1',
       Qq8PttHighway.ackCode(Uint8List.fromList(<int>[1, 2, 3])), -1);
+  checkEq('ackExtendInfo(非法帧) = null',
+      Qq8PttHighway.ackExtendInfo(Uint8List.fromList(<int>[1, 2, 3])), null);
   stdout.writeln('');
   stdout.writeln('PTT SELFTEST pass=$_pass fail=$_fail');
   if (_fail > 0) exitCode = 1;

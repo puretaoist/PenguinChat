@@ -4663,3 +4663,29 @@ body=\x02#!SILK_V3!`。所以链路本身是通的，**过一天失效只是 rke
 **教训**：①「发送成功」只说明消息包发出去了，不等于对端能取到文件；
 ②同类问题先对齐官方**上传通道**，再看元素字段；
 ③漫游回给发送方的 ptt 副本被服务端裁剪（缺 file_size），不能用它验证组包。
+
+## C118 上传回包的成败字段读错，导致「失败被记成成功」（2026-11-03）
+
+**现象**：真机日志一直写 `PTT 上传完成：10690 字节 → 112.86.240.103:15000`、`✓ 上传成功（ack code=0）`，
+但对端打开语音显示「消息已过期」；漫游回读的 ptt 元素里也确实带着 uuid。
+
+**根因**：`Qq8PttHighway.ackCode` 读的是回包头 `f2.f1`（SegHead 的 `uint32_serviceid`，服务端恒 0），
+而 `RspDataHighwayHead` 的成败字段是 **`f3 uint32_error_code`**。实测同一条回包
+`f3 = 372`、`f7 extendinfo = 空`、`f9 range = 0`（range=0 表示服务端没收到任何正文），
+而 TIM 官方回包是 `f3 = 0`、seghead `f7 flag = 1`、`f9 range = 3547`。
+
+**字段表**（官方 `com/tencent/mobileqq/highway/protocol/CSDataHighwayHead.java:138`）：
+`1 basehead / 2 seghead / 3 error_code / 4 allow_retry / 5 cachecost / 6 htcost /
+7 rsp_extendinfo / 8 timestamp / 9 range / 10 is_reset`；SegHead 的
+`1 serviceid / 2 filesize / 3 dataoffset / 4 datalength / 5 rtcode / 6 serviceticket /
+7 flag / 8 md5 / 9 file_md5 / 10 cache_addr / 11 query_times / 12 update_cacheip`。
+
+**处理**：`ackCode` 改读 `f3`，新增 `ackExtendInfo`；`_uploadPttViaHttpConn` 失败时不再中断发消息，
+只记 `PTT 上传失败（对端将显示已过期…）`。回归断言改成「真机回包 = 372」，并补一条把
+`18 f4 02` 改成 `18 00` 的成功帧（注意头长要从 0x7d 改成 0x7c，改错就是 varint 被截断）。
+
+**教训**：
+1. 回包「能解析出 0」不等于这个 0 是成败字段 —— 一定要对着官方 FieldMap 确认字段号，
+   再看成功/失败两种样本的数值差异；
+2. 上传类协议的 `range`/`offset` 是最好用的旁证：服务端回了 full-size 才算真收到；
+3. 假成功比失败更贵：它会掩盖真因（这次掩盖了将近两天）。

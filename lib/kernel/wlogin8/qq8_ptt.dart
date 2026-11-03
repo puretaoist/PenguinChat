@@ -352,7 +352,7 @@ abstract final class Qq8Ptt {
 ///         3:ext{6: 0x346 回执原始字节, 10: 1048576}, 4:0}
 /// ```
 ///
-/// 回包同样是 STX 包：头的 `f2.f1` 是结果码，0 = 成功。
+/// 回包同样是 STX 包：头的 `f3 uint32_error_code` 是结果码，0 = 成功。
 abstract final class Qq8PttHighway {
   /// 取上传节点的命令字（bigdata 通道）。
   static const String cmdBigdataChannel = 'HttpConn.0x6ff_501';
@@ -418,18 +418,39 @@ abstract final class Qq8PttHighway {
     return out;
   }
 
-  /// 解回包里的结果码（`f2.f1`）；解不出来返回 -1。
+  /// 解回包里的结果码（`RspDataHighwayHead.f3 uint32_error_code`）。
+  ///
+  /// 2026-11-03 修正：旧实现读 `f2.f1`（SegHead 的 uint32_serviceid，服务端恒回 0），
+  /// 于是服务端真的回 error_code=372 时我方也判「上传成功」，日志打「PTT 上传完成」
+  /// 而文件其实没登记（对端因此显示「消息已过期」）。官方字段表见
+  /// `com/tencent/mobileqq/highway/protocol/CSDataHighwayHead.java` 的 initFieldMap：
+  /// RspDataHighwayHead = {1 basehead, 2 seghead, 3 error_code, 4 allow_retry,
+  /// 5 cachecost, 6 htcost, 7 rsp_extendinfo, 8 timestamp, 9 range, 10 is_reset}。
   static int ackCode(Uint8List body) {
-    if (body.length < 9 || body[0] != 0x28) return -1;
+    final head = _ackHead(body);
+    if (head == null) return -1;
+    return Qq8Pb.intAt(head, 3) ?? -1;
+  }
+
+  /// 回包里的扩展信息（`RspDataHighwayHead.f7 bytes_rsp_extendinfo`）。
+  ///
+  /// 官方 presend 的 0x346 RspBody（含 bytes_uuid）就从这里回，我方当前
+  /// 上传路径还没用到，但保留取用入口便于后续接 presend 流程。
+  static Uint8List? ackExtendInfo(Uint8List body) {
+    final head = _ackHead(body);
+    if (head == null) return null;
+    final ext = Qq8Pb.bytesAt(head, 7);
+    return (ext == null || ext.isEmpty) ? null : ext;
+  }
+
+  static Map<int, List<Object>>? _ackHead(Uint8List body) {
+    if (body.length < 9 || body[0] != 0x28) return null;
     final headLen = (body[1] << 24) | (body[2] << 16) | (body[3] << 8) | body[4];
-    if (9 + headLen > body.length) return -1;
+    if (9 + headLen > body.length) return null;
     try {
-      final head = Qq8Pb.decode(body.sublist(9, 9 + headLen));
-      final rsp = Qq8Pb.bytesAt(head, 2);
-      if (rsp == null) return -1;
-      return Qq8Pb.intAt(Qq8Pb.decode(rsp), 1) ?? -1;
+      return Qq8Pb.decode(body.sublist(9, 9 + headLen));
     } on Object {
-      return -1;
+      return null;
     }
   }
 

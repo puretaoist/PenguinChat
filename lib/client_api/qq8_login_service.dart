@@ -1665,18 +1665,24 @@ class Qq8LoginService {
         onProgress: onProgress,
       );
       if (!ok) {
-        _log.w('官方 HTTP 上传通道全部不可达，回落到 bigdata（对端可能显示已过期）');
-        await _uploadPttViaHttpConn(
-        s,
-        data: bytes,
-        applyRspPayload: rsp.payload,
-        fileMd5: info.md5,
-        chunkLimit: ticket.packSize > 0
-            ? ticket.packSize
-            : Qq8PttHighway.defaultChunkLimit,
-          timeout: uploadTimeout ?? const Duration(seconds: 30),
-          onProgress: onProgress,
-        );
+        _log.w('官方 HTTP 上传通道全部不可达，回落到 bigdata');
+        try {
+          await _uploadPttViaHttpConn(
+            s,
+            data: bytes,
+            applyRspPayload: rsp.payload,
+            fileMd5: info.md5,
+            chunkLimit: ticket.packSize > 0
+                ? ticket.packSize
+                : Qq8PttHighway.defaultChunkLimit,
+            timeout: uploadTimeout ?? const Duration(seconds: 30),
+            onProgress: onProgress,
+          );
+        } on Object catch (e) {
+          // 上传失败不阻断发消息：消息本身照发（对端只会显示「消息已过期」），
+          // 这样至少对话流不中断，同时日志里能查到真实的 error_code。
+          _log.w('PTT 上传失败（对端将显示已过期，error_code 见上一条）：$e');
+        }
       }
     }
 
