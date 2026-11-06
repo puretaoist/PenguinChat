@@ -96,3 +96,7 @@ fekit_req.txt
 
 # 签名口令（2026-11-01 从 build.gradle.kts 移出；本地/CI 各自生成，绝不入库）
 android/key.properties
+
+# ---- 逆向分析一次性产物 ----
+# 整个 tmp/ 目录（原先只写了 /tmp_*，漏掉斜杠，导致 tmp/ 下 50 个截图/脚本误入库）
+/tmp/
