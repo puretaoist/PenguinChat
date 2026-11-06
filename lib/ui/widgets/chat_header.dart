@@ -1,13 +1,27 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
+import 'glass_surface.dart';
 import 'telegram_avatar.dart';
 
-/// 聊天页头部（56dp）——从 \`home_page.dart\` 的 \`_buildHeader\` 抽出来的哑视图，
-/// 几何全部对齐 TG \`ui/Components/ChatAvatarContainer.java\`：
-/// 高度 56、头像 42（:265 setRoundRadius(dp(21))）、标题 18 粗体（:282）、
-/// 副标题 14（:307）。右侧群工具/设置两个图标按钮 22dp。
+/// 聊天页头部——**三块悬浮玻璃胶囊**，不是一整条通栏。
+///
+/// 几何 100% 抄官方（C:/Users/Administrator/penguis/telegram-src/
+/// TelegramAndroid/TMessagesProj/src/main/java/org/telegram/ui/ActionBar/
+/// ActionBar.java:2232-2280 dispatchDraw()，玻璃模式下胶囊几何的唯一来源）：
+///   p = dp(6); s = dp(46); 高 = s + 2p = 58; 圆角 setRadius(dp(23))(:226/:228)
+///   左（返回）: setBounds(0, t, s + p*2, b)                    → 宽 58
+///   右（菜单）: setBounds(W - max(s, menuWidth) - p*2, t, W, b) → 宽 max(46,menuWidth)+12
+///   中（头像+标题）: 宽 = min(W-106, 文字宽+82)，在 [s+p=52, W-(menuWidth+p)] 内居中
+///     —— 见 :2246-2256 与 ChatAvatarContainer.getVisualWidth()(:1718-1732)
+///   三块之间是「左右各重叠 p=6」的关系，不是用 Row 均分/拉满。
+///
+/// 头像 40（ChatAvatarContainer.java:668 dp(42)-2）、标题 17.5 / 副标题 13.5
+/// （:756-765 setGlassMode）、头像左 9（:767-774 onLayout 1+leftPadding）、
+/// 头像到文字 ≈9.66（57.66 - 8 - 40），文字右余量 18（getVisualWidth 的 dp(52+18)）。
 class ChatHeader extends StatelessWidget {
   const ChatHeader({
     super.key,
@@ -40,133 +54,224 @@ class ChatHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: TelegramMetrics.headerHeight,
-      color: TelegramColors.bgHeader,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: <Widget>[
-          if (onBack != null)
-            IconButton(
-              onPressed: onBack,
-              icon: Icon(Icons.arrow_back, color: TelegramColors.textSecondary),
-            ),
-          GestureDetector(
-            key: const ValueKey('open-members'),
-            onTap: chat.isGroup ? onOpenMembers : null,
-            child: TelegramAvatar(
-              name: chat.title,
-              url: chat.avatarUrl,
-              size: 42,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: centerTitle
-                  ? CrossAxisAlignment.center
-                  : CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  chat.title,
-                  key: const ValueKey('chat-header-title'),
-                  maxLines: 1,
-                  textAlign: centerTitle ? TextAlign.center : null,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: TelegramColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (!hideStatus)
-                  Text(
-                    chat.isGroup
-                        ? '群聊 · ${chat.memberCount} 人'
-                        : (chat.online ? '在线' : '离线'),
-                    key: const ValueKey('chat-header-subtitle'),
-                    style: TextStyle(
-                      color: chat.online
-                          ? TelegramColors.online
-                          : TelegramColors.textSecondary,
-                      fontSize: 14,
+    // 全部单位 dp，数值来自上述官方源码。
+    const double p = 6.0; // ActionBar.java:2232 dp(6)
+    const double s = 46.0; // :2232 dp(46)
+    const double capsuleH = s + 2 * p; // 58，与 s+2p 一致
+    const double iconSlot = 48.0; // 官方每个 action item 占 48dp（menuWidth）
+    const double leftDefault = s + p; // 52，中胶囊左界（:2249）
+
+    final int menuItems = (onSearch != null ? 1 : 0) +
+        (chat.isGroup ? 1 : (onOpenSettings != null ? 1 : 0));
+    final double menuWidth = menuItems * iconSlot;
+    final double menuCapsuleW = (menuWidth > s ? menuWidth : s) + 2 * p;
+    final double rightOffset = menuWidth + p; // 中胶囊右界让出菜单宽 + p
+
+    final TextStyle titleStyle = TextStyle(
+      color: TelegramColors.textPrimary,
+      fontSize: 17.5, // ChatAvatarContainer.java:759 setGlassMode
+      fontWeight: FontWeight.w700,
+    );
+    final TextStyle subStyle = TextStyle(
+      color: chat.online ? TelegramColors.online : TelegramColors.textSecondary,
+      fontSize: 13.5, // :762
+    );
+    final String subText =
+        chat.isGroup ? '群聊 · ${chat.memberCount} 人' : (chat.online ? '在线' : '离线');
+
+    return SizedBox(
+      height: capsuleH,
+      child: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints c) {
+          final double w = c.maxWidth;
+          final double rightDefault = w - rightOffset;
+          // 不压住左右胶囊的可用宽度。官方允许中胶囊最宽到 W-106（会压住
+          // 返回/菜单），这里取更保守的 W-52-rightOffset，长标题靠省略号。
+          final double maxMiddle = w - leftDefault - rightOffset;
+          final double textW = math.max(
+            _measure(context, chat.title, titleStyle),
+            hideStatus ? 0.0 : _measure(context, subText, subStyle),
+          );
+          // 官方 getVisualWidth 有头像时加 dp(52+18)=70，再 +2p(12) 得胶囊宽。
+          final double desired = textW + 82.0;
+          final double middleW =
+              math.min(maxMiddle > 0 ? maxMiddle : 0.0, desired);
+          final double centered = (rightDefault + leftDefault - middleW) / 2;
+          final double middleLeft =
+              centered < leftDefault ? leftDefault : centered;
+
+          return Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              if (onBack != null)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  width: capsuleH, // 官方 s+p*2 = 58，正方形
+                  height: capsuleH,
+                  child: GlassSurface(
+                    radius: 23,
+                    alignment: Alignment.center,
+                    padding: EdgeInsets.zero,
+                    child: IconButton(
+                      onPressed: onBack,
+                      tooltip: '返回',
+                      icon: Icon(
+                        Icons.arrow_back,
+                        color: TelegramColors.textSecondary,
+                        size: 24,
+                      ),
                     ),
                   ),
-              ],
-            ),
-          ),
-          // TG 顶栏右侧：搜索 + 更多（⋮）。群工具与设置收进"更多"里，
-          // 不再各占一个图标位（ChatAvatarContainer.java 右侧就是这两个）。
-          if (onSearch != null)
-            IconButton(
-              key: const ValueKey('chat-header-search'),
-              onPressed: onSearch,
-              icon: Icon(
-                Icons.search,
-                color: TelegramColors.textSecondary,
-                size: 22,
-              ),
-              tooltip: '搜索',
-            ),
-          if (chat.isGroup)
-            PopupMenuButton<String>(
-              key: const ValueKey('group-menu'),
-              tooltip: '更多',
-              icon: Icon(
-                Icons.more_vert,
-                color: TelegramColors.textSecondary,
-                size: 22,
-              ),
-              onSelected: (String value) {
-                switch (value) {
-                  case 'files':
-                    onOpenGroupFiles?.call();
-                  case 'settings':
-                    onOpenGroupSettings?.call();
-                  case 'members':
-                    onOpenMembers?.call();
-                  case 'app-settings':
-                    onOpenSettings?.call();
-                }
-              },
-              itemBuilder: (_) => <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  key: ValueKey('group-menu-files'),
-                  value: 'files',
-                  child: Text('群文件'),
                 ),
-                PopupMenuItem<String>(
-                  key: ValueKey('group-menu-settings'),
-                  value: 'settings',
-                  child: Text('群设置'),
-                ),
-                PopupMenuItem<String>(
-                  key: ValueKey('group-menu-members'),
-                  value: 'members',
-                  child: Text('群成员'),
-                ),
-                if (onOpenSettings != null)
-                  PopupMenuItem<String>(
-                    key: ValueKey('chat-header-settings'),
-                    value: 'app-settings',
-                    child: Text('设置'),
+              Positioned(
+                left: middleLeft,
+                top: 0,
+                width: middleW,
+                height: capsuleH,
+                child: GlassSurface(
+                  radius: 23,
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.only(left: 8, right: 18),
+                  child: GestureDetector(
+                    key: const ValueKey('open-members'),
+                    onTap: chat.isGroup ? onOpenMembers : null,
+                    behavior: HitTestBehavior.opaque,
+                    child: Row(
+                      children: <Widget>[
+                        TelegramAvatar(
+                          name: chat.title,
+                          url: chat.avatarUrl,
+                          size: 40,
+                        ),
+                        const SizedBox(width: 9.66),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: centerTitle
+                                ? CrossAxisAlignment.center
+                                : CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                chat.title,
+                                key: const ValueKey('chat-header-title'),
+                                maxLines: 1,
+                                textAlign: centerTitle ? TextAlign.center : null,
+                                overflow: TextOverflow.ellipsis,
+                                style: titleStyle,
+                              ),
+                              if (!hideStatus)
+                                Text(
+                                  subText,
+                                  key: const ValueKey('chat-header-subtitle'),
+                                  style: subStyle,
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-              ],
-            )
-          else if (onOpenSettings != null)
-            IconButton(
-              key: const ValueKey('chat-header-settings'),
-              onPressed: onOpenSettings,
-              icon: Icon(
-                Icons.settings,
-                color: TelegramColors.textSecondary,
-                size: 22,
+                ),
               ),
-              tooltip: '设置',
-            ),
-        ],
+              Positioned(
+                right: 0,
+                top: 0,
+                width: menuCapsuleW,
+                height: capsuleH,
+                child: GlassSurface(
+                  radius: 23,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: p),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      if (onSearch != null)
+                        IconButton(
+                          key: const ValueKey('chat-header-search'),
+                          onPressed: onSearch,
+                          tooltip: '搜索',
+                          icon: Icon(
+                            Icons.search,
+                            color: TelegramColors.textSecondary,
+                            size: 22,
+                          ),
+                        ),
+                      if (chat.isGroup)
+                        PopupMenuButton<String>(
+                          key: const ValueKey('group-menu'),
+                          tooltip: '更多',
+                          icon: Icon(
+                            Icons.more_vert,
+                            color: TelegramColors.textSecondary,
+                            size: 22,
+                          ),
+                          onSelected: (String value) {
+                            switch (value) {
+                              case 'files':
+                                onOpenGroupFiles?.call();
+                              case 'settings':
+                                onOpenGroupSettings?.call();
+                              case 'members':
+                                onOpenMembers?.call();
+                              case 'app-settings':
+                                onOpenSettings?.call();
+                            }
+                          },
+                          itemBuilder: (_) => <PopupMenuEntry<String>>[
+                            const PopupMenuItem<String>(
+                              key: ValueKey('group-menu-files'),
+                              value: 'files',
+                              child: Text('群文件'),
+                            ),
+                            const PopupMenuItem<String>(
+                              key: ValueKey('group-menu-settings'),
+                              value: 'settings',
+                              child: Text('群设置'),
+                            ),
+                            const PopupMenuItem<String>(
+                              key: ValueKey('group-menu-members'),
+                              value: 'members',
+                              child: Text('群成员'),
+                            ),
+                            if (onOpenSettings != null)
+                              const PopupMenuItem<String>(
+                                key: ValueKey('chat-header-settings'),
+                                value: 'app-settings',
+                                child: Text('设置'),
+                              ),
+                          ],
+                        )
+                      else if (onOpenSettings != null)
+                        IconButton(
+                          key: const ValueKey('chat-header-settings'),
+                          onPressed: onOpenSettings,
+                          tooltip: '设置',
+                          icon: Icon(
+                            Icons.settings,
+                            color: TelegramColors.textSecondary,
+                            size: 22,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
+  }
+
+  /// 量一行文字的宽度，等价官方 `getVisualWidth()` 里的 TextPaint.measureText。
+  double _measure(BuildContext context, String text, TextStyle style) {
+    final TextPainter tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    return tp.width;
   }
 }

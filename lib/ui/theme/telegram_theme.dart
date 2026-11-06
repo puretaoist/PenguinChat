@@ -30,6 +30,9 @@ class TelegramPalette {
   final Color bgSidebar;
   final Color bgChat;
   final Color bgHeader;
+
+  /// 玻璃胶囊底色（官方 `chat_topPanelBackground`；topPanelChatActivity 用它 ×0.76）。
+  final Color bgGlassPanel;
   final Color bgInput;
   final Color bgHover;
   final Color bgSelected;
@@ -61,6 +64,7 @@ class TelegramPalette {
     required this.bgSidebar,
     required this.bgChat,
     required this.bgHeader,
+    required this.bgGlassPanel,
     required this.bgInput,
     required this.bgHover,
     required this.bgSelected,
@@ -88,6 +92,7 @@ class TelegramPalette {
     bgSidebar: Color(0xFF1D2733), // windowBackgroundWhite
     bgChat: Color(0xFF151E27), // chat_wallpaper（未设壁纸时的底色）
     bgHeader: Color(0xFF242D39), // actionBarDefault
+    bgGlassPanel: Color(0xFF212D3B), // chat_topPanelBackground（胶囊玻璃底）
     bgInput: Color(0xFF1D2733), // windowBackgroundWhite
     bgHover: Color(0xFF25313F), // windowBackgroundWhite +8%
     bgSelected: Color(0xFF314A61), // chat_inBubbleSelected
@@ -113,6 +118,7 @@ class TelegramPalette {
     bgSidebar: Color(0xFFFFFFFF),
     bgChat: Color(0xFFE6EBEE),
     bgHeader: Color(0xFFFFFFFF),
+    bgGlassPanel: Color(0xFFFFFFFF), // chat_topPanelBackground（亮色=白）
     bgInput: Color(0xFFFFFFFF),
     bgHover: Color(0xFFF1F4F6),
     bgSelected: Color(0xFF3390EC),
@@ -145,6 +151,7 @@ class TelegramPalette {
     bgSidebar: bgSidebar,
     bgChat: bgChat,
     bgHeader: bgHeader,
+    bgGlassPanel: bgGlassPanel,
     bgInput: bgInput,
     bgHover: bgHover,
     bgSelected: bgSelected ?? this.bgSelected,
@@ -205,6 +212,7 @@ class TelegramColors {
   static Color get bgSidebar => _p.bgSidebar;
   static Color get bgChat => _p.bgChat;
   static Color get bgHeader => _p.bgHeader;
+  static Color get bgGlassPanel => _p.bgGlassPanel;
   static Color get bgInput => _p.bgInput;
   static Color get bgHover => _p.bgHover;
   static Color get bgSelected => _p.bgSelected;

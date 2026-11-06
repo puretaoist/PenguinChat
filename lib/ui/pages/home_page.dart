@@ -1445,6 +1445,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 顶部/左右安全区在**根布局**统一消费一次（缺陷5：竖屏时聊天标题
     // 会和系统状态栏的时间/日期叠在一起）。底部不在这里管——输入栏自己
     // 有 SafeArea(top:false)，两层都加会把底部留白算两遍。
+    // 状态栏高度：聊天页的顶栏玻璃要盖到状态栏后面（官方 contentView
+    // setOccupyStatusBar(true)，壁纸与模糊整段延伸到状态栏下），但本页在
+    // SafeArea 内部、padding 已被抹成 0，所以在外层先取一次真实值传下去。
+    final double topInset = MediaQuery.paddingOf(context).top;
     if (wide) {
       // 平板（官方 MainTabsActivity 只占左栏，LaunchActivity.java:949-953）：
       // 左栏 = 当前 tab 的列表页，右栏 = 对话面板且**不随 tab 切换**（换 tab
@@ -1463,14 +1467,15 @@ class _HomePageState extends ConsumerState<HomePage> {
                 // 否则最后一条会话会被胶囊压住。
                 child: Padding(
                   padding: EdgeInsets.only(
-                    bottom: AppBreakpoints.sidebarTabBarReserve +
+                    bottom:
+                        AppBreakpoints.sidebarTabBarReserve +
                         MediaQuery.paddingOf(context).bottom,
                   ),
                   child: _wideLeftPane(wideTab, sidebar),
                 ),
               ),
               Container(width: 1, color: TelegramColors.divider),
-              Expanded(child: _buildChatPane(chats, store)),
+              Expanded(child: _buildChatPane(chats, store, topInset: topInset)),
             ],
           ),
         ),
@@ -1510,6 +1515,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                       chats,
                       store,
                       onBack: _backToChatList,
+                      topInset: topInset,
                     ),
                   ),
           ),
@@ -2478,6 +2484,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     List<Chat> chats,
     ChatStore? store, {
     VoidCallback? onBack,
+    double topInset = 0,
   }) {
     final chatId = _resolvedChatId;
     final chat = chats.where((c) => c.id == chatId).firstOrNull;
@@ -2500,23 +2507,26 @@ class _HomePageState extends ConsumerState<HomePage> {
       unreadAnchorId: _unreadAnchorId,
     );
 
-    return Column(
+    // 头部做成**浮层**：官方 ChatActivity 的 ActionBar 就是半透明压在消息
+    // 列表上，滚动的消息从它下面穿过并被玻璃模糊。列表用 padding.top 让出
+    // 头部高度——正是这个"让位"让顶栏后面有内容可模糊。
+    // 顶栏是浮层：官方 ActionBar 是三块悬浮胶囊压在消息列表上
+    // （ActionBar.java:2233-2280 dispatchDraw），消息从胶囊下穿过并被玻璃模糊；
+    // 列表用 padding.top 让出「胶囊高度 58 + 8dp 间隔」。
+    const double headerH = 58.0;
+    return Stack(
       children: [
-        // 普通头 ↔ 多选工具条交叉淡化 150ms：两者同高（56），直接替换
-        // 会像屏幕闪了一下；TG 的 ActionMode 出现时也是淡入。
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 150),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          child: KeyedSubtree(
-            key: ValueKey<bool>(_selecting),
-            child: _buildHeader(chat, onBack),
-          ),
-        ),
-        Expanded(
+        Positioned.fill(
           child: Stack(
             children: [
-              Positioned.fill(
+              // 壁纸向上溢出一个状态栏高度：官方壁纸是整屏的（状态栏透明
+              // 压在壁纸/模糊上），否则状态栏后面永远是 Scaffold 纯色，会和
+              // 下面的顶栏玻璃之间显出一条色差带。
+              Positioned(
+                top: -topInset,
+                left: 0,
+                right: 0,
+                bottom: 0,
                 child: ChatWallpaperBackground(
                   wallpaperId: ref.watch(
                     uiPrefsProvider.select((UiPrefs p) => p.wallpaperId),
@@ -2532,7 +2542,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                             // 新消息天然长在视野下方，不依赖贴底补偿（默认关）。
                             reverse: _reverseList,
                             padding: EdgeInsets.only(
-                              top: 12,
+                              // 让出浮层头部：消息要能滚到玻璃底下去
+                              top: headerH + 8,
                               bottom: ChatInputBar.reserve(context) + 8,
                             ),
                             // 行组件无状态：自动 keepalive 只在浪费（TG 的
@@ -2751,6 +2762,23 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
               ),
             ],
+          ),
+        ),
+        // 头部内容（文字/图标）浮在玻璃之上
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: AnimatedSwitcher(
+            // 普通头 ↔ 多选工具条交叉淡化 150ms：两者同高（56），直接替换
+            // 会像屏幕闪了一下；TG 的 ActionMode 出现时也是淡入。
+            duration: const Duration(milliseconds: 150),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: KeyedSubtree(
+              key: ValueKey<bool>(_selecting),
+              child: _buildHeader(chat, onBack),
+            ),
           ),
         ),
       ],

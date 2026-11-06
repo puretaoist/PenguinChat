@@ -1,7 +1,9 @@
-/// 聊天页头部（ChatHeader）：几何对齐 TG \`ui/Components/ChatAvatarContainer.java\`
-/// —— 高度 56（TelegramMetrics.headerHeight）、头像 42（:265 setRoundRadius(dp(21))）、
-/// 标题 18 粗体（:282 titleTextView.setTextSize(18)）、副标题 14（:307）、
-/// 右侧群工具 + 设置按钮 22dp。抽屉里 \`lib/ui/pages/home_page.dart\` 只负责传回调。
+/// 聊天页头部（ChatHeader）：三块玻璃胶囊，几何 100% 抄官方
+/// \`ui/ActionBar/ActionBar.java:2232-2280 dispatchDraw()\`——
+/// 胶囊高 s+2p=58、圆角 23；左胶囊宽 58；右胶囊宽 max(46,menuWidth)+12；
+/// 中胶囊宽 min(W-106, 文字宽+82)、在 [52, W-(menuWidth+p)] 内居中。
+/// 头像 40（\`ChatAvatarContainer.java:668\` dp(42)-2）、标题 17.5 / 副标题 13.5
+/// （:756-765 setGlassMode）。
 library;
 
 import 'dart:io';
@@ -11,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:penguinchat/client_api/objects.dart';
 import 'package:penguinchat/ui/theme/telegram_theme.dart';
 import 'package:penguinchat/ui/widgets/chat_header.dart';
+import 'package:penguinchat/ui/widgets/glass_surface.dart';
 import 'package:penguinchat/ui/widgets/telegram_avatar.dart';
 
 final bool goldenSkip = !Platform.isWindows;
@@ -49,17 +52,54 @@ Future<void> _pump(WidgetTester tester, Widget child,
 }
 
 void main() {
-  testWidgets('几何：高 56、标题 18 w700、副标题 14、头像 42', (tester) async {
+  testWidgets('几何：胶囊高 58、标题 17.5 w700、副标题 13.5、头像 40', (tester) async {
     await _pump(tester, ChatHeader(chat: _group(), onOpenSettings: () {}));
-    expect(tester.getSize(find.byType(ChatHeader)).height, 56);
+    expect(tester.getSize(find.byType(ChatHeader)).height, 58);
     final title = tester.widget<Text>(find.byKey(const ValueKey('chat-header-title')));
-    expect(title.style!.fontSize, 18);
+    expect(title.style!.fontSize, 17.5);
     expect(title.style!.fontWeight, FontWeight.w700);
     final sub = tester.widget<Text>(find.byKey(const ValueKey('chat-header-subtitle')));
-    expect(sub.style!.fontSize, 14);
+    expect(sub.style!.fontSize, 13.5);
     expect(sub.data, '群聊 · 42 人');
     final avatar = tester.widget<TelegramAvatar>(find.byType(TelegramAvatar));
-    expect(avatar.size, 42);
+    expect(avatar.size, 40);
+  });
+
+  testWidgets('三块胶囊几何照官方：左 58、右 max(46,2*48)+12=108、高 58', (tester) async {
+    // 给出 onBack + onSearch + 群菜单 → 三个胶囊齐全（360 宽）。
+    await _pump(
+      tester,
+      ChatHeader(
+        chat: _group(),
+        onBack: () {},
+        onSearch: () {},
+        onOpenSettings: () {},
+      ),
+    );
+    final capsules = find.byType(GlassSurface);
+    expect(capsules, findsNWidgets(3));
+    final left = tester.getSize(capsules.at(0));
+    final middle = tester.getSize(capsules.at(1));
+    final right = tester.getSize(capsules.at(2));
+    // 左胶囊 = s + 2p = 58，正方形。
+    expect(left.width, 58);
+    expect(left.height, 58);
+    // 右胶囊 = max(46, menuWidth=2*48) + 2p = 96 + 12 = 108。
+    expect(right.width, 108);
+    expect(right.height, 58);
+    // 中胶囊 = min(W-52-rightOffset, 文字宽+82)，必在两者之间。
+    expect(middle.height, 58);
+    expect(middle.width, lessThanOrEqualTo(360 - 52 - 102 + 0.01));
+    // 三块互不重叠：左胶囊右缘 58、中胶囊左缘 ≥ 52、右胶囊左缘 = 360-108。
+    final leftRect = tester.getRect(capsules.at(0));
+    final midRect = tester.getRect(capsules.at(1));
+    final rightRect = tester.getRect(capsules.at(2));
+    expect(leftRect.left, 0);
+    expect(midRect.left, greaterThanOrEqualTo(52));
+    // 官方胶囊是「左右重叠 p=6」的关系：中胶囊右缘 rightDefault=W-(menuWidth+p)
+    // 可比右胶囊左缘（W-max(s,menuWidth)-2p）多出 p=6dp。
+    expect(midRect.right, lessThanOrEqualTo(rightRect.left + 6.01));
+    expect(rightRect.right, 360);
   });
 
   testWidgets('私聊显示在线/离线，没有群工具菜单', (tester) async {

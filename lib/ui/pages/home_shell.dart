@@ -115,9 +115,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     // 不是"有未读的会话个数"。
     final int unreadTotal =
         (ref.watch(chatsProvider).valueOrNull ?? const <Chat>[]).fold<int>(
-      0,
-      (int sum, Chat c) => sum + (c.unreadCount > 0 ? c.unreadCount : 0),
-    );
+          0,
+          (int sum, Chat c) => sum + (c.unreadCount > 0 ? c.unreadCount : 0),
+        );
 
     final Widget bar = _MainTabBar(
       index: curTab,
@@ -186,7 +186,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     // 转场动画再顺也白搭（用户实际就是这么看到"退出没有动效"的）。
     // 让位高度取 MAIN_TABS_HEIGHT_WITH_MARGINS = 56 + 8*2 = 72
     // （DialogsActivity.java:293，官方内容区底部留白见 :2982）。
-    final double contentBottom = showBar ? barHeight + 8 + 8 + bottomInset : 0.0;
+    final double contentBottom = showBar
+        ? barHeight + 8 + 8 + bottomInset
+        : 0.0;
 
     // 四页常驻（HorizontalPager 用 Offstage 隐藏非当前页），切走再回来时页面
     // 状态不丢——滚动记忆、设置页勾选状态等都依赖这一点。
@@ -265,6 +267,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                             ],
                           ),
                         ),
+                        // 无 child 的 DecoratedBox 尺寸为 0，渐变画不出来。
+                        child: const SizedBox.expand(),
                       ),
                     ),
                   ),
@@ -483,13 +487,23 @@ class _MainTabBarState extends State<_MainTabBar> {
                         border: Border.all(color: TelegramColors.divider),
                       ),
                       child: Row(
-                  children: <Widget>[
-                    _item(0, Icons.chat_bubble_outline, Icons.chat_bubble, '聊天',
-                        badge: widget.unreadTotal),
-                    _item(1, Icons.people_outline, Icons.people, '联系人'),
-                    _item(2, Icons.settings_outlined, Icons.settings, '设置'),
-                    _profileItem(),
-                  ],
+                        children: <Widget>[
+                          _item(
+                            0,
+                            Icons.chat_bubble_outline,
+                            Icons.chat_bubble,
+                            '聊天',
+                            badge: widget.unreadTotal,
+                          ),
+                          _item(1, Icons.people_outline, Icons.people, '联系人'),
+                          _item(
+                            2,
+                            Icons.settings_outlined,
+                            Icons.settings,
+                            '设置',
+                          ),
+                          _profileItem(),
+                        ],
                       ),
                     ),
                   ),
@@ -509,8 +523,7 @@ class _MainTabBarState extends State<_MainTabBar> {
     final bool active = widget.index == i;
     // 长按拖动时临时把高亮跟着手指走（官方 CheckHelper.checkLongMove 只移动
     // selector，松手才 performClick 真正切页）。
-    final bool highlighted =
-        _dragIndex == null ? active : _dragIndex == i;
+    final bool highlighted = _dragIndex == null ? active : _dragIndex == i;
     return Expanded(
       child: TweenAnimationBuilder<double>(
         tween: Tween<double>(begin: 0, end: highlighted ? 1 : 0),
@@ -530,9 +543,12 @@ class _MainTabBarState extends State<_MainTabBar> {
                     scale: 0.6 + 0.4 * t,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: TelegramColors.accent.withValues(alpha: 0.09 * t),
+                        color: TelegramColors.accent.withValues(
+                          alpha: 0.09 * t,
+                        ),
                         borderRadius: BorderRadius.circular(16),
                       ),
+                      child: const SizedBox.expand(),
                     ),
                   ),
                 ),

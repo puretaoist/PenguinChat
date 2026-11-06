@@ -153,8 +153,9 @@ class ChatInputBar extends StatelessWidget {
                                   sigmaY: 20,
                                 ),
                                 child: Container(
-                                  constraints:
-                                      const BoxConstraints(minHeight: 48),
+                                  constraints: const BoxConstraints(
+                                    minHeight: 48,
+                                  ),
                                   decoration: BoxDecoration(
                                     // 半透明填充：让下面 blur 上来的壁纸透一点，
                                     // 这才是玻璃；完全不透明会把 blur 盖死。
@@ -175,64 +176,65 @@ class ChatInputBar extends StatelessWidget {
                                     ),
                                   ),
                                   child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: <Widget>[
-                                // 表情键在**胶囊内左侧** 44×44：TG
-                                // `ChatActivityEnterView.java:2755`
-                                // createFrame(DEFAULT_HEIGHT, DEFAULT_HEIGHT,
-                                //   BOTTOM|LEFT, 2, 0, 0, 0)，padding 7.5。
-                                _ghostIcon(
-                                  key: const ValueKey('open-faces'),
-                                  icon: Icons.emoji_emotions_outlined,
-                                  tooltip: 'QQ 表情',
-                                  onTap: onOpenFaces,
-                                  size: 26,
-                                  box: 48,
-                                ),
-                                Expanded(
-                                  child: _GrowingField(
-                                    controller: controller,
-                                    enabled: enabled,
-                                    onSubmitted: onSend,
-                                    fieldColor: fieldColor,
-                                  ),
-                                ),
-                                // 📎 回形针在**胶囊内右侧** 44×44（:2840）。
-                                // 有字时官方把它 alpha→0 / scale 0.5 收起来
-                                // （checkSendButton :7945-7979），空输入才显示。
-                                ValueListenableBuilder<TextEditingValue>(
-                                  valueListenable: controller,
-                                  builder: (context, value, child) {
-                                    final bool show =
-                                        value.text.trim().isEmpty;
-                                    return AnimatedOpacity(
-                                      opacity: show ? 1 : 0,
-                                      duration: const Duration(
-                                        milliseconds: 100,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: <Widget>[
+                                      // 表情键在**胶囊内左侧** 44×44：TG
+                                      // `ChatActivityEnterView.java:2755`
+                                      // createFrame(DEFAULT_HEIGHT, DEFAULT_HEIGHT,
+                                      //   BOTTOM|LEFT, 2, 0, 0, 0)，padding 7.5。
+                                      _ghostIcon(
+                                        key: const ValueKey('open-faces'),
+                                        icon: Icons.emoji_emotions_outlined,
+                                        tooltip: 'QQ 表情',
+                                        onTap: onOpenFaces,
+                                        size: 26,
+                                        box: 48,
                                       ),
-                                      child: AnimatedScale(
-                                        scale: show ? 1 : 0.5,
-                                        duration: const Duration(
-                                          milliseconds: 100,
-                                        ),
-                                        curve: Curves.easeOut,
-                                        child: IgnorePointer(
-                                          ignoring: !show,
-                                          child: child,
+                                      Expanded(
+                                        child: _GrowingField(
+                                          controller: controller,
+                                          enabled: enabled,
+                                          onSubmitted: onSend,
+                                          fieldColor: fieldColor,
                                         ),
                                       ),
-                                    );
-                                  },
-                                  child: _ghostIcon(
-                                    key: const ValueKey('attach'),
-                                    icon: Icons.attach_file_rounded,
-                                    tooltip: '附件',
-                                    size: 24,
-                                    box: 48,
-                                    onTap: () => _pickAttachment(context),
-                                  ),
-                                ),
-                              ],
+                                      // 📎 回形针在**胶囊内右侧** 44×44（:2840）。
+                                      // 有字时官方把它 alpha→0 / scale 0.5 收起来
+                                      // （checkSendButton :7945-7979），空输入才显示。
+                                      ValueListenableBuilder<TextEditingValue>(
+                                        valueListenable: controller,
+                                        builder: (context, value, child) {
+                                          final bool show = value.text
+                                              .trim()
+                                              .isEmpty;
+                                          return AnimatedOpacity(
+                                            opacity: show ? 1 : 0,
+                                            duration: const Duration(
+                                              milliseconds: 100,
+                                            ),
+                                            child: AnimatedScale(
+                                              scale: show ? 1 : 0.5,
+                                              duration: const Duration(
+                                                milliseconds: 100,
+                                              ),
+                                              curve: Curves.easeOut,
+                                              child: IgnorePointer(
+                                                ignoring: !show,
+                                                child: child,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: _ghostIcon(
+                                          key: const ValueKey('attach'),
+                                          icon: Icons.attach_file_rounded,
+                                          tooltip: '附件',
+                                          size: 24,
+                                          box: 48,
+                                          onTap: () => _pickAttachment(context),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -250,8 +252,9 @@ class ChatInputBar extends StatelessWidget {
                             child: ValueListenableBuilder<TextEditingValue>(
                               valueListenable: controller,
                               builder: (context, value, _) {
-                                final bool hasText =
-                                    value.text.trim().isNotEmpty;
+                                final bool hasText = value.text
+                                    .trim()
+                                    .isNotEmpty;
                                 final Widget action;
                                 if (!hasText) {
                                   final onVoice = onVoiceRecorded;
@@ -348,50 +351,50 @@ class ChatInputBar extends StatelessWidget {
       // 毛玻璃外壳由 GlassSheet 提供（内部就是 Material，ListTile 的水波纹
       // 不会像夹一层 DecoratedBox 那样被遮住）。
       builder: (sheetContext) => SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            ListTile(
+              key: const ValueKey('attach-file'),
+              leading: Icon(
+                Icons.image_outlined,
+                color: TelegramColors.textSecondary,
+              ),
+              title: Text(
+                '发送图片',
+                style: TextStyle(color: TelegramColors.textPrimary),
+              ),
+              onTap: () => Navigator.of(sheetContext).pop('image'),
+            ),
+            if (onAttachImagePath != null)
               ListTile(
-                key: const ValueKey('attach-file'),
+                key: const ValueKey('attach-image-path'),
                 leading: Icon(
-                  Icons.image_outlined,
+                  Icons.folder_open_outlined,
                   color: TelegramColors.textSecondary,
                 ),
                 title: Text(
-                  '发送图片',
+                  '按路径发送图片',
                   style: TextStyle(color: TelegramColors.textPrimary),
                 ),
-                onTap: () => Navigator.of(sheetContext).pop('image'),
+                onTap: () => Navigator.of(sheetContext).pop('image-path'),
               ),
-              if (onAttachImagePath != null)
-                ListTile(
-                  key: const ValueKey('attach-image-path'),
-                  leading: Icon(
-                    Icons.folder_open_outlined,
-                    color: TelegramColors.textSecondary,
-                  ),
-                  title: Text(
-                    '按路径发送图片',
-                    style: TextStyle(color: TelegramColors.textPrimary),
-                  ),
-                  onTap: () => Navigator.of(sheetContext).pop('image-path'),
-                ),
-              ListTile(
-                key: const ValueKey('attach-local-file'),
-                leading: Icon(
-                  Icons.insert_drive_file_outlined,
-                  color: TelegramColors.textSecondary,
-                ),
-                title: Text(
-                  '发送文件',
-                  style: TextStyle(color: TelegramColors.textPrimary),
-                ),
-                onTap: () => Navigator.of(sheetContext).pop('file'),
+            ListTile(
+              key: const ValueKey('attach-local-file'),
+              leading: Icon(
+                Icons.insert_drive_file_outlined,
+                color: TelegramColors.textSecondary,
               ),
-            ],
-          ),
+              title: Text(
+                '发送文件',
+                style: TextStyle(color: TelegramColors.textPrimary),
+              ),
+              onTap: () => Navigator.of(sheetContext).pop('file'),
+            ),
+          ],
         ),
+      ),
     );
     if (!context.mounted) return;
     if (picked == 'image') onAttachImage();
@@ -524,6 +527,7 @@ class _GrowingFieldState extends State<_GrowingField> {
             ],
           ),
         ),
+        child: const SizedBox.expand(),
       ),
     ),
   );
@@ -544,10 +548,7 @@ class _GrowingFieldState extends State<_GrowingField> {
           keyboardType: TextInputType.multiline,
           textInputAction: TextInputAction.send,
           // 18sp：TG `ChatActivityEnterView.java:5811` setTextSize(18sp)。
-          style: TextStyle(
-            color: TelegramColors.textPrimary,
-            fontSize: 18,
-          ),
+          style: TextStyle(color: TelegramColors.textPrimary, fontSize: 18),
           decoration: InputDecoration(
             hintText: widget.enabled ? '输入消息…' : '未连接',
             // hint 只占一行：窄栏（平板分栏右栏）里长 hint 会被换行、把胶囊撑高。
