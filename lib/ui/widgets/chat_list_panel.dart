@@ -5,14 +5,15 @@
 /// widget 测试可以直接喂假数据，不必先连上后端。
 ///
 /// 几何出处（telegram-src/TelegramAndroid）：会话行抄
-/// `Cells/DialogCell.java:170-171`（avatarStart = 11、messagePaddingStart
-/// = 72 = 11 + 52 + 9）；归档入口行高 52；搜索框高 38、圆角 inputRadius。
+/// exteraGram `Cells/DialogCell.java:1878-1884`（avatarLeft = 10、
+/// messagePaddingStart = 72 = 10 + 54 + 8）；归档入口行高同会话行；搜索框高 38、圆角 inputRadius。
 library;
 
 import 'package:flutter/material.dart';
 
 import '../../client_api/chat_store.dart';
 import '../../client_api/objects.dart';
+import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
 import 'message_bubble.dart' show formatTime;
 import 'telegram_avatar.dart';
@@ -37,7 +38,19 @@ class ChatListPanel extends StatelessWidget {
     required this.onOpenQq8Login,
     this.onArchiveChat,
     this.onToggleMuteChat,
+    this.prefs = const UiPrefs(),
+    this.controller,
   });
+
+  /// 会话列表的滚动控制器（可选）。宽屏"点当前 tab 回顶"需要外部拿到它
+  /// （MainTabsActivity.java:334-349 的 onParentScrollToTop 语义）。
+  final ScrollController? controller;
+
+  /// 界面偏好（头像圆角 / 分隔线 / 时间带秒 / 未读数缩写）。
+  ///
+  /// 本面板是哑视图，不直接 watch Riverpod：由宿主 HomePage 把当前快照传进来，
+  /// 这样 widget 测试喂一个 const UiPrefs() 就能覆盖默认形态。
+  final UiPrefs prefs;
 
   /// 会话列表快照（含归档；归档行只出现在顶部入口）。
   final List<Chat> chats;
@@ -96,9 +109,7 @@ class ChatListPanel extends StatelessWidget {
                 key: const ValueKey('toggle-theme'),
                 onPressed: onToggleTheme,
                 icon: Icon(
-                  TelegramColors.isDark
-                      ? Icons.light_mode
-                      : Icons.dark_mode,
+                  TelegramColors.isDark ? Icons.light_mode : Icons.dark_mode,
                   size: 20,
                   color: TelegramColors.textSecondary,
                 ),
@@ -107,7 +118,7 @@ class ChatListPanel extends StatelessWidget {
               IconButton(
                 onPressed: onOpenSettings,
                 icon: Icon(
-                  Icons.settings,
+                  Icons.settings_rounded,
                   size: 20,
                   color: TelegramColors.textSecondary,
                 ),
@@ -136,6 +147,7 @@ class ChatListPanel extends StatelessWidget {
               child: visible.isEmpty && archived.isEmpty
                   ? _buildSidebarEmpty()
                   : ListView.builder(
+                      controller: controller,
                       addAutomaticKeepAlives: false,
                       physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -149,19 +161,23 @@ class ChatListPanel extends StatelessWidget {
                           row = _archivedRow(archived);
                         } else {
                           final chat = visible[i - (archived.isEmpty ? 0 : 1)];
-                          row = _swipeable(chat, _chatTile(chat));
+                          row = _swipeable(
+                            chat,
+                            _EnterFade(index: i, child: _chatTile(chat)),
+                          );
                         }
                         // 行间 1px 分隔线：TG `Cells/DialogCell.java` 的
-                        // needDivider 画法——从文字起点（messagePaddingStart
-                        // = 72 = 11 + 52 + 9）画到右缘，最后一行不画。
+                        // needDivider 画法——从文字起点画到右缘，最后一行不画。
+                        // 文字起点 = avatarStart 11 + 头像 52 + 间距 13 = 76
+                        // （`DialogCell.java:171` messagePaddingStart+4）。
                         return Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             row,
-                            if (i != total - 1)
+                            if (!prefs.disableDividers && i != total - 1)
                               Container(
                                 height: 1,
-                                margin: const EdgeInsets.only(left: 72),
+                                margin: const EdgeInsets.only(left: 76),
                                 color: TelegramColors.divider,
                               ),
                           ],
@@ -199,7 +215,7 @@ class ChatListPanel extends StatelessWidget {
                   children: [
                     const SizedBox(width: 12),
                     Icon(
-                      Icons.search,
+                      Icons.search_rounded,
                       size: 22,
                       color: TelegramColors.textSecondary,
                     ),
@@ -227,12 +243,14 @@ class ChatListPanel extends StatelessWidget {
       key: const ValueKey('archived-row'),
       onTap: () => onOpenArchive(archived, store),
       child: Container(
-        height: 52,
+        // 行高照会话行（exteraGram DialogCell.java:135 heightDefault=72），
+        // 入口行和列表行等高才不会在视觉上"陷下去"。
+        height: TelegramMetrics.chatRowHeight,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         child: Row(
           children: [
             Icon(
-              Icons.archive_outlined,
+              Icons.archive_rounded,
               size: 20,
               color: TelegramColors.textSecondary,
             ),
@@ -286,16 +304,16 @@ class ChatListPanel extends StatelessWidget {
                 children: [
                   Icon(
                     pending
-                        ? Icons.sync
-                        : (store == null ? Icons.link_off : Icons.inbox_outlined),
+                        ? Icons.sync_rounded
+                        : (store == null
+                              ? Icons.link_off_rounded
+                              : Icons.inbox_rounded),
                     color: TelegramColors.textMuted,
                     size: 96,
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    pending
-                        ? '正在连接…'
-                        : (store == null ? '未连接后端' : '暂无会话'),
+                    pending ? '正在连接…' : (store == null ? '未连接后端' : '暂无会话'),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: TelegramColors.textPrimary,
@@ -308,8 +326,8 @@ class ChatListPanel extends StatelessWidget {
                     pending
                         ? '正在恢复上次的会话，请稍候'
                         : (store == null
-                            ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
-                            : '下拉可刷新会话列表'),
+                              ? '连上 OneBot 后端（NapCat 等）后，会话会出现在这里'
+                              : '下拉可刷新会话列表'),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: TelegramColors.textSecondary,
@@ -330,7 +348,7 @@ class ChatListPanel extends StatelessWidget {
                     const SizedBox(height: 4),
                     TextButton.icon(
                       onPressed: onOpenQq8Login,
-                      icon: const Icon(Icons.key, size: 16),
+                      icon: const Icon(Icons.key_rounded, size: 16),
                       label: const Text('QQ 账号登录（自实现协议）'),
                       style: TextButton.styleFrom(
                         foregroundColor: TelegramColors.accent,
@@ -362,20 +380,22 @@ class ChatListPanel extends StatelessWidget {
       );
     }
     return Text.rich(
-      TextSpan(children: [
-        TextSpan(
-          text: '$sender: ',
-          style: TextStyle(
-            color: subColor,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
+      TextSpan(
+        children: [
+          TextSpan(
+            text: '$sender: ',
+            style: TextStyle(
+              color: subColor,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
           ),
-        ),
-        TextSpan(
-          text: chat.lastMessage,
-          style: TextStyle(color: subColor, fontSize: 16),
-        ),
-      ]),
+          TextSpan(
+            text: chat.lastMessage,
+            style: TextStyle(color: subColor, fontSize: 16),
+          ),
+        ],
+      ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
@@ -395,12 +415,14 @@ class ChatListPanel extends StatelessWidget {
       direction: DismissDirection.horizontal,
       background: _swipeBackground(
         alignment: Alignment.centerLeft,
-        icon: chat.muted ? Icons.notifications_active : Icons.notifications_off,
+        icon: chat.muted
+            ? Icons.notifications_active_rounded
+            : Icons.notifications_off_rounded,
         color: TelegramColors.textSecondary,
       ),
       secondaryBackground: _swipeBackground(
         alignment: Alignment.centerRight,
-        icon: Icons.archive_outlined,
+        icon: Icons.archive_rounded,
         color: TelegramColors.accent,
       ),
       // 两个动作都返回 false（回弹）：列表成员只由 store 的变更驱动重建。
@@ -437,199 +459,260 @@ class ChatListPanel extends StatelessWidget {
     // 选中行在亮色下是蓝色底（#3390EC），文字必须跟着翻白——
     // 否则就是黑字压蓝底。暗色的选中底是深紫，白字同样成立。
     final titleColor = selected ? Colors.white : TelegramColors.textPrimary;
+    // 静音会话整行压暗（TG DialogCell 对 muted 会话的摘要/时间用更淡的
+    // dialogs_messagePaint），这样一眼能扫出哪些会话不会响。
     final subColor = selected
         ? Colors.white.withValues(alpha: 0.85)
+        : chat.muted
+        ? TelegramColors.textMuted
         : TelegramColors.textSecondary;
-    return InkWell(
-      key: ValueKey('chat-row-${chat.id}'),
-      onTap: () => onOpenChat(chat),
-      onLongPress: () => onLongPressChat(chat, store),
-      // 选中/取消选中的底色做 140ms 过渡（TG 的 DialogCell 换选中态也是渐显）。
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOut,
-        // 置顶行整行带一层浅底（TG 的 chats_pinnedOverlay，DialogCell.java:4164-4188）。
-        color: selected
-            ? TelegramColors.bgSelected
-            : (chat.pinned ? TelegramColors.bgHover : Colors.transparent),
-        constraints: const BoxConstraints(
-          minHeight: TelegramMetrics.chatRowHeight,
-        ),
-        // 几何抄 TG `Cells/DialogCell.java:170-171`：avatarStart = 11、
-        // messagePaddingStart = 72（= 11 + 52 + 9）；垂直方向 70 - 52 = 18，
-        // 上下各 9，正好填满 chatRowHeight。
-        padding: const EdgeInsets.symmetric(
-          horizontal: TelegramMetrics.chatRowPadding,
-          vertical: 9,
-        ),
-        child: Row(
-          children: [
-            Stack(
-              children: [
-                TelegramAvatar(
-                  name: chat.title,
-                  url: chat.avatarUrl,
-                  size: TelegramMetrics.avatarSize,
-                ),
-                if (chat.online)
-                  Positioned(
-                    right: 1,
-                    bottom: 1,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: TelegramColors.online,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: TelegramColors.bgSidebar,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+    // 整行底色放在外层 AnimatedContainer 上，InkWell 的水波纹必须画在它
+    // **上面**才算"按下去有反应"。InkWell 的水波纹是画在最近的 Material 上的，
+    // 而 AnimatedContainer 的底色是不透明的一层——以前 InkWell 直接包
+    // Container，水波纹被底色整块盖住，按下去毫无反馈。垫一层
+    // Material(transparency) 之后，水波纹浮在底色之上，才是 TG DialogCell
+    // 的按下高亮。
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOut,
+      // 置顶行整行带一层浅底（TG 的 chats_pinnedOverlay，DialogCell.java:4164-4188）。
+      color: selected
+          ? TelegramColors.bgSelected
+          : (chat.pinned ? TelegramColors.bgHover : Colors.transparent),
+      constraints: const BoxConstraints(
+        minHeight: TelegramMetrics.chatRowHeight,
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          key: ValueKey('chat-row-${chat.id}'),
+          onTap: () => onOpenChat(chat),
+          onLongPress: () => onLongPressChat(chat, store),
+          splashColor: Colors.white.withValues(alpha: 0.05),
+          highlightColor: Colors.white.withValues(alpha: 0.07),
+          // 几何抄 TG `Cells/DialogCell.java:170-171`：avatarStart = 11、
+          // messagePaddingStart+4 = 76（= 11 + 52 + 13）；垂直方向 70 - 52 = 18，
+          // 上下各 9，正好填满 chatRowHeight。
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: TelegramMetrics.chatRowPadding,
+              vertical: 9,
             ),
-            const SizedBox(width: TelegramMetrics.chatAvatarGap),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          chat.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          // TG 的会话名一律加粗（Theme.java:7812 的 dialogs_namePaint
-                          // 走 Typeface.BOLD；未读时再粗一档视觉上已经无差）——
-                          // 我们原来常态 w500，整列比 TG 淡。
-                          style: TextStyle(
-                            color: titleColor,
-                            fontSize: 17,
-                            fontWeight: chat.unreadCount > 0
-                                ? FontWeight.w700
-                                : FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      // 免打扰：标题后一个小铃铛斜杠（TG DialogCell 的 muted 图标）。
-                      if (chat.muted) ...[
-                        const SizedBox(width: 4),
-                        Icon(
-                          Icons.notifications_off,
-                          size: 16,
-                          color: selected
-                              ? Colors.white.withValues(alpha: 0.85)
-                              : TelegramColors.textMuted,
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  // 有草稿就显示草稿（TG/Nagram 的 `Draft:` 前缀），
-                  // 不然用户会以为刚才打的字丢了
-                  if (chat.draft.isNotEmpty)
-                    Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: '草稿: ',
-                            style: TextStyle(
-                              color: selected
-                                  ? Colors.white
-                                  : TelegramColors.danger,
-                              fontSize: 16,
+            child: Row(
+              children: [
+                Stack(
+                  children: [
+                    TelegramAvatar(
+                      name: chat.title,
+                      url: chat.avatarUrl,
+                      size: TelegramMetrics.avatarSize,
+                      corners: prefs.avatarCorners,
+                    ),
+                    if (chat.online)
+                      Positioned(
+                        right: 1,
+                        bottom: 1,
+                        child: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: TelegramColors.online,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: TelegramColors.bgSidebar,
+                              width: 2,
                             ),
                           ),
-                          TextSpan(
-                            text: chat.draft.replaceAll('\n', ' '),
-                            style: TextStyle(color: subColor, fontSize: 16),
-                          ),
-                        ],
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  else
-                    // 群聊摘要按 TG 排成「发送者: 正文」（DialogCell.java:1802-1827）：
-                    // 只有正文的话，群里的消息看不出是谁说的。
-                    _preview(chat, subColor),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // 置顶标记放在时间左边（TG DialogCell.java:2491-2496 的小 pin），
-                    // 不是压在标题前面——否则每个置顶会话的名字都要缩进。
-                    if (chat.pinned) ...[
-                      Icon(
-                        Icons.push_pin,
-                        size: 12,
-                        color: selected
-                            ? Colors.white.withValues(alpha: 0.85)
-                            : TelegramColors.textMuted,
-                      ),
-                      const SizedBox(width: 3),
-                    ],
-                    Text(
-                      chat.lastTime == null ? '' : formatTime(chat.lastTime!),
-                      style: TextStyle(
-                        // 有未读的会话，时间也是强调色加粗（TG dialogs_timePaint 的
-                        // 未读态）。
-                        color: chat.unreadCount > 0 && !selected
-                            ? TelegramColors.accent
-                            : subColor,
-                        fontSize: TelegramMetrics.fontTimestamp,
-                        fontWeight: chat.unreadCount > 0
-                            ? FontWeight.w700
-                            : FontWeight.w400,
-                      ),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                if (chat.unreadCount > 0)
-                  Container(
-                    // TG 的未读数是个 22dp 高的胶囊（`dialogs_unreadCounterDrawable`
-                    // 的 setSize(dp(22)...)），两位数以上自动加宽，圆角 = 高度一半。
-                    constraints: const BoxConstraints(minWidth: 22),
-                    height: 22,
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.symmetric(horizontal: 7),
-                    decoration: BoxDecoration(
-                      // 选中行整行就是强调色，徽章再刷同色等于看不见——
-                      // 翻成白底 + 强调色字（TG 选中会话的未读徽章就是这样）。
-                      color: selected
-                          ? Colors.white
-                          : chat.muted
-                          ? TelegramColors.textMuted
-                          : TelegramColors.badge,
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: Text(
-                      '${chat.unreadCount}',
-                      style: TextStyle(
-                        color: selected
-                            ? TelegramColors.bgSelected
-                            : Colors.white,
-                        // TG 的未读数文字是 dp(12) 加粗（22dp 胶囊里就是这么排的）。
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                const SizedBox(width: TelegramMetrics.chatAvatarGap),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              chat.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              // TG 的会话名一律加粗（Theme.java:7812 的 dialogs_namePaint
+                              // 走 Typeface.BOLD；未读时再粗一档视觉上已经无差）——
+                              // 我们原来常态 w500，整列比 TG 淡。
+                              style: TextStyle(
+                                color: titleColor,
+                                fontSize: 17,
+                                fontWeight: chat.unreadCount > 0
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          // 免打扰：标题后一个小铃铛斜杠（TG DialogCell 的 muted 图标）。
+                          if (chat.muted) ...[
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.notifications_off_rounded,
+                              size: 16,
+                              color: selected
+                                  ? Colors.white.withValues(alpha: 0.85)
+                                  : TelegramColors.textMuted,
+                            ),
+                          ],
+                        ],
                       ),
-                    ),
+                      const SizedBox(height: 4),
+                      // 有草稿就显示草稿（TG/Nagram 的 `Draft:` 前缀），
+                      // 不然用户会以为刚才打的字丢了
+                      if (chat.draft.isNotEmpty)
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '草稿: ',
+                                style: TextStyle(
+                                  color: selected
+                                      ? Colors.white
+                                      : TelegramColors.danger,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              TextSpan(
+                                text: chat.draft.replaceAll('\n', ' '),
+                                style: TextStyle(color: subColor, fontSize: 16),
+                              ),
+                            ],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        )
+                      else
+                        // 群聊摘要按 TG 排成「发送者: 正文」（DialogCell.java:1802-1827）：
+                        // 只有正文的话，群里的消息看不出是谁说的。
+                        _preview(chat, subColor),
+                    ],
                   ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 置顶标记放在时间左边（TG DialogCell.java:2491-2496 的小 pin），
+                        // 不是压在标题前面——否则每个置顶会话的名字都要缩进。
+                        if (chat.pinned) ...[
+                          Icon(
+                            Icons.push_pin_rounded,
+                            size: 12,
+                            color: selected
+                                ? Colors.white.withValues(alpha: 0.85)
+                                : TelegramColors.textMuted,
+                          ),
+                          const SizedBox(width: 3),
+                        ],
+                        Text(
+                          chat.lastTime == null
+                              ? ''
+                              : formatTime(
+                                  chat.lastTime!,
+                                  withSeconds: prefs.timeWithSeconds,
+                                ),
+                          style: TextStyle(
+                            // 有未读的会话，时间也是强调色加粗（TG dialogs_timePaint 的
+                            // 未读态）。
+                            // 静音会话即使有未读也不把时间刷成强调色——
+                            // 那抹蓝/紫是"要你注意"的信号，静音了就不该有。
+                            color:
+                                chat.unreadCount > 0 && !selected && !chat.muted
+                                ? TelegramColors.accent
+                                : subColor,
+                            fontSize: TelegramMetrics.fontTimestamp,
+                            fontWeight: chat.unreadCount > 0
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    if (chat.unreadCount > 0)
+                      Container(
+                        // TG 的未读数是个 22dp 高的胶囊（`dialogs_unreadCounterDrawable`
+                        // 的 setSize(dp(22)...)），两位数以上自动加宽，圆角 = 高度一半。
+                        constraints: const BoxConstraints(minWidth: 22),
+                        height: 22,
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(horizontal: 7),
+                        decoration: BoxDecoration(
+                          // 选中行整行就是强调色，徽章再刷同色等于看不见——
+                          // 翻成白底 + 强调色字（TG 选中会话的未读徽章就是这样）。
+                          color: selected
+                              ? Colors.white
+                              : chat.muted
+                              ? TelegramColors.textMuted
+                              : TelegramColors.badge,
+                          borderRadius: BorderRadius.circular(11),
+                        ),
+                        child: Text(
+                          formatUnreadCount(
+                            chat.unreadCount,
+                            noRounding: prefs.disableNumberRounding,
+                          ),
+                          style: TextStyle(
+                            color: selected
+                                ? TelegramColors.bgSelected
+                                : Colors.white,
+                            // TG 的未读数文字是 dp(12) 加粗（22dp 胶囊里就是这么排的）。
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
-          ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// 会话行首屏逐项浮现（Telegram `Components/RecyclerItemsEnterAnimator`）。
+///
+/// TG 的算法是 `startDelay = (itemTop / screenHeight) * 100ms`、alpha 动画
+/// 200ms（见 .dsh/workspace/ayugram-pick 旁边的 telegram-src 取证）。行高固定
+/// 72，所以第 i 行的延时 ≈ i*72/屏高*100ms —— 换算成"同一个时间轴上错峰"
+/// 就是下面的 [Interval]：越靠后的行起点越晚，全部在 320ms 内落到 1。
+///
+/// 为什么用 TweenAnimationBuilder 而不是 AnimationController：一个几百行的
+/// 列表挂几百个控制器太贵，而这里只需要"挂载时淡入一次"；隐式动画在 tween
+/// 终值不变时不会重播，切会话/选中行重建也不会再闪。
+class _EnterFade extends StatelessWidget {
+  const _EnterFade({required this.index, required this.child});
+
+  /// 列表里的行号（从 0 起，含归档入口行）。
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    // 只让前 12 行错峰：再往下延时累计超过 0.7，等于开场半秒后才淡入，
+    // 用户看着像列表卡住了。TG 也是按"屏幕内可见的行"算延时的。
+    if (index >= 12) return child;
+    final double start = (index * 0.055).clamp(0.0, 0.62);
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 320),
+      curve: Interval(start, 1, curve: Curves.easeOut),
+      builder: (_, double v, Widget? c) => Opacity(opacity: v, child: c),
+      child: child,
     );
   }
 }

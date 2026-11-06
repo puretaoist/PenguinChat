@@ -18,6 +18,8 @@ class ChatHeader extends StatelessWidget {
     this.onOpenGroupSettings,
     this.onOpenSettings,
     this.onSearch,
+    this.hideStatus = false,
+    this.centerTitle = false,
   });
 
   final Chat chat;
@@ -30,6 +32,12 @@ class ChatHeader extends StatelessWidget {
   /// 头部搜索（TG 顶栏右侧第一个图标就是放大镜）。
   final VoidCallback? onSearch;
 
+  /// 是否隐藏副标题（在线状态 / 成员数）。抄 `ExteraConfig.hideActionBarStatus`。
+  final bool hideStatus;
+
+  /// 标题是否居中。抄 `ExteraConfig.centerTitle`。
+  final bool centerTitle;
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -41,26 +49,30 @@ class ChatHeader extends StatelessWidget {
           if (onBack != null)
             IconButton(
               onPressed: onBack,
-              icon: Icon(
-                Icons.arrow_back,
-                color: TelegramColors.textSecondary,
-              ),
+              icon: Icon(Icons.arrow_back, color: TelegramColors.textSecondary),
             ),
           GestureDetector(
             key: const ValueKey('open-members'),
             onTap: chat.isGroup ? onOpenMembers : null,
-            child: TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 42),
+            child: TelegramAvatar(
+              name: chat.title,
+              url: chat.avatarUrl,
+              size: 42,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: centerTitle
+                  ? CrossAxisAlignment.center
+                  : CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
                   chat.title,
                   key: const ValueKey('chat-header-title'),
                   maxLines: 1,
+                  textAlign: centerTitle ? TextAlign.center : null,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: TelegramColors.textPrimary,
@@ -68,18 +80,19 @@ class ChatHeader extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                Text(
-                  chat.isGroup
-                      ? '群聊 · ${chat.memberCount} 人'
-                      : (chat.online ? '在线' : '离线'),
-                  key: const ValueKey('chat-header-subtitle'),
-                  style: TextStyle(
-                    color: chat.online
-                        ? TelegramColors.online
-                        : TelegramColors.textSecondary,
-                    fontSize: 14,
+                if (!hideStatus)
+                  Text(
+                    chat.isGroup
+                        ? '群聊 · ${chat.memberCount} 人'
+                        : (chat.online ? '在线' : '离线'),
+                    key: const ValueKey('chat-header-subtitle'),
+                    style: TextStyle(
+                      color: chat.online
+                          ? TelegramColors.online
+                          : TelegramColors.textSecondary,
+                      fontSize: 14,
+                    ),
                   ),
-                ),
               ],
             ),
           ),

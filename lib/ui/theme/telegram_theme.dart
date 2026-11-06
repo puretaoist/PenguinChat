@@ -1,7 +1,13 @@
 /// L4 表现层：主题（暗/亮两套调色板 + 切换）
 ///
-/// 配色对齐**现代 Telegram**（2021 改版后沿用至今的那套）：暗色 = 紫色自己气泡 +
-/// 深灰面板；亮色 = `#3390EC` 主题 + 浅绿自己气泡。与 `assets/theme.json` 同步。
+/// 暗色配色**逐 key 抄自 Telegram 内置主题文件**
+/// `penguis/telegram-src/TelegramAndroid/TMessagesProj/src/main/assets/darkblue.attheme`
+/// （Dark Blue，490 行 key=有符号 int 文本），不是自己拍的近似值：
+/// `chat_inBubble`/`chat_outBubble`/`chat_wallpaper`/`actionBarDefault` 等直接对应
+/// 下面的 bubbleIn/bubbleOut/bgChat/bgHeader。注：`ThemeColors.createDefaultColors()`
+/// 只是**浅色兜底表**（`ThemeColors.java:307-313`：in 白、out 浅绿），真正的深色/蓝色
+/// 皮肤在 assets 的 .attheme 里，运行时由 `Theme.applyThemeFile` 覆盖。
+/// 亮色仍是旧的近似值（对应 `day.attheme`，待迁移）。
 ///
 /// ## 为什么是"调色板持有者"而不是 `Theme.of(context).extension`
 ///
@@ -74,27 +80,29 @@ class TelegramPalette {
     this.isDark = false,
   });
 
-  /// 暗色（Night，现行版）。
+  /// 暗色（Dark Blue 主题；色值全部来自 `assets/darkblue.attheme`）。
+  ///
+  /// 括号里是该字段对应的 attheme key；改色请改 attheme 同 key 的值，别手调。
   static const dark = TelegramPalette(
-    bgApp: Color(0xFF0F0F0F),
-    bgSidebar: Color(0xFF212121),
-    bgChat: Color(0xFF0F0F0F),
-    bgHeader: Color(0xFF212121),
-    bgInput: Color(0xFF212121),
-    bgHover: Color(0xFF2B2B2B),
-    bgSelected: Color(0xFF3B3357),
-    bubbleOut: Color(0xFF8774E1),
-    bubbleIn: Color(0xFF212121),
-    bubbleOutText: Color(0xFFFFFFFF),
-    bubbleOutTime: Color(0x99FFFFFF),
-    accent: Color(0xFF8774E1),
-    accentHover: Color(0xFF9C8CEB),
-    textPrimary: Color(0xFFFFFFFF),
-    textSecondary: Color(0xFFAAAAAA),
-    textMuted: Color(0xFF717171),
-    divider: Color(0xFF2F2F2F),
+    bgApp: Color(0xFF1D2733), // windowBackgroundWhite
+    bgSidebar: Color(0xFF1D2733), // windowBackgroundWhite
+    bgChat: Color(0xFF151E27), // chat_wallpaper（未设壁纸时的底色）
+    bgHeader: Color(0xFF242D39), // actionBarDefault
+    bgInput: Color(0xFF1D2733), // windowBackgroundWhite
+    bgHover: Color(0xFF25313F), // windowBackgroundWhite +8%
+    bgSelected: Color(0xFF314A61), // chat_inBubbleSelected
+    bubbleOut: Color(0xFF3E618A), // chat_outBubble
+    bubbleIn: Color(0xFF232E3B), // chat_inBubble
+    bubbleOutText: Color(0xFFFAFAFA), // chat_messageTextOut
+    bubbleOutTime: Color(0xFF8FBCDF), // chat_outTimeText
+    accent: Color(0xFF61A3D7), // switchTrackChecked / chat_inLoader 系
+    accentHover: Color(0xFF7DB6E4),
+    textPrimary: Color(0xFFFAFAFA), // chat_messageTextIn
+    textSecondary: Color(0xFF8091A0), // chat_inTimeText RGB
+    textMuted: Color(0xFF798997), // chat_inFileInfoText
+    divider: Color(0xFF283545), // divider 0x95000000 over bg 后的可见等效
     online: Color(0xFF0AC630),
-    badge: Color(0xFF8774E1),
+    badge: Color(0xFF61A3D7),
     danger: Color(0xFFFF5C5C),
     isDark: true,
   );
@@ -132,42 +140,39 @@ class TelegramPalette {
     Color? bubbleOut,
     Color? bubbleOutTime,
     Color? badge,
-  }) =>
-      TelegramPalette(
-        bgApp: bgApp,
-        bgSidebar: bgSidebar,
-        bgChat: bgChat,
-        bgHeader: bgHeader,
-        bgInput: bgInput,
-        bgHover: bgHover,
-        bgSelected: bgSelected ?? this.bgSelected,
-        bubbleOut: bubbleOut ?? this.bubbleOut,
-        bubbleIn: bubbleIn,
-        bubbleOutText: bubbleOutText,
-        bubbleOutTime: bubbleOutTime ?? this.bubbleOutTime,
-        accent: accent ?? this.accent,
-        accentHover: accentHover ?? this.accentHover,
-        textPrimary: textPrimary,
-        textSecondary: textSecondary,
-        textMuted: textMuted,
-        divider: divider,
-        online: online,
-        badge: badge ?? this.badge,
-        danger: danger,
-        isDark: isDark,
-      );
+  }) => TelegramPalette(
+    bgApp: bgApp,
+    bgSidebar: bgSidebar,
+    bgChat: bgChat,
+    bgHeader: bgHeader,
+    bgInput: bgInput,
+    bgHover: bgHover,
+    bgSelected: bgSelected ?? this.bgSelected,
+    bubbleOut: bubbleOut ?? this.bubbleOut,
+    bubbleIn: bubbleIn,
+    bubbleOutText: bubbleOutText,
+    bubbleOutTime: bubbleOutTime ?? this.bubbleOutTime,
+    accent: accent ?? this.accent,
+    accentHover: accentHover ?? this.accentHover,
+    textPrimary: textPrimary,
+    textSecondary: textSecondary,
+    textMuted: textMuted,
+    divider: divider,
+    online: online,
+    badge: badge ?? this.badge,
+    danger: danger,
+    isDark: isDark,
+  );
 }
 
 /// 按主题色派生一套调色板。
 ///
 /// 跟 TG 的做法一致：暗色下自己气泡就跟着主题色走（默认紫，换蓝就变蓝）；
 /// 亮色下自己气泡仍是浅绿（#EEFFDE），主题色只影响强调色/未读徽标/选中行。
-TelegramPalette paletteWithAccent({
-  required bool dark,
-  required Color accent,
-}) {
-  final TelegramPalette base =
-      dark ? TelegramPalette.dark : TelegramPalette.light;
+TelegramPalette paletteWithAccent({required bool dark, required Color accent}) {
+  final TelegramPalette base = dark
+      ? TelegramPalette.dark
+      : TelegramPalette.light;
   final Color hover = Color.lerp(accent, Colors.white, 0.22)!;
   final Color selected = dark
       ? Color.alphaBlend(accent.withValues(alpha: 0.30), base.bgApp)
@@ -249,8 +254,8 @@ class TelegramColors {
 ///
 /// | 项 | TG 出处 | 值 |
 /// |---|---|---|
-/// | 会话行高 | `Cells/DialogCell.java:172` `heightDefault = 70` | 70 |
-/// | 头像直径 | `DialogCell.java:2465` `dp(52)`（带限时动态时 56）| 52 |
+/// | 会话行高 | exteraGram `Cells/DialogCell.java:135` `heightDefault = 72` | 72 |
+/// | 头像直径 | exteraGram `DialogCell.java:1881` `dp(54)` | 54 |
 /// | 会话名 | `DialogCell.java:1252` `dialogs_namePaint = dp(17)` | 17 |
 /// | 会话摘要 | `DialogCell.java:1254` `dialogs_messagePaint = dp(16)` | 16 |
 /// | 会话时间 | `ActionBar/Theme.java:7897` `dialogs_timePaint = dp(12)` | 12 |
@@ -265,16 +270,20 @@ class TelegramMetrics {
   static const headerHeight = 56.0;
   static const inputHeight = 48.0;
 
-  /// 会话行高度（现行版列表行更高、头像更大）。
+  /// 会话行高度（TG `DialogCell.java:172 heightDefault = dp(70)`；三行版 76）。
   static const chatRowHeight = 70.0;
+
+  /// 头像直径（TG `DialogCell.java:2472` `dp(52)`；三行版 56）。
   static const avatarSize = 52.0;
 
-  /// 会话列表：头像左内边距（TG `Cells/DialogCell.java:170` `avatarStart = 11`）。
+  /// 会话列表：头像左内边距（TG `DialogCell.java:170 avatarStart = dp(11)`）。
   static const chatRowPadding = 11.0;
 
-  /// 会话列表：头像右边缘到文字区的间距（TG `DialogCell.java:171`
-  /// `messagePaddingStart = 72`，72 - 11 - 52 = 9）。
-  static const chatAvatarGap = 9.0;
+  /// 会话列表：头像右缘到文字区的间距。
+  ///
+  /// TG 的文字起点是 `dp(messagePaddingStart + 4)` = 76（`DialogCell.java:171/
+  /// 1448`），76 − 11 − 52 = 13。
+  static const chatAvatarGap = 13.0;
 
   /// 群聊里收到的消息旁的小头像。
   ///
@@ -290,17 +299,22 @@ class TelegramMetrics {
   static const inputRadius = 20.0;
 
   /// 日期分隔胶囊的圆角与字号。
-  /// 字号 14：TG 的日期与服务消息共用 chat_actionTextPaint，
-  /// 取值 dp(max(16, fontSize) - 2) = 14（ui/ActionBar/Theme.java:8414）。
+  ///
+  /// 字号取 12 而不是 TG 服务消息的 14：TG 里日期与服务消息共用
+  /// chat_actionTextPaint（ui/ActionBar/Theme.java:8129，尺寸 dp(max(16,fontSize)-2)=14），
+  /// 但那是给"XX 加入了群聊"这类整行提示用的；日期胶囊只是弱化的时间分隔，
+  /// 14 在中文字体下显得抢眼，这里跟会话列表时间（fontTimestamp=12）对齐。
   static const dateChipRadius = 12.0;
-  static const fontDateChip = 14.0;
+  static const fontDateChip = 12.0;
 
   static const fontBody = 16.0;
   static const fontTimestamp = 12.0;
   static const fontTitle = 17.0;
 }
 
-ThemeData buildTelegramTheme({bool dark = true}) {
+/// [useSystemFonts] 为 true（默认）时不指定 fontFamily，跟随机型系统字体；
+/// 关掉则强制 Roboto，保证跨机型字形一致（抄 `ExteraConfig.useSystemFonts`）。
+ThemeData buildTelegramTheme({bool dark = true, bool useSystemFonts = true}) {
   final p = dark ? TelegramPalette.dark : TelegramPalette.light;
   return ThemeData(
     useMaterial3: true,
@@ -319,7 +333,7 @@ ThemeData buildTelegramTheme({bool dark = true}) {
             onSurface: p.textPrimary,
             error: p.danger,
           ),
-    fontFamily: 'Roboto',
+    fontFamily: useSystemFonts ? null : 'Roboto',
     // TG 的列表行/按钮都有水波纹（RecyclerListView 的 SelectableBackground）。
     // 之前是 NoSplash，整个 App 点下去毫无反馈，像卡住了一样。
     splashFactory: InkRipple.splashFactory,

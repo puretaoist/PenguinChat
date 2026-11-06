@@ -38,61 +38,71 @@ class StorageDialog extends StatelessWidget {
     String? limitsNote,
     VoidCallback? onClearCache,
     VoidCallback? onClearHistory,
-  }) =>
-      showDialog<void>(
-        context: context,
-        builder: (_) => StorageDialog(
-          stats: stats,
-          limitsNote: limitsNote,
-          onClearCache: onClearCache,
-          onClearHistory: onClearHistory,
-        ),
-      );
+  }) => showDialog<void>(
+    context: context,
+    builder: (_) => StorageDialog(
+      stats: stats,
+      limitsNote: limitsNote,
+      onClearCache: onClearCache,
+      onClearHistory: onClearHistory,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
     final size = StorageStats.formatBytes;
     return AlertDialog(
       backgroundColor: TelegramColors.bgSidebar,
-      title: Text('存储与缓存',
-          style: TextStyle(color: TelegramColors.textPrimary, fontSize: 16)),
+      title: Text(
+        '存储与缓存',
+        style: TextStyle(color: TelegramColors.textPrimary, fontSize: 16),
+      ),
       content: SizedBox(
         width: 340,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _row('聊天记录', size(stats.dbBytes),
-                key: const ValueKey('storage-db')),
+            _row(
+              '聊天记录',
+              size(stats.dbBytes),
+              key: const ValueKey('storage-db'),
+            ),
             Padding(
               padding: const EdgeInsets.only(left: 12, bottom: 10),
               child: Text(
                 '${stats.chatCount} 个会话 · 内存里 ${stats.messageCount} 条消息',
-                style: TextStyle(
-                    color: TelegramColors.textMuted, fontSize: 12),
+                style: TextStyle(color: TelegramColors.textMuted, fontSize: 12),
               ),
             ),
-            _row('媒体缓存', size(stats.cacheBytes),
-                key: const ValueKey('storage-cache')),
+            _row(
+              '媒体缓存',
+              size(stats.cacheBytes),
+              key: const ValueKey('storage-cache'),
+            ),
             for (final e in stats.cacheByCategory.entries)
               Padding(
                 padding: const EdgeInsets.only(left: 12, top: 4),
                 child: Text(
                   '${_categoryLabel(e.key)} ${size(e.value)}',
                   style: TextStyle(
-                      color: TelegramColors.textSecondary, fontSize: 12.5),
+                    color: TelegramColors.textSecondary,
+                    fontSize: 12.5,
+                  ),
                 ),
               ),
             if (limitsNote != null) ...[
               const SizedBox(height: 12),
-              Text(limitsNote!,
-                  style: TextStyle(
-                      color: TelegramColors.textMuted, fontSize: 12)),
+              Text(
+                limitsNote!,
+                style: TextStyle(color: TelegramColors.textMuted, fontSize: 12),
+              ),
             ],
             const SizedBox(height: 6),
-            Text('聊天记录不会被自动清理；媒体缓存按上面的保留期与上限自动清理。',
-                style:
-                    TextStyle(color: TelegramColors.textMuted, fontSize: 12)),
+            Text(
+              '聊天记录不会被自动清理；媒体缓存按上面的保留期与上限自动清理。',
+              style: TextStyle(color: TelegramColors.textMuted, fontSize: 12),
+            ),
           ],
         ),
       ),
@@ -115,8 +125,7 @@ class StorageDialog extends StatelessWidget {
                   onClearHistory!();
                   Navigator.of(context).pop();
                 },
-          child: Text('清空聊天记录',
-              style: TextStyle(color: TelegramColors.danger)),
+          child: Text('清空聊天记录', style: TextStyle(color: TelegramColors.danger)),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -127,27 +136,29 @@ class StorageDialog extends StatelessWidget {
   }
 
   Widget _row(String label, String value, {Key? key}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          key: key,
-          children: <Widget>[
-            Expanded(
-              child: Text(label,
-                  style: TextStyle(
-                      color: TelegramColors.textPrimary, fontSize: 14)),
-            ),
-            Text(value,
-                style: TextStyle(
-                    color: TelegramColors.textSecondary, fontSize: 13)),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      key: key,
+      children: <Widget>[
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(color: TelegramColors.textPrimary, fontSize: 14),
+          ),
         ),
-      );
+        Text(
+          value,
+          style: TextStyle(color: TelegramColors.textSecondary, fontSize: 13),
+        ),
+      ],
+    ),
+  );
 
   static String _categoryLabel(String dir) => switch (dir) {
-        'photos' => '图片',
-        'videos' => '视频',
-        'files' => '文件',
-        'voices' => '语音',
-        _ => '其它',
-      };
+    'photos' => '图片',
+    'videos' => '视频',
+    'files' => '文件',
+    'voices' => '语音',
+    _ => '其它',
+  };
 }

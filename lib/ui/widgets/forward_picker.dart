@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
+import 'glass_sheet.dart';
 import 'telegram_avatar.dart';
 import 'telegram_list_item.dart';
 
@@ -27,15 +28,10 @@ class ForwardPickerSheet extends StatelessWidget {
     BuildContext context, {
     required List<Chat> chats,
     required void Function(Chat chat) onPick,
-  }) =>
-      showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: TelegramColors.bgSidebar,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-        ),
-        builder: (_) => ForwardPickerSheet(chats: chats, onPick: onPick),
-      );
+  }) => showGlassSheet<void>(
+    context: context,
+    builder: (_) => ForwardPickerSheet(chats: chats, onPick: onPick),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -92,8 +88,7 @@ class ForwardPickerSheet extends StatelessWidget {
                         children: <Widget>[
                           TgChatRow(
                             key: ValueKey('forward-to-${chat.id}'),
-                            leading:
-                                TelegramAvatar(name: chat.title, size: 52),
+                            leading: TelegramAvatar(name: chat.title, size: 52),
                             title: chat.title,
                             subtitle: chat.isGroup ? '群聊' : '私聊',
                             onTap: () {

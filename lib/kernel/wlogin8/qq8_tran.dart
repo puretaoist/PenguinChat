@@ -149,6 +149,16 @@ class Qq8TransportException implements Exception {
       'Qq8TransportException: $message${cause == null ? '' : ' ($cause)'}';
 }
 
+/// 对端回的是 HTTP 文本而不是二进制帧。
+///
+/// 校园网 / 运营商 / 酒店门户会把任意 TCP 连接（尤其 8080、80）劫持成
+/// 「302 到认证页」的 HTTP 响应。此时 TCP 是通的、连一次就成功，
+/// 只有把协议包发出去、收到第一段字节才会露馅——前 4 个字节是 "HTTP"
+/// 而不是 u32 帧长。单独立类型，好让传输层「换个端点重试」。
+class Qq8HttpInterceptException extends Qq8TransportException {
+  Qq8HttpInterceptException(super.message);
+}
+
 /// 把 TCP 字节流切成一个个 packet。
 ///
 /// 必须处理两种情况，二者都会真实发生：
@@ -164,6 +174,9 @@ class Qq8FrameDecoder {
   /// 单包上限。超过就认为流已经错位，宁可直接报错也不要无限缓存。
   static const int maxFrameLength = 1 << 22; // 4 MiB
 
+  /// 可打印 ASCII —— 用来识别「对端在说 HTTP」。
+  static bool _isPrintableAscii(int b) => b >= 0x20 && b <= 0x7e;
+
   final List<int> _buf = <int>[];
 
   /// 已缓存但尚未成帧的字节数。
@@ -178,6 +191,21 @@ class Qq8FrameDecoder {
 
     var cursor = 0;
     while (_buf.length - cursor >= headerLength) {
+      // 合法帧长的首字节必然是 0x00（上限 4 MiB = 0x00400000），
+      // 不可能落到可打印 ASCII；出现两个可打印字节说明对端在说 HTTP。
+      if (_isPrintableAscii(_buf[cursor]) &&
+          _isPrintableAscii(_buf[cursor + 1])) {
+        final prefix = String.fromCharCodes(
+          _buf.sublist(
+            cursor,
+            cursor + 32 < _buf.length ? cursor + 32 : _buf.length,
+          ),
+        );
+        _buf.clear();
+        throw Qq8HttpInterceptException(
+          '对端返回 HTTP 文本而非二进制帧（疑似校园网/运营商门户劫持）：$prefix',
+        );
+      }
       final total = (_buf[cursor] << 24) |
           (_buf[cursor + 1] << 16) |
           (_buf[cursor + 2] << 8) |
@@ -296,6 +324,13 @@ class Qq8TcpTransport implements Qq8Transport {
   Socket? _socket;
   final Qq8FrameDecoder _decoder = Qq8FrameDecoder();
 
+  /// 本次连接实际使用的候选端点列表（[candidates] 的快照）。
+  ///
+  /// HTTP 门户劫持后要「换下一个端点」，必须知道当前用的是第几个，
+  /// 所以把列表和下标存下来。
+  List<Qq8Endpoint> _candidates = const <Qq8Endpoint>[];
+  int _endpointIndex = -1;
+
   /// 待响应的 Completer（串行，最多一个）。
   Completer<Uint8List>? _pending;
 
@@ -329,7 +364,14 @@ class Qq8TcpTransport implements Qq8Transport {
     if (explicit != null) {
       extra = explicit;
     } else if (host == qq8DefaultHost && port == qq8DefaultPort) {
-      extra = qq8SeedEndpoints;
+      // 同一域名的 443 必须排在 IP 兜底之前。
+      // 校园网/酒店门户只劫持 80 与 8080（把 TCP 变成 HTTP 302 认证页），
+      // 443 是放行的；而硬编码的 IP 种子会随腾讯调度过期（实测
+      // 153.3.46.86:443 已经没有 MSF 服务）。所以先试域名 443，再试 IP。
+      extra = <Qq8Endpoint>[
+        const Qq8Endpoint(qq8DefaultHost, 443),
+        ...qq8SeedEndpoints,
+      ];
     } else {
       extra = const <Qq8Endpoint>[];
     }
@@ -345,11 +387,20 @@ class Qq8TcpTransport implements Qq8Transport {
   @override
   Future<void> connect() async {
     if (_socket != null) return;
+    await _connectFrom(0);
+  }
 
+  /// 从第 [start] 个候选端点开始依次尝试建连。
+  ///
+  /// 抽出来是为了「HTTP 门户劫持后换端点重试」：劫持时 TCP 是通的，
+  /// 只有发完包才暴露，因此重连必须能从「下一个候选」开始，
+  /// 而不是把解析失败的第一个端点再试一遍。
+  Future<void> _connectFrom(int start) async {
     final list = candidates;
+    _candidates = list;
     final errors = <String>[];
 
-    for (var i = 0; i < list.length; i++) {
+    for (var i = start; i < list.length; i++) {
       final ep = list[i];
       // 主端点等满 connectTimeout；兜底端点只等三分之一。
       // 理由：兜底是「主端点已经失败过一次」之后才上场的，用户此刻已经
@@ -364,6 +415,7 @@ class Qq8TcpTransport implements Qq8Transport {
       try {
         _socket = await Socket.connect(ep.host, ep.port, timeout: timeoutFor);
         connectedEndpoint = ep;
+        _endpointIndex = i;
         if (i > 0) {
           onConnectAttempt?.call('主端点失败，已切到兜底 ${ep.key} 连上');
         }
@@ -387,8 +439,12 @@ class Qq8TcpTransport implements Qq8Transport {
     _decoder.reset();
     _disconnectNotified = false;
 
-    _socket!.listen(
+    // 抓局部变量：端点轮换时旧 socket 的 onDone 会晚到，
+    // 若不比对身份，它会把「新连接」的 _socket 置空、把新请求判失败。
+    final sock = _socket!;
+    sock.listen(
       (chunk) {
+        if (!identical(_socket, sock)) return; // 旧连接的残留数据
         List<Uint8List> frames;
         try {
           frames = _decoder.add(chunk);
@@ -417,6 +473,7 @@ class Qq8TcpTransport implements Qq8Transport {
       // 判断为假，直接往死 socket 里写，connect() 也因为同样的判断永远不重连——
       // 重连循环于是空转到日志停止。onDone 早就把 _socket 置空了，这里必须一致。
       onError: (Object e) {
+        if (!identical(_socket, sock)) return;
         _socket = null;
         connectedEndpoint = null;
         final err = Qq8TransportException('读取失败', e);
@@ -424,6 +481,7 @@ class Qq8TcpTransport implements Qq8Transport {
         _notifyDisconnected(err);
       },
       onDone: () {
+        if (!identical(_socket, sock)) return;
         _socket = null;
         connectedEndpoint = null;
         final err = Qq8TransportException('连接被对端关闭');
@@ -500,7 +558,47 @@ class Qq8TcpTransport implements Qq8Transport {
 
   @override
   Future<Uint8List> send(Uint8List payload, {Duration? timeout}) async {
-    if (_socket == null) await connect();
+    var start = _socket == null ? 0 : _endpointIndex;
+    final tried = <String>[];
+    while (true) {
+      if (_socket == null) {
+        await _connectFrom(start < 0 ? 0 : start);
+      }
+      try {
+        final key = _candidates[_endpointIndex].key;
+        if (!tried.contains(key)) tried.add(key);
+        return await _sendOnce(payload, timeout);
+      } on Qq8HttpInterceptException catch (e) {
+        // 这个端点其实是 HTTP 门户，协议包它根本不认。换下一个候选端点重发：
+        // 真正的 QQ 服务器还没处理过这个请求，重发不会造成重复登录。
+        final next = _endpointIndex + 1;
+        onConnectAttempt?.call('${e.message} → 放弃该端点，尝试下一个');
+        final dead = _socket;
+        _socket = null;
+        connectedEndpoint = null;
+        _decoder.reset();
+        if (dead != null) {
+          try {
+            await dead.close();
+          } on Object {
+            // 关闭失败无需上报。
+          }
+        }
+        if (next >= _candidates.length) rethrow;
+        start = next;
+      } on Qq8TransportException catch (e) {
+        // 把「试过哪些端点」带进消息：真机日志只能看到这一条文案，
+        // 没有端点清单就无法区分「全被劫持」和「唯一可用端点超时」。
+        throw Qq8TransportException(
+          '${e.message}\n已尝试端点：${tried.join(' → ')}',
+          e.cause,
+        );
+      }
+    }
+  }
+
+  /// 单次「写一个包、等一个响应」，不含端点轮换逻辑。
+  Future<Uint8List> _sendOnce(Uint8List payload, Duration? timeout) async {
     if (_pending != null) {
       throw Qq8TransportException('上一个请求还没收到响应，本协议不支持并发');
     }

@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_gfs.dart';
 import 'package:penguinchat/ui/theme/telegram_theme.dart';
 import 'package:penguinchat/ui/widgets/telegram_list_item.dart';
+import 'package:penguinchat/ui/widgets/glass_sheet.dart';
 
 class GroupFilesPanel extends StatefulWidget {
   const GroupFilesPanel({
@@ -54,9 +55,8 @@ class GroupFilesPanel extends StatefulWidget {
     Future<void> Function(String name)? onCreateDir,
     Future<void> Function(Qq8GfsEntry entry, String name)? onRename,
   }) {
-    return showModalBottomSheet<void>(
+    return showGlassSheet<void>(
       context: context,
-      backgroundColor: TelegramColors.bgSidebar,
       isScrollControlled: true,
       builder: (_) => GroupFilesPanel(
         title: title,
@@ -162,10 +162,14 @@ class _GroupFilesPanelState extends State<GroupFilesPanel> {
       builder: (ctx) => AlertDialog(
         key: const ValueKey('gf-delete-dialog'),
         backgroundColor: TelegramColors.bgSidebar,
-        title: Text('删除「${f.name}」？',
-            style: TextStyle(color: TelegramColors.textPrimary)),
-        content: Text('群里的其他成员也会看不到这个文件。',
-            style: TextStyle(color: TelegramColors.textSecondary, fontSize: 13)),
+        title: Text(
+          '删除「${f.name}」？',
+          style: TextStyle(color: TelegramColors.textPrimary),
+        ),
+        content: Text(
+          '群里的其他成员也会看不到这个文件。',
+          style: TextStyle(color: TelegramColors.textSecondary, fontSize: 13),
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -305,37 +309,52 @@ class _GroupFilesPanelState extends State<GroupFilesPanel> {
                   IconButton(
                     key: const ValueKey('gf-up'),
                     onPressed: _loading ? null : _up,
-                    icon: Icon(Icons.arrow_upward,
-                        size: 20, color: TelegramColors.textSecondary),
+                    icon: Icon(
+                      Icons.arrow_upward,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
                     tooltip: '上一级',
                   ),
                 if (widget.onCreateDir != null && _pid == Qq8Gfs.rootPid)
                   IconButton(
                     key: const ValueKey('gf-newdir'),
                     onPressed: _loading ? null : _newDir,
-                    icon: Icon(Icons.create_new_folder_outlined,
-                        size: 20, color: TelegramColors.textSecondary),
+                    icon: Icon(
+                      Icons.create_new_folder_outlined,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
                     tooltip: '新建文件夹',
                   ),
                 if (widget.onUpload != null)
                   IconButton(
                     key: const ValueKey('gf-upload'),
                     onPressed: _loading ? null : _upload,
-                    icon: Icon(Icons.upload_file_outlined,
-                        size: 20, color: TelegramColors.textSecondary),
+                    icon: Icon(
+                      Icons.upload_file_outlined,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
                     tooltip: '上传文件',
                   ),
                 IconButton(
                   key: const ValueKey('gf-refresh'),
                   onPressed: _loading ? null : _load,
-                  icon: Icon(Icons.refresh,
-                      size: 20, color: TelegramColors.textSecondary),
+                  icon: Icon(
+                    Icons.refresh,
+                    size: 20,
+                    color: TelegramColors.textSecondary,
+                  ),
                   tooltip: '刷新',
                 ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  icon: Icon(Icons.close,
-                      size: 20, color: TelegramColors.textSecondary),
+                  icon: Icon(
+                    Icons.close,
+                    size: 20,
+                    color: TelegramColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -348,52 +367,58 @@ class _GroupFilesPanelState extends State<GroupFilesPanel> {
   }
 
   Widget _header(List<Qq8GfsEntry>? entries) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(widget.title,
-              key: const ValueKey('gf-title'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: TelegramColors.textPrimary,
-                  fontSize: TelegramMetrics.fontTitle,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(
-            entries == null ? '加载中…' : '${entries.length} 个文件',
-            key: const ValueKey('gf-count'),
-            style:
-                TextStyle(color: TelegramColors.textSecondary, fontSize: 12.5),
-          ),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      Text(
+        widget.title,
+        key: const ValueKey('gf-title'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: TelegramColors.textPrimary,
+          fontSize: TelegramMetrics.fontTitle,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        entries == null ? '加载中…' : '${entries.length} 个文件',
+        key: const ValueKey('gf-count'),
+        style: TextStyle(color: TelegramColors.textSecondary, fontSize: 12.5),
+      ),
+    ],
+  );
 
   Widget _body(List<Qq8GfsEntry>? entries) {
     if (_error != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!,
-              key: const ValueKey('gf-error'),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: TelegramColors.textSecondary, fontSize: 13)),
+          child: Text(
+            _error!,
+            key: const ValueKey('gf-error'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: TelegramColors.textSecondary, fontSize: 13),
+          ),
         ),
       );
     }
     if (entries == null) {
       return const Center(
         child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2)),
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       );
     }
     if (entries.isEmpty) {
       return Center(
-        child: Text('这个目录还是空的',
-            key: const ValueKey('gf-empty'),
-            style: TextStyle(color: TelegramColors.textMuted, fontSize: 13)),
+        child: Text(
+          '这个目录还是空的',
+          key: const ValueKey('gf-empty'),
+          style: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
+        ),
       );
     }
     return ListView.builder(
@@ -439,24 +464,33 @@ class _GroupFilesPanelState extends State<GroupFilesPanel> {
             IconButton(
               key: ValueKey('gf-rename-${f.fid}'),
               onPressed: () => _rename(f),
-              icon: Icon(Icons.drive_file_rename_outline,
-                  size: 20, color: TelegramColors.textSecondary),
+              icon: Icon(
+                Icons.drive_file_rename_outline,
+                size: 20,
+                color: TelegramColors.textSecondary,
+              ),
               tooltip: '重命名',
             ),
           if (f.isDir && widget.onDelete != null)
             IconButton(
               key: ValueKey('gf-delete-${f.fid}'),
               onPressed: _busyFid == null ? () => _delete(f) : null,
-              icon: Icon(Icons.delete_outline,
-                  size: 20, color: TelegramColors.danger),
+              icon: Icon(
+                Icons.delete_outline,
+                size: 20,
+                color: TelegramColors.danger,
+              ),
               tooltip: '删除文件夹',
             ),
           if (!f.isDir && widget.onRename != null)
             IconButton(
               key: ValueKey('gf-rename-${f.fid}'),
               onPressed: () => _rename(f),
-              icon: Icon(Icons.drive_file_rename_outline,
-                  size: 20, color: TelegramColors.textSecondary),
+              icon: Icon(
+                Icons.drive_file_rename_outline,
+                size: 20,
+                color: TelegramColors.textSecondary,
+              ),
               tooltip: '重命名',
             ),
           if (!f.isDir && widget.onDownload != null)
@@ -467,22 +501,32 @@ class _GroupFilesPanelState extends State<GroupFilesPanel> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : Icon(Icons.download_outlined,
-                      size: 20, color: TelegramColors.textSecondary),
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Icons.download_outlined,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
               tooltip: '下载',
             ),
           if (!f.isDir && widget.onDelete != null)
             IconButton(
               key: ValueKey('gf-delete-${f.fid}'),
               onPressed: _busyFid == null ? () => _delete(f) : null,
-              icon: Icon(Icons.delete_outline,
-                  size: 20, color: TelegramColors.danger),
+              icon: Icon(
+                Icons.delete_outline,
+                size: 20,
+                color: TelegramColors.danger,
+              ),
               tooltip: '删除',
             ),
           if (f.isDir)
-            Icon(Icons.chevron_right,
-                color: TelegramColors.textMuted, size: 20),
+            Icon(
+              Icons.chevron_right,
+              color: TelegramColors.textMuted,
+              size: 20,
+            ),
         ],
       ),
     );

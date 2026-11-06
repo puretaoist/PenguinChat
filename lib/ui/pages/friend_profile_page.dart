@@ -107,8 +107,12 @@ class FriendProfilePage extends ConsumerWidget {
                   TelegramTileGroup(
                     children: <Widget>[
                       _infoRow('昵称', friend.nick.isEmpty ? '（空）' : friend.nick),
-                      _infoRow('备注',
-            friend.remark.isEmpty || friend.remark == friend.nick ? '未设置' : friend.remark),
+                      _infoRow(
+                        '备注',
+                        friend.remark.isEmpty || friend.remark == friend.nick
+                            ? '未设置'
+                            : friend.remark,
+                      ),
                       _infoRow(
                         '分组',
                         service.friendGroupNameOf(friend.groupId) ?? '好友',
@@ -126,10 +130,10 @@ class FriendProfilePage extends ConsumerWidget {
   }
 
   static String _sexLabel(int sex) => switch (sex) {
-        1 => '男',
-        2 => '女',
-        _ => '未知',
-      };
+    1 => '男',
+    2 => '女',
+    _ => '未知',
+  };
 
   Widget _header(BuildContext context) {
     return Container(
@@ -204,19 +208,13 @@ class FriendProfilePage extends ConsumerWidget {
           Expanded(
             child: Text(
               title,
-              style: TextStyle(
-                color: TelegramColors.textPrimary,
-                fontSize: 16,
-              ),
+              style: TextStyle(color: TelegramColors.textPrimary, fontSize: 16),
             ),
           ),
           const SizedBox(width: 12),
           Text(
             value,
-            style: TextStyle(
-              color: TelegramColors.textSecondary,
-              fontSize: 13,
-            ),
+            style: TextStyle(color: TelegramColors.textSecondary, fontSize: 13),
           ),
         ],
       ),

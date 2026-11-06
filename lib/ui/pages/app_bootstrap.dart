@@ -93,8 +93,10 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
     // 有预览就不需要计时器：第一帧已经是列表，登录完成后 store 接管，
     // 列表内容不变（同一份索引、同一套排序），所以没有"切换"要等。
     if (!_hasPreview) {
-      _ticker =
-          Timer.periodic(const Duration(milliseconds: 100), (_) => _check());
+      _ticker = Timer.periodic(
+        const Duration(milliseconds: 100),
+        (_) => _check(),
+      );
     }
   }
 
@@ -109,10 +111,9 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
       final bridge = AudioBridge();
       final engine = BridgeVoiceEngine(bridge);
       await engine.init();
-      ref.read(voicePlaybackProvider).configure(
-            preparer: SilkVoicePreparer(),
-            engine: engine,
-          );
+      ref
+          .read(voicePlaybackProvider)
+          .configure(preparer: SilkVoicePreparer(), engine: engine);
       _log.i('语音通道已就绪');
     } catch (e) {
       _log.w('语音通道初始化失败（不影响启动）', error: e);
@@ -148,18 +149,17 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
   }
 
   static bool _isSettled(Qq8LoginStage stage) => switch (stage) {
-        Qq8LoginStage.online ||
-        Qq8LoginStage.failed ||
-        Qq8LoginStage.rejected ||
-        Qq8LoginStage.sessionExpired ||
-        Qq8LoginStage.disconnected ||
-        Qq8LoginStage.needsSlider ||
-        Qq8LoginStage.needsSmsCode ||
-        Qq8LoginStage.needsDeviceLock ||
-        Qq8LoginStage.waitingQrScan =>
-          true,
-        _ => false,
-      };
+    Qq8LoginStage.online ||
+    Qq8LoginStage.failed ||
+    Qq8LoginStage.rejected ||
+    Qq8LoginStage.sessionExpired ||
+    Qq8LoginStage.disconnected ||
+    Qq8LoginStage.needsSlider ||
+    Qq8LoginStage.needsSmsCode ||
+    Qq8LoginStage.needsDeviceLock ||
+    Qq8LoginStage.waitingQrScan => true,
+    _ => false,
+  };
 
   void _reveal() {
     if (_revealed || !mounted) return;
@@ -167,7 +167,7 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
     final int ms = DateTime.now().difference(_startedAt).inMilliseconds;
     final Qq8LoginStage stage =
         ref.read(qq8LoginStateProvider).valueOrNull?.stage ??
-            Qq8LoginStage.idle;
+        Qq8LoginStage.idle;
     _log.i('冷启动壳 → 主界面：用时 ${ms}ms，stage=${stage.name}');
     setState(() => _revealed = true);
   }
@@ -175,15 +175,13 @@ class _AppBootstrapState extends ConsumerState<AppBootstrap> {
   String _statusFor(Qq8LoginSnapshot? snap) {
     final Qq8LoginStage stage = snap?.stage ?? Qq8LoginStage.idle;
     return switch (stage) {
-      Qq8LoginStage.connecting => snap?.uin == null
-          ? '正在恢复账号…'
-          : '正在恢复账号 ${snap!.uin}…',
+      Qq8LoginStage.connecting =>
+        snap?.uin == null ? '正在恢复账号…' : '正在恢复账号 ${snap!.uin}…',
       Qq8LoginStage.online => '已恢复，正在进入…',
       Qq8LoginStage.waitingQrScan => '等待扫码确认…',
       Qq8LoginStage.needsSlider ||
       Qq8LoginStage.needsSmsCode ||
-      Qq8LoginStage.needsDeviceLock =>
-        '需要重新验证…',
+      Qq8LoginStage.needsDeviceLock => '需要重新验证…',
       Qq8LoginStage.sessionExpired || Qq8LoginStage.rejected => '需要在设置里重新登录',
       _ => '正在启动…',
     };

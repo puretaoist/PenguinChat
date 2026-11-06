@@ -417,8 +417,11 @@ Future<void> main() async {
     final t = Qq8TcpTransport();
     final c = t.candidates;
     check('默认主机时主端点在第一位', c.first.isPrimary && c.first.host == qq8DefaultHost);
-    check('默认主机时挂了兜底种子', c.length == 1 + qq8SeedEndpoints.length,
-        '${c.length}');
+    // 域名 443 必须紧跟主端点：校园网只劫持 80/8080，443 是唯一活路。
+    check('主端点之后先试域名 443', c[1].host == qq8DefaultHost && c[1].port == 443,
+        '${c[1].key}');
+    check('域名 443 之后才是 IP 种子',
+        c.length == 2 + qq8SeedEndpoints.length, '${c.length}');
     check('兜底端点不是主端点', c.skip(1).every((e) => !e.isPrimary));
     check('候选里没有重复的 host:port',
         c.map((e) => e.key).toSet().length == c.length);
@@ -594,6 +597,71 @@ Future<void> main() async {
     check('close() 后写会尝试重连并在失败时报错', msg.contains('连接失败'), msg);
     await t.close();
   }
+  // 【11】帧解析器必须把「HTTP 文本」识别成门户劫持，而不是普通错位
+  {
+    final d = Qq8FrameDecoder();
+    var threw = false;
+    var msg = '';
+    try {
+      d.add('HTTP/1.0 302 Moved Temporarily\r\n'.codeUnits);
+    } on Qq8HttpInterceptException catch (e) {
+      threw = true;
+      msg = e.message;
+    }
+    check('帧解析器把 HTTP 文本识别为门户劫持',
+        threw && msg.contains('HTTP 文本'), msg);
+  }
+
+  // 【12】端点回 HTTP（校园网门户劫持 8080）时自动换下一个端点（回归 2026-11-05 真机）
+  {
+    final portal = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final portalConnections = <Socket>[];
+    portal.listen((s) {
+      portalConnections.add(s);
+      s.listen(
+        (_) {
+          s.add('HTTP/1.0 302 Moved Temporarily\r\n'
+                  'Location: http://portal.hdu.edu.cn/\r\n\r\n'
+              .codeUnits);
+          // 不立刻 destroy：先让 HTTP 文本到达客户端，否则会先触发
+          // 「连接被对端关闭」，测不到劫持识别。连接在 finally 里统一销毁。
+          s.flush();
+        },
+        onError: (_) {},
+        onDone: () => s.destroy(),
+      );
+    });
+    final srv = await MockServer.start(<Uint8List>[_bytes([0x7b])]);
+    final attempts = <String>[];
+    final t = Qq8TcpTransport(
+      host: InternetAddress.loopbackIPv4.address,
+      port: portal.port,
+      connectTimeout: const Duration(seconds: 2),
+      fallbacks: <Qq8Endpoint>[
+        Qq8Endpoint(InternetAddress.loopbackIPv4.address, srv.port),
+      ],
+    )..onConnectAttempt = attempts.add;
+    try {
+      final got = await t.send(
+        framePacket(_bytes([0x01])),
+        timeout: const Duration(seconds: 3),
+      );
+      check('门户劫持后自动切到真实端点',
+          t.connectedEndpoint?.port == srv.port, '${t.connectedEndpoint?.key}');
+      check('切换端点后成功收到真实响应', got.join(',') == '123', _hex(got));
+      check('切换端点时留下日志', attempts.any((a) => a.contains('放弃该端点')),
+          '$attempts');
+      check('门户端点确实收到过协议包', portalConnections.isNotEmpty);
+    } finally {
+      await t.close();
+      await srv.stop();
+      for (final c in portalConnections) {
+        c.destroy();
+      }
+      await portal.close();
+    }
+  }
+
   // -- 汇总 --------------------------------------------------------------
   stdout.writeln('\n${'=' * 66}');
   stdout.writeln('通过 $_passed 项，失败 $_failed 项');

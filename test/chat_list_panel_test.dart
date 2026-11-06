@@ -2,7 +2,7 @@
 ///
 /// 这一组补的是此前**没有任何金样**的盲区：`test/message_bubble_test.dart`
 /// 只覆盖气泡列表，`test/ui_test.dart` 只管接线能不能起来。会话行的字号
-/// （17/16）、未读徽章（22dp 胶囊）、行间 1px 分隔线（从 72 起）都是按 TG
+/// （17/16）、未读徽章（22dp 胶囊）、行间 1px 分隔线（从 76 起）都是按 TG
 /// 的 `Cells/DialogCell` 对齐的，没有金样就只能靠肉眼，改坏了没人拦。
 library;
 
@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:penguinchat/client_api/objects.dart';
+import 'package:penguinchat/ui/prefs/ui_prefs.dart';
 import 'package:penguinchat/ui/theme/telegram_theme.dart';
 import 'package:penguinchat/ui/widgets/chat_list_panel.dart';
 import 'package:penguinchat/ui/widgets/message_bubble.dart' show formatTime;
@@ -57,6 +58,7 @@ Future<void> _pump(
   WidgetTester tester, {
   String? selected,
   Size size = const Size(360, 560),
+  UiPrefs prefs = const UiPrefs(),
   Future<void> Function(Chat chat)? onArchiveChat,
   Future<void> Function(Chat chat)? onToggleMuteChat,
 }) async {
@@ -85,17 +87,18 @@ Future<void> _pump(
         onOpenQq8Login: () {},
         onArchiveChat: onArchiveChat,
         onToggleMuteChat: onToggleMuteChat,
+        prefs: prefs,
       ),
     ),
   ));
   await tester.pumpAndSettle();
 }
 
-/// 行间分隔线（高 1、左边距 72）都有哪些——用来验证 `needDivider` 的规则。
+/// 行间分隔线（高 1、左边距 76）都有哪些——用来验证 `needDivider` 的规则。
 Finder _dividers() => find.byWidgetPredicate(
       (w) =>
           w is Container &&
-          w.margin == const EdgeInsets.only(left: 72) &&
+          w.margin == const EdgeInsets.only(left: 76) &&
           w.child == null,
     );
 
@@ -141,6 +144,27 @@ void main() {
     await _pump(tester);
     // 3 个在列表里的会话 + 1 个「已归档」入口 = 4 行 ⇒ 3 条分隔线
     expect(_dividers(), findsNWidgets(3));
+  });
+
+  testWidgets('关掉分隔线后一条都不画（prefs 开关生效）', (tester) async {
+    await _pump(tester, prefs: const UiPrefs(disableDividers: true));
+    expect(_dividers(), findsNothing);
+  });
+
+  testWidgets('时间带秒：开开关后时间变成 09:12:00', (tester) async {
+    await _pump(tester, prefs: const UiPrefs(timeWithSeconds: true));
+    expect(
+      find.text(formatTime(DateTime(2026, 10, 30, 9, 12), withSeconds: true)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('会话行高照 TG 的 70、头像 52（A1 尺寸对齐）', (tester) async {
+    await _pump(tester);
+    final row = tester.getSize(find.byKey(const ValueKey('chat-row-group_1')));
+    expect(row.height, TelegramMetrics.chatRowHeight);
+    expect(TelegramMetrics.chatRowHeight, 70.0);
+    expect(TelegramMetrics.avatarSize, 52.0);
   });
 
   testWidgets('归档会话不出现在主列表里，只在「已归档」入口计数', (tester) async {

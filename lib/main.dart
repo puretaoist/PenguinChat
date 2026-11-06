@@ -69,15 +69,14 @@ Future<void> main() async {
   final registry = await _loadBackendRegistry();
 
   // 设备信息采集（只在 Android 有实现）。
-  final deviceInfo =
-      Platform.isAndroid ? AndroidDeviceInfo() : const NoopDeviceInfo();
+  final deviceInfo = Platform.isAndroid
+      ? AndroidDeviceInfo()
+      : const NoopDeviceInfo();
 
   // 先把「这一版 APK 到底带了什么」写进日志。有一次真机日志里整段新代码的
   // 痕迹都看不到，最后靠解包 APK 翻 dex 才确认装的是旧包 —— 那次排查本可省掉。
   final deviceTag = await deviceInfo.buildTag();
-  Log.get('Main').i(
-    '设备采集: 构建=${deviceTag ?? "无原生实现（非 Android 或通道缺失）"}',
-  );
+  Log.get('Main').i('设备采集: 构建=${deviceTag ?? "无原生实现（非 Android 或通道缺失）"}');
 
   // 设备身份必须在这里定下来，不能交给异步 provider —— 理由见
   // `resolveQq8DeviceIdentity` 的文档：androidId 进 guid 派生
@@ -86,9 +85,8 @@ Future<void> main() async {
     dataDir: dataDir,
     deviceInfo: deviceInfo,
   );
-  Log.get('Main').i(
-    '设备身份已确定: ${deviceIdentity == null ? "无（将退回合成派生）" : "有（本机采集或人工注入）"}',
-  );
+  Log.get('Main')
+      .i('设备身份已确定: ${deviceIdentity == null ? "无（将退回合成派生）" : "有（本机采集或人工注入）"}');
 
   // 冷启动首帧的会话列表：直接读上次那个账号的 chats.json。
   // 这是"官方同款启动"的关键一步（Telegram 的 LaunchActivity 就是这么做的：
@@ -106,7 +104,9 @@ Future<void> main() async {
         safetyGateProvider.overrideWithValue(gate),
         // 协议线的票据存储：需要可写目录（不注入会在首次 watch 时抛错 → 白屏）
         qq8TokenStoreProvider.overrideWithValue(
-          FileQq8TokenStore(Directory('${dataDir.path}${Platform.pathSeparator}qq8')),
+          FileQq8TokenStore(
+            Directory('${dataDir.path}${Platform.pathSeparator}qq8'),
+          ),
         ),
         // 设备身份：null 表示"采不到 → 让上层退回合成派生"，这是合法状态，
         // 所以必须 override（不 override 的话 provider 会自己去读 identity.json，
@@ -138,8 +138,7 @@ Future<Directory> _resolveDataDir() async {
   } catch (e) {
     final fallback = Directory('${Directory.systemTemp.path}/qqclient');
     await fallback.create(recursive: true);
-    Log.get('Main').w('取应用私有目录失败，退化到临时目录（数据可能被系统清理）',
-        error: e);
+    Log.get('Main').w('取应用私有目录失败，退化到临时目录（数据可能被系统清理）', error: e);
     return fallback;
   }
 }
@@ -198,11 +197,15 @@ class QQClientApp extends ConsumerWidget {
     final dark = applyThemePalette(ref);
     // 字号倍率作用在根 MediaQuery 上：整个应用（含后续 push 的页面）一起变，
     // 不需要每个 Text 各自算一遍。
-    final fontScale = ref.watch(uiPrefsProvider).fontScale;
+    final uiPrefs = ref.watch(uiPrefsProvider);
+    final fontScale = uiPrefs.fontScale;
     return MaterialApp(
       title: 'PenguinChat',
       debugShowCheckedModeBanner: false,
-      theme: buildTelegramTheme(dark: dark),
+      theme: buildTelegramTheme(
+        dark: dark,
+        useSystemFonts: uiPrefs.useSystemFonts,
+      ),
       builder: (BuildContext context, Widget? child) {
         final mq = MediaQuery.of(context);
         return MediaQuery(

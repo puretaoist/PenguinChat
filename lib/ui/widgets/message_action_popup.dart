@@ -15,6 +15,7 @@
 library;
 
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -132,9 +133,15 @@ class _MessageActionPopupState extends State<_MessageActionPopup>
     final double maxLeft = screen.width - kMessagePopupWidth - 8;
     final double left = rawLeft.clamp(8.0, maxLeft < 8 ? 8.0 : maxLeft);
     final double maxTop = screen.height - _menuHeight - 16;
-    final double top = widget.anchor.top.clamp(16.0, maxTop < 16 ? 16.0 : maxTop);
+    final double top = widget.anchor.top.clamp(
+      16.0,
+      maxTop < 16 ? 16.0 : maxTop,
+    );
 
-    final curve = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
+    final curve = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOutCubic,
+    );
     return Stack(
       children: <Widget>[
         // 20% 黑遮罩：点它关闭（TG 的 popup 外层就是这么收的）。
@@ -153,14 +160,28 @@ class _MessageActionPopupState extends State<_MessageActionPopup>
           left: left,
           top: top,
           width: kMessagePopupWidth,
-          child: FadeTransition(
-            opacity: _controller,
-            child: ScaleTransition(
-              // 从贴气泡那条边展开（自己发的从右上，别人的从左上）。
-              alignment:
-                  widget.outgoing ? Alignment.topRight : Alignment.topLeft,
-              scale: Tween<double>(begin: 0.92, end: 1).animate(curve),
-              child: _menu(),
+          // TG 的 ActionBarPopupWindow 是"从锚点那侧弹出来"：0.85 → 1 的缩放 +
+          // 200ms 淡入，并带一点点朝气泡方向的位移。只做淡入会像凭空出现，
+          // 只做缩放又缺少方向感，两个一起才像从气泡边上长出来。
+          child: AnimatedBuilder(
+            animation: curve,
+            builder: (_, Widget? inner) => Transform.translate(
+              offset: Offset(
+                (1 - curve.value) * (widget.outgoing ? 10 : -10),
+                (1 - curve.value) * -6,
+              ),
+              child: inner,
+            ),
+            child: FadeTransition(
+              opacity: _controller,
+              child: ScaleTransition(
+                // 从贴气泡那条边展开（自己发的从右上，别人的从左上）。
+                alignment: widget.outgoing
+                    ? Alignment.topRight
+                    : Alignment.topLeft,
+                scale: Tween<double>(begin: 0.85, end: 1).animate(curve),
+                child: _menu(),
+              ),
             ),
           ),
         ),
@@ -173,34 +194,57 @@ class _MessageActionPopupState extends State<_MessageActionPopup>
       color: Colors.transparent,
       child: Container(
         decoration: BoxDecoration(
-          color: TelegramColors.bgHover,
           borderRadius: BorderRadius.circular(kMessagePopupRadius),
           boxShadow: <BoxShadow>[
+            // 阴影收一档（原来 blur 18 / 45% 太重，像贴了一张黑胶带）：
+            // TG 的 ActionBarPopupWindow 是 elevation 8 级别的柔和投影。
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.45),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
+              color: Colors.black.withValues(alpha: 0.38),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            for (var i = 0; i < widget.items.length; i++) ...<Widget>[
-              if (i > 0 && widget.items[i].danger)
-                Container(height: 1, color: TelegramColors.divider),
-              _row(widget.items[i]),
-            ],
-          ],
+        // 毛玻璃：菜单背后是照片时，纯色块会显得"贴"在图上；模糊一层
+        // 既保住可读性，又让浮层和底下的内容有层次（TG 12+ 的 popup 也
+        // 开始用 blur backdrops）。
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(kMessagePopupRadius),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+              decoration: BoxDecoration(
+                color: TelegramColors.bgHover.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(kMessagePopupRadius),
+              ),
+              // 描边画在 foregroundDecoration：Border.all 若写进 decoration
+              // 会占掉左右 1dp 内边距，把行宽从 200 挤成 198。
+              foregroundDecoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(kMessagePopupRadius),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  for (var i = 0; i < widget.items.length; i++) ...<Widget>[
+                    if (i > 0 && widget.items[i].danger)
+                      Container(height: 1, color: TelegramColors.divider),
+                    _row(widget.items[i]),
+                  ],
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
   }
 
   Widget _row(ActionSheetItem item) {
-    final color =
-        item.danger ? TelegramColors.danger : TelegramColors.textPrimary;
+    final color = item.danger
+        ? TelegramColors.danger
+        : TelegramColors.textPrimary;
     return InkWell(
       key: item.key,
       onTap: item.onTap == null ? null : () => _close(item.onTap),

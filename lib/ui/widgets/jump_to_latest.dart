@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/telegram_theme.dart';
 
-class JumpToLatestButton extends StatelessWidget {
+class JumpToLatestButton extends StatefulWidget {
   /// 未读条数（0 = 不显示徽章）。
   final int unread;
 
@@ -22,14 +22,49 @@ class JumpToLatestButton extends StatelessWidget {
   });
 
   @override
+  State<JumpToLatestButton> createState() => _JumpToLatestButtonState();
+}
+
+class _JumpToLatestButtonState extends State<JumpToLatestButton>
+    with SingleTickerProviderStateMixin {
+  /// 出现时从 0.8 弹到 1 并淡入（TG 的 chat_go_down 是"淡入 + 轻微放大"，
+  /// 不是硬生生蹦出来）。180ms 收得干净，不拖沓。
+  late final AnimationController _enter = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+  )..forward();
+
+  late final Animation<double> _curve = CurvedAnimation(
+    parent: _enter,
+    curve: Curves.easeOutCubic,
+  );
+
+  @override
+  void dispose() {
+    _enter.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final unread = widget.unread;
+    return FadeTransition(
+      opacity: _curve,
+      child: ScaleTransition(
+        scale: _curve.drive(Tween<double>(begin: 0.8, end: 1)),
+        child: _buildButton(unread),
+      ),
+    );
+  }
+
+  Widget _buildButton(int unread) {
     return Material(
       color: TelegramColors.bgHeader,
       elevation: 3,
       shape: const CircleBorder(),
       child: InkWell(
         customBorder: const CircleBorder(),
-        onTap: onTap,
+        onTap: widget.onTap,
         child: SizedBox(
           // TG 的 chat_go_down 按钮直径 dp(46)
           width: 46,
@@ -55,7 +90,10 @@ class JumpToLatestButton extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: TelegramColors.badge,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: TelegramColors.bgChat, width: 2),
+                      border: Border.all(
+                        color: TelegramColors.bgChat,
+                        width: 2,
+                      ),
                     ),
                     child: Text(
                       '$unread',

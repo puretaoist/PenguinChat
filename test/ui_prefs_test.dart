@@ -20,6 +20,28 @@ void main() {
       expect(p.wallpaperId, 'plain');
     });
 
+    test('聊天列表四项默认：圆角 30（=圆形）、分隔线开、时间不带秒、未读数缩写', () {
+      const p = UiPrefs();
+      expect(p.avatarCorners, UiPrefs.avatarCornersDefault);
+      expect(UiPrefs.avatarCornersDefault, 30.0);
+      expect(p.disableDividers, isFalse);
+      expect(p.timeWithSeconds, isFalse);
+      // 字段是 disableNumberRounding，默认 false = 允许缩写
+      expect(p.disableNumberRounding, isFalse);
+      // 默认 30 必须落回"圆形"文案，别让用户以为默认是半圆
+      expect(UiPrefs.avatarCornersLabel(30), '圆形');
+      expect(UiPrefs.avatarCornersLabel(0), '方形');
+      expect(UiPrefs.avatarCornersLabel(12), '12');
+    });
+
+    test('未读数文案：默认 K 缩写，noRounding 时原样', () {
+      expect(formatUnreadCount(3), '3');
+      expect(formatUnreadCount(999), '999');
+      expect(formatUnreadCount(1234), '1.2K');
+      expect(formatUnreadCount(12000), '12K');
+      expect(formatUnreadCount(1234, noRounding: true), '1234');
+    });
+
     test('九档主题色、五档聊天背景都有中文名，未知值退默认', () {
       expect(UiPrefs.accentIds.length, 9);
       expect(UiPrefs.accentIds.first, 'default');
@@ -50,6 +72,10 @@ void main() {
         messageAnimations: false,
         accentId: 'orange',
         wallpaperId: 'ocean',
+        avatarCorners: 12,
+        disableDividers: true,
+        timeWithSeconds: true,
+        disableNumberRounding: true,
       );
       expect(UiPrefs.fromJson(p.toJson()), p);
       final decoded = jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>;
@@ -86,6 +112,15 @@ void main() {
       expect(p.accentId, 'default');
       expect(p.wallpaperId, 'plain');
       expect(p.fontScale, 1.2);
+    });
+
+    test('头像圆角越界/类型错都夹回 0–30', () {
+      final tooBig = UiPrefs.fromJson(<String, Object?>{'avatar_corners': 99});
+      expect(tooBig.avatarCorners, 30.0);
+      final negative = UiPrefs.fromJson(<String, Object?>{'avatar_corners': -5});
+      expect(negative.avatarCorners, 0.0);
+      final wrongType = UiPrefs.fromJson(<String, Object?>{'avatar_corners': 'round'});
+      expect(wrongType.avatarCorners, 30.0);
     });
 
     test('copyWith 只改指定字段', () {

@@ -66,7 +66,8 @@ class RecordProgress {
   final double amplitude;
 
   @override
-  String toString() => 'RecordProgress(${durationMs}ms, amp=${amplitude.toStringAsFixed(2)})';
+  String toString() =>
+      'RecordProgress(${durationMs}ms, amp=${amplitude.toStringAsFixed(2)})';
 }
 
 /// 一段录制完成的裸 PCM 文件。
@@ -88,10 +89,10 @@ class RecordedPcm {
 
   /// 从原生返回的 Map 解析。字段缺失时给保守默认值（不抛异常）。
   factory RecordedPcm.fromMap(Map<Object?, Object?> map) => RecordedPcm(
-        path: map['path'] as String? ?? '',
-        durationMs: (map['durationMs'] as num?)?.toInt() ?? 0,
-        size: (map['size'] as num?)?.toInt() ?? 0,
-      );
+    path: map['path'] as String? ?? '',
+    durationMs: (map['durationMs'] as num?)?.toInt() ?? 0,
+    size: (map['size'] as num?)?.toInt() ?? 0,
+  );
 
   @override
   String toString() => 'RecordedPcm($path, ${durationMs}ms, $size bytes)';
@@ -108,11 +109,11 @@ class AudioBridge {
     MethodChannel? methodChannel,
     EventChannel? playbackEventChannel,
     EventChannel? recordEventChannel,
-  })  : _method = methodChannel ?? const MethodChannel(methodChannelName),
-        _playbackChannel =
-            playbackEventChannel ?? const EventChannel(playbackEventChannelName),
-        _recordChannel =
-            recordEventChannel ?? const EventChannel(recordEventChannelName);
+  }) : _method = methodChannel ?? const MethodChannel(methodChannelName),
+       _playbackChannel =
+           playbackEventChannel ?? const EventChannel(playbackEventChannelName),
+       _recordChannel =
+           recordEventChannel ?? const EventChannel(recordEventChannelName);
 
   /// 方法通道名。写成常量是为了真机排障时能在 logcat/dumpsys 里搜到。
   static const String methodChannelName = 'penguinchat/audio';
@@ -150,31 +151,31 @@ class AudioBridge {
     if (_ensured) return;
     _ensured = true;
     _playbackSub = _playbackChannel.receiveBroadcastStream().listen(
-          _onPlaybackEvent,
-          onError: (Object error) {
-            if (!_playbackController.isClosed) {
-              _playbackController.addError(_toUnsupported(error, '播放事件流'));
-            }
-          },
-        );
+      _onPlaybackEvent,
+      onError: (Object error) {
+        if (!_playbackController.isClosed) {
+          _playbackController.addError(_toUnsupported(error, '播放事件流'));
+        }
+      },
+    );
     _recordSub = _recordChannel.receiveBroadcastStream().listen(
-          _onRecordEvent,
-          onError: (Object error) {
-            if (!_recordController.isClosed) {
-              _recordController.addError(_toUnsupported(error, '录音事件流'));
-            }
-          },
-        );
+      _onRecordEvent,
+      onError: (Object error) {
+        if (!_recordController.isClosed) {
+          _recordController.addError(_toUnsupported(error, '录音事件流'));
+        }
+      },
+    );
   }
 
   /// 播放一段裸 PCM 文件。返回总时长（毫秒）。
   ///
   /// [sampleRate] 必须与文件内容一致（单声道 PCM16），否则速度会跑偏。
   Future<int> playFile(String path, {int sampleRate = 16000}) async {
-    final result = await _invoke<Map<Object?, Object?>>('playPcmFile', <String, Object?>{
-      'path': path,
-      'sampleRate': sampleRate,
-    });
+    final result = await _invoke<Map<Object?, Object?>>(
+      'playPcmFile',
+      <String, Object?>{'path': path, 'sampleRate': sampleRate},
+    );
     return (result?['durationMs'] as num?)?.toInt() ?? 0;
   }
 
@@ -189,7 +190,9 @@ class AudioBridge {
 
   /// 跳转到 [positionMs]（毫秒），返回实际落点毫秒。
   Future<int> seek(int positionMs) async {
-    final v = await _invoke<int>('seek', <String, Object?>{'positionMs': positionMs});
+    final v = await _invoke<int>('seek', <String, Object?>{
+      'positionMs': positionMs,
+    });
     return v ?? 0;
   }
 
@@ -198,7 +201,9 @@ class AudioBridge {
 
   /// 设置播放速度。API<23 或平台不支持时返回 false。
   Future<bool> setSpeed(double speed) async {
-    final v = await _invoke<bool>('setSpeed', <String, Object?>{'speed': speed});
+    final v = await _invoke<bool>('setSpeed', <String, Object?>{
+      'speed': speed,
+    });
     return v ?? false;
   }
 
@@ -216,7 +221,9 @@ class AudioBridge {
   }
 
   Future<void> recordStart({int sampleRate = 16000}) async {
-    await _invoke<Object?>('recordStart', <String, Object?>{'sampleRate': sampleRate});
+    await _invoke<Object?>('recordStart', <String, Object?>{
+      'sampleRate': sampleRate,
+    });
   }
 
   /// 结束录音。没有进行中的录音时返回 null。
@@ -264,20 +271,24 @@ class AudioBridge {
     final event = data['event'];
     if (event is! String) return;
     if (_playbackController.isClosed) return;
-    _playbackController.add(PlaybackEvent(
-      event: event,
-      positionMs: (data['positionMs'] as num?)?.toInt() ?? 0,
-    ));
+    _playbackController.add(
+      PlaybackEvent(
+        event: event,
+        positionMs: (data['positionMs'] as num?)?.toInt() ?? 0,
+      ),
+    );
   }
 
   void _onRecordEvent(dynamic data) {
     if (data is! Map) return;
     if (_recordController.isClosed) return;
     final rawAmplitude = (data['amplitude'] as num?)?.toDouble() ?? 0.0;
-    _recordController.add(RecordProgress(
-      durationMs: (data['durationMs'] as num?)?.toInt() ?? 0,
-      amplitude: rawAmplitude.clamp(0.0, 1.0).toDouble(),
-    ));
+    _recordController.add(
+      RecordProgress(
+        durationMs: (data['durationMs'] as num?)?.toInt() ?? 0,
+        amplitude: rawAmplitude.clamp(0.0, 1.0).toDouble(),
+      ),
+    );
   }
 
   UnsupportedError _toUnsupported(Object error, String where) {
@@ -286,9 +297,7 @@ class AudioBridge {
     }
     if (error is PlatformException) {
       final detail = error.message == null ? '' : ' ${error.message!}';
-      return UnsupportedError(
-        '音频平台通道出错（$where）：${error.code}$detail。',
-      );
+      return UnsupportedError('音频平台通道出错（$where）：${error.code}$detail。');
     }
     return UnsupportedError('音频平台通道出错（$where）：$error。');
   }

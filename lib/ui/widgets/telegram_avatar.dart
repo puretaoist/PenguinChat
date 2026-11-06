@@ -34,20 +34,31 @@ class TelegramAvatar extends StatelessWidget {
   /// 头像 CDN 在弱网下经常超时，绝不能让整行列表陪着白屏。
   final String? url;
 
+  /// 圆角：绝对半径，基准 56dp（抄 exteraGram `ExteraConfig.avatarCorners`，
+  /// 绘制时按 `corners * size / 56` 等比缩放）。
+  /// 30 = 圆形（默认，与 TG 的 dp(28)@54 等价）；0 = 方形。
+  final double corners;
+
   const TelegramAvatar({
     super.key,
     required this.name,
     this.size = TelegramMetrics.avatarSize,
     this.url,
+    this.corners = 30.0,
   });
 
   @override
   Widget build(BuildContext context) {
+    // 与 exteraGram 的 getAvatarCorners(size) 同式：corners 以 56dp 为基准
+    // 等比缩放，所以同一个 corners 值在任何尺寸上看起来一样圆。
+    final double radius = corners * size / 56.0;
     final letter = Container(
       width: size,
       height: size,
-      decoration:
-          BoxDecoration(color: _colorFromName(name), shape: BoxShape.circle),
+      decoration: BoxDecoration(
+        color: _colorFromName(name),
+        borderRadius: BorderRadius.circular(radius),
+      ),
       alignment: Alignment.center,
       child: Text(
         name.isEmpty ? '?' : name.characters.first,
@@ -65,6 +76,7 @@ class TelegramAvatar extends StatelessWidget {
       key: ValueKey<String>(url!),
       url: url!,
       size: size,
+      radius: radius,
       fallback: letter,
     );
   }
@@ -82,12 +94,16 @@ class TelegramAvatar extends StatelessWidget {
 class _AvatarImage extends StatefulWidget {
   final String url;
   final double size;
+
+  /// 裁剪半径（<= size/2 时按圆角矩形裁，否则就是圆）。
+  final double radius;
   final Widget fallback;
 
   const _AvatarImage({
     super.key,
     required this.url,
     required this.size,
+    required this.radius,
     required this.fallback,
   });
 
@@ -133,26 +149,31 @@ class _AvatarImageState extends State<_AvatarImage> {
 
   @override
   Widget build(BuildContext context) {
-    // 始终保留 ClipOval：形状断言（正圆回归测试）与视觉一致都靠它；
-    // 放弃重试时里面换成首字母块，而不是把 ClipOval 整个摘掉。
-    return ClipOval(
-      child: _gaveUp
-          ? widget.fallback
-          : Image.network(
-              widget.url,
-              key: ValueKey<int>(_attemptSeq),
-              width: widget.size,
-              height: widget.size,
-              fit: BoxFit.cover,
-              // CDN 慢是常态：加载中显示首字母色块而不是空白
-              frameBuilder: (ctx, child, frame, _) =>
-                  frame == null ? widget.fallback : child,
-              errorBuilder: (_, _, _) {
-                // errorBuilder 在构建期调用，不能直接 setState。
-                WidgetsBinding.instance.addPostFrameCallback((_) => _onError());
-                return widget.fallback;
-              },
-            ),
+    // 圆形（默认）继续走 ClipOval：正圆回归测试（C103）与真机圆头像都靠它，
+    // 只有用户把圆角调小才换成 ClipRRect。
+    final Widget content = _gaveUp
+        ? widget.fallback
+        : Image.network(
+            widget.url,
+            key: ValueKey<int>(_attemptSeq),
+            width: widget.size,
+            height: widget.size,
+            fit: BoxFit.cover,
+            // CDN 慢是常态：加载中显示首字母色块而不是空白
+            frameBuilder: (ctx, child, frame, _) =>
+                frame == null ? widget.fallback : child,
+            errorBuilder: (_, _, _) {
+              // errorBuilder 在构建期调用，不能直接 setState。
+              WidgetsBinding.instance.addPostFrameCallback((_) => _onError());
+              return widget.fallback;
+            },
+          );
+    if (widget.radius >= widget.size / 2) {
+      return ClipOval(child: content);
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.radius),
+      child: content,
     );
   }
 }

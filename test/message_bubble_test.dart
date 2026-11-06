@@ -105,6 +105,7 @@ Widget _row(
         child: MessageBubble(
           message: m,
           showSenderName: item.showSenderName,
+          firstInGroup: item.showSenderName,
           highlighted: m.atMe || m.replyToId != null,
           onReveal: onReveal,
           onRetry: onRetry,

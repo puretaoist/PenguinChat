@@ -78,12 +78,14 @@ class TgListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final titleColor =
-        danger ? TelegramColors.danger : TelegramColors.textPrimary;
+    final titleColor = danger
+        ? TelegramColors.danger
+        : TelegramColors.textPrimary;
     final subColor = danger
         ? TelegramColors.danger.withValues(alpha: 0.7)
         : TelegramColors.textSecondary;
-    final slotColor = iconBg ??
+    final slotColor =
+        iconBg ??
         (danger
             ? TelegramColors.danger.withValues(alpha: 0.15)
             : TelegramColors.accent.withValues(alpha: 0.15));
@@ -252,8 +254,9 @@ class TgFileRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        highlight ? TelegramColors.accent : TelegramColors.textSecondary;
+    final color = highlight
+        ? TelegramColors.accent
+        : TelegramColors.textSecondary;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -384,6 +387,7 @@ class TgChatRow extends StatelessWidget {
     );
   }
 }
+
 /// 分组卡片：现代 TG 设置页的圆角 12 卡 + 行间 1px 分隔线（分隔线缩进
 /// 到文字起点再画到右缘，同 TextCell.java needDivider 的画法；缩进
 /// 62 = 16 左距 + 40 图标槽 + 6 缝隙，即 TgListTile 的文字起点）。
@@ -403,11 +407,13 @@ class TelegramTileGroup extends StatelessWidget {
     for (var i = 0; i < children.length; i++) {
       rows.add(children[i]);
       if (divided && i != children.length - 1) {
-        rows.add(Container(
-          height: 1,
-          margin: const EdgeInsets.only(left: 62),
-          color: TelegramColors.divider,
-        ));
+        rows.add(
+          Container(
+            height: 1,
+            margin: const EdgeInsets.only(left: 62),
+            color: TelegramColors.divider,
+          ),
+        );
       }
     }
     return Padding(

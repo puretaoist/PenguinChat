@@ -28,17 +28,29 @@ class ChatWallpaper {
 /// 全部可选聊天背景（'plain' 必须排第一 = 默认）。
 const List<ChatWallpaper> wallpaperChoices = <ChatWallpaper>[
   ChatWallpaper(id: 'plain', colors: <Color>[]),
-  ChatWallpaper(id: 'dusk', colors: <Color>[Color(0xFF1E1B2E), Color(0xFF3A2E4F)]),
-  ChatWallpaper(id: 'forest', colors: <Color>[Color(0xFF10261B), Color(0xFF1E4433)]),
-  ChatWallpaper(id: 'ocean', colors: <Color>[Color(0xFF0A2233), Color(0xFF15496B)]),
-  ChatWallpaper(id: 'sunset', colors: <Color>[Color(0xFF331E2B), Color(0xFF6E3A2E)]),
+  ChatWallpaper(
+    id: 'dusk',
+    colors: <Color>[Color(0xFF1E1B2E), Color(0xFF3A2E4F)],
+  ),
+  ChatWallpaper(
+    id: 'forest',
+    colors: <Color>[Color(0xFF10261B), Color(0xFF1E4433)],
+  ),
+  ChatWallpaper(
+    id: 'ocean',
+    colors: <Color>[Color(0xFF0A2233), Color(0xFF15496B)],
+  ),
+  ChatWallpaper(
+    id: 'sunset',
+    colors: <Color>[Color(0xFF331E2B), Color(0xFF6E3A2E)],
+  ),
 ];
 
 /// 按 id 取背景；认不出的 id 回默认纯色，不抛异常。
 ChatWallpaper wallpaperOf(String id) => wallpaperChoices.firstWhere(
-      (ChatWallpaper w) => w.id == id,
-      orElse: () => wallpaperChoices.first,
-    );
+  (ChatWallpaper w) => w.id == id,
+  orElse: () => wallpaperChoices.first,
+);
 
 /// 聊天区背景：按 [wallpaperId] 画渐变，纯色档直接铺 TelegramColors.bgChat。
 ///

@@ -74,58 +74,62 @@ class MessageActionsSheet extends StatelessWidget {
     VoidCallback? onForward,
     VoidCallback? onSelect,
     VoidCallback? onPoke,
-  }) =>
-      ActionSheet.show(
-        context,
-        preview: _preview(message),
-        items: itemsFor(
-          context,
-          message: message,
-          canRecall: canRecall,
-          onCopy: onCopy,
-          onReply: onReply,
-          onRecall: onRecall,
-          onReveal: onReveal,
-          onDelete: onDelete,
-          onForward: onForward,
-          onSelect: onSelect,
-          onPoke: onPoke,
-        ),
-      );
+  }) => ActionSheet.show(
+    context,
+    preview: _preview(message),
+    items: itemsFor(
+      context,
+      message: message,
+      canRecall: canRecall,
+      onCopy: onCopy,
+      onReply: onReply,
+      onRecall: onRecall,
+      onReveal: onReveal,
+      onDelete: onDelete,
+      onForward: onForward,
+      onSelect: onSelect,
+      onPoke: onPoke,
+    ),
+  );
 
   /// 顶部预览：让人确认点的是哪条（左侧一条强调色竖线，同 TG 的引用块）。
   static Widget _preview(ChatMessage message) => Row(
-        children: <Widget>[
-          Container(
-            width: 3,
-            height: 34,
-            decoration: BoxDecoration(
-              color: TelegramColors.accent,
-              borderRadius: BorderRadius.circular(2),
-            ),
+    children: <Widget>[
+      Container(
+        width: 3,
+        height: 34,
+        decoration: BoxDecoration(
+          color: TelegramColors.accent,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          message.text.isEmpty ? message.displayText : message.text,
+          key: const ValueKey('actions-preview'),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: TelegramColors.textPrimary,
+            fontSize: 15,
+            height: 1.25,
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message.text.isEmpty ? message.displayText : message.text,
-              key: const ValueKey('actions-preview'),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: TelegramColors.textPrimary,
-                fontSize: 15,
-                height: 1.25,
-              ),
-            ),
-          ),
-        ],
-      );
+        ),
+      ),
+    ],
+  );
 
   static List<ActionSheetItem> itemsFor(
     BuildContext context, {
     required ChatMessage message,
     required bool canRecall,
     bool includeSelect = true,
+    // 菜单项可见性（抄 ayu 的 showCopy*/分享/删除 开关）：调用方按偏好传。
+    // 默认 true —— 组件被单独使用（测试/其它入口）时保持原有全套动作。
+    bool includeCopy = true,
+    bool includeForward = true,
+    bool includeDelete = true,
     // 底部弹层用得到「取消」这一行；气泡旁 popup 不要（TG 是点空白处关），
     // 所以给调用方一个开关，而不是两处各维护一份清单。
     bool includeCancel = true,
@@ -146,12 +150,13 @@ class MessageActionsSheet extends StatelessWidget {
         label: '回复',
         onTap: onReply,
       ),
-      ActionSheetItem(
-        key: const ValueKey('action-copy'),
-        icon: Icons.copy_outlined,
-        label: '复制',
-        onTap: onCopy,
-      ),
+      if (includeCopy)
+        ActionSheetItem(
+          key: const ValueKey('action-copy'),
+          icon: Icons.copy_outlined,
+          label: '复制',
+          onTap: onCopy,
+        ),
       if (onPoke != null)
         ActionSheetItem(
           key: const ValueKey('action-poke'),
@@ -159,12 +164,13 @@ class MessageActionsSheet extends StatelessWidget {
           label: '戳一戳',
           onTap: onPoke,
         ),
-      ActionSheetItem(
-        key: const ValueKey('action-forward'),
-        icon: Icons.forward,
-        label: '转发',
-        onTap: onForward,
-      ),
+      if (includeForward)
+        ActionSheetItem(
+          key: const ValueKey('action-forward'),
+          icon: Icons.forward,
+          label: '转发',
+          onTap: onForward,
+        ),
       if (includeSelect)
         ActionSheetItem(
           key: const ValueKey('action-select'),
@@ -187,13 +193,14 @@ class MessageActionsSheet extends StatelessWidget {
           danger: true,
           onTap: onRecall,
         ),
-      ActionSheetItem(
-        key: const ValueKey('action-delete'),
-        icon: Icons.delete_outline,
-        label: '删除（仅本地）',
-        danger: true,
-        onTap: onDelete,
-      ),
+      if (includeDelete)
+        ActionSheetItem(
+          key: const ValueKey('action-delete'),
+          icon: Icons.delete_outline,
+          label: '删除（仅本地）',
+          danger: true,
+          onTap: onDelete,
+        ),
       if (includeCancel)
         ActionSheetItem(
           key: const ValueKey('action-cancel'),

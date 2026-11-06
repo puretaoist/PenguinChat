@@ -21,11 +21,18 @@ import 'package:flutter/rendering.dart';
 import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
 import '../../infra/net/media_fetcher.dart';
+import '../platform/app_breakpoints.dart';
 import '../theme/telegram_theme.dart';
 import 'message_content.dart';
 
-String formatTime(DateTime t) =>
-    '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+/// 时分（`12:05`）。[withSeconds] 打开后补上秒（抄 exteraGram 的
+/// `ExteraConfig.formatTimeWithSeconds`，列表与气泡共用同一格式化）。
+String formatTime(DateTime t, {bool withSeconds = false}) {
+  final hh = t.hour.toString().padLeft(2, '0');
+  final mm = t.minute.toString().padLeft(2, '0');
+  if (!withSeconds) return '$hh:$mm';
+  return '$hh:$mm:${t.second.toString().padLeft(2, '0')}';
+}
 
 class MessageBubble extends StatelessWidget {
   final ChatMessage message;
@@ -33,8 +40,18 @@ class MessageBubble extends StatelessWidget {
   /// 发送失败时的重试入口。为 null 表示不提供重试（例如收到的消息）。
   final VoidCallback? onRetry;
 
+  /// 气泡圆角；null = 走 [TelegramMetrics.bubbleRadius]（17）。
+  final double? bubbleRadius;
+
   /// 是否显示发送者名（群聊里同一人的第一条）。
   final bool showSenderName;
+
+  /// 是否为本组的第一条（同方向 + 同发送者 + 5 分钟内）。
+  ///
+  /// TG 的连续消息堆只把**最上面**那条的顶角画满圆，中间几条的"外侧"顶角
+  /// 收成 6dp（ChatMessageCell 里 cornerRadius 按 isFirstInGroup 改），
+  /// 这样一叠消息看起来是连在一起的一坨，而不是一串独立胶囊。
+  final bool firstInGroup;
 
   /// 发言人显示名的覆盖值（可选）。
   ///
@@ -44,6 +61,13 @@ class MessageBubble extends StatelessWidget {
 
   /// 是否被 @（或回复到我）：左侧画一条 accent 竖线。
   final bool highlighted;
+
+  /// 这个会话是否**有头像列**（群聊为 true、私聊为 false）。
+  ///
+  /// TG 私聊也画头像，所以入站气泡一律从 dp(48+3) 起；本项目私聊不画头像
+  /// （见 home_page 的 showAvatars），若照搬 3dp 就会贴着屏幕左边，所以在
+  /// 没有头像列时保留 8dp 的呼吸位。
+  final bool showAvatarColumn;
 
   /// 这一行左侧是否画了头像。TG 的可用气泡宽度在画头像时会再扣 52dp
   /// （`messenger/MessageObject.java:8527-8531`：`parentWidth - dp(80)`，
@@ -92,9 +116,16 @@ class MessageBubble extends StatelessWidget {
     super.key,
     required this.message,
     this.onRetry,
+
+    /// 气泡圆角（null = 用 TelegramMetrics.bubbleRadius 的默认 17）。
+    /// 由消息列表按用户偏好传下来，组件本身不依赖 riverpod，
+    /// 这样金样测试/单独使用都不必包 ProviderScope。
+    this.bubbleRadius,
     this.showSenderName = true,
+    this.firstInGroup = true,
     this.senderLabel,
     this.highlighted = false,
+    this.showAvatarColumn = false,
     this.avatarVisible = false,
     this.onReveal,
     this.localMedia,
@@ -114,19 +145,25 @@ class MessageBubble extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         // sizeOf：键盘动画帧（viewInsets）不触发重建
-        final mediaLimit = MediaQuery.sizeOf(context).width * 0.78;
-        // 扣掉同一行里的兄弟：外层 Padding 的 8x2。不扣的话 Row 会溢出
-        // ——widget 测试在 800px 宽的窗口下抓到过这 16px。
-        const chrome = 16.0;
+        final mediaLimit = math.min(
+          MediaQuery.sizeOf(context).width * 0.78,
+          AppBreakpoints.bubbleMaxWidth,
+        );
+        // 扣掉同一行里的兄弟：外层 Padding 靠屏那一侧最多 8dp（另一侧 0）。
+        // 余量给 Row 两端与取整误差，避免 800px 窗口下溢出。
+        const chrome = 8.0;
         // 宽度按 TG 的算法收：父宽 -80，画头像的那一侧再 -52
         // （messenger/MessageObject.java:8527-8531）。本组件拿到的
         // constraints 已经扣掉了头像槽（44dp），所以这里只补 20（= 80 - 44 - 16
         // 里的差值）与头像那 52。短屏上比以前窄 18dp 左右，正是 TG 的留白。
         final avatarInset = avatarVisible ? 56.0 : 0.0;
-        final avail =
-            math.max(constraints.maxWidth - chrome - 16 - avatarInset, 0.0);
-        final maxWidth =
-            constraints.maxWidth.isFinite ? math.min(mediaLimit, avail) : mediaLimit;
+        final avail = math.max(
+          constraints.maxWidth - chrome - 16 - avatarInset,
+          0.0,
+        );
+        final maxWidth = constraints.maxWidth.isFinite
+            ? math.min(mediaLimit, avail)
+            : mediaLimit;
         return _build(context, maxWidth);
       },
     );
@@ -137,155 +174,164 @@ class MessageBubble extends StatelessWidget {
     // 单图（没有别的块级段）时把时间画进图片右下角（TG ChatMessageCell.java
     // 24015-24060 的 media 分支），气泡不再为时间另留一行；没有文字说明的
     // 纯图还要四边贴边（连内边距一起去掉）。
-    final imageOnly = MessageContent.singleImageBlock(message) &&
+    final imageOnly =
+        MessageContent.singleImageBlock(message) &&
         !message.isFailed &&
         !(message.isRecalled && !message.revealed);
-    final pureImage = imageOnly &&
+    final pureImage =
+        imageOnly &&
         message.text.trim().isEmpty &&
         message.replyPreview == null;
+    final double radius = bubbleRadius ?? TelegramMetrics.bubbleRadius;
+    // 外侧（靠头像/靠屏幕边的那一侧）顶角：组内非首条收成 6dp。
+    const double tight = 6.0;
+    final double outerTop = firstInGroup ? radius : tight;
     final bubbleShape = BorderRadius.only(
-      topLeft: const Radius.circular(TelegramMetrics.bubbleRadius),
-      topRight: const Radius.circular(TelegramMetrics.bubbleRadius),
+      topLeft: Radius.circular(isOut ? radius : outerTop),
+      topRight: Radius.circular(isOut ? outerTop : radius),
       bottomLeft: Radius.circular(
-          isOut ? TelegramMetrics.bubbleRadius : TelegramMetrics.bubbleTailRadius),
+        isOut ? radius : TelegramMetrics.bubbleTailRadius,
+      ),
       bottomRight: Radius.circular(
-          isOut ? TelegramMetrics.bubbleTailRadius : TelegramMetrics.bubbleRadius),
+        isOut ? TelegramMetrics.bubbleTailRadius : radius,
+      ),
     );
     final inner = Container(
-        decoration: BoxDecoration(
-          // @我 的入站气泡：底色掺 12% 强调色（TG 用强调色表达"有人在叫我"，
-          // 但**不画气泡外的东西**）。以前这里在气泡外面挂了一根 3x28 的紫色
-          // 竖条，用户反馈"聊天气泡外部左侧的竖条是什么，怎么有的有有的没有"
-          // ——那根条只在 @我/回复 的消息上出现，纯属自造视觉。
-          color: isOut
-              ? TelegramColors.bubbleOut
-              : (highlighted
+      decoration: BoxDecoration(
+        // @我 的入站气泡：底色掺 12% 强调色（TG 用强调色表达"有人在叫我"，
+        // 但**不画气泡外的东西**）。以前这里在气泡外面挂了一根 3x28 的紫色
+        // 竖条，用户反馈"聊天气泡外部左侧的竖条是什么，怎么有的有有的没有"
+        // ——那根条只在 @我/回复 的消息上出现，纯属自造视觉。
+        color: isOut
+            ? TelegramColors.bubbleOut
+            : (highlighted
                   ? Color.alphaBlend(
                       TelegramColors.accent.withValues(alpha: 0.12),
                       TelegramColors.bubbleIn,
                     )
                   : TelegramColors.bubbleIn),
-          borderRadius: bubbleShape,
-        ),
-        // 内边距不是四边等宽：TG layoutTextXY 16626-16651 自己 +11、对方 +17
-        // （给对方头像留空隙），上 8、右 12、下 6。
-        padding: pureImage
-            ? EdgeInsets.zero
-            : EdgeInsets.fromLTRB(isOut ? 11 : 17, 8, 12, 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 气泡宽度必须由「最宽的子项」决定（TG 的气泡随正文收缩）。
-            // 关键：Align 默认撑满父宽，所以这层给 widthFactor: 1 让它 hug；
-            // 发送者名/引用/正文/撤回行全部塞进同一个 start 对齐的内层 Column，
-            // 这样谁最宽谁定宽度，其余子项都跟着 hug，不会被顶到右边。
-            Align(
-              alignment: Alignment.centerLeft,
-              widthFactor: 1,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (!isOut &&
-                      showSenderName &&
-                      (senderLabel ?? message.senderName).isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Text(
-                        senderLabel ?? message.senderName,
-                        style: TextStyle(
-                          // TG 按 user.id % 7 轮转七色（UserObject.java:212-216），
-                          // 不是统一强调色。
-                          color: TelegramColors.nameColorFor(message.senderId),
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                        ),
+        borderRadius: bubbleShape,
+      ),
+      // 内边距不是四边等宽：TG layoutTextXY 16626-16651 自己 +11、对方 +17
+      // （给对方头像留空隙），上 8、右 12、下 6。
+      padding: pureImage
+          ? EdgeInsets.zero
+          : EdgeInsets.fromLTRB(isOut ? 11 : 17, 8, 12, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 气泡宽度必须由「最宽的子项」决定（TG 的气泡随正文收缩）。
+          // 关键：Align 默认撑满父宽，所以这层给 widthFactor: 1 让它 hug；
+          // 发送者名/引用/正文/撤回行全部塞进同一个 start 对齐的内层 Column，
+          // 这样谁最宽谁定宽度，其余子项都跟着 hug，不会被顶到右边。
+          Align(
+            alignment: Alignment.centerLeft,
+            widthFactor: 1,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!isOut &&
+                    showSenderName &&
+                    (senderLabel ?? message.senderName).isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 3),
+                    child: Text(
+                      senderLabel ?? message.senderName,
+                      style: TextStyle(
+                        // TG 按 user.id % 7 轮转七色（UserObject.java:212-216），
+                        // 不是统一强调色。
+                        color: TelegramColors.nameColorFor(message.senderId),
+                        // TG `Theme.java:8399` namePaint = dp((2*16+10)/3) = 14。
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  if (message.replyPreview != null && message.replyPreview!.isNotEmpty)
-                    _replyQuote(isOut),
-                  if (message.isRecalled && !message.revealed)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          message.displayText,
-                          style: TextStyle(
-                            color: isOut
-                                ? TelegramColors.bubbleOutTime
-                                : TelegramColors.textSecondary,
-                            fontStyle: FontStyle.italic,
-                            fontSize: TelegramMetrics.fontBody,
-                            height: 1.35,
-                          ),
-                        ),
-                        if (onReveal != null) ...[
-                          const SizedBox(width: 6),
-                          GestureDetector(
-                            key: const ValueKey('msg-reveal'),
-                            onTap: onReveal,
-                            child: Text(
-                              '查看',
-                              style: TextStyle(
-                                color: isOut
-                                    ? TelegramColors.bubbleOutText
-                                    : TelegramColors.accent,
-                                fontSize: TelegramMetrics.fontTimestamp + 1,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    )
-                  else ...[
-                    // 正文交给 MessageContent：文本/表情/@ 行内排，图片单独成块。
-                    // 揭示后的撤回消息也走这里——反撤回要能看到**原样**的内容，
-                    // 包括图片；"已撤回 · 内容已保留"那行注释负责说明它是被撤回的。
-                    MessageContent(
-                      message: message,
-                      isOut: isOut,
-                      localMedia: localMedia,
-                      ensureMedia: ensureMedia,
-                      mediaFailure: mediaFailure,
-                      retryMedia: retryMedia,
-                      onOpenFile: onOpenFile,
-                      imageMeta: imageOnly ? _imageTimeBadge(isOut) : null,
-                      trailing: _inlineMeta ? _metaInline(isOut) : null,
-                    ),
-                    if (message.deleted)
+                  ),
+                if (message.replyPreview != null &&
+                    message.replyPreview!.isNotEmpty)
+                  _replyQuote(isOut),
+                if (message.isRecalled && !message.revealed)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        '已撤回 · 内容已保留',
-                        key: const ValueKey('msg-recalled-note'),
+                        message.displayText,
                         style: TextStyle(
                           color: isOut
                               ? TelegramColors.bubbleOutTime
-                              : TelegramColors.textMuted,
-                          fontSize: TelegramMetrics.fontTimestamp,
+                              : TelegramColors.textSecondary,
+                          fontStyle: FontStyle.italic,
+                          fontSize: TelegramMetrics.fontBody,
+                          height: 1.35,
                         ),
                       ),
-                  ],
+                      if (onReveal != null) ...[
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          key: const ValueKey('msg-reveal'),
+                          onTap: onReveal,
+                          child: Text(
+                            '查看',
+                            style: TextStyle(
+                              color: isOut
+                                  ? TelegramColors.bubbleOutText
+                                  : TelegramColors.accent,
+                              fontSize: TelegramMetrics.fontTimestamp + 1,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  )
+                else ...[
+                  // 正文交给 MessageContent：文本/表情/@ 行内排，图片单独成块。
+                  // 揭示后的撤回消息也走这里——反撤回要能看到**原样**的内容，
+                  // 包括图片；"已撤回 · 内容已保留"那行注释负责说明它是被撤回的。
+                  MessageContent(
+                    message: message,
+                    isOut: isOut,
+                    localMedia: localMedia,
+                    ensureMedia: ensureMedia,
+                    mediaFailure: mediaFailure,
+                    retryMedia: retryMedia,
+                    onOpenFile: onOpenFile,
+                    imageMeta: imageOnly ? _imageTimeBadge(isOut) : null,
+                    trailing: _inlineMeta ? _metaInline(isOut) : null,
+                  ),
+                  if (message.deleted)
+                    Text(
+                      '已撤回 · 内容已保留',
+                      key: const ValueKey('msg-recalled-note'),
+                      style: TextStyle(
+                        color: isOut
+                            ? TelegramColors.bubbleOutTime
+                            : TelegramColors.textMuted,
+                        fontSize: TelegramMetrics.fontTimestamp,
+                      ),
+                    ),
                 ],
-              ),
+              ],
             ),
-            // 时间/状态能贴正文就贴（TG 的排法，见 [_inlineMeta]），贴不了
-            // 才单独占一行——否则每个气泡都白多出一行高度，短消息看着特别空。
-            // 单图的时间已经画在图片右下角（imageOnly），不再占一行。
-            if (!_inlineMeta && !imageOnly) ...[
-              const SizedBox(height: 2),
-              _metaRow(isOut),
-            ],
+          ),
+          // 时间/状态能贴正文就贴（TG 的排法，见 [_inlineMeta]），贴不了
+          // 才单独占一行——否则每个气泡都白多出一行高度，短消息看着特别空。
+          // 单图的时间已经画在图片右下角（imageOnly），不再占一行。
+          if (!_inlineMeta && !imageOnly) ...[
+            const SizedBox(height: 2),
+            _metaRow(isOut),
           ],
-        ),
-      );
-    final body = ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: maxWidth,
+        ],
       ),
+    );
+    final body = ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
       // 纯图要贴满四角：Container 的 decoration 不裁剪子级，必须自己 Clip。
-      child:
-          pureImage ? ClipRRect(borderRadius: bubbleShape, child: inner) : inner,
+      child: pureImage
+          ? ClipRRect(borderRadius: bubbleShape, child: inner)
+          : inner,
     );
 
     // 交出自己的 RenderBox（弹菜单定位用）。用回调而不是 GlobalKey：
@@ -297,14 +343,25 @@ class MessageBubble extends StatelessWidget {
             onGone: onBubbleBoxGone,
             child: body,
           );
+    // 靠屏一侧的留白照 TG 收窄到 3dp（媒体 9dp，`ChatMessageCell.java:20595`
+    // 入站 / 20515 出站），原来左右一律 8dp，整列气泡比 TG 多缩进 5dp，看着更窄。
+    // 垂直方向按"是否组首"分档：TG 组间空隙大、组内几乎贴紧（名字行本身也
+    // 占高度），原来一律 1dp 让所有消息糊成一坨，且组与组之间分不开。
+    final double outEdge = imageOnly ? 9 : 3;
+    // 入站靠左的留白：有头像列（群聊）时照 TG 的 3dp，没头像列（私聊）留 8dp。
+    final double inEdge = imageOnly ? 9 : (showAvatarColumn ? 3 : 8);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      padding: EdgeInsets.only(
+        left: isOut ? 0 : inEdge,
+        right: isOut ? outEdge : 0,
+        top: firstInGroup ? 7 : 2,
+        bottom: 2,
+      ),
       child: Row(
-        mainAxisAlignment:
-            isOut ? MainAxisAlignment.end : MainAxisAlignment.start,
-        children: [
-          bubble,
-        ],
+        mainAxisAlignment: isOut
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        children: [bubble],
       ),
     );
   }
@@ -338,8 +395,8 @@ class MessageBubble extends StatelessWidget {
               message.isFailed
                   ? Icons.error_outline
                   : message.isSending
-                      ? Icons.schedule
-                      : Icons.done,
+                  ? Icons.schedule
+                  : Icons.done,
               size: 12,
               color: Colors.white70,
             ),
@@ -351,8 +408,9 @@ class MessageBubble extends StatelessWidget {
 
   /// 引用条：竖线 + 引用原文（最多两行）。
   Widget _replyQuote(bool isOut) {
-    final quoteColor =
-        isOut ? TelegramColors.bubbleOutTime : TelegramColors.textSecondary;
+    final quoteColor = isOut
+        ? TelegramColors.bubbleOutTime
+        : TelegramColors.textSecondary;
     return Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.only(left: 8),
@@ -389,8 +447,9 @@ class MessageBubble extends StatelessWidget {
   /// 用 WidgetSpan 塞进文本流里（`PlaceholderAlignment.bottom` 让它贴着行底，
   /// 不参与基线——Row 没有基线，用 baseline 对齐会断言失败）。
   InlineSpan _metaInline(bool isOut) {
-    final timeColor =
-        isOut ? TelegramColors.bubbleOutTime : TelegramColors.textSecondary;
+    final timeColor = isOut
+        ? TelegramColors.bubbleOutTime
+        : TelegramColors.textSecondary;
     return WidgetSpan(
       alignment: PlaceholderAlignment.bottom,
       child: Padding(
@@ -411,8 +470,8 @@ class MessageBubble extends StatelessWidget {
                 message.isFailed
                     ? Icons.error_outline
                     : message.isSending
-                        ? Icons.schedule
-                        : Icons.done,
+                    ? Icons.schedule
+                    : Icons.done,
                 size: 14,
                 color: message.isFailed
                     ? TelegramColors.danger
@@ -427,8 +486,9 @@ class MessageBubble extends StatelessWidget {
 
   /// 右下角：失败提示 + 时间 + 送达状态。
   Widget _metaRow(bool isOut) {
-    final timeColor =
-        isOut ? TelegramColors.bubbleOutTime : TelegramColors.textSecondary;
+    final timeColor = isOut
+        ? TelegramColors.bubbleOutTime
+        : TelegramColors.textSecondary;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -458,8 +518,8 @@ class MessageBubble extends StatelessWidget {
             message.isFailed
                 ? Icons.error_outline
                 : message.isSending
-                    ? Icons.schedule
-                    : Icons.done,
+                ? Icons.schedule
+                : Icons.done,
             size: 14,
             color: message.isFailed
                 ? TelegramColors.danger
@@ -557,7 +617,7 @@ class DateChip extends StatelessWidget {
     return Center(
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
         decoration: BoxDecoration(
           // 暗色是黑底白字；亮色反过来——TG 亮色的日期胶囊是比聊天背景
           // 略深的浅灰底 + 深灰字，白字压在浅色背景上根本看不清。
@@ -570,7 +630,7 @@ class DateChip extends StatelessWidget {
           label(day, now: now),
           style: TextStyle(
             color: TelegramColors.isDark
-                ? Colors.white
+                ? Colors.white.withValues(alpha: 0.85)
                 : TelegramColors.textSecondary,
             fontSize: TelegramMetrics.fontDateChip,
             fontWeight: FontWeight.w500,

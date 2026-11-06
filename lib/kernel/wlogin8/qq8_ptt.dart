@@ -367,8 +367,19 @@ abstract final class Qq8PttHighway {
   static const int defaultChunkLimit = 524288;
 
   /// 组一帧上传包。
+  ///
+  /// 字段 5（LoginSigHead）与 1.6（AppId）是 2026-11-05 补的：
+  /// 参考实现 Lagrange.Core/Internal/Context/HighwayContext.cs 的 UploadFile()
+  /// 里，ReqDataHighwayHead 一定带 MsgLoginSigHead = {1: loginSigType(8), 2: A2,
+  /// 3: AppId}，且 DataHighwayHead.AppId 填客户端 AppId（不是 0）。此前我们
+  /// 两处都缺，服务端对所有节点统一回 error_code=372（真机 11-05 复现），
+  /// 文件从未真正登记，对端因此显示「消息已过期」。
   static Uint8List buildFrame({
     required int seq,
+    /// `DataHighwayHead.f2 Uin` 在协议定义里是 **string**（Lagrange.Core
+    /// Internal/Packets/Service/Highway.cs 的 `DataHighwayHead.Uin` 声明为 string?，
+    /// HighwayContext.cs:69 填 `Keystore.Uin.ToString()`）。2026-11-05 我曾误改成 int，
+    /// 真机实测 372→67 与 uin 的编码方式无关（两种都回 67），故按官方定义恢复 string。
     required String uin,
     required int totalSize,
     required int offset,
@@ -376,6 +387,8 @@ abstract final class Qq8PttHighway {
     required Uint8List ticket,
     required Uint8List fileMd5,
     required Uint8List ext,
+    required int appId,
+    Uint8List? loginSig,
   }) {
     final head = Qq8Pb.encode(<int, Object?>{
       1: <int, Object?>{
@@ -384,7 +397,7 @@ abstract final class Qq8PttHighway {
         3: 'PicUp.DataUp',
         4: seq,
         5: 0,
-        6: 0,
+        6: appId,
         7: 16,
         8: cmdIdUpload,
       },
@@ -401,6 +414,13 @@ abstract final class Qq8PttHighway {
       },
       3: ext,
       4: 0,
+      // LoginSigHead：老客户端 A2 登录态签名，缺它服务端按未登录处理（372）。
+      if (loginSig != null && loginSig.isNotEmpty)
+        5: <int, Object?>{
+          1: 8, // loginSigType = 8（A2）
+          2: loginSig,
+          3: appId,
+        },
     });
     final out = Uint8List(9 + head.length + chunk.length + 1);
     out[0] = 0x28;

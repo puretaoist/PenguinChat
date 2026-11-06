@@ -11,7 +11,8 @@ import '../audio/voice_playback_controller.dart';
 /// ChangeNotifierProvider 自己会在销毁时 dispose 这个 notifier，再挂一次
 /// 会 double dispose，测试里直接抛
 /// A VoicePlaybackController was used after being disposed。
-final voicePlaybackProvider =
-    ChangeNotifierProvider<VoicePlaybackController>((ref) {
+final voicePlaybackProvider = ChangeNotifierProvider<VoicePlaybackController>((
+  ref,
+) {
   return VoicePlaybackController();
 });

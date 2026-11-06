@@ -76,10 +76,8 @@ class TgPageHeader extends StatelessWidget {
               ],
             ),
           ),
-          for (final w in trailing) Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: w,
-          ),
+          for (final w in trailing)
+            Padding(padding: const EdgeInsets.only(left: 4), child: w),
         ],
       ),
     );

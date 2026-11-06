@@ -26,7 +26,8 @@ abstract class RecorderPlatform {
 
 /// 用真实原生通道的实现。
 class AudioBridgeRecorder implements RecorderPlatform {
-  AudioBridgeRecorder([AudioBridge? bridge]) : _bridge = bridge ?? AudioBridge();
+  AudioBridgeRecorder([AudioBridge? bridge])
+    : _bridge = bridge ?? AudioBridge();
 
   final AudioBridge _bridge;
 

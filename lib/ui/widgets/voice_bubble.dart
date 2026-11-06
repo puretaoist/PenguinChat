@@ -59,8 +59,9 @@ class VoiceBubble extends StatelessWidget {
         ? Colors.white.withValues(alpha: 0.22)
         : TelegramColors.accent;
     final iconColor = isOut ? TelegramColors.bubbleOutText : Colors.white;
-    final playedColor =
-        isOut ? TelegramColors.bubbleOutText : TelegramColors.accent;
+    final playedColor = isOut
+        ? TelegramColors.bubbleOutText
+        : TelegramColors.accent;
     final restColor = isOut
         ? Colors.white.withValues(alpha: 0.42)
         : TelegramColors.textSecondary.withValues(alpha: 0.45);
@@ -80,15 +81,18 @@ class VoiceBubble extends StatelessWidget {
             Container(
               width: 34,
               height: 34,
-              decoration: BoxDecoration(color: circleBg, shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                color: circleBg,
+                shape: BoxShape.circle,
+              ),
               child: loading
                   ? Icon(Icons.download_rounded, size: 18, color: iconColor)
                   : Icon(
                       playing
                           ? Icons.pause_rounded
                           : (errorText == null
-                              ? Icons.play_arrow_rounded
-                              : Icons.refresh_rounded),
+                                ? Icons.play_arrow_rounded
+                                : Icons.refresh_rounded),
                       size: 22,
                       color: iconColor,
                     ),
@@ -170,8 +174,10 @@ class VoiceBubble extends StatelessWidget {
               child: FractionallySizedBox(
                 alignment: Alignment.bottomCenter,
                 heightFactor:
-                    (0.22 + values[(i * values.length) ~/ count] * 0.78)
-                        .clamp(0.15, 1.0),
+                    (0.22 + values[(i * values.length) ~/ count] * 0.78).clamp(
+                      0.15,
+                      1.0,
+                    ),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: i < playedBars ? playedColor : restColor,

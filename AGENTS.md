@@ -1,7 +1,7 @@
 # AGENTS.md — 项目交接说明
 
 > 这份文件是**给接手本项目的 AI agent 读的第一份文档**。
-> 读完它你应该能：明白项目在做什么、遵守哪些纪律、当前做到哪、下一步做什么。
+> 读完它应该能：明白项目在做什么、遵守哪些纪律、当前做到哪、下一步做什么。
 >
 > 细节文档见 [`docs/`](docs/) 目录，本文件末尾有索引。
 
@@ -15,11 +15,11 @@
 | 线 | 内核 | 定位 | 风险 |
 |---|---|---|---|
 | **日用线** | OneBot 11 + NapCat | 真能聊天 | 最低（跑官方客户端本体） |
-| **研究线** | QQ 8.2.11 / 8.9.50 自实现协议 | 课程作业 / 协议学习 | 高（自实现协议） |
+| **研究线** | QQ 8.2.11 / 8.9.50 / tim 自实现协议 | 尝试做到日用 | 高（自实现协议） |
 
 ---
 
-## 1. 硬性纪律（不要违反）
+## 1. 硬性纪律
 
 ### 1.1 分层单向依赖
 
@@ -127,7 +127,7 @@ log.d('tgtgt ${Redact.fingerprint('tgtgt', b)}'); // 敏感值只输出长度+�
 ```
 qqclient/
 ├── AGENTS.md                ← 本文件
-├── README.md                项目说明（面向人类）
+├── README.md                项目说明
 ├── STRUCTURE.md             分层架构详解
 ├── SAFETY.md                账号风险与防护设计
 ├── STORAGE-DESIGN.md        存储设计（学 Telegram 不学 QQ）
@@ -211,8 +211,7 @@ Get-ChildItem tool -Filter "*_selftest.dart" | ForEach-Object { & $dart run $_.F
 
 ### 3.3 构建
 
-**不要在本地构建**（本机 JDK / Android SDK / NDK / 代理环境都有坑，
-`CI-BUILD.md` 里有完整踩坑记录）。走 GitHub Actions：
+走 GitHub Actions：
 
 - 推送到 `main` 就自动构建 debug
 - 或在 Actions 页面手动 `Run workflow`，选 `debug` / `release`

@@ -329,10 +329,12 @@ void testHttpFrame() {
 void testBigdataChannel() {
   section('五、bigdata 上传通道（地址来源）');
 
+  // 2026-11-05 第三轮：按 Lagrange HighwaySessionService 的 C501ReqBody 对齐后
+  // 的请求体（4=0、7=[1,5,10,21]、9/10/11 与版本串 15 都在；A2 未传所以无 5）。
   eqHex(
     'HttpConn.0x6ff_501 请求体',
     Qq8File.buildBigdataChannelBody(uin: uin),
-    '8a50100880cdc8840d10001810200130033805',
+    '8a50230880cdc8840d100018102000300338013805380a38154802500958087a05312e302e31',
   );
 
   final rsp = hex('8a50200a10404142434445464748494a4b4c4d4e4f'

@@ -15,18 +15,15 @@ import 'package:flutter/material.dart';
 
 import '../../kernel/wlogin8/qq8_elem.dart';
 import '../theme/telegram_theme.dart';
+import 'glass_sheet.dart';
 
 /// 弹出表情面板。选中一个就把它的 `/名字` 交给 [onPick]。
 Future<void> showFacePicker(
   BuildContext context, {
   required void Function(String token) onPick,
 }) {
-  return showModalBottomSheet<void>(
+  return showGlassSheet<void>(
     context: context,
-    backgroundColor: TelegramColors.bgSidebar,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-    ),
     builder: (ctx) => _FacePanel(onPick: onPick),
   );
 }
@@ -118,10 +115,7 @@ class _FaceTile extends StatelessWidget {
           name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: TelegramColors.textPrimary,
-            fontSize: 12.5,
-          ),
+          style: TextStyle(color: TelegramColors.textPrimary, fontSize: 12.5),
         ),
       ),
     );

@@ -67,35 +67,35 @@ final EcdhKeyPair _fixedEcdh = Ecdh.exchange(
 
 /// 固定设备夹具（与 `qq8_login_service_selftest.dart` 同款）。
 Qq8Device _fixtureDevice(int uin) => Qq8Device(
-      product: 'piano',
-      device: 'piano',
-      board: 'piano',
-      brand: 'Xiaomi',
-      model: '25091RP04C',
-      bootloader: 'unknown',
-      fingerprint: 'Xiaomi/piano/piano:16/BP2A/eng:user/release-keys',
-      bootId: '11111111-2222-3333-4444-555555555555',
-      procVersion: 'Linux version 5.15.0',
-      baseband: '',
-      sim: 'T-Mobile',
-      apn: 'wifi',
-      osType: 'android',
-      macAddress: '00:50:56:C0:00:08',
-      ipAddress: '10.0.0.1',
-      wifiBssid: '00:50:56:C0:00:08',
-      wifiSsid: 'TP-LINK-2711',
-      imei: '860000000000001',
-      androidId: 'ABCDEF1234567890',
-      version: const Qq8AndroidVersion(
-        release: '10',
-        codename: 'REL',
-        incremental: '1234567',
-        sdk: 29,
-      ),
-      imsi: Uint8List(16),
-      tgtgt: _tgtgt,
-      guid: _hex('00112233445566778899aabbccddeeff'),
-    );
+  product: 'piano',
+  device: 'piano',
+  board: 'piano',
+  brand: 'Xiaomi',
+  model: '25091RP04C',
+  bootloader: 'unknown',
+  fingerprint: 'Xiaomi/piano/piano:16/BP2A/eng:user/release-keys',
+  bootId: '11111111-2222-3333-4444-555555555555',
+  procVersion: 'Linux version 5.15.0',
+  baseband: '',
+  sim: 'T-Mobile',
+  apn: 'wifi',
+  osType: 'android',
+  macAddress: '00:50:56:C0:00:08',
+  ipAddress: '10.0.0.1',
+  wifiBssid: '00:50:56:C0:00:08',
+  wifiSsid: 'TP-LINK-2711',
+  imei: '860000000000001',
+  androidId: 'ABCDEF1234567890',
+  version: const Qq8AndroidVersion(
+    release: '10',
+    codename: 'REL',
+    incremental: '1234567',
+    sdk: 29,
+  ),
+  imsi: Uint8List(16),
+  tgtgt: _tgtgt,
+  guid: _hex('00112233445566778899aabbccddeeff'),
+);
 
 /// 造一个真机结构的响应帧：`[外壳(flag=2)][SSO 头][payload]`。
 /// 脚本里协商出来的 d2key（`_successFrame` 里塞的就是它）。
@@ -105,7 +105,10 @@ final Uint8List _d2key = _hex('a3' * 16);
 (String, Uint8List) _uniParts(Uint8List pkt) {
   var pos = 14;
   final uinLen =
-      (pkt[pos] << 24) | (pkt[pos + 1] << 16) | (pkt[pos + 2] << 8) | pkt[pos + 3];
+      (pkt[pos] << 24) |
+      (pkt[pos + 1] << 16) |
+      (pkt[pos + 2] << 8) |
+      pkt[pos + 3];
   pos += uinLen;
   final sso = qqTeaDecrypt(pkt.sublist(pos), _d2key);
   final cmdLen = (sso[4] << 24) | (sso[5] << 16) | (sso[6] << 8) | sso[7];
@@ -121,17 +124,18 @@ final Uint8List _d2key = _hex('a3' * 16);
 
 Uint8List _frame(int seq, String cmd, Uint8List payload) {
   final cmdBytes = utf8.encode(cmd);
-  final header = (ByteWriter()
-        ..u32(0)
-        ..u32(seq)
-        ..u32(0)
-        ..u32(4)
-        ..u32(cmdBytes.length + 4)
-        ..raw(cmdBytes)
-        ..u32(8)
-        ..raw(_hex('01020304'))
-        ..u32(0))
-      .build();
+  final header =
+      (ByteWriter()
+            ..u32(0)
+            ..u32(seq)
+            ..u32(0)
+            ..u32(4)
+            ..u32(cmdBytes.length + 4)
+            ..raw(cmdBytes)
+            ..u32(8)
+            ..raw(_hex('01020304'))
+            ..u32(0))
+          .build();
   final headLen = header.length - 4;
   header[0] = (headLen >> 24) & 0xff;
   header[1] = (headLen >> 16) & 0xff;
@@ -151,11 +155,13 @@ Uint8List _frame(int seq, String cmd, Uint8List payload) {
 }
 
 Uint8List _successFrame(int seq, {Uint8List? key}) {
-  final inner = (ByteWriter()..u16(1))
-      .build();
+  final inner = (ByteWriter()..u16(1)).build();
   final innerTlvs = ByteWriter()..raw(inner);
   void put(int tag, List<int> body) {
-    innerTlvs..u16(tag)..u16(body.length)..raw(body);
+    innerTlvs
+      ..u16(tag)
+      ..u16(body.length)
+      ..raw(body);
   }
 
   put(0x10A, List<int>.filled(56, 0xa1)); // tgt
@@ -166,24 +172,26 @@ Uint8List _successFrame(int seq, {Uint8List? key}) {
   put(0x16A, List<int>.filled(56, 0xa6)); // srm_token
 
   final enc = qqTeaEncrypt(innerTlvs.build(), key ?? _tgtgt);
-  return _frame(seq, 'wtlogin.login', _payload(0, <int, List<int>>{0x119: enc}));
+  return _frame(
+    seq,
+    'wtlogin.login',
+    _payload(0, <int, List<int>>{0x119: enc}),
+  );
 }
 
 Uint8List _payload(int type, Map<int, List<int>> tlvs) {
-  final w = ByteWriter()..u16(1)..u8(type)..u16(2);
+  final w = ByteWriter()
+    ..u16(1)
+    ..u8(type)
+    ..u16(2);
   tlvs.forEach((tag, body) {
     w.u16(tag);
     w.u16(body.length);
     w.raw(body);
   });
   final enc = qqTeaEncrypt(w.build(), _fixedEcdh.shareKey);
-  return Uint8List.fromList(<int>[
-    ...List<int>.filled(16, 0x77),
-    ...enc,
-    0x03,
-  ]);
+  return Uint8List.fromList(<int>[...List<int>.filled(16, 0x77), ...enc, 0x03]);
 }
-
 
 /// 注册成功帧（JCE）。
 Uint8List _registerFrame(int seq) {
@@ -205,71 +213,74 @@ Uint8List _msg({
   String text = '你好',
   String? fromNick,
   Map<int, Object?>? groupInfo,
-}) =>
-    Qq8Pb.encode(<int, Object?>{
-      1: <int, Object?>{
-        1: from,
-        2: to,
-        3: msgType,
-        5: seq,
-        6: time,
-        9: ?groupInfo,
-        14: ?fromNick,
-      },
-      3: <int, Object?>{
-        1: <int, Object?>{
-          2: <Uint8List>[
-            Qq8Pb.encode(<int, Object?>{
-              1: {1: text},
-            }),
-          ],
-        },
-      },
-    });
+}) => Qq8Pb.encode(<int, Object?>{
+  1: <int, Object?>{
+    1: from,
+    2: to,
+    3: msgType,
+    5: seq,
+    6: time,
+    9: ?groupInfo,
+    14: ?fromNick,
+  },
+  3: <int, Object?>{
+    1: <int, Object?>{
+      2: <Uint8List>[
+        Qq8Pb.encode(<int, Object?>{
+          1: {1: text},
+        }),
+      ],
+    },
+  },
+});
 
 /// 好友列表响应（JCE）：1 个好友 + 1 个分组。
 Uint8List _friendPayload() => Qq8Jce.encode(<int, Object?>{
-      7: Qq8Jce.encode(<int, Object?>{
-        0: <Object?, Object?>{
-          'GetFriendListResp': Qq8Jce.encodeStruct(<int, Object?>{
-            5: 1,
-            7: <Object?>[
-              Qq8JceNested(Qq8Jce.encode(<int, Object?>{
-                0: 22222,
-                1: 1,
-                3: '小王',
-                14: '阿王',
-                31: 1,
-              })),
-            ],
-            14: <Object?>[
-              Qq8JceNested(Qq8Jce.encode(<int, Object?>{0: 1, 1: '我的好友'})),
-            ],
-            15: 0,
-          }),
-        },
+  7: Qq8Jce.encode(<int, Object?>{
+    0: <Object?, Object?>{
+      'GetFriendListResp': Qq8Jce.encodeStruct(<int, Object?>{
+        5: 1,
+        7: <Object?>[
+          Qq8JceNested(
+            Qq8Jce.encode(<int, Object?>{
+              0: 22222,
+              1: 1,
+              3: '小王',
+              14: '阿王',
+              31: 1,
+            }),
+          ),
+        ],
+        14: <Object?>[
+          Qq8JceNested(Qq8Jce.encode(<int, Object?>{0: 1, 1: '我的好友'})),
+        ],
+        15: 0,
       }),
-    });
+    },
+  }),
+});
 
 /// 群列表响应（JCE）：1 个群。
 Uint8List _groupPayload() => Qq8Jce.encode(<int, Object?>{
-      7: Qq8Jce.encode(<int, Object?>{
-        0: <Object?, Object?>{
-          'GetTroopListRespV2': Qq8Jce.encodeStruct(<int, Object?>{
-            1: 1,
-            2: 0,
-            5: <Object?>[
-              Qq8JceNested(Qq8Jce.encode(<int, Object?>{
-                1: 987654321,
-                4: '测试群',
-                19: 233,
-                29: 500,
-              })),
-            ],
-          }),
-        },
+  7: Qq8Jce.encode(<int, Object?>{
+    0: <Object?, Object?>{
+      'GetTroopListRespV2': Qq8Jce.encodeStruct(<int, Object?>{
+        1: 1,
+        2: 0,
+        5: <Object?>[
+          Qq8JceNested(
+            Qq8Jce.encode(<int, Object?>{
+              1: 987654321,
+              4: '测试群',
+              19: 233,
+              29: 500,
+            }),
+          ),
+        ],
       }),
-    });
+    },
+  }),
+});
 
 Future<void> main() async {
   stdout.writeln('协议线 Session 适配离线自测（真实服务 + 脚本传输）');
@@ -299,9 +310,9 @@ Future<void> main() async {
     reportOnlineChecks: false,
     reportOnlineStatus: false,
     timeout: const Duration(seconds: 5),
-      // 群探测与上线补拉都会抢脚本帧：测试里都关掉，行为回到纯手动路径
-      startupPullDelay: const Duration(hours: 1),
-      primeGroupSeqs: false,
+    // 群探测与上线补拉都会抢脚本帧：测试里都关掉，行为回到纯手动路径
+    startupPullDelay: const Duration(hours: 1),
+    primeGroupSeqs: false,
   );
   final adapter = Qq8SessionAdapter(service: svc, uin: _me);
 
@@ -314,23 +325,35 @@ Future<void> main() async {
   section('1. connect（token 登录）+ 状态映射');
   {
     await adapter.connect();
-    check('state = ready', adapter.state == SessionState.ready, adapter.state.name);
-    check('account.uin / backendName',
-        adapter.account?.uin == '$_me' && adapter.backendName == 'wlogin8',
-        '${adapter.account?.uin} ${adapter.backendName}');
+    check(
+      'state = ready',
+      adapter.state == SessionState.ready,
+      adapter.state.name,
+    );
+    check(
+      'account.uin / backendName',
+      adapter.account?.uin == '$_me' && adapter.backendName == 'wlogin8',
+      '${adapter.account?.uin} ${adapter.backendName}',
+    );
     // 事件走广播流、异步投递：断言前先让一轮事件循环跑完
     await Future<void>.delayed(const Duration(milliseconds: 10));
-    check('发出过 SessionStateChanged（到 ready）',
-        events.whereType<SessionStateChanged>().any((e) => e.state == SessionState.ready),
-        '${events.length} 个事件');
-    check('能力上报：列表/历史/发消息/撤回/已读为 true，戳一戳与未知能力为 false',
-        adapter.supports('send_message') &&
-            adapter.supports('fetch_history') &&
-            adapter.supports('list_chats') &&
-            adapter.supports('recall') &&
-            adapter.supports('set_message_read') &&
-            !adapter.supports('send_poke') &&
-            !adapter.supports('没有这个能力'));
+    check(
+      '发出过 SessionStateChanged（到 ready）',
+      events.whereType<SessionStateChanged>().any(
+        (e) => e.state == SessionState.ready,
+      ),
+      '${events.length} 个事件',
+    );
+    check(
+      '能力上报：列表/历史/发消息/撤回/已读为 true，戳一戳与未知能力为 false',
+      adapter.supports('send_message') &&
+          adapter.supports('fetch_history') &&
+          adapter.supports('list_chats') &&
+          adapter.supports('recall') &&
+          adapter.supports('set_message_read') &&
+          !adapter.supports('send_poke') &&
+          !adapter.supports('没有这个能力'),
+    );
   }
 
   // ----------------------------------------------------------------
@@ -341,45 +364,59 @@ Future<void> main() async {
       _frame(3, Qq8List.cmdGroupList, _groupPayload()),
     ]);
     final chats = await adapter.listChats();
-    check('两个会话：私聊 + 群', chats.length == 2,
-        chats.map((c) => c.id).join(' '));
+    check('两个会话：私聊 + 群', chats.length == 2, chats.map((c) => c.id).join(' '));
     final priv = chats.firstWhere((c) => c.type == ChatType.private);
     final grp = chats.firstWhere((c) => c.type == ChatType.group);
-    check('私聊 ID/标题/裸 ID（备注优先）',
-        priv.id == 'private_22222' && priv.title == '小王' && priv.rawId == 22222,
-        '${priv.id} ${priv.title}');
-    check('群 ID/标题/成员数',
-        grp.id == 'group_987654321' &&
-            grp.title == '测试群' &&
-            grp.memberCount == 233,
-        '${grp.id} ${grp.title} ${grp.memberCount}');
+    check(
+      '私聊 ID/标题/裸 ID（备注优先）',
+      priv.id == 'private_22222' && priv.title == '小王' && priv.rawId == 22222,
+      '${priv.id} ${priv.title}',
+    );
+    check(
+      '群 ID/标题/成员数',
+      grp.id == 'group_987654321' &&
+          grp.title == '测试群' &&
+          grp.memberCount == 233,
+      '${grp.id} ${grp.title} ${grp.memberCount}',
+    );
   }
 
   // ----------------------------------------------------------------
   section('3. sendMessage（文本段 → 内核发送 → 消息 ID）');
   {
     scripted.scriptedResponses.add(
-        // 成功判据是 code == 0 且字段 14（serverMsgId）!= 0，
-        // 见 PITFALLS C20 与 icqq friend.js:230。缺字段 14 会被判失败。
-        _frame(4, Qq8Msg.sendCmd,
-            Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500, 14: 77})));
-    final id = await adapter.sendMessage(
-        'private_22222', <Segment>[const TextSegment('hello '), const TextSegment('world')]);
+      // 成功判据是 code == 0 且字段 14（serverMsgId）!= 0，
+      // 见 PITFALLS C20 与 icqq friend.js:230。缺字段 14 会被判失败。
+      _frame(
+        4,
+        Qq8Msg.sendCmd,
+        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500, 14: 77}),
+      ),
+    );
+    final id = await adapter.sendMessage('private_22222', <Segment>[
+      const TextSegment('hello '),
+      const TextSegment('world'),
+    ]);
     check('返回的 id 非空', id != null && id.isNotEmpty, id ?? '(null)');
     if (id != null) {
       // 独立复算：u32 对方 ‖ u32 seq ‖ u32 rand ‖ u32 time ‖ u8 flag(1=自己发)
       final raw = base64.decode(id);
-      int u32(int i) => (raw[i] << 24) | (raw[i + 1] << 16) | (raw[i + 2] << 8) | raw[i + 3];
-      check('id 打包正确（对方/时间/flag=1）',
-          raw.length == 17 &&
-              u32(0) == 22222 &&
-              u32(12) == 1700000500 &&
-              raw[16] == 1,
-          'len=${raw.length} t=${u32(12)}');
+      int u32(int i) =>
+          (raw[i] << 24) | (raw[i + 1] << 16) | (raw[i + 2] << 8) | raw[i + 3];
+      check(
+        'id 打包正确（对方/时间/flag=1）',
+        raw.length == 17 &&
+            u32(0) == 22222 &&
+            u32(12) == 1700000500 &&
+            raw[16] == 1,
+        'len=${raw.length} t=${u32(12)}',
+      );
     }
     var threw = false;
     try {
-      await adapter.sendMessage('private_22222', <Segment>[const ReplySegment('x')]);
+      await adapter.sendMessage('private_22222', <Segment>[
+        const ReplySegment('x'),
+      ]);
     } on SessionException {
       threw = true;
     }
@@ -389,96 +426,127 @@ Future<void> main() async {
   // ----------------------------------------------------------------
   section('4. fetchHistory：私聊（时间游标）');
   {
-    scripted.scriptedResponses.add(_frame(5, Qq8History.cmdOneDayRoam,
+    scripted.scriptedResponses.add(
+      _frame(
+        5,
+        Qq8History.cmdOneDayRoam,
         Qq8Pb.encode(<int, Object?>{
-      1: 0,
-      3: 22222,
-      6: <Uint8List>[
-        _msg(from: 22222, to: _me, seq: 5, time: 1700000100, text: '旧消息'),
-        _msg(from: _me, to: 22222, seq: 6, time: 1700000200, text: '我的旧消息'),
-      ],
-      7: 0, // 还没翻到头
-    })));
+          1: 0,
+          3: 22222,
+          6: <Uint8List>[
+            _msg(from: 22222, to: _me, seq: 5, time: 1700000100, text: '旧消息'),
+            _msg(from: _me, to: 22222, seq: 6, time: 1700000200, text: '我的旧消息'),
+          ],
+          7: 0, // 还没翻到头
+        }),
+      ),
+    );
     final page = await adapter.fetchHistory('private_22222', count: 20);
-    check('两条历史、时间倒序（最新在前）',
-        page.messages.length == 2 &&
-            page.messages.first.text == '我的旧消息' &&
-            page.messages.first.outgoing &&
-            !page.messages.last.outgoing,
-        page.messages.map((m) => m.text).join('|'));
+    check(
+      '两条历史、时间倒序（最新在前）',
+      page.messages.length == 2 &&
+          page.messages.first.text == '我的旧消息' &&
+          page.messages.first.outgoing &&
+          !page.messages.last.outgoing,
+      page.messages.map((m) => m.text).join('|'),
+    );
     check('chatId 是复合 ID', page.messages.first.chatId == 'private_22222');
-    check('还有更多 → next 是时间游标（最旧一条的时间）',
-        page.hasMore && page.next?.time?.millisecondsSinceEpoch == 1700000100000,
-        '${page.next}');
+    check(
+      '还有更多 → next 是时间游标（最旧一条的时间）',
+      page.hasMore && page.next?.time?.millisecondsSinceEpoch == 1700000100000,
+      '${page.next}',
+    );
   }
 
   // ----------------------------------------------------------------
   section('5. fetchHistory：群（seq 游标，先学到 seq 才能拉）');
   {
     final empty = await adapter.fetchHistory('group_987654321');
-    check('还没见过群消息 → 空页、不发请求（不猜 seq）',
-        empty.messages.isEmpty && !empty.hasMore && scripted.sent.length == 6,
-        '已发 ${scripted.sent.length} 个包');
+    check(
+      '还没见过群消息 → 空页、不发请求（不猜 seq）',
+      empty.messages.isEmpty && !empty.hasMore && scripted.sent.length == 6,
+      '已发 ${scripted.sent.length} 个包',
+    );
 
     // 收一条群推送 → 适配套件学到最新 seq
-    scripted.emit(_frame(99, Qq8PushCmd.pushGroup,
+    scripted.emit(
+      _frame(
+        99,
+        Qq8PushCmd.pushGroup,
         Qq8Pb.encode(<int, Object?>{
-      1: Qq8Pb.encode(<int, Object?>{
-        1: Qq8Pb.encode(<int, Object?>{
-          1: 33333,
-          2: _me,
-          3: 82,
-          5: 1000,
-          6: 1700000600,
-          9: {1: 987654321, 8: '测试群'},
-          14: '阿花',
+          1: Qq8Pb.encode(<int, Object?>{
+            1: Qq8Pb.encode(<int, Object?>{
+              1: 33333,
+              2: _me,
+              3: 82,
+              5: 1000,
+              6: 1700000600,
+              9: {1: 987654321, 8: '测试群'},
+              14: '阿花',
+            }),
+            3: Qq8Pb.encode(<int, Object?>{
+              1: <int, Object?>{
+                2: <Uint8List>[
+                  Qq8Pb.encode(<int, Object?>{
+                    1: {1: '群里说话'},
+                  }),
+                ],
+              },
+            }),
+          }),
         }),
-        3: Qq8Pb.encode(<int, Object?>{
-          1: <int, Object?>{
-            2: <Uint8List>[
-              Qq8Pb.encode(<int, Object?>{
-                1: {1: '群里说话'},
-              }),
-            ],
-          },
-        }),
-      }),
-    })));
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 30));
     final msgEv = events.whereType<SessionMessage>().lastOrNull;
-    check('群推送 → SessionMessage（chatId=group_987654321、文本、发送者）',
-        msgEv != null &&
-            msgEv.message.chatId == 'group_987654321' &&
-            msgEv.message.text == '群里说话' &&
-            msgEv.message.senderName == '阿花' &&
-            msgEv.message.senderId == '33333',
-        msgEv == null ? '没有消息事件' : '${msgEv.message.chatId} ${msgEv.message.text}');
+    check(
+      '群推送 → SessionMessage（chatId=group_987654321、文本、发送者）',
+      msgEv != null &&
+          msgEv.message.chatId == 'group_987654321' &&
+          msgEv.message.text == '群里说话' &&
+          msgEv.message.senderName == '阿花' &&
+          msgEv.message.senderId == '33333',
+      msgEv == null
+          ? '没有消息事件'
+          : '${msgEv.message.chatId} ${msgEv.message.text}',
+    );
 
-    scripted.scriptedResponses.add(_frame(6, Qq8History.cmdGetGroupMsg,
+    scripted.scriptedResponses.add(
+      _frame(
+        6,
+        Qq8History.cmdGetGroupMsg,
         Qq8Pb.encode(<int, Object?>{
-      1: 0,
-      3: 987654321,
-      4: 981,
-      5: 1000,
-      6: <Uint8List>[
-        _msg(
-          from: 33333,
-          to: _me,
-          msgType: 82,
-          seq: 999,
-          time: 1700000550,
-          text: '群历史一',
-          groupInfo: {1: 987654321},
-        ),
-      ],
-    })));
+          1: 0,
+          3: 987654321,
+          4: 981,
+          5: 1000,
+          6: <Uint8List>[
+            _msg(
+              from: 33333,
+              to: _me,
+              msgType: 82,
+              seq: 999,
+              time: 1700000550,
+              text: '群历史一',
+              groupInfo: {1: 987654321},
+            ),
+          ],
+        }),
+      ),
+    );
     final page = await adapter.fetchHistory('group_987654321', count: 20);
-    check('学到 seq 后能拉：1 条 + 群 chatId',
-        page.messages.length == 1 &&
-            page.messages.single.chatId == 'group_987654321' &&
-            page.messages.single.text == '群历史一',
-        page.messages.map((m) => m.text).join('|'));
-    check('next 是 seq 游标（begin-1 = 980）', page.next?.seq == 980, '${page.next?.seq}');
+    check(
+      '学到 seq 后能拉：1 条 + 群 chatId',
+      page.messages.length == 1 &&
+          page.messages.single.chatId == 'group_987654321' &&
+          page.messages.single.text == '群历史一',
+      page.messages.map((m) => m.text).join('|'),
+    );
+    check(
+      'next 是 seq 游标（begin-1 = 980）',
+      page.next?.seq == 980,
+      '${page.next?.seq}',
+    );
   }
   // ----------------------------------------------------------------
   section('6. 多元素推送 → ChatMessage（语音/卡片/认不出/引用）');
@@ -502,8 +570,10 @@ Future<void> main() async {
             2: <Uint8List>[
               Qq8Pb.encode(<int, Object?>{
                 12: {
-                  1: Uint8List.fromList(
-                      <int>[0, ...utf8.encode('<msg brief="一张卡片"/>')]),
+                  1: Uint8List.fromList(<int>[
+                    0,
+                    ...utf8.encode('<msg brief="一张卡片"/>'),
+                  ]),
                 },
               }),
               Qq8Pb.encode(<int, Object?>{
@@ -537,39 +607,57 @@ Future<void> main() async {
     scripted.emit(_frame(100, Qq8PushCmd.pushGroup, push));
     await Future<void>.delayed(const Duration(milliseconds: 30));
     final ev = events.whereType<SessionMessage>().lastOrNull;
-    check('推送抵达且适配成 ChatMessage', ev != null,
-        ev == null ? '没有消息事件' : '');
+    check('推送抵达且适配成 ChatMessage', ev != null, ev == null ? '没有消息事件' : '');
 
     if (ev != null) {
       final m = ev.message;
-      check('纯文本 = 卡片占位 + 引用不掺进来 + 语音 + 不支持占位',
-          m.text == '[卡片] 一张卡片[不支持显示的消息][语音]', m.text);
-      check('引用原文进了 replyPreview（气泡引用条读它）',
-          m.replyPreview == '被引用的原话', '${m.replyPreview}');
-      check('引用**不**造假消息 ID（src_msg 里没有 rand）', m.replyToId == null,
-          '${m.replyToId}');
+      check(
+        '纯文本 = 卡片占位 + 引用不掺进来 + 语音 + 不支持占位',
+        m.text == '[卡片] 一张卡片[不支持显示的消息][语音]',
+        m.text,
+      );
+      check(
+        '引用原文进了 replyPreview（气泡引用条读它）',
+        m.replyPreview == '被引用的原话',
+        '${m.replyPreview}',
+      );
+      check(
+        '引用**不**造假消息 ID（src_msg 里没有 rand）',
+        m.replyToId == null,
+        '${m.replyToId}',
+      );
 
       final types = m.segments.map((s) => s.runtimeType.toString()).toList();
-      check('段类型齐了：卡片 / 引用 / 不支持 / 语音',
-          types.length == 4 &&
-              types[0] == 'XmlSegment' &&
-              types[1] == 'ReplySegment' &&
-              types[2] == 'UnknownSegment' &&
-              types[3] == 'RecordSegment',
-          types.join(' / '));
+      check(
+        '段类型齐了：卡片 / 引用 / 不支持 / 语音',
+        types.length == 4 &&
+            types[0] == 'XmlSegment' &&
+            types[1] == 'ReplySegment' &&
+            types[2] == 'UnknownSegment' &&
+            types[3] == 'RecordSegment',
+        types.join(' / '),
+      );
 
       final voice = m.segments.whereType<RecordSegment>().firstOrNull;
-      check('语音段带上时长与体积', voice?.seconds == 7 && voice?.size == 4096,
-          '${voice?.seconds}s ${voice?.size}B');
+      check(
+        '语音段带上时长与体积',
+        voice?.seconds == 7 && voice?.size == 4096,
+        '${voice?.seconds}s ${voice?.size}B',
+      );
       final card = m.segments.whereType<XmlSegment>().firstOrNull;
       check('卡片段带上摘要', card?.summary == '一张卡片', '${card?.summary}');
       final unknown = m.segments.whereType<UnknownSegment>().firstOrNull;
-      check('认不出的段落里保留了字段名（排查用）',
-          unknown?.data['elem'] == 'unknown(100)' &&
-              unknown?.data['field'] == 100,
-          '${unknown?.data}');
-      check('认不出的段文案是官方那句',
-          unknown?.preview == '[不支持显示的消息]', '${unknown?.preview}');
+      check(
+        '认不出的段落里保留了字段名（排查用）',
+        unknown?.data['elem'] == 'unknown(100)' &&
+            unknown?.data['field'] == 100,
+        '${unknown?.data}',
+      );
+      check(
+        '认不出的段文案是官方那句',
+        unknown?.preview == '[不支持显示的消息]',
+        '${unknown?.preview}',
+      );
     }
   }
 
@@ -603,50 +691,66 @@ Future<void> main() async {
     scripted.emit(_frame(101, Qq8PushCmd.c2cSync, syncPush));
     await Future<void>.delayed(const Duration(milliseconds: 40));
 
-    check('回执发出去了（多一条包）', scripted.sent.length == before + 1,
-        '多发了 ${scripted.sent.length - before}');
+    check(
+      '回执发出去了（多一条包）',
+      scripted.sent.length == before + 1,
+      '多发了 ${scripted.sent.length - before}',
+    );
     if (scripted.sent.length > before) {
       final (cmd, body) = _uniParts(scripted.sent.last);
       check('回执命令字 = OnlinePush.RespPush', cmd == 'OnlinePush.RespPush', cmd);
       final w = Qq8Jce.decode(body);
-      check('回执 service/method 对', w[5] == 'OnlinePush' && w[6] == 'SvcRespPushMsg',
-          '${w[5]}/${w[6]}');
+      check(
+        '回执 service/method 对',
+        w[5] == 'OnlinePush' && w[6] == 'SvcRespPushMsg',
+        '${w[5]}/${w[6]}',
+      );
       check('iRequestId = 推送的 seq(101)', w[4] == 101, '${w[4]}');
-      final attrs = Qq8Jce.decode(w[7] as Uint8List)[0] as Map<Object?, Object?>;
+      final attrs =
+          Qq8Jce.decode(w[7] as Uint8List)[0] as Map<Object?, Object?>;
       final r = Qq8Jce.decode(attrs['r'] as Uint8List)[0] as Map<int, Object?>;
-      check('回执里带上 uin / svrip / 空 items',
-          r[0] == _me && r[2] == 0x01020304 && (r[1] as List).isEmpty,
-          '${r[0]} ${r[2]} ${r[1]}');
+      check(
+        '回执里带上 uin / svrip / 空 items',
+        r[0] == _me && r[2] == 0x01020304 && (r[1] as List).isEmpty,
+        '${r[0]} ${r[2]} ${r[1]}',
+      );
     }
 
     // 群消息推送（PbPushGroupMsg）：参考实现不回执
     final beforeGroup = scripted.sent.length;
-    scripted.emit(_frame(102, Qq8PushCmd.pushGroup,
+    scripted.emit(
+      _frame(
+        102,
+        Qq8PushCmd.pushGroup,
         Qq8Pb.encode(<int, Object?>{
-      1: Qq8Pb.encode(<int, Object?>{
-        1: Qq8Pb.encode(<int, Object?>{
-          1: 33333,
-          2: _me,
-          3: 82,
-          5: 1002,
-          6: 1700000810,
-          9: {1: 987654321, 8: '测试群'},
+          1: Qq8Pb.encode(<int, Object?>{
+            1: Qq8Pb.encode(<int, Object?>{
+              1: 33333,
+              2: _me,
+              3: 82,
+              5: 1002,
+              6: 1700000810,
+              9: {1: 987654321, 8: '测试群'},
+            }),
+            3: Qq8Pb.encode(<int, Object?>{
+              1: <int, Object?>{
+                2: <Uint8List>[
+                  Qq8Pb.encode(<int, Object?>{
+                    1: {1: '群推不该回执'},
+                  }),
+                ],
+              },
+            }),
+          }),
         }),
-        3: Qq8Pb.encode(<int, Object?>{
-          1: <int, Object?>{
-            2: <Uint8List>[
-              Qq8Pb.encode(<int, Object?>{
-                1: {1: '群推不该回执'},
-              }),
-            ],
-          },
-        }),
-      }),
-    })));
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 40));
-    check('群消息推送不回执（与参考实现一致）',
-        scripted.sent.length == beforeGroup,
-        '多发了 ${scripted.sent.length - beforeGroup}');
+    check(
+      '群消息推送不回执（与参考实现一致）',
+      scripted.sent.length == beforeGroup,
+      '多发了 ${scripted.sent.length - beforeGroup}',
+    );
   }
 
   // ----------------------------------------------------------------
@@ -656,33 +760,35 @@ Future<void> main() async {
     // ⚠️ 这里的 seq 必须等于"通知触发的拉取"真正用的 seq：会话层按 seq 配对，
     // 对不上就当成推送丢掉（然后这次拉取超时）。当前是 7——**在本节之前插入
     // 任何发包用例，后面的 seq 都要跟着顺移**（这是本文件的老坑）。
-    scripted.scriptedResponses.add(_frame(
-      7,
-      Qq8History.cmdGetMsg,
-      // 字段号照 qq8_history.dart 头注：
-      // 1 result / 3 sync_cookie / 5 uin_pair_msgs
-      // UinPairMsg：2 peer_uin / 4 msg(repeated) / 5 unread_msg_num
-      Qq8Pb.encode(<int, Object?>{
-        1: 0, // result
-        3: Uint8List.fromList(<int>[1, 2, 3, 4]), // sync cookie（非空即更新）
-        5: <Uint8List>[
-          Qq8Pb.encode(<int, Object?>{
-            2: 44444, // peer_uin
-            4: <Uint8List>[
-              _msg(
-                from: 44444,
-                to: _me,
-                msgType: 9,
-                seq: 3001,
-                time: 1700000900,
-                text: '通知拉回来的消息',
-              ),
-            ],
-            5: 1, // unread_msg_num
-          }),
-        ],
-      }),
-    ));
+    scripted.scriptedResponses.add(
+      _frame(
+        7,
+        Qq8History.cmdGetMsg,
+        // 字段号照 qq8_history.dart 头注：
+        // 1 result / 3 sync_cookie / 5 uin_pair_msgs
+        // UinPairMsg：2 peer_uin / 4 msg(repeated) / 5 unread_msg_num
+        Qq8Pb.encode(<int, Object?>{
+          1: 0, // result
+          3: Uint8List.fromList(<int>[1, 2, 3, 4]), // sync cookie（非空即更新）
+          5: <Uint8List>[
+            Qq8Pb.encode(<int, Object?>{
+              2: 44444, // peer_uin
+              4: <Uint8List>[
+                _msg(
+                  from: 44444,
+                  to: _me,
+                  msgType: 9,
+                  seq: 3001,
+                  time: 1700000900,
+                  text: '通知拉回来的消息',
+                ),
+              ],
+              5: 1, // unread_msg_num
+            }),
+          ],
+        }),
+      ),
+    );
 
     final notify = Qq8Jce.encodeWrapper(
       service: 'x',
@@ -693,23 +799,34 @@ Future<void> main() async {
     );
     // 通知包前面有 4 字节前缀（见 qq8_push.dart 的解析）
     final before = scripted.sent.length;
-    scripted.emit(_frame(103, Qq8PushCmd.notify,
-        Uint8List.fromList(<int>[0, 0, 0, 0, ...notify])));
+    scripted.emit(
+      _frame(
+        103,
+        Qq8PushCmd.notify,
+        Uint8List.fromList(<int>[0, 0, 0, 0, ...notify]),
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 60));
 
-    check('收到"有新消息"通知后会去拉一次 PbGetMsg',
-        scripted.sent.length == before + 1, '多发了 ${scripted.sent.length - before}');
+    check(
+      '收到"有新消息"通知后会去拉一次 PbGetMsg',
+      scripted.sent.length == before + 1,
+      '多发了 ${scripted.sent.length - before}',
+    );
     if (scripted.sent.length > before) {
       final (cmd, _) = _uniParts(scripted.sent.last);
-      check('发出去的命令字 = MessageSvc.PbGetMsg',
-          cmd == Qq8History.cmdGetMsg, cmd);
+      check('发出去的命令字 = MessageSvc.PbGetMsg', cmd == Qq8History.cmdGetMsg, cmd);
     }
 
     // 拉回来的消息走推送同一条流水线 → 适配器发 SessionMessage
     final pulled = events.whereType<SessionMessage>().where(
-        (e) => e.message.text == '通知拉回来的消息');
-    check('拉回来的消息进了 UI 事件流（复用推送流水线）',
-        pulled.isNotEmpty, '${events.whereType<SessionMessage>().length} 条消息事件');
+      (e) => e.message.text == '通知拉回来的消息',
+    );
+    check(
+      '拉回来的消息进了 UI 事件流（复用推送流水线）',
+      pulled.isNotEmpty,
+      '${events.whereType<SessionMessage>().length} 条消息事件',
+    );
 
     // 不该拉的类型：群请求（84）需要的是 getGrpSysMsg，我们还没做
     await Future<void>.delayed(const Duration(milliseconds: 20));
@@ -721,12 +838,19 @@ Future<void> main() async {
         'r': Qq8Jce.encodeStruct({5: 84}),
       },
     );
-    scripted.emit(_frame(104, Qq8PushCmd.notify,
-        Uint8List.fromList(<int>[0, 0, 0, 0, ...sysNotify])));
+    scripted.emit(
+      _frame(
+        104,
+        Qq8PushCmd.notify,
+        Uint8List.fromList(<int>[0, 0, 0, 0, ...sysNotify]),
+      ),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 60));
-    check('系统消息类（84 群请求）不乱拉——那要 getGrpSysMsg，还没做',
-        scripted.sent.length == beforeSys,
-        '多发了 ${scripted.sent.length - beforeSys}');
+    check(
+      '系统消息类（84 群请求）不乱拉——那要 getGrpSysMsg，还没做',
+      scripted.sent.length == beforeSys,
+      '多发了 ${scripted.sent.length - beforeSys}',
+    );
   }
 
   // ----------------------------------------------------------------
@@ -734,7 +858,12 @@ Future<void> main() async {
   {
     // 收到的消息（flag=0）不能撤回
     final incomingId = Qq8Msg.dmMessageId(
-        peerUin: 22222, seq: 1, rand: 2, time: 3, outgoing: false);
+      peerUin: 22222,
+      seq: 1,
+      rand: 2,
+      time: 3,
+      outgoing: false,
+    );
     var refused = false;
     try {
       await adapter.recall('private_22222', incomingId);
@@ -753,31 +882,45 @@ Future<void> main() async {
 
     final before = scripted.sent.length;
     final mine = Qq8Msg.dmMessageId(
-        peerUin: 22222, seq: 321, rand: 0x11223344, time: 1700000500, outgoing: true);
+      peerUin: 22222,
+      seq: 321,
+      rand: 0x11223344,
+      time: 1700000500,
+      outgoing: true,
+    );
 
     // 撤回成功（脚本排一条 result=0 的响应）
-    scripted.scriptedResponses.add(_frame(
+    scripted.scriptedResponses.add(
+      _frame(
         8,
         Qq8Msg.withdrawCmd,
         Qq8Pb.encode(<int, Object?>{
           1: Qq8Pb.encode(<int, Object?>{1: 0, 2: ''}),
-        })));
+        }),
+      ),
+    );
     var recallThrew = false;
     try {
       await adapter.recall('private_22222', mine);
     } on SessionException {
       recallThrew = true;
     }
-    check('撤回成功：不抛异常且发了包', !recallThrew && scripted.sent.length == before + 1,
-        '已发 ${scripted.sent.length}');
+    check(
+      '撤回成功：不抛异常且发了包',
+      !recallThrew && scripted.sent.length == before + 1,
+      '已发 ${scripted.sent.length}',
+    );
 
     // 撤回被服务端拒（result=5）→ 抛 SessionException 并带服务端文案
-    scripted.scriptedResponses.add(_frame(
+    scripted.scriptedResponses.add(
+      _frame(
         9,
         Qq8Msg.withdrawCmd,
         Qq8Pb.encode(<int, Object?>{
           1: Qq8Pb.encode(<int, Object?>{1: 5, 2: '消息不存在'}),
-        })));
+        }),
+      ),
+    );
     var failed = false;
     try {
       await adapter.recall('private_22222', mine);
@@ -787,47 +930,77 @@ Future<void> main() async {
     check('撤回被拒 → 抛出并带服务端文案', failed);
 
     // 已读上报：私聊（报到时间）与群（报到 seq）
-    scripted.scriptedResponses.add(_frame(10, Qq8Msg.readedReportCmd, Uint8List(0)));
+    scripted.scriptedResponses.add(
+      _frame(10, Qq8Msg.readedReportCmd, Uint8List(0)),
+    );
     await adapter.markRead('private_22222', mine);
-    scripted.scriptedResponses.add(_frame(11, Qq8Msg.readedReportCmd, Uint8List(0)));
+    scripted.scriptedResponses.add(
+      _frame(11, Qq8Msg.readedReportCmd, Uint8List(0)),
+    );
     await adapter.markRead(
-        'group_987654321',
-        Qq8Msg.groupMessageId(
-            gid: 987654321, senderUin: 33333, seq: 999, rand: 1, time: 1700000550));
-    check('已读上报：私聊与群两条都发出去了',
-        scripted.sent.length == before + 4, '已发 ${scripted.sent.length}');
+      'group_987654321',
+      Qq8Msg.groupMessageId(
+        gid: 987654321,
+        senderUin: 33333,
+        seq: 999,
+        rand: 1,
+        time: 1700000550,
+      ),
+    );
+    check(
+      '已读上报：私聊与群两条都发出去了',
+      scripted.sent.length == before + 4,
+      '已发 ${scripted.sent.length}',
+    );
 
     // 引用回复：ReplySegment 不再被拒，翻成 src_msg 元素发出去（seq 12）
     final quoted = Qq8Msg.dmMessageId(
-        peerUin: 22222, seq: 5, rand: 6, time: 1700000400, outgoing: false);
-    scripted.scriptedResponses.add(_frame(
+      peerUin: 22222,
+      seq: 5,
+      rand: 6,
+      time: 1700000400,
+      outgoing: false,
+    );
+    scripted.scriptedResponses.add(
+      _frame(
         12,
         Qq8Msg.sendCmd,
-        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500, 14: 78})));
+        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000500, 14: 78}),
+      ),
+    );
     final replyId = await adapter.sendMessage('private_22222', <Segment>[
       ReplySegment(quoted, text: '被引用的话'),
       const TextSegment('这是我的回复'),
     ]);
-    check('带引用的回复能发出去（ReplySegment 翻成 src_msg）',
-        replyId != null && replyId.isNotEmpty, replyId ?? '(null)');
+    check(
+      '带引用的回复能发出去（ReplySegment 翻成 src_msg）',
+      replyId != null && replyId.isNotEmpty,
+      replyId ?? '(null)',
+    );
 
     // 群消息**分片**撤回：pktNum>1 时撤回体按片展开（以前这里直接抛"协议还没核实"）
     final fragId = Qq8Msg.groupMessageId(
-        gid: 987654321,
-        senderUin: _me,
-        seq: 555,
-        rand: 0x0A0B0C0D,
-        time: 1700000600,
-        pktNum: 3);
-    check('群分片消息 ID 里带着片数（pktNum=3）',
-        Qq8Msg.parseGroupMessageId(fragId)?.pktNum == 3,
-        '${Qq8Msg.parseGroupMessageId(fragId)}');
-    scripted.scriptedResponses.add(_frame(
+      gid: 987654321,
+      senderUin: _me,
+      seq: 555,
+      rand: 0x0A0B0C0D,
+      time: 1700000600,
+      pktNum: 3,
+    );
+    check(
+      '群分片消息 ID 里带着片数（pktNum=3）',
+      Qq8Msg.parseGroupMessageId(fragId)?.pktNum == 3,
+      '${Qq8Msg.parseGroupMessageId(fragId)}',
+    );
+    scripted.scriptedResponses.add(
+      _frame(
         13,
         Qq8Msg.withdrawCmd,
         Qq8Pb.encode(<int, Object?>{
           2: Qq8Pb.encode(<int, Object?>{1: 0, 2: ''}),
-        })));
+        }),
+      ),
+    );
     final beforeFrag = scripted.sent.length;
     var fragThrew = false;
     try {
@@ -835,22 +1008,29 @@ Future<void> main() async {
     } on SessionException {
       fragThrew = true;
     }
-    check('群分片消息（pktNum=3）能撤回：不抛异常且发了一个包',
-        !fragThrew && scripted.sent.length == beforeFrag + 1,
-        '已发 ${scripted.sent.length}');
+    check(
+      '群分片消息（pktNum=3）能撤回：不抛异常且发了一个包',
+      !fragThrew && scripted.sent.length == beforeFrag + 1,
+      '已发 ${scripted.sent.length}',
+    );
 
     // 能力上报：撤回与已读现在都算支持
-    check('supports：recall / set_message_read 已变为 true',
-        adapter.supports('recall') && adapter.supports('set_message_read'));
+    check(
+      'supports：recall / set_message_read 已变为 true',
+      adapter.supports('recall') && adapter.supports('set_message_read'),
+    );
   }
 
   // ----------------------------------------------------------------
-  section('8. 多元素发送：表情能发；图片段只认本地文件、混排拒绝');
+  section('8. 多元素发送：表情能发、图文可混排、图片只认本地文件');
   {
-    scripted.scriptedResponses.add(_frame(
+    scripted.scriptedResponses.add(
+      _frame(
         14,
         Qq8Msg.sendCmd,
-        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000600, 14: 79})));
+        Qq8Pb.encode(<int, Object?>{1: 0, 2: '', 3: 1700000600, 14: 79}),
+      ),
+    );
     final before = scripted.sent.length;
 
     final faceId = await adapter.sendMessage('private_22222', <Segment>[
@@ -858,10 +1038,16 @@ Future<void> main() async {
       const FaceSegment('14'),
       const TextSegment('吧'),
     ]);
-    check('表情段不再被拒（发出去并拿到消息 ID）',
-        faceId != null && faceId.isNotEmpty, faceId ?? '(null)');
-    check('文本+表情只发一个包', scripted.sent.length == before + 1,
-        '多发了 ${scripted.sent.length - before - 1} 个');
+    check(
+      '表情段不再被拒（发出去并拿到消息 ID）',
+      faceId != null && faceId.isNotEmpty,
+      faceId ?? '(null)',
+    );
+    check(
+      '文本+表情只发一个包',
+      scripted.sent.length == before + 1,
+      '多发了 ${scripted.sent.length - before - 1} 个',
+    );
 
     // 发图走上传链路（探图 → PicUp → highway）：没有本地文件就**明确拒绝**，
     // 不能拿一个空图糊过去（转发收到的那种只有 QQ 文件名）。
@@ -874,20 +1060,35 @@ Future<void> main() async {
       imgThrew = e.message.contains('没有本地文件');
     }
     check('转发收到的图（无本地文件）被拒，且说清原因', imgThrew);
-    check('被拒的段没有发出去', scripted.sent.length == before + 1,
-        '${scripted.sent.length}');
+    check(
+      '被拒的段没有发出去',
+      scripted.sent.length == before + 1,
+      '${scripted.sent.length}',
+    );
 
-    // 图片 + 文字混排：一条消息里暂时只能有一张图，不能静默只发一半
-    var mixThrew = false;
+    // 图片 + 文字混排：现在**允许**（一条消息里图文同发）。这里给的是不存在的
+    // 文件，所以最终还是失败，但失败原因必须是"读不到文件"，不再是"只能单独发"。
+    var mixMsg = '';
     try {
       await adapter.sendMessage('private_22222', <Segment>[
         const TextSegment('看这个'),
         const ImageSegment('不存在的路径.png'),
       ]);
-    } on SessionException catch (e) {
-      mixThrew = e.message.contains('只能单独发');
+    } on Object catch (e) {
+      mixMsg = '$e';
     }
-    check('图片+文字混排被拒（宁失败不静默丢）', mixThrew);
+    check('图文混排不再被"只能单独发"拦下', !mixMsg.contains('只能单独发'), mixMsg);
+
+    // 一条消息最多 9 张图：超了要在**上传之前**就拒绝，不能传一半再抛。
+    var nineMsg = '';
+    try {
+      await adapter.sendMessage('private_22222', <Segment>[
+        for (var i = 0; i < 10; i++) ImageSegment('x$i.png'),
+      ]);
+    } on Object catch (e) {
+      nineMsg = '$e';
+    }
+    check('超过 9 张图直接拒绝', nineMsg.contains('最多 9 张'), nineMsg);
   }
 
   // ----------------------------------------------------------------
@@ -895,76 +1096,108 @@ Future<void> main() async {
   {
     List<Object> split(String s) => Qq8SessionAdapter.splitFaceTokens(s);
 
-    check('单个表情：/微笑 → [14]',
-        split('/微笑').length == 1 && split('/微笑')[0] == 14,
-        '${split('/微笑')}');
-    check('前后带文本：你好/微笑吧 → ["你好", 14, "吧"]',
-        split('你好/微笑吧').join('|') == '你好|14|吧',
-        split('你好/微笑吧').join('|'));
-    check('后面跟标点也认：/微笑，你好 → [14, "，你好"]',
-        split('/微笑，你好').join('|') == '14|，你好',
-        split('/微笑，你好').join('|'));
-    check('超级表情用带斜杠的名字：/吃瓜 → [271]',
-        split('/吃瓜').length == 1 && split('/吃瓜')[0] == 271,
-        '${split('/吃瓜')}');
-    check('不是表情名的斜杠原样保留：/notaface → 一个文本片段',
-        split('/notaface').length == 1 && split('/notaface')[0] == '/notaface',
-        '${split('/notaface')}');
-    check('路径里的斜杠不吞：见 a/b 说明',
-        split('见 a/b 说明').join('|') == '见 a/b 说明',
-        split('见 a/b 说明').join('|'));
-    check('连续两个表情各自成元素：/微笑/大哭 → [14, 9]',
-        split('/微笑/大哭').join('|') == '14|9',
-        split('/微笑/大哭').join('|'));
-    check('没有斜杠时原样返回', split('普通一句话').join('|') == '普通一句话',
-        split('普通一句话').join('|'));
+    check(
+      '单个表情：/微笑 → [14]',
+      split('/微笑').length == 1 && split('/微笑')[0] == 14,
+      '${split('/微笑')}',
+    );
+    check(
+      '前后带文本：你好/微笑吧 → ["你好", 14, "吧"]',
+      split('你好/微笑吧').join('|') == '你好|14|吧',
+      split('你好/微笑吧').join('|'),
+    );
+    check(
+      '后面跟标点也认：/微笑，你好 → [14, "，你好"]',
+      split('/微笑，你好').join('|') == '14|，你好',
+      split('/微笑，你好').join('|'),
+    );
+    check(
+      '超级表情用带斜杠的名字：/吃瓜 → [271]',
+      split('/吃瓜').length == 1 && split('/吃瓜')[0] == 271,
+      '${split('/吃瓜')}',
+    );
+    check(
+      '不是表情名的斜杠原样保留：/notaface → 一个文本片段',
+      split('/notaface').length == 1 && split('/notaface')[0] == '/notaface',
+      '${split('/notaface')}',
+    );
+    check(
+      '路径里的斜杠不吞：见 a/b 说明',
+      split('见 a/b 说明').join('|') == '见 a/b 说明',
+      split('见 a/b 说明').join('|'),
+    );
+    check(
+      '连续两个表情各自成元素：/微笑/大哭 → [14, 9]',
+      split('/微笑/大哭').join('|') == '14|9',
+      split('/微笑/大哭').join('|'),
+    );
+    check(
+      '没有斜杠时原样返回',
+      split('普通一句话').join('|') == '普通一句话',
+      split('普通一句话').join('|'),
+    );
   }
 
   // ----------------------------------------------------------------
   section('5b. 删除占位过滤（缺陷4：time=0 / sender=0 / 正文 [已删除]）');
   {
-    Qq8IncomingMessage msg(
-            {int from = 0, int time = 0, String text = '[已删除]'}) =>
-        Qq8IncomingMessage(
-          kind: Qq8IncomingKind.group,
-          fromUin: from,
-          toUin: _me,
-          groupCode: 987654321,
-          seq: 1,
-          rand: 0,
-          time: time,
-          msgType: 82,
-          c2cCmd: 0,
-          text: text,
-          atTargets: const <int>[],
-          atAll: false,
-          font: 'unknown',
-          pktNum: 1,
-          pkgIndex: 0,
-          divSeq: 0,
-          elemKinds: const <String>[],
-        );
+    Qq8IncomingMessage msg({
+      int from = 0,
+      int time = 0,
+      String text = '[已删除]',
+    }) => Qq8IncomingMessage(
+      kind: Qq8IncomingKind.group,
+      fromUin: from,
+      toUin: _me,
+      groupCode: 987654321,
+      seq: 1,
+      rand: 0,
+      time: time,
+      msgType: 82,
+      c2cCmd: 0,
+      text: text,
+      atTargets: const <int>[],
+      atAll: false,
+      font: 'unknown',
+      pktNum: 1,
+      pkgIndex: 0,
+      divSeq: 0,
+      elemKinds: const <String>[],
+    );
 
-    check('三条件齐（time=0 + sender=0 + [已删除]）→ 判为占位',
-        Qq8SessionAdapter.isDeletedPlaceholder(msg()));
-    check('真人发同样文案（sender 非 0）→ 不丢',
-        !Qq8SessionAdapter.isDeletedPlaceholder(msg(from: 33333)));
-    check('time=0 但正文正常 → 不丢',
-        !Qq8SessionAdapter.isDeletedPlaceholder(msg(text: '正常一条')));
-    check('有正常时间与发送者的 [已删除] → 不丢',
-        !Qq8SessionAdapter.isDeletedPlaceholder(
-            msg(from: 33333, time: 1700000500)));
+    check(
+      '三条件齐（time=0 + sender=0 + [已删除]）→ 判为占位',
+      Qq8SessionAdapter.isDeletedPlaceholder(msg()),
+    );
+    check(
+      '真人发同样文案（sender 非 0）→ 不丢',
+      !Qq8SessionAdapter.isDeletedPlaceholder(msg(from: 33333)),
+    );
+    check(
+      'time=0 但正文正常 → 不丢',
+      !Qq8SessionAdapter.isDeletedPlaceholder(msg(text: '正常一条')),
+    );
+    check(
+      '有正常时间与发送者的 [已删除] → 不丢',
+      !Qq8SessionAdapter.isDeletedPlaceholder(
+        msg(from: 33333, time: 1700000500),
+      ),
+    );
   }
   // ----------------------------------------------------------------
   section('10. 戳一戳（OidbSvc.0xed3）与释放');
   {
     // 群戳：一个请求、一个应答 {3:0}。上一段的最后一个 seq 是 14。
     scripted.scriptedResponses.add(
-        _frame(15, Qq8Msg.pokeCmd, Qq8Pb.encode(<int, Object?>{3: 0})));
+      _frame(15, Qq8Msg.pokeCmd, Qq8Pb.encode(<int, Object?>{3: 0})),
+    );
     final beforePoke = scripted.sent.length;
     await adapter.sendPoke('group_987654321', '22222');
-    check('群戳一戳发出去了（不抛异常）', scripted.sent.length == beforePoke + 1,
-        '已发 ${scripted.sent.length}');
+    check(
+      '群戳一戳发出去了（不抛异常）',
+      scripted.sent.length == beforePoke + 1,
+      '已发 ${scripted.sent.length}',
+    );
     check('能力表里承认 poke', adapter.supports('poke'));
 
     // 用户 ID 不是数字：本地就拒，不能拿垃圾值去撞服务端
@@ -975,8 +1208,11 @@ Future<void> main() async {
       badIdThrew = e.message.contains('uin');
     }
     check('userId 不是数字 → 本地拒绝且说明原因', badIdThrew);
-    check('被拒时没有发包', scripted.sent.length == beforePoke + 1,
-        '${scripted.sent.length}');
+    check(
+      '被拒时没有发包',
+      scripted.sent.length == beforePoke + 1,
+      '${scripted.sent.length}',
+    );
 
     await adapter.dispose();
     await svc.close();
@@ -1015,30 +1251,36 @@ Future<void> main() async {
       reportOnlineStatus: false,
       timeout: const Duration(seconds: 5),
     );
-    final controller =
-        Qq8ConnectController(service: svc2, dataDir: tmp);
+    final controller = Qq8ConnectController(service: svc2, dataDir: tmp);
     final labels = <String>[];
     controller.addListener((s) => labels.add(s.stateLabel));
 
-    check('初始：未连接、没有 session/store',
-        controller.status.stage == Qq8LoginStage.idle &&
-            controller.session == null &&
-            controller.store == null,
-        controller.status.stateLabel);
+    check(
+      '初始：未连接、没有 session/store',
+      controller.status.stage == Qq8LoginStage.idle &&
+          controller.session == null &&
+          controller.store == null,
+      controller.status.stateLabel,
+    );
 
     await controller.loginWithToken(_me);
     // _attach 是异步的（上线后自动套适配器 + 建 ChatStore）：等它跑完
     await Future<void>.delayed(const Duration(milliseconds: 80));
-    check('登录后：session 与 store 都自动就绪',
-        controller.session != null && controller.store != null);
-    check('会话列表经 ChatStore 到了 UI 口（2 个）',
-        controller.store?.chats.length == 2,
-        '${controller.store?.chats.length}');
-    check('状态到"已上线"且 isOnline',
-        controller.status.isOnline && controller.status.stateLabel == '已上线',
-        controller.status.stateLabel);
-    check('状态变化序列里出现过"连接中…"', labels.contains('连接中…'),
-        labels.join('>'));
+    check(
+      '登录后：session 与 store 都自动就绪',
+      controller.session != null && controller.store != null,
+    );
+    check(
+      '会话列表经 ChatStore 到了 UI 口（2 个）',
+      controller.store?.chats.length == 2,
+      '${controller.store?.chats.length}',
+    );
+    check(
+      '状态到"已上线"且 isOnline',
+      controller.status.isOnline && controller.status.stateLabel == '已上线',
+      controller.status.stateLabel,
+    );
+    check('状态变化序列里出现过"连接中…"', labels.contains('连接中…'), labels.join('>'));
 
     // _attach 的并发闸（真机 2026-10-25 12:23 事故的回归）
     //
@@ -1052,36 +1294,55 @@ Future<void> main() async {
     // 包体是加密的，看不到命令名，只能数总数。6 = token 登录 1 + 上线
     // 固定包若干 + 好友列表 1 + 群列表 1；重入会让好友/群各多一次（→7）。
     // 反证过：把 `_attaching` 闸去掉就变 7，且脚本响应先用尽。
-    check('_attach 期间没有重入（包数稳定在 6）', scripted2.sent.length == 6,
-        '实际 ${scripted2.sent.length} 个');
+    check(
+      '_attach 期间没有重入（包数稳定在 6）',
+      scripted2.sent.length == 6,
+      '实际 ${scripted2.sent.length} 个',
+    );
     final storeBefore = controller.store;
-    check('store 是同一个实例（没有被第二次 _attach 换掉）',
-        identical(controller.store, storeBefore));
+    check(
+      'store 是同一个实例（没有被第二次 _attach 换掉）',
+      identical(controller.store, storeBefore),
+    );
 
-    check('状态标签映射（需要人操作的几种）',
-        const Qq8ConnectStatus(stage: Qq8LoginStage.needsSlider).stateLabel ==
-                '需要完成滑动验证' &&
-            const Qq8ConnectStatus(stage: Qq8LoginStage.waitingQrScan).needsHumanAction &&
-            const Qq8ConnectStatus(stage: Qq8LoginStage.needsSmsCode).needsHumanAction &&
-            const Qq8ConnectStatus(stage: Qq8LoginStage.failed).stateLabel == '登录失败');
+    check(
+      '状态标签映射（需要人操作的几种）',
+      const Qq8ConnectStatus(stage: Qq8LoginStage.needsSlider).stateLabel ==
+              '需要完成滑动验证' &&
+          const Qq8ConnectStatus(stage: Qq8LoginStage.waitingQrScan)
+              .needsHumanAction &&
+          const Qq8ConnectStatus(stage: Qq8LoginStage.needsSmsCode)
+              .needsHumanAction &&
+          const Qq8ConnectStatus(stage: Qq8LoginStage.failed).stateLabel ==
+              '登录失败',
+    );
 
     // 准入拒绝要和普通失败**说得不一样**，否则用户会以为再点一次就好。
     // 这是 UI 侧唯一的区分点（阶段本身是同一条线路的终点）。
-    check('状态标签：rejected 与 failed 分开说',
-        const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).stateLabel ==
-                '服务端拒绝登录' &&
-            !const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).needsHumanAction);
-    check('rejected 不被当成「需要人做点什么」（不该弹任何验证表单）',
-        !const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).isOnline);
+    check(
+      '状态标签：rejected 与 failed 分开说',
+      const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).stateLabel ==
+              '服务端拒绝登录' &&
+          !const Qq8ConnectStatus(stage: Qq8LoginStage.rejected)
+              .needsHumanAction,
+    );
+    check(
+      'rejected 不被当成「需要人做点什么」（不该弹任何验证表单）',
+      !const Qq8ConnectStatus(stage: Qq8LoginStage.rejected).isOnline,
+    );
 
     // 异常类型：resultType 要原样带出去（文案会变，返回码不会）。
     const rejectedEx = AccessRejectedException('服务端拒绝', 45);
-    check('AccessRejectedException 保留返回码与文案',
-        rejectedEx.resultType == 45 &&
-            rejectedEx.toString().contains('type=45') &&
-            rejectedEx.toString().contains('服务端拒绝'));
-    check('AccessRejectedException 无返回码时不硬编 type=',
-        !const AccessRejectedException('x').toString().contains('type='));
+    check(
+      'AccessRejectedException 保留返回码与文案',
+      rejectedEx.resultType == 45 &&
+          rejectedEx.toString().contains('type=45') &&
+          rejectedEx.toString().contains('服务端拒绝'),
+    );
+    check(
+      'AccessRejectedException 无返回码时不硬编 type=',
+      !const AccessRejectedException('x').toString().contains('type='),
+    );
 
     await controller.shutdown();
     await svc2.close();
@@ -1102,10 +1363,10 @@ Future<void> main() async {
     final until = DateTime.now()
         .add(const Duration(minutes: 30))
         .toIso8601String();
-    final coolFile =
-        File('${tmp.path}${Platform.pathSeparator}qq8-login-cooldown.json');
-    await coolFile.writeAsString(
-        '{"uin":$_me,"type":45,"until":"$until"}');
+    final coolFile = File(
+      '${tmp.path}${Platform.pathSeparator}qq8-login-cooldown.json',
+    );
+    await coolFile.writeAsString('{"uin":$_me,"type":45,"until":"$until"}');
 
     var transportAsked = 0;
     final svc = Qq8LoginService(
@@ -1121,19 +1382,30 @@ Future<void> main() async {
     final c = Qq8ConnectController(service: svc, dataDir: tmp);
     check('冷却文件存在时控制器能正常构造（不抛）', true);
     await c.loginWithPassword(_me, 'whatever');
-    check('冷却期内：口令登录一个包都不发（transport 未被请求）',
-        transportAsked == 0, 'transportAsked=$transportAsked');
-    check('冷却期内：状态停在 rejected 且带回 resultType=45',
-        c.status.stage == Qq8LoginStage.rejected && c.status.resultType == 45,
-        '${c.status.stage}/${c.status.resultType}');
-    check('冷却期内：提示给出剩余等待分钟数',
-        (c.status.error ?? '').contains('分钟'), c.status.error ?? '');
+    check(
+      '冷却期内：口令登录一个包都不发（transport 未被请求）',
+      transportAsked == 0,
+      'transportAsked=$transportAsked',
+    );
+    check(
+      '冷却期内：状态停在 rejected 且带回 resultType=45',
+      c.status.stage == Qq8LoginStage.rejected && c.status.resultType == 45,
+      '${c.status.stage}/${c.status.resultType}',
+    );
+    check(
+      '冷却期内：提示给出剩余等待分钟数',
+      (c.status.error ?? '').contains('分钟'),
+      c.status.error ?? '',
+    );
 
     // 冷却文件损坏 / 是垃圾内容时不能崩，也不能永久拦人（当成没有冷却）。
     await coolFile.writeAsString('not-a-json');
     final c2 = Qq8ConnectController(service: svc, dataDir: tmp);
-    check('冷却文件是垃圾内容时控制器仍能构造，且状态是干净的 idle',
-        c2.status.stage == Qq8LoginStage.idle, c2.status.stage.name);
+    check(
+      '冷却文件是垃圾内容时控制器仍能构造，且状态是干净的 idle',
+      c2.status.stage == Qq8LoginStage.idle,
+      c2.status.stage.name,
+    );
     await c2.shutdown();
 
     await c.shutdown();
@@ -1180,22 +1452,33 @@ Future<void> main() async {
     await svc.loginWithToken(uin: _me);
     await Future<void>.delayed(const Duration(milliseconds: 30));
     final failures = evs.whereType<SessionFailure>().toList();
-    check('断网失败不往事件流塞 SessionFailure', failures.isEmpty,
-        failures.map((f) => f.error.toString()).join(' | '));
+    check(
+      '断网失败不往事件流塞 SessionFailure',
+      failures.isEmpty,
+      failures.map((f) => f.error.toString()).join(' | '),
+    );
     final states = evs.whereType<SessionStateChanged>().toList();
-    check('状态确实变成 disconnected',
-        states.isNotEmpty && states.last.state == SessionState.disconnected,
-        states.map((e) => e.state.name).join('>'));
-    check('状态原因说的是网络（用户看到的是"网络"不是"登录失败"）',
-        states.isNotEmpty && (states.last.reason ?? '').contains('网络'),
-        states.isEmpty ? 'none' : (states.last.reason ?? ''));
-    check('状态标签是「等待网络恢复」，不是「登录失败」',
-        const Qq8ConnectStatus(
-                    stage: Qq8LoginStage.disconnected, networkIssue: true)
-                .stateLabel ==
-            '等待网络恢复' &&
-        const Qq8ConnectStatus(stage: Qq8LoginStage.disconnected).stateLabel ==
-            '已断开');
+    check(
+      '状态确实变成 disconnected',
+      states.isNotEmpty && states.last.state == SessionState.disconnected,
+      states.map((e) => e.state.name).join('>'),
+    );
+    check(
+      '状态原因说的是网络（用户看到的是"网络"不是"登录失败"）',
+      states.isNotEmpty && (states.last.reason ?? '').contains('网络'),
+      states.isEmpty ? 'none' : (states.last.reason ?? ''),
+    );
+    check(
+      '状态标签是「等待网络恢复」，不是「登录失败」',
+      const Qq8ConnectStatus(
+                stage: Qq8LoginStage.disconnected,
+                networkIssue: true,
+              ).stateLabel ==
+              '等待网络恢复' &&
+          const Qq8ConnectStatus(stage: Qq8LoginStage.disconnected)
+                  .stateLabel ==
+              '已断开',
+    );
     await sub.cancel();
     await ad.dispose();
     await svc.close();
@@ -1227,8 +1510,7 @@ Future<void> main() async {
     await svc.loginWithToken(uin: _me);
     await Future<void>.delayed(const Duration(milliseconds: 30));
     final once = evs.whereType<SessionFailure>().length;
-    check('同一次动作内两次相同失败 → 只报 1 条 SessionFailure', once == 1,
-        '实际 $once 条');
+    check('同一次动作内两次相同失败 → 只报 1 条 SessionFailure', once == 1, '实际 $once 条');
 
     // B. 用户点了两次（controller → _run → beginAction，序号变化）：两条都报
     evs.clear();
@@ -1236,8 +1518,7 @@ Future<void> main() async {
     await c.loginWithToken(_me);
     await Future<void>.delayed(const Duration(milliseconds: 30));
     final twice = evs.whereType<SessionFailure>().length;
-    check('用户两次动作、同一句失败 → 报 2 条 SessionFailure', twice == 2,
-        '实际 $twice 条');
+    check('用户两次动作、同一句失败 → 报 2 条 SessionFailure', twice == 2, '实际 $twice 条');
 
     await sub.cancel();
     await ad.dispose();
@@ -1248,6 +1529,77 @@ Future<void> main() async {
     } on FileSystemException {
       // Windows 句柄延迟释放，忽略。
     }
+  }
+
+  // ----------------------------------------------------------------
+  section('14. 空内容条目（msg_type=732、无元素）不进事件流');
+  //
+  // 真机 2026-11-05（m03823）：拉新消息里混进一条 msg_head.msg_type=732、
+  // 无文本无元素、无群号的同步条目，fromUin 恰好是某个群的**内群号**。
+  // 适配层若照常转成 ChatMessage，ChatStore 就会建出一条 private_<群号>
+  // 的空白会话（预览空白、未读 1，删了下次登录还回来）。
+  {
+    // 自建一套服务与适配器：main 里的 adapter 在前面的小节已经 dispose。
+    final s2 = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+      _registerFrame(1),
+    ]);
+    final st2 = _MemStore()
+      ..data = Qq8TokenData(
+        uin: _me,
+        savedAt: 'test',
+        tgt: _hex('1122334455667788'),
+        d2: _hex('a2' * 64),
+        d2key: _hex('a3' * 16),
+        sigKey: _hex('a4' * 48),
+        ticketKey: _hex('a5' * 16),
+        srmToken: _hex('a6' * 56),
+      );
+    final svc2 = Qq8LoginService(
+      tokenStore: st2,
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () => s2,
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(seconds: 5),
+      startupPullDelay: const Duration(hours: 1),
+      primeGroupSeqs: false,
+    );
+    final ad2 = Qq8SessionAdapter(service: svc2, uin: _me);
+    final evs2 = <SessionEvent>[];
+    final sub2 = ad2.events.listen(evs2.add);
+    await ad2.connect();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    final before = evs2.whereType<SessionMessage>().length;
+    s2.emit(
+      _frame(
+        120,
+        Qq8PushCmd.pushGroup,
+        Qq8Pb.encode(<int, Object?>{
+          1: Qq8Pb.encode(<int, Object?>{
+            1: Qq8Pb.encode(<int, Object?>{
+              1: 3976045673,
+              2: _me,
+              3: 732,
+              5: 45177,
+              6: 1793865386,
+            }),
+            3: Qq8Pb.encode(<int, Object?>{1: <int, Object?>{}}),
+          }),
+        }),
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    final after = evs2.whereType<SessionMessage>().length;
+    check(
+      '空内容条目被丢弃，事件流没有新增 SessionMessage',
+      after == before,
+      '$before → $after',
+    );
+    await sub2.cancel();
+    await ad2.dispose();
+    await svc2.close();
   }
 
   stdout.writeln('\n${'=' * 62}');
@@ -1261,8 +1613,9 @@ class _OfflineTransport implements Qq8Transport {
 
   @override
   Future<void> connect() async => throw Qq8TransportException(
-      '连接失败（已尝试 5 个端点）\n'
-      "  - tcp: SocketException: Failed host lookup: 'msfwifi.3g.qq.com'");
+    '连接失败（已尝试 5 个端点）\n'
+    "  - tcp: SocketException: Failed host lookup: 'msfwifi.3g.qq.com'",
+  );
 
   @override
   set onFrame(void Function(Uint8List frame)? cb) {}

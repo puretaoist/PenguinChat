@@ -24,7 +24,8 @@ class VoiceRecordButton extends StatefulWidget {
   });
 
   /// 录完（且时长够）后回调：裸 PCM 文件 + 波形（0..1）。
-  final Future<void> Function(RecordedPcm pcm, List<double> waveform) onRecorded;
+  final Future<void> Function(RecordedPcm pcm, List<double> waveform)
+  onRecorded;
 
   final bool enabled;
 
@@ -119,68 +120,71 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
           builder: (context, _) {
             final seconds = _controller.elapsedMs / 1000;
             final bars = _controller.waveform;
-            final color =
-                _willCancel ? TelegramColors.danger : TelegramColors.accent;
-            return Center(
+            final color = _willCancel
+                ? TelegramColors.danger
+                : TelegramColors.accent;
+            // 官方是输入区上方居中的 RecordCircle（
+            // `ChatActivityEnterView.java:4512` + recordCircle.onTouch），
+            // 一个直径约 200dp 的圆：上箭头（取消时变垃圾桶）、计时、
+            // 实时波形，底部一行提示。之前做成 180 宽的圆角卡片，离得远。
+            return Align(
+              alignment: const Alignment(0, 0.62),
               child: Container(
                 key: const ValueKey('voice-record-overlay'),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+                width: 200,
+                height: 200,
                 decoration: BoxDecoration(
-                  color: TelegramColors.bgHeader.withValues(alpha: 0.96),
-                  borderRadius: BorderRadius.circular(18),
+                  color: TelegramColors.bgHeader.withValues(alpha: 0.97),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: color.withValues(alpha: 0.85),
+                    width: 2,
+                  ),
                   boxShadow: const <BoxShadow>[
-                    BoxShadow(color: Color(0x66000000), blurRadius: 24),
+                    BoxShadow(color: Color(0x77000000), blurRadius: 28),
                   ],
                 ),
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    SizedBox(
-                      height: 46,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: <Widget>[
-                          Icon(
-                            _willCancel ? Icons.delete_outline : Icons.mic,
-                            color: color,
-                            size: 26,
-                          ),
-                          const SizedBox(width: 10),
-                          Text(
-                            '${seconds.toStringAsFixed(1)}\u2033',
-                            style: TextStyle(
-                              color: _willCancel
-                                  ? TelegramColors.danger
-                                  : TelegramColors.textPrimary,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: const <FontFeature>[
-                                FontFeature.tabularFigures(),
-                              ],
-                            ),
-                          ),
+                    Icon(
+                      _willCancel
+                          ? Icons.delete_outline_rounded
+                          : Icons.keyboard_arrow_up_rounded,
+                      color: color,
+                      size: 24,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${seconds.toStringAsFixed(1)}\u2033',
+                      style: TextStyle(
+                        color: _willCancel
+                            ? TelegramColors.danger
+                            : TelegramColors.textPrimary,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: const <FontFeature>[
+                          FontFeature.tabularFigures(),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 10),
                     SizedBox(
-                      height: 22,
-                      width: 180,
+                      height: 26,
+                      width: 150,
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.center,
-                        children: List<Widget>.generate(28, (i) {
+                        children: List<Widget>.generate(24, (i) {
                           final double amp = i < bars.length
                               ? bars[bars.length - 1 - i]
                               : 0.0;
-                          final h = 3 + amp.clamp(0.0, 1.0) * 19;
+                          final h = 3 + amp.clamp(0.0, 1.0) * 21;
                           return Container(
                             width: 3,
                             height: h,
-                            margin:
-                                const EdgeInsets.symmetric(horizontal: 1.5),
+                            margin: const EdgeInsets.symmetric(horizontal: 1.3),
                             decoration: BoxDecoration(
                               color: color,
                               borderRadius: BorderRadius.circular(2),
@@ -189,14 +193,14 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
                         }),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(
-                      _willCancel ? '松开取消' : '松开 发送 · 上滑取消',
+                      _willCancel ? '松开 取消' : '松开 发送 · 上滑取消',
                       style: TextStyle(
                         color: _willCancel
                             ? TelegramColors.danger
                             : TelegramColors.textSecondary,
-                        fontSize: 12,
+                        fontSize: 11.5,
                       ),
                     ),
                   ],
@@ -223,13 +227,15 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
         width: widget.size,
         height: widget.size,
         decoration: BoxDecoration(
-          color: TelegramColors.bgHover,
+          color: widget.enabled
+              ? TelegramColors.accent
+              : TelegramColors.bgHover,
           shape: BoxShape.circle,
         ),
         child: Icon(
           Icons.mic_none,
-          color: TelegramColors.textMuted,
-          size: 20,
+          color: widget.enabled ? Colors.white : TelegramColors.textMuted,
+          size: 22,
         ),
       ),
     );

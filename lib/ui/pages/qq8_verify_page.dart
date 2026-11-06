@@ -202,7 +202,8 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
   void initState() {
     super.initState();
     _web = WebViewController.fromPlatformCreationParams(
-        const PlatformWebViewControllerCreationParams());
+      const PlatformWebViewControllerCreationParams(),
+    );
     unawaited(_configure());
     _poll = Timer.periodic(_kPollInterval, (_) => unawaited(_pullFromPage()));
   }
@@ -219,46 +220,49 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
     await _web.setBackgroundColor(TelegramColors.bgApp);
     // 通道名对页面意味着 `window.PenguinCaptcha.postMessage(...)`；
     // 注意它只对**之后加载**的页面生效，所以这里必须早于 loadRequest。
-    await _web.addJavaScriptChannel(_kBridgeName,
-        onMessageReceived: (JavaScriptMessage message) =>
-            _onBridge(message.message));
-    await _web.setNavigationDelegate(NavigationDelegate(
-      onNavigationRequest: (NavigationRequest request) {
-        final uri = Uri.tryParse(request.url);
-        if (uri == null) return NavigationDecision.navigate;
-        _observe('nav', request.url);
-        // 非 http(s)（页面想拉起 QQ / 自定义 scheme）在 WebView 里也打不开，
-        // 直接拦掉，免得留一个打不开的白页。
-        return uri.scheme.startsWith('http')
-            ? NavigationDecision.navigate
-            : NavigationDecision.prevent;
-      },
-      onPageStarted: (url) {
-        _observe('load', url);
-        if (_pageError != null) setState(() => _pageError = null);
-      },
-      onPageFinished: (url) async {
-        _observe('loaded', url);
-        _loaded = true;
-        await _injectProbe();
-        await _pullFromPage();
-      },
-      onProgress: (progress) {
-        if (progress != _progress) setState(() => _progress = progress);
-      },
-      onWebResourceError: (error) {
-        // 子资源出错不是致命问题，只有主框架失败才值得弹出来
-        if (error.isForMainFrame == false) return;
-        setState(() => _pageError = '加载失败：${error.description}');
-        _observe('error', error.description);
-      },
-    ));
+    await _web.addJavaScriptChannel(
+      _kBridgeName,
+      onMessageReceived: (JavaScriptMessage message) =>
+          _onBridge(message.message),
+    );
+    await _web.setNavigationDelegate(
+      NavigationDelegate(
+        onNavigationRequest: (NavigationRequest request) {
+          final uri = Uri.tryParse(request.url);
+          if (uri == null) return NavigationDecision.navigate;
+          _observe('nav', request.url);
+          // 非 http(s)（页面想拉起 QQ / 自定义 scheme）在 WebView 里也打不开，
+          // 直接拦掉，免得留一个打不开的白页。
+          return uri.scheme.startsWith('http')
+              ? NavigationDecision.navigate
+              : NavigationDecision.prevent;
+        },
+        onPageStarted: (url) {
+          _observe('load', url);
+          if (_pageError != null) setState(() => _pageError = null);
+        },
+        onPageFinished: (url) async {
+          _observe('loaded', url);
+          _loaded = true;
+          await _injectProbe();
+          await _pullFromPage();
+        },
+        onProgress: (progress) {
+          if (progress != _progress) setState(() => _progress = progress);
+        },
+        onWebResourceError: (error) {
+          // 子资源出错不是致命问题，只有主框架失败才值得弹出来
+          if (error.isForMainFrame == false) return;
+          setState(() => _pageError = '加载失败：${error.description}');
+          _observe('error', error.description);
+        },
+      ),
+    );
 
     final platform = _web.platform;
     if (platform is AndroidWebViewController) {
       await platform.setMediaPlaybackRequiresUserGesture(false);
-      await platform
-          .setOnConsoleMessage((m) => _observe('console', m.message));
+      await platform.setOnConsoleMessage((m) => _observe('console', m.message));
       // 腾讯系 WebView 桥常用 prompt 传参：内容必须看得到。官方插件在没有回调时
       // 会把 prompt 直接吃掉（返回空串），所以这里接管并记账。
       await platform.setOnJavaScriptTextInputDialog((request) async {
@@ -301,9 +305,11 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
       _manual.text = ticket;
     }
     final line = _renderLine(kind, text);
-    _log.i('验证事件 $kind len=${text.length}'
-        '${ticket == null ? '' : ' 含验证码'}' //
-        '${line.isEmpty ? '' : ' ${_clip(line, 300)}'}');
+    _log.i(
+      '验证事件 $kind len=${text.length}'
+      '${ticket == null ? '' : ' 含验证码'}' //
+      '${line.isEmpty ? '' : ' ${_clip(line, 300)}'}',
+    );
     if (!mounted) return;
     setState(() {
       _trace.add(_Trace(kind, _clip(line, 400)));
@@ -355,11 +361,15 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
   Future<void> _pullFromPage() async {
     if (!_loaded) return;
     try {
-      final href = _jsString(await _web.runJavaScriptReturningResult(
-          'location.href'));
+      final href = _jsString(
+        await _web.runJavaScriptReturningResult('location.href'),
+      );
       _observe('href', href);
-      final text = _jsString(await _web.runJavaScriptReturningResult(
-          'document.body ? document.body.innerText : ""'));
+      final text = _jsString(
+        await _web.runJavaScriptReturningResult(
+          'document.body ? document.body.innerText : ""',
+        ),
+      );
       _observe('text', text);
     } on Object catch (e) {
       _log.d('取页面状态失败：$e');
@@ -417,8 +427,10 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
           IconButton(
             key: const ValueKey('qq8-verify-external'),
             tooltip: '用系统浏览器打开同一地址',
-            onPressed: () => launchUrl(Uri.parse(widget.url),
-                mode: LaunchMode.externalApplication),
+            onPressed: () => launchUrl(
+              Uri.parse(widget.url),
+              mode: LaunchMode.externalApplication,
+            ),
             icon: const Icon(Icons.open_in_new),
           ),
         ],
@@ -431,8 +443,10 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
               width: double.infinity,
               color: const Color(0x33E05252),
               padding: const EdgeInsets.all(8),
-              child: Text(_pageError!,
-                  style: const TextStyle(fontSize: 12, height: 1.35)),
+              child: Text(
+                _pageError!,
+                style: const TextStyle(fontSize: 12, height: 1.35),
+              ),
             ),
           Expanded(child: WebViewWidget(controller: _web)),
           _bottomPanel(context),
@@ -459,7 +473,7 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
             hasTicket
                 ? '已识别到验证码（${ticket.length} 字符），可直接提交继续登录。'
                 : '在上面的页面里完成验证。识别到验证码会自动填到下面；'
-                    '若一直没识别到，把页面上的验证码复制到这里。',
+                      '若一直没识别到，把页面上的验证码复制到这里。',
             style: TextStyle(
               color: hasTicket
                   ? TelegramColors.online
@@ -511,8 +525,11 @@ class _Qq8VerifyPageState extends State<Qq8VerifyPage> {
                 ),
                 child: _trace.isEmpty
                     ? const Center(
-                        child: Text('（还没有捕获到任何事件）',
-                            style: TextStyle(fontSize: 12)))
+                        child: Text(
+                          '（还没有捕获到任何事件）',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      )
                     : ListView.builder(
                         key: const ValueKey('qq8-verify-trace-list'),
                         padding: const EdgeInsets.all(6),

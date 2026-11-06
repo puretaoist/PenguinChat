@@ -30,7 +30,10 @@ class StartupSplash extends StatelessWidget {
                 duration: const Duration(milliseconds: 420),
                 curve: Curves.easeOutBack,
                 builder: (BuildContext _, double value, Widget? child) {
-                  final double opacity = ((value - 0.88) / 0.12).clamp(0.0, 1.0);
+                  final double opacity = ((value - 0.88) / 0.12).clamp(
+                    0.0,
+                    1.0,
+                  );
                   return Opacity(
                     opacity: opacity,
                     child: Transform.scale(scale: value, child: child),

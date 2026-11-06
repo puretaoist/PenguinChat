@@ -24,6 +24,7 @@ import '../../client_api/segment.dart';
 import '../../infra/net/media_fetcher.dart';
 import '../../kernel/wlogin8/qq8_elem.dart';
 import '../theme/telegram_theme.dart';
+import 'blur_up_image.dart';
 import 'voice_message.dart';
 
 class MessageContent extends StatelessWidget {
@@ -111,20 +112,29 @@ class MessageContent extends StatelessWidget {
           plain &&
           spans.length == 1 &&
           spans.first is TextSpan) {
-        blocks.add(Text((spans.first as TextSpan).text ?? '',
-            style: _base.copyWith(color: bodyColor)));
+        blocks.add(
+          Text(
+            (spans.first as TextSpan).text ?? '',
+            style: _base.copyWith(color: bodyColor),
+          ),
+        );
       } else {
         // children 要传**副本**：下面会 clear() 复用这个列表，
         // 传引用的话刚建好的 TextSpan 会被清空（踩过一次）。
-        blocks.add(Text.rich(
-          TextSpan(style: _base, children: [
-            ...List<InlineSpan>.of(spans),
-            // 时间/对勾贴着最后一行正文：空间不够时整块折行，不会压到文字上。
-            // 注意 ?? 这里用的是 null-aware element（Dart 3.8 的 `?tail`），
-            // 没有尾巴时等于什么都没加。
-            ?tail,
-          ]),
-        ));
+        blocks.add(
+          Text.rich(
+            TextSpan(
+              style: _base,
+              children: [
+                ...List<InlineSpan>.of(spans),
+                // 时间/对勾贴着最后一行正文：空间不够时整块折行，不会压到文字上。
+                // 注意 ?? 这里用的是 null-aware element（Dart 3.8 的 `?tail`），
+                // 没有尾巴时等于什么都没加。
+                ?tail,
+              ],
+            ),
+          ),
+        );
       }
       spans.clear();
       plain = true;
@@ -134,99 +144,119 @@ class MessageContent extends StatelessWidget {
       switch (s) {
         case TextSegment(:final text):
           if (text.isEmpty) break;
-          spans.add(TextSpan(
-            text: text,
-            style: TextStyle(color: bodyColor),
-          ));
+          spans.add(
+            TextSpan(
+              text: text,
+              style: TextStyle(color: bodyColor),
+            ),
+          );
         case FaceSegment(:final id):
           // 表情名是给人看的（id 是给协议看的）；名字表里没有就退回 [表情]。
           final name = Qq8FaceNames.nameOf(id);
           plain = false;
-          spans.add(TextSpan(
-            text: name == null ? '[表情]' : '[$name]',
-            style: TextStyle(color: _linkColor()),
-          ));
+          spans.add(
+            TextSpan(
+              text: name == null ? '[表情]' : '[$name]',
+              style: TextStyle(color: _linkColor()),
+            ),
+          );
         case AtSegment(:final qq, :final name):
           plain = false;
-          spans.add(TextSpan(
-            text: '@${name ?? (qq == 'all' ? '全体成员' : qq)}',
-            style: TextStyle(color: _linkColor()),
-          ));
+          spans.add(
+            TextSpan(
+              text: '@${name ?? (qq == 'all' ? '全体成员' : qq)}',
+              style: TextStyle(color: _linkColor()),
+            ),
+          );
         case ReplySegment():
           break; // 引用由气泡顶部的引用条负责
         case ImageSegment():
           flush();
           // 只有"整条消息就是这一张图"才叠时间块（多图/图文混排交给
           // 气泡底部的 _metaRow，叠在一堆图里反而看不清）。
-          blocks.add(_ImageBlock(
-            seg: s,
-            isOut: isOut,
-            localMedia: localMedia,
-            ensureMedia: ensureMedia,
-            mediaFailure: mediaFailure,
-            retryMedia: retryMedia,
-            imageMeta: singleImageBlock(message) ? imageMeta : null,
-            fullBleed: _pureImage,
-          ));
+          blocks.add(
+            _ImageBlock(
+              seg: s,
+              isOut: isOut,
+              localMedia: localMedia,
+              ensureMedia: ensureMedia,
+              mediaFailure: mediaFailure,
+              retryMedia: retryMedia,
+              imageMeta: singleImageBlock(message) ? imageMeta : null,
+              fullBleed: _pureImage,
+            ),
+          );
         case RecordSegment():
           flush();
           // 语音有自己的气泡内容（播放键 + 波形 + 时长），不再是「假装不能播」
           // 的元数据行。下载沿用同一套媒体缓存钩子，键也取同一个
           // （ChatStore.mediaRefOf 的 voice:<md5>）。
-          blocks.add(VoiceMessage(
-            segment: s,
-            isOut: isOut,
-            mediaKey: mediaRefOf(s)?.key,
-            ensureMedia: ensureMedia,
-            retryMedia: retryMedia,
-          ));
+          blocks.add(
+            VoiceMessage(
+              segment: s,
+              isOut: isOut,
+              mediaKey: mediaRefOf(s)?.key,
+              ensureMedia: ensureMedia,
+              retryMedia: retryMedia,
+            ),
+          );
         case VideoSegment():
           flush();
-          blocks.add(_MediaRow(
-            icon: Icons.videocam_outlined,
-            title: s.name?.isNotEmpty == true ? s.name! : '视频',
-            detail: _withSize(
-              s.seconds == null ? '' : '${s.seconds}″',
-              s.size,
+          blocks.add(
+            _MediaRow(
+              icon: Icons.videocam_outlined,
+              title: s.name?.isNotEmpty == true ? s.name! : '视频',
+              detail: _withSize(
+                s.seconds == null ? '' : '${s.seconds}″',
+                s.size,
+              ),
+              isOut: isOut,
             ),
-            isOut: isOut,
-          ));
+          );
         case FileSegment():
           flush();
           final open = onOpenFile;
-          blocks.add(_MediaRow(
-            icon: Icons.insert_drive_file_outlined,
-            title: s.name?.isNotEmpty == true ? s.name! : '文件',
-            detail: _withSize('', s.size),
-            isOut: isOut,
-            onTap: open == null ? null : () => open(s),
-          ));
+          blocks.add(
+            _MediaRow(
+              icon: Icons.insert_drive_file_outlined,
+              title: s.name?.isNotEmpty == true ? s.name! : '文件',
+              detail: _withSize('', s.size),
+              isOut: isOut,
+              onTap: open == null ? null : () => open(s),
+            ),
+          );
         case XmlSegment():
         case JsonSegment():
           // 卡片：有摘要就显示摘要（从 XML/JSON 属性里抠的），没有就显示通用文案。
           final summary = _cardSummary(s);
           flush();
-          blocks.add(_MediaRow(
-            icon: Icons.article_outlined,
-            title: summary.isEmpty ? '卡片消息' : summary,
-            detail: summary.isEmpty ? '' : '卡片消息',
-            isOut: isOut,
-          ));
+          blocks.add(
+            _MediaRow(
+              icon: Icons.article_outlined,
+              title: summary.isEmpty ? '卡片消息' : summary,
+              detail: summary.isEmpty ? '' : '卡片消息',
+              isOut: isOut,
+            ),
+          );
         case PokeSegment():
           // 戳一戳是行内小动作，跟文字排一行
-          spans.add(TextSpan(
-            text: '[戳一戳]',
-            style: TextStyle(color: _linkColor()),
-          ));
+          spans.add(
+            TextSpan(
+              text: '[戳一戳]',
+              style: TextStyle(color: _linkColor()),
+            ),
+          );
         default:
           // 其它段（未知类型…）先按摘要显示，别让气泡空着。
           final text = s.preview;
           if (text.isEmpty) break;
           plain = false;
-          spans.add(TextSpan(
-            text: text,
-            style: TextStyle(color: TelegramColors.textSecondary),
-          ));
+          spans.add(
+            TextSpan(
+              text: text,
+              style: TextStyle(color: TelegramColors.textSecondary),
+            ),
+          );
       }
     }
     flush();
@@ -252,10 +282,10 @@ class MessageContent extends StatelessWidget {
 
   /// 卡片摘要（两种卡片都有 [summary]，但类型不同，用模式匹配取）。
   static String _cardSummary(Segment s) => switch (s) {
-        XmlSegment(:final summary) => summary,
-        JsonSegment(:final summary) => summary,
-        _ => '',
-      };
+    XmlSegment(:final summary) => summary,
+    JsonSegment(:final summary) => summary,
+    _ => '',
+  };
 
   /// 把"主信息 · 体积"拼一行（空的部分自动省掉分隔符）。
   static String _withSize(String primary, int? size) {
@@ -275,10 +305,15 @@ class MessageContent extends StatelessWidget {
     final tail = trailing;
     // 纯文本消息（segments 为空、正文在 message.text 里）也要能贴时间。
     if (tail == null) return Text(text, style: style);
-    return Text.rich(TextSpan(style: style, children: [
-      TextSpan(text: text),
-      tail,
-    ]));
+    return Text.rich(
+      TextSpan(
+        style: style,
+        children: [
+          TextSpan(text: text),
+          tail,
+        ],
+      ),
+    );
   }
 
   /// 这条消息是不是"一张图 + 若干行内元素"（没有别的块级段）。
@@ -309,13 +344,15 @@ class MessageContent extends StatelessWidget {
   ///
   /// 有的话气泡的"最后一行"不是文本行，时间得单独占一行——否则会贴到块级
   /// 内容（比如图片）的右下角，被图盖住或悬在图片外面。
-  static bool hasBlockSegments(ChatMessage message) => message.segments.any((s) =>
-      s is ImageSegment ||
-      s is RecordSegment ||
-      s is VideoSegment ||
-      s is FileSegment ||
-      s is XmlSegment ||
-      s is JsonSegment);
+  static bool hasBlockSegments(ChatMessage message) => message.segments.any(
+    (s) =>
+        s is ImageSegment ||
+        s is RecordSegment ||
+        s is VideoSegment ||
+        s is FileSegment ||
+        s is XmlSegment ||
+        s is JsonSegment,
+  );
 }
 
 /// 语音 / 视频 / 文件 / 卡片这类"块级但没图可画"的消息：图标 + 标题 + 副信息。
@@ -582,12 +619,18 @@ class _ImageBlockState extends State<_ImageBlock> {
     // 本地优先：直链几天就过期，本地文件不会。这条路径同时也是"离线可看"。
     final local = _localPath();
     if (local != null) {
-      return Image.file(
-        File(local),
-        fit: BoxFit.cover,
+      // blur-up：先铺一张 32px 的模糊小图，清晰图解码完再 180ms 淡入。
+      // TG 的 ImageLoader 同样先给 blurred thumb——否则滚动时是"空洞 →
+      // 突然一张彩图"，观感很硬。
+      return BlurUpImage(
         // 按显示尺寸解码（TG ImageLoader 的 downsampling 等价物）：
         // 相机原图 4000px 解码到 240px 档，内存与解码耗时都是数量级差别。
-        cacheWidth: _decodeWidth(context, _maxWidth),
+        image: ResizeImage.resizeIfNeeded(
+          _decodeWidth(context, _maxWidth),
+          null,
+          FileImage(File(local)),
+        ),
+        fit: BoxFit.cover,
         errorBuilder: (_, _, _) => _failedPlaceholder(),
       );
     }
@@ -628,33 +671,30 @@ class _ImageBlockState extends State<_ImageBlock> {
   }
 
   Widget _placeholder(String text) => Container(
-        color: isOut
-            ? TelegramColors.bubbleOutText.withValues(alpha: 0.10)
-            : TelegramColors.bgHover,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(8),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              seg.flash ? Icons.visibility_off : Icons.image_outlined,
-              size: 22,
-              color: TelegramColors.textSecondary,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              text,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: TelegramColors.textSecondary,
-                fontSize: 11.5,
-              ),
-            ),
-          ],
+    color: isOut
+        ? TelegramColors.bubbleOutText.withValues(alpha: 0.10)
+        : TelegramColors.bgHover,
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(8),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          seg.flash ? Icons.visibility_off : Icons.image_outlined,
+          size: 22,
+          color: TelegramColors.textSecondary,
         ),
-      );
+        const SizedBox(height: 6),
+        Text(
+          text,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: TelegramColors.textSecondary, fontSize: 11.5),
+        ),
+      ],
+    ),
+  );
 
   /// 点开看大图。没有直链时就只把文件名/尺寸摊开，便于对着日志排查。
   void _openLarge(BuildContext context) {
@@ -666,9 +706,16 @@ class _ImageBlockState extends State<_ImageBlock> {
     final h = maxH;
     final w = (h * ar).clamp(120.0, maxW);
 
-    showDialog<void>(
+    // 大图用自绘的 200ms 淡入 + 0.92→1 缩放，而不是 showDialog 的默认弹法：
+    // TG 的 PhotoViewer 打开时图片是从缩略图位置"放大"出来的（这里是近似，
+    // 没有做真正的 shared-element，但观感方向一致）。
+    showGeneralDialog<void>(
       context: context,
-      builder: (ctx) => Dialog(
+      barrierDismissible: true,
+      barrierLabel: '查看图片',
+      barrierColor: Colors.black.withValues(alpha: 0.6),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (ctx, _, _) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(16),
         child: Column(
@@ -702,7 +749,9 @@ class _ImageBlockState extends State<_ImageBlock> {
                                     : '没有可用的直链，无法加载原图',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                    color: Colors.white70, fontSize: 12.5),
+                                  color: Colors.white70,
+                                  fontSize: 12.5,
+                                ),
                               ),
                               const SizedBox(height: 10),
                               SelectableText(
@@ -710,40 +759,50 @@ class _ImageBlockState extends State<_ImageBlock> {
                                 '${seg.width ?? '?'}×${seg.height ?? '?'}',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                    color: Colors.white54, fontSize: 11.5),
+                                  color: Colors.white54,
+                                  fontSize: 11.5,
+                                ),
                               ),
                             ],
                           ),
                         ),
                       )
                     : localLarge != null
-                        ? Image.file(
-                            File(localLarge),
-                            cacheWidth: _decodeWidth(
-                                context, MediaQuery.sizeOf(context).width),
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, _, _) => Container(
-                              color: Colors.black87,
-                              alignment: Alignment.center,
-                              child: const Text(
-                                '本地文件读不出来了（可能刚被缓存清理删掉）',
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 12.5),
-                              ),
+                    ? Image.file(
+                        File(localLarge),
+                        cacheWidth: _decodeWidth(
+                          context,
+                          MediaQuery.sizeOf(context).width,
+                        ),
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, _, _) => Container(
+                          color: Colors.black87,
+                          alignment: Alignment.center,
+                          child: const Text(
+                            '本地文件读不出来了（可能刚被缓存清理删掉）',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12.5,
                             ),
-                          )
-                        : Image.network(
+                          ),
+                        ),
+                      )
+                    : Image.network(
                         seg.url!,
                         cacheWidth: _decodeWidth(
-                            context, MediaQuery.sizeOf(context).width),
+                          context,
+                          MediaQuery.sizeOf(context).width,
+                        ),
                         fit: BoxFit.contain,
                         loadingBuilder: (_, child, p) =>
                             p == null ? child : const _Spinner(),
                         errorBuilder: (_, _, _) => Container(
                           color: Colors.black87,
                           alignment: Alignment.center,
-                          child: const Text('原图加载失败',
-                              style: TextStyle(color: Colors.white70)),
+                          child: const Text(
+                            '原图加载失败',
+                            style: TextStyle(color: Colors.white70),
+                          ),
                         ),
                       ),
               ),
@@ -756,6 +815,20 @@ class _ImageBlockState extends State<_ImageBlock> {
           ],
         ),
       ),
+      transitionBuilder: (ctx, animation, _, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1).animate(curved),
+            child: child,
+          ),
+        );
+      },
     );
   }
 }
@@ -765,13 +838,13 @@ class _Spinner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const ColoredBox(
-        color: Colors.black87,
-        child: Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
+    color: Colors.black87,
+    child: Center(
+      child: SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+    ),
+  );
 }

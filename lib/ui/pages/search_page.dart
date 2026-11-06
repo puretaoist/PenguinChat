@@ -93,30 +93,29 @@ class _SearchPageState extends State<SearchPage> {
       body: _query.trim().isEmpty
           ? _hint('输入名字找会话，或输入内容找消息')
           : (chatting.isEmpty && messages.isEmpty
-              ? _hint('没有找到。\n消息只搜已加载的部分——更早的可能还没拉下来。')
-              : ListView(
-                  key: const ValueKey('search-results'),
-                  padding: const EdgeInsets.only(top: 4),
-                  children: [
-                    if (chatting.isNotEmpty) ...[
-                      _sectionTitle('会话'),
-                      for (var i = 0; i < chatting.length; i++)
-                        _withDivider(
-                          _chatTile(chatting[i]),
-                          last: i == chatting.length - 1 &&
-                              messages.isEmpty,
-                        ),
+                ? _hint('没有找到。\n消息只搜已加载的部分——更早的可能还没拉下来。')
+                : ListView(
+                    key: const ValueKey('search-results'),
+                    padding: const EdgeInsets.only(top: 4),
+                    children: [
+                      if (chatting.isNotEmpty) ...[
+                        _sectionTitle('会话'),
+                        for (var i = 0; i < chatting.length; i++)
+                          _withDivider(
+                            _chatTile(chatting[i]),
+                            last: i == chatting.length - 1 && messages.isEmpty,
+                          ),
+                      ],
+                      if (messages.isNotEmpty) ...[
+                        _sectionTitle('消息'),
+                        for (var i = 0; i < messages.length; i++)
+                          _withDivider(
+                            _messageTile(messages[i]),
+                            last: i == messages.length - 1,
+                          ),
+                      ],
                     ],
-                    if (messages.isNotEmpty) ...[
-                      _sectionTitle('消息'),
-                      for (var i = 0; i < messages.length; i++)
-                        _withDivider(
-                          _messageTile(messages[i]),
-                          last: i == messages.length - 1,
-                        ),
-                    ],
-                  ],
-                )),
+                  )),
     );
   }
 
@@ -131,11 +130,7 @@ class _SearchPageState extends State<SearchPage> {
       child: Row(
         children: [
           const SizedBox(width: 12),
-          Icon(
-            Icons.search,
-            size: 18,
-            color: TelegramColors.textSecondary,
-          ),
+          Icon(Icons.search, size: 18, color: TelegramColors.textSecondary),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -180,51 +175,51 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Widget _hint(String text) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: TelegramColors.textSecondary,
-              fontSize: 13,
-              height: 1.5,
-            ),
-          ),
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: TelegramColors.textSecondary,
+          fontSize: 13,
+          height: 1.5,
         ),
-      );
+      ),
+    ),
+  );
 
   /// 分组标题 = TG `Cells/GraySectionCell.java`：高 32（`layerHeight`）、
   /// 14dp 粗体（`:57`）、左右 padding 16（`:50`）、底色 `key_graySection`。
   Widget _sectionTitle(String text) => Container(
-        height: 32,
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        color: TelegramColors.bgHover,
-        child: Text(
-          text,
-          style: TextStyle(
-            color: TelegramColors.textMuted,
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      );
+    height: 32,
+    alignment: Alignment.centerLeft,
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    color: TelegramColors.bgHover,
+    child: Text(
+      text,
+      style: TextStyle(
+        color: TelegramColors.textMuted,
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
 
   /// 行间分隔线：从文字起点（72）画到右缘，最后一行不画
   /// （同 `Cells/DialogCell` 的 `needDivider`）。
   Widget _withDivider(Widget child, {required bool last}) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          child,
-          if (!last)
-            Container(
-              height: 1,
-              margin: const EdgeInsets.only(left: 72),
-              color: TelegramColors.divider,
-            ),
-        ],
-      );
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      child,
+      if (!last)
+        Container(
+          height: 1,
+          margin: const EdgeInsets.only(left: 72),
+          color: TelegramColors.divider,
+        ),
+    ],
+  );
 
   /// 结果行 = TG `Cells/DialogCell.java:170-172`： avatarStart 11、
   /// messagePaddingStart 72、heightDefault 70；标题 dp(17)、摘要 dp(16)。
@@ -234,66 +229,65 @@ class _SearchPageState extends State<SearchPage> {
     required String title,
     required String subtitle,
     required VoidCallback onTap,
-  }) =>
-      InkWell(
-        key: key,
-        onTap: onTap,
-        child: Container(
-          constraints: const BoxConstraints(
-            minHeight: TelegramMetrics.chatRowHeight,
-          ),
-          padding: const EdgeInsets.symmetric(
-            horizontal: TelegramMetrics.chatRowPadding,
-            vertical: 9,
-          ),
-          child: Row(
-            children: [
-              avatar,
-              const SizedBox(width: TelegramMetrics.chatAvatarGap),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: TelegramColors.textPrimary,
-                        fontSize: TelegramMetrics.fontTitle,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: TelegramColors.textSecondary,
-                        fontSize: TelegramMetrics.fontBody,
-                      ),
-                    ),
-                  ],
+  }) => InkWell(
+    key: key,
+    onTap: onTap,
+    child: Container(
+      constraints: const BoxConstraints(
+        minHeight: TelegramMetrics.chatRowHeight,
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: TelegramMetrics.chatRowPadding,
+        vertical: 9,
+      ),
+      child: Row(
+        children: [
+          avatar,
+          const SizedBox(width: TelegramMetrics.chatAvatarGap),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: TelegramColors.textPrimary,
+                    fontSize: TelegramMetrics.fontTitle,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: TelegramColors.textSecondary,
+                    fontSize: TelegramMetrics.fontBody,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 
   Widget _chatTile(Chat chat) => _resultRow(
-        key: ValueKey('search-chat-${chat.id}'),
-        avatar: TelegramAvatar(
-          name: chat.title,
-          url: chat.avatarUrl,
-          size: TelegramMetrics.avatarSize,
-        ),
-        title: chat.title,
-        subtitle: chat.lastMessage,
-        onTap: () => _open(chat.id),
-      );
+    key: ValueKey('search-chat-${chat.id}'),
+    avatar: TelegramAvatar(
+      name: chat.title,
+      url: chat.avatarUrl,
+      size: TelegramMetrics.avatarSize,
+    ),
+    title: chat.title,
+    subtitle: chat.lastMessage,
+    onTap: () => _open(chat.id),
+  );
 
   Widget _messageTile(({String chatId, ChatMessage message}) hit) {
     final chat = widget.chats.where((c) => c.id == hit.chatId).firstOrNull;

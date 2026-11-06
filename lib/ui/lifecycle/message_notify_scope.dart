@@ -96,12 +96,12 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
     ref.listen<ChatStore?>(chatStoreProvider, (_, next) => _attach(next));
     // 用户把「消息通知」关掉：正在挂着的常驻通知要立刻撤掉，
     // 否则开关看着是关的、通知栏里却还留着几条。
-    ref.listen<bool>(
-      uiPrefsProvider.select((UiPrefs p) => p.notifications),
-      (_, bool enabled) {
-        if (!enabled) unawaited(_notifier.cancelAll());
-      },
-    );
+    ref.listen<bool>(uiPrefsProvider.select((UiPrefs p) => p.notifications), (
+      _,
+      bool enabled,
+    ) {
+      if (!enabled) unawaited(_notifier.cancelAll());
+    });
     return widget.child;
   }
 
@@ -237,7 +237,9 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
     final gid = chat?.rawId;
     final raw = message.senderName;
     final needName =
-        isGroup && gid != null && (raw.isEmpty || RegExp(r'^\d+$').hasMatch(raw));
+        isGroup &&
+        gid != null &&
+        (raw.isEmpty || RegExp(r'^\d+$').hasMatch(raw));
     if (needName) {
       final svc = _namesService();
       if (svc != null) {
@@ -274,10 +276,9 @@ class _MessageNotifyScopeState extends ConsumerState<MessageNotifyScope>
   }
 
   static bool _isBackground(AppLifecycleState? state) => switch (state) {
-        AppLifecycleState.paused ||
-        AppLifecycleState.hidden ||
-        AppLifecycleState.detached =>
-          true,
-        _ => false,
-      };
+    AppLifecycleState.paused ||
+    AppLifecycleState.hidden ||
+    AppLifecycleState.detached => true,
+    _ => false,
+  };
 }

@@ -181,6 +181,8 @@ void main() {
     ticket: ticketBytes,
     fileMd5: md5,
     ext: Uint8List.fromList(<int>[0x32, 0x00]),
+    appId: 537064117,
+    loginSig: Uint8List.fromList(<int>[0xAA, 0xBB, 0xCC]),
   );
   checkEq('frame 首字节 0x28', frame.first, 0x28);
   checkEq('frame 尾字节 0x29', frame.last, 0x29);
@@ -193,6 +195,8 @@ void main() {
       9 + headLen + chunk.length + 1);
   final fh = Qq8Pb.decode(Uint8List.sublistView(frame, 9, 9 + headLen));
   final f1 = Qq8Pb.decode(Qq8Pb.bytesAt(fh, 1)!);
+  // 2026-11-05 修正：f2 Uin 在协议定义里是 string（Lagrange Highway.cs），按字符串编。
+  checkEq('头1.2 = uin（string）', Qq8Pb.textAt(f1, 2), '3880159487');
   checkEq('头1.3 = PicUp.DataUp', Qq8Pb.textAt(f1, 3), 'PicUp.DataUp');
   checkEq('头1.7 = 16', Qq8Pb.intAt(f1, 7), 16);
   checkEq('头1.8 = 1007（语音上传）', Qq8Pb.intAt(f1, 8), 1007);
@@ -204,6 +208,12 @@ void main() {
   check('头2.8 = md5(片)', eqBytes(Qq8Pb.bytesAt(f2h, 8), md5Bytes(chunk)));
   check('头2.9 = md5(整)', eqBytes(Qq8Pb.bytesAt(f2h, 9), md5));
   checkEq('头4 = 0（时间戳不填）', Qq8Pb.intAt(fh, 4), 0);
+  // 2026-11-05 补齐的两个字段：缺它们时服务端统一回 372。
+  checkEq('头1.6 = 客户端 AppId', Qq8Pb.intAt(f1, 6), 537064117);
+  final f5 = Qq8Pb.decode(Qq8Pb.bytesAt(fh, 5)!);
+  checkEq('头5.1 = loginSigType(8=A2)', Qq8Pb.intAt(f5, 1), 8);
+  check('头5.2 = A2 原始字节', eqBytes(Qq8Pb.bytesAt(f5, 2), <int>[0xAA, 0xBB, 0xCC]));
+  checkEq('头5.3 = AppId', Qq8Pb.intAt(f5, 3), 537064117);
   // 2026-11-01 真机回包原文（HTTP 200 / 135 字节）。注意：
   // 这条回包的 `f3 uint32_error_code` 实际是 **372**（失败），旧实现读的是
   // `f2.f1`（SegHead.serviceid，恒 0）所以误判成功 —— 2026-11-03 已修正。

@@ -25,7 +25,7 @@ import 'package:flutter/services.dart';
 
 class MessageNotifier {
   MessageNotifier({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel(channelName);
+    : _channel = channel ?? const MethodChannel(channelName);
 
   /// 通道名。写成常量是为了真机排障时能在 `dumpsys`/`logcat` 里搜到。
   static const String channelName = 'penguinchat/notify';
@@ -66,7 +66,9 @@ class MessageNotifier {
           if (args is! Map) return false;
           final chatId = args['chatId'];
           final text = args['text'];
-          if (chatId is! String || text is! String || chatId.isEmpty) return false;
+          if (chatId is! String || text is! String || chatId.isEmpty) {
+            return false;
+          }
           // 只有空白的输入等于没回复：不要因此给对方发一条空消息。
           final trimmed = text.trim();
           if (trimmed.isEmpty) return false;

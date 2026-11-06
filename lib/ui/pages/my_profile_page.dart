@@ -174,8 +174,8 @@ class _MyProfilePageState extends ConsumerState<MyProfilePage> {
       return;
     }
     // 兜底：没有 tab 回调时压栈打开（例如将来从别的入口进来）。
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
-    );
+    Navigator.of(
+      context,
+    ).push<void>(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
   }
 }

@@ -271,14 +271,15 @@ int _seenActionSerial = -1;
     );
   }
 
-  /// 发一条消息（**支持文本 / QQ 表情 / 本地单张图片**，其他段会抛错而不是
-  /// 静默丢），返回服务端消息 ID。
+  /// 发一条消息（**文本 / QQ 表情 / @ / 本地图片（可多张、可与文字混排）**，
+  /// 其他段会抛错而不是静默丢），返回服务端消息 ID。
   ///
-  /// 图片走完整上传链路（[Qq8LoginService.sendImage]：探图 → PicUp 申请 →
-  /// highway 传数据 → 元素回填）。暂不支持的：
-  /// * 图片 + 其他内容混排（要先把多个元素排好再发，还没做）；
-  /// * **转发收到的图**——`ImageSegment.file` 里只有 QQ 的图片文件名，
-  ///   本地没有文件可传（服务端 md5 命中也不能免传，fid 是按目标换的）。
+  /// 图片走完整上传链路（[Qq8LoginService.uploadImageElem]：探图 → PicUp 申请
+  /// → highway 传数据 → 元素回填）。逐张上传后**按原段序**把图元素插回
+  /// elems，所以"你好 + 图"是一条消息而不是两条。
+  ///
+  /// 暂不支持：**转发收到的图**——`ImageSegment.file` 里只有 QQ 的图片文件名，
+  /// 本地没有文件可传（服务端 md5 命中也不能免传，fid 是按目标换的）。
   @override
   Future<String?> sendMessage(String chatId, List<Segment> segments) async {
     _requireReady();
@@ -288,40 +289,32 @@ int _seenActionSerial = -1;
     }
     final self = service.snapshot.uin ?? 0;
 
-    if (segments.any((s) => s is ImageSegment)) {
-      if (segments.length != 1 || segments.first is! ImageSegment) {
-        throw SessionException('图片暂时只能单独发（文字/表情混排还没做）');
+    // 图片先上传成元素；后面 _elemsOf 会按段序把它们插进 elems。
+    final images = segments.whereType<ImageSegment>().toList();
+    final imageElems = <Uint8List>[];
+    if (images.isNotEmpty) {
+      if (images.length > 9) {
+        throw SessionException('一条消息最多 9 张图（现在 ${images.length} 张）');
       }
-      final img = segments.first as ImageSegment;
-      final path = img.file;
-      final f = File(path);
-      if (path.isEmpty || !f.existsSync()) {
-        throw SessionException(
-            '这张图没有本地文件（收到/转发的图暂时发不出去）：$path');
+      for (final seg in segments) {
+        if (seg is FileSegment || seg is RecordSegment || seg is VideoSegment) {
+          throw SessionException('图片不能和文件/语音/视频混在一条消息里');
+        }
       }
-      final bytes = await f.readAsBytes();
-      final r = key.type == ChatType.private
-          ? await service.sendImage(bytes: bytes, uid: key.id)
-          : await service.sendImage(bytes: bytes, gid: key.id);
-      if (!r.ok) {
-        throw SessionException(
-            '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+      for (final img in images) {
+        final path = img.file;
+        final f = File(path);
+        if (path.isEmpty || !f.existsSync()) {
+          throw SessionException('这张图没有本地文件（收到/转发的图暂时发不出去）：$path');
+        }
+        imageElems.add(
+          await service.uploadImageElem(
+            bytes: await f.readAsBytes(),
+            uid: key.type == ChatType.private ? key.id : null,
+            gid: key.type == ChatType.group ? key.id : null,
+          ),
+        );
       }
-      return key.type == ChatType.private
-          ? Qq8Msg.dmMessageId(
-              peerUin: key.id!,
-              seq: r.seq,
-              rand: r.rand,
-              time: r.time,
-              outgoing: true,
-            )
-          : Qq8Msg.groupMessageId(
-              gid: key.id!,
-              senderUin: self,
-              seq: r.seq,
-              rand: r.rand,
-              time: r.time,
-            );
     }
 
     if (segments.any((s) => s is FileSegment)) {
@@ -392,7 +385,7 @@ int _seenActionSerial = -1;
             );
     }
 
-    final elems = _elemsOf(segments);
+    final elems = _elemsOf(segments, imageElems: imageElems);
     final reply = _replyOf(segments, chatId);
 
     if (key.type == ChatType.private) {
@@ -749,6 +742,21 @@ int _seenActionSerial = -1;
 
   ChatMessage? _toChatMessage(Qq8IncomingMessage m) {
     final self = service.snapshot.uin ?? 0;
+    // 内容全空的条目**直接丢弃**，不能进会话库。
+    // 真机 2026-11-05（m03823）：拉新消息（MessageSvc.PbGetMsg）里混进了
+    // msg_head.msg_type=732、无文本无元素无群号的同步条目，它的 fromUin 恰好是
+    // 某个群的**内群号（groupUin）**；内核按「非 82/83 即私聊」判成 c2c，于是
+    // 每登录一次就在列表里长出一条 `private_<群号>` 的空白会话（删了还会回来，
+    // 预览空白、只挂个未读 1）。
+    // 判定要求 text、elems、elemKinds **三者全空**：只要有一个元素被识别出来，
+    // 或者内核记到了原始元素名，就说明它确实带着内容，交给下面正常处理——
+    // 宁可留个空气泡给人看，也不能吞掉真消息。
+    if (m.text.isEmpty && m.elems.isEmpty && m.elemKinds.isEmpty) {
+      _log('debug',
+          '丢弃空内容条目（无文本/无元素/无元素名） from=${m.fromUin} '
+          'to=${m.toUin} type=${m.msgType} c2cCmd=${m.c2cCmd} gid=${m.groupCode}');
+      return null;
+    }
     if (isDeletedPlaceholder(m)) {
       _log('debug', '丢弃服务端删除占位（time=0 sender=0 text=[已删除]）');
       return null;
@@ -773,6 +781,17 @@ int _seenActionSerial = -1;
     // 混用一张全局表会让私聊里冒出对方在别的群里的名字（真机 m45402 反馈）。
     // 服务层缓存（备注/群名片）优先于消息自带昵称：备注是用户在客户端里设的，
     // 这才是他期望看到的名字；消息里的昵称只是发送方当时的自称。
+    // 消息自带昵称（group msg_head[14]）就顺手补进成员名缓存：成员名单还没
+    // 拉到时，这一条（以及重启后的历史）才能立刻显示名字，而不是空白
+    // （真机 m05841：某人只发了一条消息，气泡上却没有名字）。
+    // 必须先回填再算 scopedName，本条消息才吃得到。
+    if (isGroup && (m.groupCode ?? 0) > 0 && m.fromNick != null) {
+      service.rememberGroupMemberNameFromMessage(
+        m.groupCode!,
+        m.fromUin,
+        m.fromNick,
+      );
+    }
     final scopedName = (isGroup && (m.groupCode ?? 0) > 0)
         ? service.groupMemberNameOf(m.groupCode!, m.fromUin)
         : service.displayNameOf(m.fromUin);
@@ -915,8 +934,14 @@ int _seenActionSerial = -1;
   /// 转发、粘贴进来的文本同样生效。
   ///
   /// 不认识的段**抛错**而不是丢掉：发出去的内容少一块，比发送失败更难查。
-  static List<Uint8List> _elemsOf(List<Segment> segments) {
+  /// [imageElems] 是**已经上传好**的图片元素，按 [segments] 里
+  /// [ImageSegment] 出现的顺序依次取用（顺序就是气泡里的显示顺序）。
+  static List<Uint8List> _elemsOf(
+    List<Segment> segments, {
+    List<Uint8List> imageElems = const <Uint8List>[],
+  }) {
     final elems = <Uint8List>[];
+    var imageIndex = 0;
     final buf = StringBuffer();
     void flushText() {
       if (buf.isEmpty) return;
@@ -944,6 +969,12 @@ int _seenActionSerial = -1;
           buf.write(name != null && name.isNotEmpty ? '@$name ' : '@$qq ');
         case ReplySegment():
           break; // 引用不走正文
+        case ImageSegment():
+          if (imageIndex >= imageElems.length) {
+            throw SessionException('图片元素没上传就先组装了（内部顺序错误）');
+          }
+          flushText();
+          elems.add(imageElems[imageIndex++]);
         default:
           throw SessionException('协议线暂不支持这种消息段：${s.runtimeType}');
       }

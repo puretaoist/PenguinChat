@@ -36,8 +36,7 @@ class VoiceMessage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // ChangeNotifierProvider 的 watch 在 analyzer 眼里是可空的（泛型上界是
     // ChangeNotifier?），provider 里 create 一定返回实例，这里断言非空。
-    final controller =
-        controllerOverride ?? ref.watch(voicePlaybackProvider)!;
+    final controller = controllerOverride ?? ref.watch(voicePlaybackProvider)!;
     // 用 ListenableBuilder 而不是只靠 ref.watch：测试里传 controllerOverride
     // 绕开了 Riverpod，那种情况下没有任何东西会触发重建。
     return ListenableBuilder(

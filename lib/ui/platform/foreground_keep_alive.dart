@@ -22,10 +22,7 @@ import 'package:flutter/services.dart';
 import '../../infra/lifecycle/keep_alive.dart';
 
 class ForegroundKeepAlive implements KeepAlive {
-  ForegroundKeepAlive({
-    this.title = '保持连接',
-    this.text = '正在后台保持消息连接',
-  });
+  ForegroundKeepAlive({this.title = '保持连接', this.text = '正在后台保持消息连接'});
 
   /// 常驻通知标题。
   final String title;
@@ -36,10 +33,10 @@ class ForegroundKeepAlive implements KeepAlive {
   static const MethodChannel _channel = MethodChannel('penguinchat/keepalive');
 
   @override
-  Future<void> start() => _channel.invokeMethod<void>('start', <String, Object?>{
-        'title': title,
-        'text': text,
-      });
+  Future<void> start() => _channel.invokeMethod<void>(
+    'start',
+    <String, Object?>{'title': title, 'text': text},
+  );
 
   @override
   Future<void> stop() => _channel.invokeMethod<void>('stop');

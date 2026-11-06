@@ -100,7 +100,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
       for (var i = 0; i < kRiskPoints.length; i++)
         if (_acked[i]) kRiskPoints[i],
     ];
-    final rejected = await gate.enableRealServer(acknowledged, environment: _report);
+    final rejected = await gate.enableRealServer(
+      acknowledged,
+      environment: _report,
+    );
     if (!mounted) return;
     setState(() => _gateError = rejected);
   }
@@ -174,22 +177,28 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
         backgroundColor: TelegramColors.bgHeader,
         foregroundColor: TelegramColors.textPrimary,
         elevation: 0,
-        title: const Text('连接设置',
-            style: TextStyle(fontSize: TelegramMetrics.fontTitle)),
+        title: const Text(
+          '连接设置',
+          style: TextStyle(fontSize: TelegramMetrics.fontTitle),
+        ),
         actions: [
           TextButton(
             key: const ValueKey('open-qq8-connect'),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const Qq8ConnectPage()),
             ),
-            child: Text('协议线登录',
-                style: TextStyle(color: TelegramColors.accent)),
+            child: Text(
+              '协议线登录',
+              style: TextStyle(color: TelegramColors.accent),
+            ),
           ),
           if (status.isConnected)
             TextButton(
               onPressed: _leave,
-              child: Text('进入主界面',
-                  style: TextStyle(color: TelegramColors.accent)),
+              child: Text(
+                '进入主界面',
+                style: TextStyle(color: TelegramColors.accent),
+              ),
             ),
         ],
       ),
@@ -245,8 +254,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
           value: _tokenInHeader,
           activeThumbColor: TelegramColors.accent,
           onChanged: (v) => setState(() => _tokenInHeader = v),
-          title: Text('令牌放在 Authorization 头',
-              style: TextStyle(color: TelegramColors.textPrimary, fontSize: 13)),
+          title: Text(
+            '令牌放在 Authorization 头',
+            style: TextStyle(color: TelegramColors.textPrimary, fontSize: 13),
+          ),
           subtitle: Text(
             '默认走 ?access_token= 查询参数；NapCat 两种都支持，按你的配置选',
             style: TextStyle(color: TelegramColors.textSecondary, fontSize: 11),
@@ -330,19 +341,23 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('错误原文',
-                    style: TextStyle(
-                        color: _warnColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600)),
+                const Text(
+                  '错误原文',
+                  style: TextStyle(
+                    color: _warnColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 4),
                 // 排障靠这句：原文照抄，不做归纳，可选中复制
                 SelectableText(
                   status.error!,
                   style: TextStyle(
-                      color: TelegramColors.textPrimary,
-                      fontSize: 12.5,
-                      height: 1.4),
+                    color: TelegramColors.textPrimary,
+                    fontSize: 12.5,
+                    height: 1.4,
+                  ),
                 ),
               ],
             ),
@@ -371,7 +386,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
               '在驱动这个账号——用非官方客户端连接真实服务器违反《QQ 用户协议》，'
               '账号可能被限制登录或永久封禁。',
               style: TextStyle(
-                  color: TelegramColors.textPrimary, fontSize: 12.5, height: 1.45),
+                color: TelegramColors.textPrimary,
+                fontSize: 12.5,
+                height: 1.45,
+              ),
             ),
           ),
         ],
@@ -388,7 +406,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
           '开启真实服务器模式需要过两道关：先做环境检测（高危环境直接拒绝），'
           '再逐条确认下面 ${kRiskPoints.length} 项。',
           style: TextStyle(
-              color: TelegramColors.textSecondary, fontSize: 12, height: 1.4),
+            color: TelegramColors.textSecondary,
+            fontSize: 12,
+            height: 1.4,
+          ),
         ),
         const SizedBox(height: 12),
         Row(
@@ -404,7 +425,9 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
               Text(
                 '等级：${report.level.label}',
                 style: TextStyle(
-                  color: report.blocksRealServer ? _warnColor : TelegramColors.online,
+                  color: report.blocksRealServer
+                      ? _warnColor
+                      : TelegramColors.online,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -413,8 +436,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
         ),
         if (_probeError != null) ...[
           const SizedBox(height: 8),
-          Text('环境检测失败：$_probeError',
-              style: TextStyle(color: _warnColor, fontSize: 12)),
+          Text(
+            '环境检测失败：$_probeError',
+            style: TextStyle(color: _warnColor, fontSize: 12),
+          ),
         ],
         if (report != null) ...[
           const SizedBox(height: 10),
@@ -424,13 +449,21 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
               child: Text(
                 '· [${f.severity.label}] ${f.label}：${f.detail}',
                 style: TextStyle(
-                    color: TelegramColors.textSecondary, fontSize: 12, height: 1.4),
+                  color: TelegramColors.textSecondary,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
               ),
             ),
           ),
           if (report.findings.isEmpty)
-            Text('未发现常见风险信号。',
-                style: TextStyle(color: TelegramColors.textSecondary, fontSize: 12)),
+            Text(
+              '未发现常见风险信号。',
+              style: TextStyle(
+                color: TelegramColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
           if (report.undetectable.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
@@ -438,9 +471,14 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
               style: TextStyle(color: TelegramColors.textMuted, fontSize: 11),
             ),
             ...report.undetectable.map(
-              (u) => Text('· $u',
-                  style: TextStyle(
-                      color: TelegramColors.textMuted, fontSize: 11, height: 1.35)),
+              (u) => Text(
+                '· $u',
+                style: TextStyle(
+                  color: TelegramColors.textMuted,
+                  fontSize: 11,
+                  height: 1.35,
+                ),
+              ),
             ),
           ],
         ],
@@ -456,7 +494,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
             title: Text(
               kRiskPoints[i],
               style: TextStyle(
-                  color: TelegramColors.textPrimary, fontSize: 12.5, height: 1.4),
+                color: TelegramColors.textPrimary,
+                fontSize: 12.5,
+                height: 1.4,
+              ),
             ),
           ),
         const SizedBox(height: 8),
@@ -478,7 +519,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
             child: Text(
               _gateError!,
               style: TextStyle(
-                  color: TelegramColors.textPrimary, fontSize: 12.5, height: 1.45),
+                color: TelegramColors.textPrimary,
+                fontSize: 12.5,
+                height: 1.45,
+              ),
             ),
           ),
         ],
@@ -500,7 +544,10 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
         Text(
           gate.describe(),
           style: TextStyle(
-              color: TelegramColors.textPrimary, fontSize: 13, height: 1.4),
+            color: TelegramColors.textPrimary,
+            fontSize: 13,
+            height: 1.4,
+          ),
         ),
         if (gate.consent != null) ...[
           const SizedBox(height: 6),
@@ -536,37 +583,39 @@ class _ConnectPageState extends ConsumerState<ConnectPage> {
   }
 
   Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.only(bottom: 3),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 68,
-              child: Text(k,
-                  style: TextStyle(
-                      color: TelegramColors.textSecondary, fontSize: 12)),
-            ),
-            Expanded(
-              child: SelectableText(v,
-                  style: TextStyle(
-                      color: TelegramColors.textPrimary, fontSize: 12.5)),
-            ),
-          ],
+    padding: const EdgeInsets.only(bottom: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 68,
+          child: Text(
+            k,
+            style: TextStyle(color: TelegramColors.textSecondary, fontSize: 12),
+          ),
         ),
-      );
+        Expanded(
+          child: SelectableText(
+            v,
+            style: TextStyle(color: TelegramColors.textPrimary, fontSize: 12.5),
+          ),
+        ),
+      ],
+    ),
+  );
 
   InputDecoration _inputDecoration(String hint) => InputDecoration(
-        hintText: hint,
-        hintStyle: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
-        isDense: true,
-        filled: true,
-        fillColor: TelegramColors.bgHover,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide.none,
-        ),
-      );
+    hintText: hint,
+    hintStyle: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
+    isDense: true,
+    filled: true,
+    fillColor: TelegramColors.bgHover,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: BorderSide.none,
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -640,7 +689,9 @@ class _PrimaryButton extends StatelessWidget {
           foregroundColor: Colors.white,
           disabledForegroundColor: TelegramColors.textMuted,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
         child: Text(label, style: TextStyle(fontSize: 14)),
       ),
@@ -671,9 +722,13 @@ class _OutlinedButton extends StatelessWidget {
           foregroundColor: color,
           disabledForegroundColor: TelegramColors.textMuted,
           side: BorderSide(
-            color: enabled ? color.withValues(alpha: 0.5) : TelegramColors.divider,
+            color: enabled
+                ? color.withValues(alpha: 0.5)
+                : TelegramColors.divider,
           ),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
         child: Text(label, style: TextStyle(fontSize: 14)),
       ),

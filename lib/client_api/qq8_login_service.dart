@@ -64,6 +64,7 @@ import '../kernel/wlogin8/qq8_group_admin.dart';
 import '../kernel/wlogin8/qq8_image.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_msg.dart';
+import '../kernel/wlogin8/qq8_ntv2.dart';
 import '../kernel/wlogin8/qq8_ptt.dart';
 import '../kernel/wlogin8/qq8_multimsg.dart';
 import '../kernel/wlogin8/qq8_jce.dart';
@@ -240,21 +241,21 @@ class Qq8LoginSnapshot {
 
   /// 复制一份并打上动作序号（[_emit] 用；本类不可变，只能整份重建）。
   Qq8LoginSnapshot stamped(int seq) => Qq8LoginSnapshot(
-        stage: stage,
-        uin: uin,
-        sliderUrl: sliderUrl,
-        phone: phone,
-        smsAutoSent: smsAutoSent,
-        smsFlow: smsFlow,
-        deviceLockHint: deviceLockHint,
-        qrToken: qrToken,
-        qrMessage: qrMessage,
-        error: error,
-        resultType: resultType,
-        networkIssue: networkIssue,
-        stackTrace: stackTrace,
-        actionSeq: seq,
-      );
+    stage: stage,
+    uin: uin,
+    sliderUrl: sliderUrl,
+    phone: phone,
+    smsAutoSent: smsAutoSent,
+    smsFlow: smsFlow,
+    deviceLockHint: deviceLockHint,
+    qrToken: qrToken,
+    qrMessage: qrMessage,
+    error: error,
+    resultType: resultType,
+    networkIssue: networkIssue,
+    stackTrace: stackTrace,
+    actionSeq: seq,
+  );
 
   bool get isOnline => stage == Qq8LoginStage.online;
   bool get needsHumanAction =>
@@ -264,7 +265,8 @@ class Qq8LoginSnapshot {
       stage == Qq8LoginStage.waitingQrScan;
 
   @override
-  String toString() => 'Qq8LoginSnapshot(${stage.name}'
+  String toString() =>
+      'Qq8LoginSnapshot(${stage.name}'
       '${uin == null ? '' : ' uin=$uin'}'
       '${error == null ? '' : ' error=$error'})';
 }
@@ -363,6 +365,7 @@ class Qq8LoginService {
   final bool reportOnlineStatus;
 
   final Duration heartbeatInterval;
+
   /// 收消息兜底轮询间隔（推送不可靠时的补拉频率）。
   ///
   /// 服务端对我们**完全不推消息**（真机 2026-10-25：只有 `StatSvc.QueryHB` 与
@@ -378,6 +381,7 @@ class Qq8LoginService {
   /// 频率 4 次/分，低于原先 8 s 的 7.5 次/分。群侧另有"窗口问空就不再重复
   /// 问"的短路（见 [_groupWindowIdle]），实际包量更低。
   final Duration pullInterval;
+
   /// 应用在后台时的轮询间隔。
   ///
   /// 官方客户端**根本不做定时轮询**：`MessageHandler` 里 `MessageSvc.PbGetMsg`
@@ -390,8 +394,10 @@ class Qq8LoginService {
   /// 请求压到接近官方水平（官方在后台根本不轮询）。
   /// 所以前台 15 s、后台 120 s。
   final Duration backgroundPullInterval;
+
   /// 上线后延迟多久做第一次补拉（0 = 不做）。测试里调大避免抢帧。
   final Duration startupPullDelay;
+
   /// 上线后是否对每个群发一次探测把最新 seq 记下来（群消息轮询的前提）
   final bool primeGroupSeqs;
 
@@ -406,7 +412,9 @@ class Qq8LoginService {
 
   final StreamController<Qq8LoginSnapshot> _states =
       StreamController<Qq8LoginSnapshot>.broadcast();
-  Qq8LoginSnapshot _snapshot = const Qq8LoginSnapshot(stage: Qq8LoginStage.idle);
+  Qq8LoginSnapshot _snapshot = const Qq8LoginSnapshot(
+    stage: Qq8LoginStage.idle,
+  );
 
   final StreamController<Qq8PushEvent> _events =
       StreamController<Qq8PushEvent>.broadcast();
@@ -450,6 +458,7 @@ class Qq8LoginService {
   int _actionSerial = 0;
   int get actionSerial => _actionSerial;
   void beginAction() => _actionSerial++;
+
   /// 收消息兜底轮询（PushNotify 不可靠时的补拉）。
   Timer? _pullTimer;
   Qq8Session? _session;
@@ -476,10 +485,16 @@ class Qq8LoginService {
   /// **群内**显示名缓存：gid → (uin → 群名片/昵称)。
   ///
   /// 群名片只在该群有效，绝不能拿去当私聊名字。
-  final Map<int, Map<int, String>> _groupMemberNames = <int, Map<int, String>>{};
+  final Map<int, Map<int, String>> _groupMemberNames =
+      <int, Map<int, String>>{};
 
-  /// 群成员名单的最近拉取时间（同一个群 10 分钟内不重复拉）。
-  final Map<int, DateTime> _groupNamesFetchedAt = <int, DateTime>{};
+  /// 群成员名单的**下次允许拉取时间**。
+  ///
+  /// 成功 → now + 10 分钟（名单不会秒变）；失败 → now + 30 秒。
+  /// 旧版把失败也记成 10 分钟冷却（先写时间再拉），一次网络抖动就让该群
+  /// 所有人 10 分钟都没有名字——真机 m05841「某个人只发了一条消息却没有
+  /// 名字」的成因之一。
+  final Map<int, DateTime> _groupNamesNextTryAt = <int, DateTime>{};
 
   /// 最近一次拉到的好友列表（含分组），给「联系人」页当数据源。
   ///
@@ -570,24 +585,48 @@ class Qq8LoginService {
       return;
     }
     // 没有真昵称：群名片仅在没有真昵称时兜底，且不覆盖已有的值。
-    if (!_selfNicknameIsReal && (_selfNickname == null || _selfNickname!.isEmpty)) {
+    if (!_selfNicknameIsReal &&
+        (_selfNickname == null || _selfNickname!.isEmpty)) {
       _selfNickname = name;
     }
   }
 
-  /// 确保某个群的成员名字已缓存（10 分钟内只拉一次，失败静默）。
+  /// 用**消息体里带的昵称**补一次成员名缓存（给适配层调用）。
+  ///
+  /// 群消息的 `msg_head[14]`（`fromNick`）有时带发送者昵称，而成员名单
+  /// 可能还没拉到、或该成员不在名单里（刚入群 / 分页没翻到）。昵称比 QQ 号
+  /// 更像"名字"，见到就存下来，气泡下一帧就能显示。
+  ///
+  /// 已有值（群名片优先）时**不覆盖**：名片是群内身份，昵称只是自称。
+  void rememberGroupMemberNameFromMessage(int gid, int uin, String? nick) {
+    if (gid == 0 || uin == 0) return;
+    final name = nick?.trim();
+    if (name == null || name.isEmpty) return;
+    final existing = _groupMemberNames[gid]?[uin];
+    if (existing != null && existing.isNotEmpty) return;
+    (_groupMemberNames[gid] ??= <int, String>{})[uin] = name;
+  }
+
+  /// 确保某个群的成员名字已缓存（成功 10 分钟内不重复拉，失败 30s 后可重试）。
   ///
   /// 只为「让通知/气泡能显示网名」服务，所以绝不抛异常、绝不阻塞消息处理。
   Future<void> ensureGroupNames(int gid) async {
-    final at = _groupNamesFetchedAt[gid];
-    if (at != null && DateTime.now().difference(at) < const Duration(minutes: 10)) {
-      return;
-    }
-    _groupNamesFetchedAt[gid] = DateTime.now();
+    final now = DateTime.now();
+    final next = _groupNamesNextTryAt[gid];
+    if (next != null && now.isBefore(next)) return;
     try {
-      await fetchGroupMembers(gid);
+      final page = await fetchGroupMembers(gid);
+      // result != 0 或一个人都没拿到 = 这次没成功：30 秒后允许重试。
+      // 只有真拿到名单才写 10 分钟冷却（见字段注释：旧版顺序写反了，
+      // 失败也会被锁 10 分钟）。
+      _groupNamesNextTryAt[gid] = now.add(
+        page.result == 0 && page.members.isNotEmpty
+            ? const Duration(minutes: 10)
+            : const Duration(seconds: 30),
+      );
     } catch (_) {
-      // 名字是装饰，拉不到就算了。
+      // 名字是装饰，拉不到就算了——但要允许很快重试。
+      _groupNamesNextTryAt[gid] = now.add(const Duration(seconds: 30));
     }
   }
 
@@ -627,11 +666,13 @@ class Qq8LoginService {
 
   /// 增量拉消息的游标（`PbGetMsgResp.sync_cookie`，服务端靠它算增量）。
   Uint8List? _syncCookie;
+
   /// 每个群「已收到的最大消息 seq」。
   ///
   /// 初始值来自 `PbUnReadMsgSeq`（那是**水位**，见 `_groupSynced`），之后
   /// 只由 `_advanceGroupCursor` 按实际收到的消息推进。
   final Map<int, int> _groupLastSeq = {};
+
   /// 已经把「水位之前一窗」补过的群。
   ///
   /// [PbUnReadMsgSeq] 给的 `group_seq` 是**最新消息序号（水位）**，不是
@@ -641,6 +682,7 @@ class Qq8LoginService {
 
   /// 供自测读取某群的当前游标（`null` = 还没铺底）。只读，无副作用。
   int? debugGroupCursor(int groupCode) => _groupLastSeq[groupCode];
+
   /// 供自测：下一次请求会拿到的 seq（不消耗号；null = 未上线）。
   int? get debugSeqCursor => _session?.seqCursor;
 
@@ -648,7 +690,8 @@ class Qq8LoginService {
   Future<void> debugPollGroups({String reason = '自测轮询'}) => _pollGroups(reason);
 
   /// 供自测：所有群的当前游标（只读快照）。
-  Map<int, int> get debugGroupCursors => Map<int, int>.unmodifiable(_groupLastSeq);
+  Map<int, int> get debugGroupCursors =>
+      Map<int, int>.unmodifiable(_groupLastSeq);
 
   /// 供自测：当前因"窗口问空"被短路的群（只读快照）。
   Set<int> get debugGroupWindowIdle => Set<int>.unmodifiable(_groupWindowIdle);
@@ -662,6 +705,7 @@ class Qq8LoginService {
       _groupSynced.remove(groupCode);
     }
   }
+
   /// seq 探测两路都拿不到的群（本轮会话内不再重试，避免请求风暴）。
   final Set<int> _primeFailed = {};
 
@@ -802,9 +846,9 @@ class Qq8LoginService {
     this.allowExperimentalRecovery = false,
     this.timeout = const Duration(seconds: 15),
     this.registerTimeout = const Duration(seconds: 30),
-  })  : profile = profile ?? qq8DefaultProfile,
-        tokenStore = tokenStore ?? _MemoryTokenStore(),
-        transportBuilder = transportBuilder ?? (() => Qq8TcpTransport());
+  }) : profile = profile ?? qq8DefaultProfile,
+       tokenStore = tokenStore ?? _MemoryTokenStore(),
+       transportBuilder = transportBuilder ?? (() => Qq8TcpTransport());
 
   /// 诊断钩子（可选）：每收到一条登录/验证类的**原始响应帧**就回调一次。
   ///
@@ -815,7 +859,7 @@ class Qq8LoginService {
   /// [tag] 说明这条是哪一步（`fetch`/`poll`/`login`）；[parsed] 是能解出
   /// type/TLV 时的解析结果（扫码的响应类型不同，可能是 null）。
   void Function(String tag, Uint8List frame, Qq8LoginResponse? parsed)?
-      onDiagnostic;
+  onDiagnostic;
 
   /// 当前 ECDH 共享密钥（诊断落盘用；没握手前为 null）。
   Uint8List? get debugShareKey => _ecdh?.shareKey;
@@ -838,8 +882,13 @@ class Qq8LoginService {
   bool _passGate() {
     final blocked = _gateBlockReason();
     if (blocked == null) return true;
-    _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.failed, uin: _snapshot.uin, error: blocked));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: Qq8LoginStage.failed,
+        uin: _snapshot.uin,
+        error: blocked,
+      ),
+    );
     return false;
   }
 
@@ -884,8 +933,7 @@ class Qq8LoginService {
   Future<void> loginWithPasswordMd5({
     required int uin,
     required Uint8List passwordMd5,
-  }) =>
-      _login(uin: uin, passwordMd5: passwordMd5);
+  }) => _login(uin: uin, passwordMd5: passwordMd5);
 
   /// 用已存的票据续期登录（不需要口令）。
   Future<void> loginWithToken({required int uin}) async {
@@ -894,10 +942,12 @@ class Qq8LoginService {
     // （子命令 15）。两者都没有才是真的没料——这时才报错，具体走哪条由
     // 下面的 planner 决定（材料不足的话术也由 planner 的 Stop 分支负责）。
     if (token == null || !token.recoveryUsable) {
-      _emit(const Qq8LoginSnapshot(
-        stage: Qq8LoginStage.failed,
-        error: '没有可用的票据（先做一次口令登录）',
-      ));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '没有可用的票据（先做一次口令登录）',
+        ),
+      );
       return;
     }
     // **本地已知不可用就别发包**：服务端已判失效 / 服务端给过的到期时间已过。
@@ -906,12 +956,14 @@ class Qq8LoginService {
     final v = token.evaluateValidity(DateTime.now());
     if (v == Qq8TokenValidity.invalidated || v == Qq8TokenValidity.expired) {
       _log.w('票据不可用（$v），不发包，直接让用户重新登录');
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.sessionExpired,
-        uin: uin,
-        error: '上次登录已失效（票据过期或被服务端作废），请重新登录',
-        resultType: token.invalidatedType,
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.sessionExpired,
+          uin: uin,
+          error: '上次登录已失效（票据过期或被服务端作废），请重新登录',
+          resultType: token.invalidatedType,
+        ),
+      );
       return;
     }
     if (v == Qq8TokenValidity.expiringSoon) _log.i('票据将在 30 分钟内到期，仍尝试续期');
@@ -935,16 +987,20 @@ class Qq8LoginService {
       allowUnverifiedMaterials: allowExperimentalRecovery,
     );
     if (decision is Qq8RecoveryStop) {
-      _log.w('免密恢复停止 code=${decision.code}（${decision.message}）'
-          '材料=$avail');
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.sessionExpired,
-        uin: uin,
-        error: decision.code == 'unverified'
-            ? '登录凭证不足以自动恢复（只剩未验证的恢复材料），请重新登录一次'
-            : '登录凭证不足，请重新登录一次',
-        resultType: token.invalidatedType,
-      ));
+      _log.w(
+        '免密恢复停止 code=${decision.code}（${decision.message}）'
+        '材料=$avail',
+      );
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.sessionExpired,
+          uin: uin,
+          error: decision.code == 'unverified'
+              ? '登录凭证不足以自动恢复（只剩未验证的恢复材料），请重新登录一次'
+              : '登录凭证不足，请重新登录一次',
+          resultType: token.invalidatedType,
+        ),
+      );
       return;
     }
     final material = (decision as Qq8RecoveryAttempt).material;
@@ -989,14 +1045,18 @@ class Qq8LoginService {
       case Qq8RecoveryMaterial.a2Only:
         // a2Only：无 key 时 tgtgt 该填什么（空 / 全零）官方未在证据里给死。
         // 因此这里**明确停**，绝不降级成 d2key 或密码，也不假装已实现。
-        _log.w('免密恢复分支 $material 未接线（live=unavailable），'
-            '不发包，请用户重新登录一次');
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.sessionExpired,
-          uin: uin,
-          error: '登录凭证不足，请重新登录一次',
-          resultType: token.invalidatedType,
-        ));
+        _log.w(
+          '免密恢复分支 $material 未接线（live=unavailable），'
+          '不发包，请用户重新登录一次',
+        );
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.sessionExpired,
+            uin: uin,
+            error: '登录凭证不足，请重新登录一次',
+            resultType: token.invalidatedType,
+          ),
+        );
         return;
     }
     await _login(uin: uin, passwordMd5: null, token: token);
@@ -1029,11 +1089,13 @@ class Qq8LoginService {
         a1 == null &&
         a2Key == null &&
         Qq8LoginPolicy.passwordLoginBlocked) {
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.failed,
-        uin: uin,
-        error: Qq8LoginPolicy.blockedMessage,
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          uin: uin,
+          error: Qq8LoginPolicy.blockedMessage,
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
@@ -1046,11 +1108,13 @@ class Qq8LoginService {
     // 非空，这里只是最后一层防线，直接报"凭证不足"让用户重登。
     if (a2Key != null && a2Key.isEmpty) {
       _log.w('A2KEY 为空（0 字节），不组包、不降级成口令链，请用户重新登录一次');
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.sessionExpired,
-        uin: uin,
-        error: '登录凭证不足，请重新登录一次',
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.sessionExpired,
+          uin: uin,
+          error: '登录凭证不足，请重新登录一次',
+        ),
+      );
       return;
     }
     try {
@@ -1081,12 +1145,17 @@ class Qq8LoginService {
           if (a1.length >= 16) {
             _device = _device!.withTgtgt(a1.sublist(a1.length - 16));
           } else {
-            _log.w('A1 只有 ${a1.length}B（不足 16B，取不出尾部 tgtgt），'
-                '按服务端裁决照常发包');
+            _log.w(
+              'A1 只有 ${a1.length}B（不足 16B，取不出尾部 tgtgt），'
+              '按服务端裁决照常发包',
+            );
           }
         }
-        _ecdh = (ecdhBuilder ??
-            () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
+        _ecdh =
+            (ecdhBuilder ??
+            () => Ecdh.exchange(
+              Uint8List.fromList(Qq8Config.serverEcdhPublicKey),
+            ))();
         _sessionId = _randomBytes(4);
         _randomKey = _randomBytes(16);
         _flowSeq = null;
@@ -1099,7 +1168,12 @@ class Qq8LoginService {
         _verifyPhone = null;
       }
 
-      final ctx = _tlvCtx(uin, passwordMd5: passwordMd5, token: token, smsLogin: smsLogin);
+      final ctx = _tlvCtx(
+        uin,
+        passwordMd5: passwordMd5,
+        token: token,
+        smsLogin: smsLogin,
+      );
       // QIMEI：优先用手工/身份文件注入的值；没有才去灯塔取号（只取一次）。
       // 取号失败不阻断登录——官方取不到 0x545 就整条不发（`k.java` case 1349）。
       final effectiveQimei = await _resolveQimei();
@@ -1133,7 +1207,8 @@ class Qq8LoginService {
                       loginType: 3,
                       t104: ctx.t104,
                       qimei: effectiveQimei,
-                      t548: ctx.t548)
+                      t548: ctx.t548,
+                    )
                   : Qq8LoginConditions(qimei: effectiveQimei, t548: ctx.t548),
               // 0x545 的 body 从 args 取（ctx 只做承载）；有 QIMEI 时才进包。
               args: <int, List<Object?>>{
@@ -1156,13 +1231,21 @@ class Qq8LoginService {
   Future<void> submitSliderTicket(String ticket) async {
     final uin = _snapshot.uin;
     if (uin == null || _device == null) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没发起登录，无法提交验证'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没发起登录，无法提交验证',
+        ),
+      );
       return;
     }
     if (_t104.isEmpty) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '缺少服务端下发的盐（0x104），请重新发起登录'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '缺少服务端下发的盐（0x104），请重新发起登录',
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
@@ -1171,11 +1254,13 @@ class Qq8LoginService {
       // `this.mMiscBitmap` **原值**交给 `n.a(...)`，不叠 `WLOGIN_DA2`；
       // 叠位只发生在密码首包 `GetStWithPasswd`（`:1415-1418`）。
       // 故这条包的 0x116 发 `0x08F7FF7C`（150470524）。
-      final ctx = _tlvCtx(uin,
-          passwordMd5: null,
-          token: null,
-          da2BitActive: false,
-          t544SubCmd: Qq8SubCmd.slider);
+      final ctx = _tlvCtx(
+        uin,
+        passwordMd5: null,
+        token: null,
+        da2BitActive: false,
+        t544SubCmd: Qq8SubCmd.slider,
+      );
       final body = Qq8LoginBody.buildSlider(ctx, ticket: ticket);
       await _sendLoginBody(uin, ctx, body);
     } on Object catch (e, st) {
@@ -1188,14 +1273,22 @@ class Qq8LoginService {
   Future<void> requestSmsCode() async {
     final uin = _snapshot.uin;
     if (uin == null || _device == null) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没发起登录，无法请求短信'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没发起登录，无法请求短信',
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     try {
-      final ctx = _tlvCtx(uin,
-          passwordMd5: null, token: null, t544SubCmd: Qq8SubCmd.sendSms);
+      final ctx = _tlvCtx(
+        uin,
+        passwordMd5: null,
+        token: null,
+        t544SubCmd: Qq8SubCmd.sendSms,
+      );
       await _sendLoginBody(uin, ctx, Qq8LoginBody.buildSendSms(ctx));
     } on Object catch (e, st) {
       _fail('请求短信验证码失败', e, st);
@@ -1206,16 +1299,27 @@ class Qq8LoginService {
   Future<void> submitSmsCode(String code) async {
     final uin = _snapshot.uin;
     if (uin == null || _device == null) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没发起登录，无法提交验证码'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没发起登录，无法提交验证码',
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
     try {
-      final ctx = _tlvCtx(uin,
-          passwordMd5: null, token: null, t544SubCmd: Qq8SubCmd.submitSms);
+      final ctx = _tlvCtx(
+        uin,
+        passwordMd5: null,
+        token: null,
+        t544SubCmd: Qq8SubCmd.submitSms,
+      );
       await _sendLoginBody(
-          uin, ctx, Qq8LoginBody.buildSubmitSms(ctx, code: code));
+        uin,
+        ctx,
+        Qq8LoginBody.buildSubmitSms(ctx, code: code),
+      );
     } on Object catch (e, st) {
       _fail('提交短信验证码失败', e, st);
     }
@@ -1225,8 +1329,12 @@ class Qq8LoginService {
   Future<void> unlockDevice() async {
     final uin = _snapshot.uin;
     if (uin == null || _device == null) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没发起登录，无法解锁'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没发起登录，无法解锁',
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, uin: uin));
@@ -1257,8 +1365,9 @@ class Qq8LoginService {
   /// 见 `msf/core/auth/l.java:796`）。
   Future<void> loginWithPhone({required String phone}) async {
     if (phone.isEmpty) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '手机号不能为空'));
+      _emit(
+        const Qq8LoginSnapshot(stage: Qq8LoginStage.failed, error: '手机号不能为空'),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, phone: phone));
@@ -1277,8 +1386,11 @@ class Qq8LoginService {
       // 还不知道 uin（要等 18 号回包的 0x113）：设备按 0 派生，
       // 与官方"新建一个 uin=0 的会话"（`t.a(0L)`）是同一形状。
       _device = (deviceBuilder ?? Qq8Device.generate)(0);
-      _ecdh = (ecdhBuilder ??
-          () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
+      _ecdh =
+          (ecdhBuilder ??
+          () => Ecdh.exchange(
+            Uint8List.fromList(Qq8Config.serverEcdhPublicKey),
+          ))();
       _sessionId = _randomBytes(4);
       _randomKey = _randomBytes(16);
 
@@ -1302,13 +1414,21 @@ class Qq8LoginService {
   Future<void> refreshSmsLoginCode() async {
     final phone = _smsPhone;
     if (phone == null || _device == null) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没发起手机号登录，无法请求验证码'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没发起手机号登录，无法请求验证码',
+        ),
+      );
       return;
     }
     if (_t104.isEmpty) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '缺少服务端下发的盐（0x104），请重新检查手机号'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '缺少服务端下发的盐（0x104），请重新检查手机号',
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, phone: phone));
@@ -1332,20 +1452,31 @@ class Qq8LoginService {
   Future<void> submitSmsLoginCode(String code) async {
     final phone = _smsPhone;
     if (phone == null || _device == null) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没发起手机号登录，无法提交验证码'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没发起手机号登录，无法提交验证码',
+        ),
+      );
       return;
     }
     if (_t104.isEmpty) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '缺少服务端下发的盐（0x104），请重新检查手机号'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '缺少服务端下发的盐（0x104），请重新检查手机号',
+        ),
+      );
       return;
     }
     final random = _smsRandom;
     if (random == null || random.isEmpty) {
-      _emit(const Qq8LoginSnapshot(
+      _emit(
+        const Qq8LoginSnapshot(
           stage: Qq8LoginStage.failed,
-          error: '缺少服务端下发的随机数（0x126），请重新检查手机号'));
+          error: '缺少服务端下发的随机数（0x126），请重新检查手机号',
+        ),
+      );
       return;
     }
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.connecting, phone: phone));
@@ -1413,17 +1544,21 @@ class Qq8LoginService {
     _smsTimeLimit = state.timeLimit;
     _smsMpasswd = null;
     _device = (deviceBuilder ?? Qq8Device.generate)(0);
-    _ecdh = (ecdhBuilder ??
-        () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
+    _ecdh =
+        (ecdhBuilder ??
+        () =>
+            Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
     _sessionId = _randomBytes(4);
     _randomKey = _randomBytes(16);
     _flowSeq = null;
-    _emit(Qq8LoginSnapshot(
-      stage: Qq8LoginStage.needsSmsCode,
-      phone: state.hintPhone ?? state.phone,
-      smsAutoSent: true,
-      smsFlow: true,
-    ));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: Qq8LoginStage.needsSmsCode,
+        phone: state.hintPhone ?? state.phone,
+        smsAutoSent: true,
+        smsFlow: true,
+      ),
+    );
   }
 
   // ------------------------------------------------------------------
@@ -1458,8 +1593,12 @@ class Qq8LoginService {
       syncR9: _randomU32(),
       syncR11: _randomU32(),
     );
-    final rsp =
-        await s.sendUni(Qq8Msg.sendCmd, body, seq: seq, timeout: timeout);
+    final rsp = await s.sendUni(
+      Qq8Msg.sendCmd,
+      body,
+      seq: seq,
+      timeout: timeout,
+    );
     final r = Qq8Msg.parseSendResponse(rsp.payload, seq: seq, rand: rand);
     _log.i('私聊发送 uid=$uid code=${r.code} seq=$seq ${r.ok ? 'ok' : r.message}');
     return r;
@@ -1485,7 +1624,12 @@ class Qq8LoginService {
     );
     final rsp = await s.sendUni(Qq8Msg.sendCmd, body, timeout: timeout);
     // 群聊判据：只看 code（字段 14 不在群应答里，消息序号走推送回显）。
-    final r = Qq8Msg.parseSendResponse(rsp.payload, seq: 0, rand: rand32, groupSend: true);
+    final r = Qq8Msg.parseSendResponse(
+      rsp.payload,
+      seq: 0,
+      rand: rand32,
+      groupSend: true,
+    );
     _log.i('群聊发送 gid=$gid code=${r.code} ${r.ok ? 'ok' : r.message}');
     return r;
   }
@@ -1518,6 +1662,32 @@ class Qq8LoginService {
     void Function(double progress)? onProgress,
     Duration? uploadTimeout,
   }) async {
+    final elem = await uploadImageElem(
+      bytes: bytes,
+      uid: uid,
+      gid: gid,
+      asFace: asFace,
+      onProgress: onProgress,
+      uploadTimeout: uploadTimeout,
+    );
+    return uid != null
+        ? sendC2c(uid: uid, elems: <Uint8List>[elem])
+        : sendGroup(gid: gid!, elems: <Uint8List>[elem]);
+  }
+
+  /// 只上传、不发送：返回可直接拼进 `elems` 的图片元素。
+  ///
+  /// 拆出来的原因是「图片 + 文字/表情混排」：混排要把图文按原顺序拼成**一条**
+  /// 消息的 elems，如果上传后顺手发掉就变成两条消息了。参数语义与 [sendImage]
+  /// 完全一致（[uid] 私聊 / [gid] 群 二选一，[onProgress] 是 highway 0..1）。
+  Future<Uint8List> uploadImageElem({
+    required Uint8List bytes,
+    int? uid,
+    int? gid,
+    bool asFace = false,
+    void Function(double progress)? onProgress,
+    Duration? uploadTimeout,
+  }) async {
     final s = _requireOnline();
     if ((uid == null) == (gid == null)) {
       throw Qq8ImageException('sendImage 必须且只能给 uid（私聊）或 gid（群）之一');
@@ -1526,6 +1696,7 @@ class Qq8LoginService {
     final targetUid = uid;
     final targetGid = gid;
     final dm = targetUid != null;
+
     _log.i('发图 ${dm ? '私聊 uid=$targetUid' : '群 gid=$targetGid'}：$info');
 
     // ① 申请：拿 fid / ticket / 图床地址（服务端已有该 md5 时会直接给 fid）
@@ -1552,12 +1723,14 @@ class Qq8LoginService {
         : Qq8ImageUp.parseGroupPicUpResponse(rsp.payload);
     if (replies.isEmpty) {
       throw Qq8ImageException(
-          '${dm ? 'OffPicUp' : 'GroupPicUp'} 申请没有回执（响应 ${rsp.payload.length} 字节）');
+        '${dm ? 'OffPicUp' : 'GroupPicUp'} 申请没有回执（响应 ${rsp.payload.length} 字节）',
+      );
     }
     final r = replies.first;
     if (!r.ok) {
       throw Qq8ImageException(
-          '${dm ? 'OffPicUp' : 'GroupPicUp'} 申请被拒：code=${r.code} ${r.message}');
+        '${dm ? 'OffPicUp' : 'GroupPicUp'} 申请被拒：code=${r.code} ${r.message}',
+      );
     }
     _log.i('PicUp 回执：$r');
 
@@ -1569,8 +1742,10 @@ class Qq8LoginService {
       final host = r.host;
       final port = r.port;
       if (host == null || port == null || r.ticket.isEmpty) {
-        throw Qq8ImageException('PicUp 回执缺图床地址或凭证'
-            '（host=$host port=$port ticket=${r.ticket.length}B）');
+        throw Qq8ImageException(
+          'PicUp 回执缺图床地址或凭证'
+          '（host=$host port=$port ticket=${r.ticket.length}B）',
+        );
       }
       await Qq8Highway.upload(
         host: host,
@@ -1591,9 +1766,7 @@ class Qq8LoginService {
     final elem = dm
         ? Qq8ImageElems.dm(info: info, fid: r.fid, asFace: asFace)
         : Qq8ImageElems.group(info: info, fid: r.fid, asFace: asFace);
-    return dm
-        ? sendC2c(uid: targetUid, elems: <Uint8List>[elem])
-        : sendGroup(gid: targetGid!, elems: <Uint8List>[elem]);
+    return elem;
   }
 
   // ------ 发语音（PTT：申请上传 → HTTP 传 SILK → RichText.ptt） ------
@@ -1621,12 +1794,29 @@ class Qq8LoginService {
     final targetUid = uid;
     final targetGid = gid;
     final dm = targetUid != null;
+
+    // 优先走官方 NT 富媒体上传（0x126d）：只有它会把文件真正登记到服务端，
+    // 对端才不会「消息已过期」。任何一步失败都回落老 0x346 链路（至少能发出去）。
+    try {
+      return await _sendVoiceViaNtv2(
+        targetUin: targetUid,
+        groupUin: targetGid,
+        bytes: bytes,
+        seconds: seconds,
+        onProgress: onProgress,
+        uploadTimeout: uploadTimeout,
+      );
+    } on Object catch (e) {
+      _log.w('NT 富媒体上传（${dm ? '0x126d' : '0x126e'}）失败，回落老链路：$e');
+    }
     final info = Qq8FileInfo.of('', bytes);
     // 官方 bytes_file_name = md5 + ".amr"（即使内容是 SILK，后缀也写 amr）。
     final fileName = '${info.md5Hex}.amr';
     final seq = s.nextSeq();
-    _log.i('发语音 ${dm ? '私聊 uid=$uid' : '群 gid=$gid'}：'
-        '${bytes.length} 字节 ${seconds}s md5=${info.md5Hex}');
+    _log.i(
+      '发语音 ${dm ? '私聊 uid=$uid' : '群 gid=$gid'}：'
+      '${bytes.length} 字节 ${seconds}s md5=${info.md5Hex}',
+    );
 
     // ① 申请上传：拿 ip/port/uuid/upload_key（C2C 回执没有 file_id）
     final rsp = await s.sendUni(
@@ -1643,12 +1833,13 @@ class Qq8LoginService {
       seq: seq,
       timeout: timeout,
     );
-    _log.i('PTT 申请回包 retcode=${rsp.retcode} ${rsp.payload.length}B '
-        'hex=${hexOfBytes(rsp.payload.take(160).toList())}');
+    _log.i(
+      'PTT 申请回包 retcode=${rsp.retcode} ${rsp.payload.length}B '
+      'hex=${hexOfBytes(rsp.payload.take(160).toList())}',
+    );
     final ticket = Qq8Ptt.parseApplyUploadResponse(rsp.payload);
     if (!ticket.ok) {
-      throw Qq8PttException(
-          'PTT 上传申请被拒：code=${ticket.code} ${ticket.message}');
+      throw Qq8PttException('PTT 上传申请被拒：code=${ticket.code} ${ticket.message}');
     }
     _log.i('PTT 申请回执：$ticket');
 
@@ -1660,14 +1851,16 @@ class Qq8LoginService {
       if (!ticket.hasEndpoint || (ticket.uploadKey?.isEmpty ?? true)) {
         throw Qq8PttException('PTT 上传申请缺地址或凭证：$ticket');
       }
+      if (!dm) {
+        // 群语音只支持 NT（0x126e）：老链路的 C2C 上传通道与群通道不通用，
+        // 硬走只会传到 BDH 而服务端不登记，对端仍是「已过期」。
+        throw Qq8PttException('群语音 NT（0x126e）失败，老链路不支持群上传');
+      }
       // 上传走 bigdata 通道 + httpconn（2026-11-01 真机实证）。
       //
       // 0x346 回执里的 `upload_ip` 是运营商边缘节点（11.180.x / 30.176.x），
       // 在宽带 Wi-Fi 上完全不可达；真正的上传节点与 ticket 来自
       // `HttpConn.0x6ff_501`（bigdata 通道），帧格式见 [Qq8PttHighway]。
-      if (!dm) {
-        throw Qq8PttException('群语音上传走 0x388 + BDH，暂未实现');
-      }
       // 先走官方 8.2.11 的 C2C 通道：HTTP POST /qqcommfileupload?ver=100。
       //
       // 官方 Layow.a([B) 拼的就是这个 URL（ukey=upload_key、filekey=md5hex、
@@ -1733,6 +1926,207 @@ class Qq8LoginService {
         : sendGroup(gid: targetGid!, elems: const <Uint8List>[], ptt: ptt);
   }
 
+  /// 官方 NT 富媒体上行：私聊 `0x126d_100` / 群 `0x126e_100` —— 申请 →
+  /// highway 传输 → 发 MsgInfo 元素。
+  ///
+  /// 为什么要走这条：老 0x346 链路拿不到 fileid/rkey，文件没被服务端登记，
+  /// 对端点开就是「消息已过期」（2026-11-02 真机）。0x126d 的回执里直接带
+  /// `MsgInfo`，服务端按它签发下行直链，这条才是官方 8.2.11 的真实路径。
+  ///
+  /// [targetUin] / [groupUin] 二选一。群走 `0x126e`：相对私聊只有 SceneInfo、
+  /// CompatQMsgSceneType、PttExtBizInfo 三处字段不同，回执结构与 highway 传输
+  /// 完全一致（见 [Qq8Ntv2.buildUploadGroupPttBody]）。
+  Future<Qq8MsgSendResult> _sendVoiceViaNtv2({
+    int? targetUin,
+    int? groupUin,
+    required Uint8List bytes,
+    required int seconds,
+    void Function(double progress)? onProgress,
+    Duration? uploadTimeout,
+  }) async {
+    final s = _requireOnline();
+    if ((targetUin == null) == (groupUin == null)) {
+      throw Qq8Ntv2Exception(
+        '_sendVoiceViaNtv2 必须且只能给 targetUin（私聊）或 groupUin（群）之一',
+      );
+    }
+    final isGroup = groupUin != null;
+    final cmdName = isGroup ? '0x126e' : '0x126d';
+    final tmo = uploadTimeout ?? const Duration(seconds: 120);
+    final md5 = md5Bytes(bytes);
+    final sha1Hex = hexOfBytes(sha1Bytes(bytes));
+    final md5Hex = hexOfBytes(md5);
+    // 官方 FileName 用 "{md5}.silk"（与老链路的 .amr 不同，别混）。
+    final fileName = '$md5Hex.silk';
+    // ① 申请：一次拿到 ukey / 上传节点 / MsgInfo
+    //
+    // C2C 场景的 `C2CUserInfo.AccountType` 必须填 **1**、`TargetUid` 直接填
+    // uin 数字串。2026-11-05 真机实测：填 2 + uin → `result=170019001
+    // illegal params`（2 是给 NT uid `u_xxx` 用的，本账号体系拿不到 uid，
+    // 0xfd4 与老 friendlist 都只回 uin）；填 1 + uin → 成功。
+    final applyRsp = await s.sendUni(
+      isGroup ? Qq8Ntv2.cmdUploadGroupPtt : Qq8Ntv2.cmdUploadPtt,
+      Qq8Msg.buildOidbWrapper(
+        type1: isGroup ? Qq8Ntv2.oidbUploadGroupPtt : Qq8Ntv2.oidbUploadPtt,
+        type2: Qq8Ntv2.oidbServiceUploadPtt,
+        body: isGroup
+            ? Qq8Ntv2.buildUploadGroupPttBody(
+                groupUin: groupUin,
+                fileSize: bytes.length,
+                md5Hex: md5Hex,
+                sha1Hex: sha1Hex,
+                fileName: fileName,
+                seconds: seconds,
+                clientRandomId: _randomU32(),
+              )
+            : Qq8Ntv2.buildUploadPttBody(
+                targetUid: '${targetUin!}',
+                accountType: 1,
+                fileSize: bytes.length,
+                md5Hex: md5Hex,
+                sha1Hex: sha1Hex,
+                fileName: fileName,
+                seconds: seconds,
+                clientRandomId: _randomU32(),
+              ),
+        apkVersion: profile.apk.ver,
+      ),
+      timeout: tmo,
+    );
+    final ticket = Qq8Ntv2.parseUploadPttResponse(applyRsp.payload);
+    _log.i(
+      '$cmdName → ok=${ticket.ok} result=${ticket.result} '
+      'msg=${ticket.message} 回包=${applyRsp.payload.length}B',
+    );
+    if (!ticket.ok) {
+      throw Qq8Ntv2Exception(
+        '$cmdName 申请被拒：code=${ticket.result} ${ticket.message}',
+      );
+    }
+    _log.i('$cmdName 回执：$ticket');
+    final split = Qq8Ntv2.splitMsgInfo(ticket.msgInfo!);
+
+    // ② 传输：highway 帧，节点来自回执（0x126d 给的 IP 是专给这次上传的）
+    if (ticket.ipv4s.isEmpty) {
+      throw Qq8Ntv2Exception('$cmdName 回执没给上传节点');
+    }
+    await _uploadNtv2Highway(
+      s,
+      endpoints: ticket.ipv4s,
+      data: bytes,
+      ext: Qq8Ntv2.buildHighwayExt(
+        fileUuid: split.fileUuid,
+        ukey: ticket.ukey,
+        endpoints: ticket.ipv4s,
+        msgInfoBodies: split.bodies,
+        sha1Hex: split.sha1Hex,
+      ),
+      timeout: tmo,
+      onProgress: onProgress,
+    );
+
+    // ③ 发消息：MsgInfo **原样**塞进 common_elem（不是 CompatQMsg）
+    final elem = Qq8Ntv2.buildPttMsgElem(ticket.msgInfo!, group: isGroup);
+    return isGroup
+        ? sendGroup(gid: groupUin, elems: <Uint8List>[elem])
+        : sendC2c(uid: targetUin!, elems: <Uint8List>[elem]);
+  }
+
+  /// highway 分块上传（NT 形态）：先要 C501 的 SigSession 当 service_ticket，
+  /// 再用 0x126d 给的节点列表逐块发 httpconn 帧。
+  ///
+  /// 节点=回执节点 + C501 候选，任一节点整条走通即返回；全失败抛最后一条错误
+  /// （错误码 0/67/331/372 的区别见 qq8_ptt.dart 的自测注释）。
+  Future<void> _uploadNtv2Highway(
+    Qq8Session s, {
+    required List<Qq8Ntv2Endpoint> endpoints,
+    required Uint8List data,
+    required Uint8List ext,
+    required Duration timeout,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ch = await s.sendUni(
+      Qq8PttHighway.cmdBigdataChannel,
+      Qq8File.buildBigdataChannelBody(uin: s.uin, loginSig: _sig?.tgt),
+      timeout: timeout,
+    );
+    final parsed = Qq8File.parseBigdataChannelFull(ch.payload);
+    if (parsed == null) {
+      throw Qq8Ntv2Exception('highway 通道没给 ticket（回包 ${ch.payload.length} 字节）');
+    }
+    final nodes = <({String host, int port})>[
+      for (final e in endpoints) (host: e.host, port: e.port),
+      ...parsed.candidates,
+    ];
+    final fileMd5 = md5Bytes(data);
+    final limit = Qq8Ntv2.blockSize;
+    Object? lastError;
+    for (final node in nodes) {
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4);
+      try {
+        var offset = 0;
+        var seq = s.nextSeq();
+        while (offset < data.length) {
+          final end = (offset + limit < data.length)
+              ? offset + limit
+              : data.length;
+          final chunk = Uint8List.sublistView(data, offset, end);
+          final frame = Qq8PttHighway.buildFrame(
+            seq: seq++,
+            uin: '${s.uin}',
+            totalSize: data.length,
+            offset: offset,
+            chunk: chunk,
+            ticket: parsed.ticket,
+            fileMd5: fileMd5,
+            ext: ext,
+            appId: Qq8Config.appId,
+            loginSig: _sig?.tgt,
+          );
+          final uri = Uri.parse(
+            'http://${node.host}:${node.port}/cgi-bin/httpconn'
+            '?htcmd=${Qq8PttHighway.htcmd}&uin=${s.uin}',
+          );
+          final req = await client.postUrl(uri).timeout(timeout);
+          req.headers.set('Accept', '*/*');
+          req.headers.set('Connection', 'Keep-Alive');
+          req.headers.set('Pragma', 'no-cache');
+          req.headers.set('Cache-Control', 'no-cache');
+          req.headers.set(
+            'User-Agent',
+            'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2)',
+          );
+          req.headers.contentLength = frame.length;
+          req.add(frame);
+          final resp = await req.close().timeout(timeout);
+          final builder = BytesBuilder(copy: false);
+          await for (final part in resp.timeout(timeout)) {
+            builder.add(part);
+          }
+          final raw = builder.toBytes();
+          final code = Qq8PttHighway.ackCode(raw);
+          if (resp.statusCode != 200 || code != 0) {
+            throw Qq8Ntv2Exception(
+              'NT highway 回包异常 status=${resp.statusCode} '
+              'code=$code 长度=${raw.length} '
+              'hex=${hexOfBytes(raw.take(180).toList())}',
+            );
+          }
+          offset = end;
+          onProgress?.call((offset / data.length).clamp(0.0, 1.0));
+        }
+        _log.i('NT 语音上传完成：${data.length} 字节 → ${node.host}:${node.port}');
+        return;
+      } catch (e) {
+        lastError = e;
+        _log.w('NT 上传节点 ${node.host}:${node.port} 失败：$e');
+      } finally {
+        client.close(force: true);
+      }
+    }
+    throw Qq8Ntv2Exception('NT 语音上传全部节点失败：$lastError');
+  }
 
   /// 官方 8.2.11 的 C2C 语音上传通道：HTTP POST `/qqcommfileupload?ver=100`。
   ///
@@ -1791,30 +2185,33 @@ class Qq8LoginService {
   }) async {
     final ch = await s.sendUni(
       Qq8PttHighway.cmdBigdataChannel,
-      Qq8File.buildBigdataChannelBody(uin: s.uin),
+      Qq8File.buildBigdataChannelBody(uin: s.uin, loginSig: _sig?.tgt),
       timeout: timeout,
     );
-    _log.i('PTT 通道回包 ${ch.payload.length}B hex=${hexOfBytes(ch.payload.take(320).toList())}');
+    _log.i(
+      'PTT 通道回包 ${ch.payload.length}B hex=${hexOfBytes(ch.payload.take(320).toList())}',
+    );
     final parsed = Qq8File.parseBigdataChannelFull(ch.payload);
     if (parsed == null || parsed.candidates.isEmpty) {
-      throw Qq8PttException(
-          'bigdata 通道没给可上传节点（回包 ${ch.payload.length} 字节）');
+      throw Qq8PttException('bigdata 通道没给可上传节点（回包 ${ch.payload.length} 字节）');
     }
     // 主形态：点分串第一段在最低字节（`_ipv4OfFixed32`）。若某个点的字节序
     // 与我们推断相反，MB 形态会整体反序成 82.x/226.x 这类保留段，因此这里再
     // 追一组「反序地址」作为兜底，主形态全部失败才会用到。
-    final nodes = <({String host, int port})>[
-      ...parsed.candidates,
-    ];
+    final nodes = <({String host, int port})>[...parsed.candidates];
     for (final n in parsed.candidates) {
       final parts = n.host.split('.');
       if (parts.length == 4) {
         nodes.add((host: parts.reversed.join('.'), port: n.port));
       }
     }
-    _log.i('PTT 通道 ticket=${parsed.ticket.length}B 节点=${nodes.length} 个 '
-        '${nodes.map((c) => '${c.host}:${c.port}').join(', ')}');
-    final limit = chunkLimit <= 0 ? Qq8PttHighway.defaultChunkLimit : chunkLimit;
+    _log.i(
+      'PTT 通道 ticket=${parsed.ticket.length}B 节点=${nodes.length} 个 '
+      '${nodes.map((c) => '${c.host}:${c.port}').join(', ')}',
+    );
+    final limit = chunkLimit <= 0
+        ? Qq8PttHighway.defaultChunkLimit
+        : chunkLimit;
     Object? lastError;
     for (final node in nodes) {
       final client = HttpClient()
@@ -1823,7 +2220,9 @@ class Qq8LoginService {
         var offset = 0;
         var seq = s.nextSeq();
         while (offset < data.length) {
-          final end = (offset + limit < data.length) ? offset + limit : data.length;
+          final end = (offset + limit < data.length)
+              ? offset + limit
+              : data.length;
           final chunk = Uint8List.sublistView(data, offset, end);
           final frame = Qq8PttHighway.buildFrame(
             seq: seq++,
@@ -1834,16 +2233,24 @@ class Qq8LoginService {
             ticket: parsed.ticket,
             fileMd5: fileMd5,
             ext: Qq8Pb.encode(<int, Object?>{6: applyRspPayload, 10: 1048576}),
+            // AppId 与 A2：2026-11-05 起按 Lagrange.Core 的 HighwayContext 补齐，
+            // 缺这两项时服务端对所有节点统一回 372（真机复现见 qq8_ptt.dart）。
+            appId: Qq8Config.appId,
+            loginSig: _sig?.tgt,
           );
-          final uri = Uri.parse('http://${node.host}:${node.port}/cgi-bin/httpconn'
-              '?htcmd=${Qq8PttHighway.htcmd}&uin=${s.uin}');
+          final uri = Uri.parse(
+            'http://${node.host}:${node.port}/cgi-bin/httpconn'
+            '?htcmd=${Qq8PttHighway.htcmd}&uin=${s.uin}',
+          );
           final req = await client.postUrl(uri).timeout(timeout);
           req.headers.set('Accept', '*/*');
           req.headers.set('Connection', 'Keep-Alive');
           req.headers.set('Pragma', 'no-cache');
           req.headers.set('Cache-Control', 'no-cache');
           req.headers.set(
-              'User-Agent', 'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2)');
+            'User-Agent',
+            'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.2)',
+          );
           req.headers.contentLength = frame.length;
           req.add(frame);
           final resp = await req.close().timeout(timeout);
@@ -1854,8 +2261,11 @@ class Qq8LoginService {
           final raw = builder.toBytes();
           final code = Qq8PttHighway.ackCode(raw);
           if (resp.statusCode != 200 || code != 0) {
-            throw Qq8PttException('httpconn 回包异常 status=${resp.statusCode} '
-                'code=$code 长度=${raw.length}');
+            throw Qq8PttException(
+              'httpconn 回包异常 status=${resp.statusCode} '
+              'code=$code 长度=${raw.length} '
+              'hex=${hexOfBytes(raw.take(180).toList())}',
+            );
           }
           offset = end;
           onProgress?.call((offset / data.length).clamp(0.0, 1.0));
@@ -1945,8 +2355,7 @@ class Qq8LoginService {
       timeout: timeout,
     );
     if (!Qq8File.parseUploadSucc(rsp2.payload)) {
-      throw Qq8FileException(
-          '上传完成（800）被拒：响应 ${rsp2.payload.length} 字节');
+      throw Qq8FileException('上传完成（800）被拒：响应 ${rsp2.payload.length} 字节');
     }
 
     // ④ 发消息体
@@ -1966,15 +2375,21 @@ class Qq8LoginService {
       syncR9: _randomU32(),
       syncR11: _randomU32(),
     );
-    final rsp3 =
-        await s.sendUni(Qq8Msg.sendCmd, body, seq: seq, timeout: timeout);
+    final rsp3 = await s.sendUni(
+      Qq8Msg.sendCmd,
+      body,
+      seq: seq,
+      timeout: timeout,
+    );
     final r = Qq8Msg.parseSendResponse(rsp3.payload, seq: seq, rand: rand);
-    _log.i('文件消息 uid=$uid fid=${t.fid} code=${r.code} '
-        '${r.ok ? 'ok' : r.message}');
+    _log.i(
+      '文件消息 uid=$uid fid=${t.fid} code=${r.code} '
+      '${r.ok ? 'ok' : r.message}',
+    );
     return r;
   }
 
-/// 把若干条消息合并转发成一张"聊天记录"卡片（QQ 的合并转发）。
+  /// 把若干条消息合并转发成一张"聊天记录"卡片（QQ 的合并转发）。
   ///
   /// **需已上线**。[target] 在 [group] 为真时是群号，否则是好友 uin。
   /// 链路见 `lib/kernel/wlogin8/qq8_multimsg.dart` 头注：
@@ -1992,16 +2407,18 @@ class Qq8LoginService {
     final s = _requireOnline();
     final built = <Uint8List>[];
     for (final n in nodes) {
-      built.add(Qq8MultiMsg.buildNode(
-        senderUin: n.senderUin,
-        target: target,
-        dm: !group,
-        seq: _randomU32() & 0xFFFF,
-        time: n.time,
-        rand: _randomU32(),
-        rich: Qq8Msg.richElems(n.elems),
-        nickname: n.nickname,
-      ));
+      built.add(
+        Qq8MultiMsg.buildNode(
+          senderUin: n.senderUin,
+          target: target,
+          dm: !group,
+          seq: _randomU32() & 0xFFFF,
+          time: n.time,
+          rand: _randomU32(),
+          rich: Qq8Msg.richElems(n.elems),
+          nickname: n.nickname,
+        ),
+      );
     }
     final content = Qq8MultiMsg.buildContent(built);
     final compressed = Qq8MultiMsg.gzipContent(content);
@@ -2020,17 +2437,21 @@ class Qq8LoginService {
     final ticket = Qq8MultiMsg.parseApplyUp(up.payload);
     if (ticket == null) {
       throw Qq8LoginException(
-          'MultiMsg.ApplyUp 应答解析失败（${up.payload.length} 字节）');
+        'MultiMsg.ApplyUp 应答解析失败（${up.payload.length} 字节）',
+      );
     }
     if (!ticket.ok) {
       throw Qq8LoginException('MultiMsg.ApplyUp 被拒（code=${ticket.code}）');
     }
     if (ticket.host.isEmpty || ticket.port <= 0 || ticket.ticket.isEmpty) {
       throw Qq8LoginException(
-          'MultiMsg.ApplyUp 没给上传通道（${ticket.host}:${ticket.port}）');
+        'MultiMsg.ApplyUp 没给上传通道（${ticket.host}:${ticket.port}）',
+      );
     }
-    _log.i('合并转发 ApplyUp resid=${ticket.resid} 通道=${ticket.host}:${ticket.port} '
-        '压缩后 ${compressed.length} B');
+    _log.i(
+      '合并转发 ApplyUp resid=${ticket.resid} 通道=${ticket.host}:${ticket.port} '
+      '压缩后 ${compressed.length} B',
+    );
 
     // ② highway 传内容（业务号 27）
     final body = Qq8MultiMsg.buildUploadBody(
@@ -2066,8 +2487,10 @@ class Qq8LoginService {
     final r = group
         ? await sendGroup(gid: target, elems: <Uint8List>[elem])
         : await sendC2c(uid: target, elems: <Uint8List>[elem]);
-    _log.i('合并转发 → ${group ? 'group' : 'c2c'} $target 共 ${built.length} 条 '
-        'resid=${ticket.resid} code=${r.code} ${r.ok ? 'ok' : r.message}');
+    _log.i(
+      '合并转发 → ${group ? 'group' : 'c2c'} $target 共 ${built.length} 条 '
+      'resid=${ticket.resid} code=${r.code} ${r.ok ? 'ok' : r.message}',
+    );
     return r;
   }
 
@@ -2076,7 +2499,8 @@ class Qq8LoginService {
   /// 通道一般由登录后的 `ConfigPushSvc.PushReq`（type=2）下发；没收到时
   /// 用 `HttpConn.0x6ff_501` 补问一次。
   Future<({String host, int port, Uint8List ticket})> _ensureBigdataChannel(
-      Qq8Session s) async {
+    Qq8Session s,
+  ) async {
     final cached = _bigdataSigSession;
     final host = _bigdataHost;
     final port = _bigdataPort;
@@ -2086,19 +2510,23 @@ class Qq8LoginService {
     _log.i('还没有 bigdata 通道，主动查一次（${Qq8File.cmdBigdataChannel}）');
     final rsp = await s.sendUni(
       Qq8File.cmdBigdataChannel,
-      Qq8File.buildBigdataChannelBody(uin: s.uin),
+      Qq8File.buildBigdataChannelBody(uin: s.uin, loginSig: _sig?.tgt),
       timeout: timeout,
     );
     final got = Qq8File.parseBigdataChannel(rsp.payload);
     if (got == null || got.ticket.isEmpty) {
-      throw Qq8FileException('没有 bigdata 上传通道'
-          '（响应 ${rsp.payload.length} 字节，解析不出 ip/port）');
+      throw Qq8FileException(
+        '没有 bigdata 上传通道'
+        '（响应 ${rsp.payload.length} 字节，解析不出 ip/port）',
+      );
     }
     _bigdataHost = got.host;
     _bigdataPort = got.port;
     _bigdataSigSession = got.ticket;
-    _log.i('bigdata 通道：${got.host}:${got.port} '
-        'ticket=${got.ticket.length}B');
+    _log.i(
+      'bigdata 通道：${got.host}:${got.port} '
+      'ticket=${got.ticket.length}B',
+    );
     return got;
   }
 
@@ -2136,8 +2564,10 @@ class Qq8LoginService {
       }
       final r = replies.first;
       if (r.result != 0) {
-        _log.w('群图换链失败 gid=$groupCode md5=$md5Hex '
-            'result=${r.result} msg=${r.failMsg}');
+        _log.w(
+          '群图换链失败 gid=$groupCode md5=$md5Hex '
+          'result=${r.result} msg=${r.failMsg}',
+        );
         return null;
       }
       final url = Qq8ImageDown.downloadUrlOf(r);
@@ -2261,8 +2691,10 @@ class Qq8LoginService {
     if (page.syncCookie != null && page.syncCookie!.isNotEmpty) {
       _syncCookie = page.syncCookie;
     }
-    _log.i('拉新消息 result=${page.result} 会话块=${page.blocks.length} '
-        '消息=${page.messages.length}');
+    _log.i(
+      '拉新消息 result=${page.result} 会话块=${page.blocks.length} '
+      '消息=${page.messages.length}',
+    );
     return page;
   }
 
@@ -2286,8 +2718,10 @@ class Qq8LoginService {
       timeout: timeout,
     );
     final page = Qq8History.parseOneDayRoam(frame.payload);
-    _log.i('私聊历史 peer=$peerUin result=${page.result} '
-        '条数=${page.messages.length} 到头=${page.isComplete}');
+    _log.i(
+      '私聊历史 peer=$peerUin result=${page.result} '
+      '条数=${page.messages.length} 到头=${page.isComplete}',
+    );
     return page;
   }
 
@@ -2313,8 +2747,10 @@ class Qq8LoginService {
     // 曾被它推到 10114，而服务端真实最新只有 9934，之后所有轮询都在请求
     // 「最新之后」的空区间，于是「群消息一条都没有」。
     _advanceGroupCursor(groupCode, page);
-    _log.i('群历史 gid=$groupCode seq=$beginSeq-$endSeq result=${page.result} '
-        '条数=${page.messages.length}');
+    _log.i(
+      '群历史 gid=$groupCode seq=$beginSeq-$endSeq result=${page.result} '
+      '条数=${page.messages.length}',
+    );
     return page;
   }
 
@@ -2368,8 +2804,10 @@ class Qq8LoginService {
         ..clear()
         ..addAll(classes);
     }
-    _log.i('好友列表：${friends.length}/$total 人、${classes.length} 个分组'
-        '（$pages 页，result=$result）');
+    _log.i(
+      '好友列表：${friends.length}/$total 人、${classes.length} 个分组'
+      '（$pages 页，result=$result）',
+    );
     return Qq8FriendListPage(
       result: result,
       total: total,
@@ -2387,12 +2825,16 @@ class Qq8LoginService {
       timeout: timeout,
     );
     final page = Qq8List.parseGroupList(frame.payload);
-    _log.i('群列表：${page.groups.length}/${page.total} 个群'
-        '（result=${page.result}）');
+    _log.i(
+      '群列表：${page.groups.length}/${page.total} 个群'
+      '（result=${page.result}）',
+    );
     // 给群消息轮询铺底：每个群探一次最新 seq（不 emit，历史由用户
     // 打开会话时再拉）。没有这个底，轮询不知道从哪个 seq 开始。
     if (page.groups.isNotEmpty) {
-      if (primeGroupSeqs) unawaited(primeGroups([for (final g in page.groups) g.gid]));
+      if (primeGroupSeqs) {
+        unawaited(primeGroups([for (final g in page.groups) g.gid]));
+      }
     }
     return page;
   }
@@ -2474,8 +2916,11 @@ class Qq8LoginService {
   static const int _catchUpPageSize = 20;
   static const int _catchUpMaxPages = 6;
 
-  Future<void> _catchUpGroup(int groupCode,
-      {required int from, required int to}) async {
+  Future<void> _catchUpGroup(
+    int groupCode, {
+    required int from,
+    required int to,
+  }) async {
     if (from < 1) from = 1;
     if (to < from) return;
     final total = to - from + 1;
@@ -2487,13 +2932,17 @@ class Qq8LoginService {
     }
     try {
       while (begin <= to) {
-        final end = (begin + _catchUpPageSize - 1 > to) ? to : begin + _catchUpPageSize - 1;
+        final end = (begin + _catchUpPageSize - 1 > to)
+            ? to
+            : begin + _catchUpPageSize - 1;
         final page = await fetchGroupHistory(
           groupCode: groupCode,
           beginSeq: begin,
           endSeq: end,
         );
-        _log.i('群 $groupCode 回看 $begin-$end：result=${page.result} 条数=${page.messages.length}');
+        _log.i(
+          '群 $groupCode 回看 $begin-$end：result=${page.result} 条数=${page.messages.length}',
+        );
         if (page.result == 103) {
           // 服务端对该群的准入结论，本会话不再试（与 _pollGroups 同一判据）。
           _groupDead.add(groupCode);
@@ -2612,11 +3061,9 @@ class Qq8LoginService {
     if (page.messages.isEmpty) return;
     for (final m in page.messages) {
       if (_events.isClosed) return;
-      _events.add(Qq8MessagePush(
-        Qq8PushCmd.pushGroup,
-        message: m,
-        needsAck: false,
-      ));
+      _events.add(
+        Qq8MessagePush(Qq8PushCmd.pushGroup, message: m, needsAck: false),
+      );
     }
   }
 
@@ -2699,8 +3146,10 @@ class Qq8LoginService {
           }
           continue;
         }
-        _log.i('$reason（群）：gid=$gid 新消息 ${page.messages.length} 条'
-            '${firstSync ? '（首次同步回看 $begin-$end）' : ''}');
+        _log.i(
+          '$reason（群）：gid=$gid 新消息 ${page.messages.length} 条'
+          '${firstSync ? '（首次同步回看 $begin-$end）' : ''}',
+        );
         _emitGroupPage(gid, page);
       } on Object catch (err) {
         // 103/104 之外唯一的"群级"硬失败：身份没了。整轮都别跑了。
@@ -2763,7 +3212,9 @@ class Qq8LoginService {
       timeout: timeout,
     );
     final r = Qq8Msg.parseWithdrawResponse(frame.payload, group: true);
-    _log.i('群撤回 gid=$gid seq=$seq pktNum=$pktNum result=${r.result} ${r.errmsg}');
+    _log.i(
+      '群撤回 gid=$gid seq=$seq pktNum=$pktNum result=${r.result} ${r.errmsg}',
+    );
     return r;
   }
 
@@ -2881,7 +3332,10 @@ class Qq8LoginService {
     final frame = await _sendGroupOidb(
       Qq8GroupAdmin.cmdKick,
       Qq8GroupAdmin.buildKickBody(
-          gid: gid, uid: uid, rejectAddRequest: rejectAddRequest),
+        gid: gid,
+        uid: uid,
+        rejectAddRequest: rejectAddRequest,
+      ),
     );
     final r = Qq8GroupAdmin.parseKick(frame.payload);
     _log.i('踢人 gid=$gid uid=$uid ok=${r.ok} code=${r.code}');
@@ -2927,7 +3381,9 @@ class Qq8LoginService {
     await s.sendUni(
       Qq8Msg.readedReportCmd,
       Qq8Msg.buildC2cReadReportBody(
-          peerUin: peerUin, lastReadTime: lastReadTime),
+        peerUin: peerUin,
+        lastReadTime: lastReadTime,
+      ),
       timeout: timeout,
     );
   }
@@ -2991,7 +3447,7 @@ class Qq8LoginService {
   /// [pid] 传 `/` 就是根目录；目录条目的 fid 会以 `/` 开头（服务端约定）。
   /// 一页最多 100 条（参考实现固定 100），继续翻页把 [start] 加上已拿到的条数。
   Future<({int code, String? message, List<Qq8GfsEntry> entries})>
-      fetchGroupFiles(
+  fetchGroupFiles(
     int gid, {
     String pid = Qq8Gfs.rootPid,
     int start = 0,
@@ -3003,14 +3459,21 @@ class Qq8LoginService {
       Qq8Msg.buildOidbWrapper(
         type1: Qq8Gfs.type1Dir,
         type2: 1,
-        body: Qq8Gfs.buildDirBody(gid: gid, pid: pid, start: start, limit: limit),
+        body: Qq8Gfs.buildDirBody(
+          gid: gid,
+          pid: pid,
+          start: start,
+          limit: limit,
+        ),
         apkVersion: profile.apk.ver,
       ),
       timeout: timeout,
     );
     final r = Qq8Gfs.parseDir(frame.payload);
-    _log.i('群文件列表 gid=$gid pid=$pid start=$start code=${r.code} '
-        '条目=${r.entries.length}');
+    _log.i(
+      '群文件列表 gid=$gid pid=$pid start=$start code=${r.code} '
+      '条目=${r.entries.length}',
+    );
     return r;
   }
 
@@ -3038,12 +3501,11 @@ class Qq8LoginService {
   /// 返回的 URL 形如 `http://<host>/ftn_handler/<token>/?fname=<名字>`，
   /// 由调用方用 [Qq8File.downloadHttp] 或自己的 HttpClient 去下。
   Future<({String name, String url, int size, String fid})>
-      groupFileDownloadUrl(int gid, String fid) async {
+  groupFileDownloadUrl(int gid, String fid) async {
     final stat = await groupFileStat(gid, fid);
     final e = stat.entry;
     if (stat.code != 0 || e == null) {
-      throw Qq8GfsException(
-          '取群文件属性失败：${stat.message ?? stat.code}');
+      throw Qq8GfsException('取群文件属性失败：${stat.message ?? stat.code}');
     }
     final s = _requireOnline();
     final frame = await s.sendUni(
@@ -3061,7 +3523,10 @@ class Qq8LoginService {
       throw Qq8GfsException('取群文件下载地址失败：${r.message ?? r.code}');
     }
     final url = Qq8Gfs.buildDownloadUrl(
-        host: r.host, tokenHex: r.tokenHex, name: e.name);
+      host: r.host,
+      tokenHex: r.tokenHex,
+      name: e.name,
+    );
     _log.i('群文件下载地址 gid=$gid fid=${e.fid} → $url');
     return (name: e.name, url: url, size: e.size, fid: e.fid);
   }
@@ -3105,8 +3570,10 @@ class Qq8LoginService {
     if (ap.code != 0 || ap.fid.isEmpty) {
       throw Qq8GfsException('群文件申请上传失败：${ap.message ?? ap.code}');
     }
-    _log.i('群文件申请上传 gid=$gid name=$name size=${bytes.length} '
-        '秒传=${ap.exists} busid=${ap.busid} fid=${ap.fid}');
+    _log.i(
+      '群文件申请上传 gid=$gid name=$name size=${bytes.length} '
+      '秒传=${ap.exists} busid=${ap.busid} fid=${ap.fid}',
+    );
 
     if (!ap.exists) {
       final ch = await _ensureBigdataChannel(s);
@@ -3226,8 +3693,6 @@ class Qq8LoginService {
     return r;
   }
 
-
-
   /// 建群文件夹（`0x6d7_0`，官方只允许建在**根目录**下）。**需已上线**。
   Future<({int code, String? message, Qq8GfsEntry? entry})> createGroupDir({
     required int gid,
@@ -3246,8 +3711,10 @@ class Qq8LoginService {
       timeout: timeout,
     );
     final r = Qq8Gfs.parseMkdir(frame.payload);
-    _log.i('建群文件夹 gid=$gid name=${name.trim()} code=${r.code} '
-        'fid=${r.entry?.fid}');
+    _log.i(
+      '建群文件夹 gid=$gid name=${name.trim()} code=${r.code} '
+      'fid=${r.entry?.fid}',
+    );
     return r;
   }
 
@@ -3281,8 +3748,10 @@ class Qq8LoginService {
     final r = entry.isDir
         ? Qq8Gfs.parseRenameDir(frame.payload)
         : Qq8Gfs.parseRenameFile(frame.payload);
-    _log.i('群文件改名 gid=$gid fid=${entry.fid} dir=${entry.isDir} '
-        'name=$newName code=${r.code}');
+    _log.i(
+      '群文件改名 gid=$gid fid=${entry.fid} dir=${entry.isDir} '
+      'name=$newName code=${r.code}',
+    );
     return r;
   }
 
@@ -3341,8 +3810,11 @@ class Qq8LoginService {
       // 取码发生在"还不知道账号"之前，所以设备用 expectedUin（默认 0）派生；
       // 扫码确认后会按扫出来的账号**重新派生**，保证同一账号恒定同一台设备。
       _device = (deviceBuilder ?? Qq8Device.generate)(expectedUin);
-      _ecdh = (ecdhBuilder ??
-          () => Ecdh.exchange(Uint8List.fromList(Qq8Config.serverEcdhPublicKey)))();
+      _ecdh =
+          (ecdhBuilder ??
+          () => Ecdh.exchange(
+            Uint8List.fromList(Qq8Config.serverEcdhPublicKey),
+          ))();
       _sessionId = _randomBytes(4);
       _randomKey = _randomBytes(16);
 
@@ -3354,8 +3826,14 @@ class Qq8LoginService {
       final tran = _tran ??= transportBuilder();
       await _connect(tran);
       final frame = await tran.send(
-        _code2dPacket(ctx, expectedUin, watch, Qq8Qrcode.cmdFetch,
-            Qq8Qrcode.headFetch, body),
+        _code2dPacket(
+          ctx,
+          expectedUin,
+          watch,
+          Qq8Qrcode.cmdFetch,
+          Qq8Qrcode.headFetch,
+          body,
+        ),
         timeout: timeout,
       );
       final sso = qq8UnwrapRecv(frame);
@@ -3372,23 +3850,29 @@ class Qq8LoginService {
       // 扫码这条链走的是 code2d 命令（0x12），不经过 _sendLoginBody，所以那里的
       // "登录响应 type=… + 0x146 文案" 日志在这里不生效——真机上取码失败时
       // 什么都看不到（只有一个 retcode）。这里补一条，够判断"码是不是真码"。
-      _log.i('取码响应 retcode=${r.retcode} ok=${r.ok} '
-          'qrToken=${r.qrToken.length}字节 qrsig=${r.qrsig.length}字节');
+      _log.i(
+        '取码响应 retcode=${r.retcode} ok=${r.ok} '
+        'qrToken=${r.qrToken.length}字节 qrsig=${r.qrsig.length}字节',
+      );
       if (!r.ok) {
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed,
-          error: '获取二维码失败（retcode=${r.retcode}），请重试',
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            error: '获取二维码失败（retcode=${r.retcode}），请重试',
+          ),
+        );
         return;
       }
       _qrsig = r.qrsig;
       _qrToken = r.qrToken;
       _lastQrRetcode = null;
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.waitingQrScan,
-        qrToken: r.qrToken,
-        qrMessage: '请用手机 QQ 扫码',
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.waitingQrScan,
+          qrToken: r.qrToken,
+          qrMessage: '请用手机 QQ 扫码',
+        ),
+      );
     } on Object catch (e, st) {
       _fail('取二维码失败', e, st);
     }
@@ -3402,8 +3886,12 @@ class Qq8LoginService {
     if (!_passGate()) return;
     final qrsig = _qrsig;
     if (qrsig == null || qrsig.isEmpty) {
-      _emit(const Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed, error: '还没有取二维码，无法轮询'));
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '还没有取二维码，无法轮询',
+        ),
+      );
       return;
     }
     try {
@@ -3413,8 +3901,14 @@ class Qq8LoginService {
       final tran = _tran ??= transportBuilder();
       await _connect(tran);
       final frame = await tran.send(
-        _code2dPacket(ctx, _expectedUin, watch, Qq8Qrcode.cmdQuery,
-            Qq8Qrcode.headQuery, body),
+        _code2dPacket(
+          ctx,
+          _expectedUin,
+          watch,
+          Qq8Qrcode.cmdQuery,
+          Qq8Qrcode.headQuery,
+          body,
+        ),
         timeout: timeout,
       );
       final sso = qq8UnwrapRecv(frame);
@@ -3434,10 +3928,12 @@ class Qq8LoginService {
       } on Qq8LoginException catch (e) {
         _qrsig = null;
         _qrToken = null;
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed,
-          error: '二维码状态响应解析异常（${e.message}），请重新获取二维码',
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            error: '二维码状态响应解析异常（${e.message}），请重新获取二维码',
+          ),
+        );
         return;
       }
       // 轮询是秒级的：只在 retcode **变了**时记一条。这条日志用来回答
@@ -3445,20 +3941,27 @@ class Qq8LoginService {
       // 所以还要看后面 register/心跳是否真的通。
       if (_lastQrRetcode != q.retcode) {
         _lastQrRetcode = q.retcode;
-        _log.i('扫码轮询 retcode=${q.retcode} confirmed=${q.confirmed} '
-            'uin=${q.uin ?? 0} msg=${q.message}');
+        _log.i(
+          '扫码轮询 retcode=${q.retcode} confirmed=${q.confirmed} '
+          'uin=${q.uin ?? 0} msg=${q.message}',
+        );
       }
 
       if (!q.confirmed) {
-        final terminal = q.retcode == Qq8QrcodeResult.timeout ||
+        final terminal =
+            q.retcode == Qq8QrcodeResult.timeout ||
             q.retcode == Qq8QrcodeResult.canceled;
         if (terminal) _qrsig = null;
-        _emit(Qq8LoginSnapshot(
-          stage: terminal ? Qq8LoginStage.failed : Qq8LoginStage.waitingQrScan,
-          qrToken: terminal ? null : _qrToken,
-          qrMessage: q.message,
-          error: terminal ? q.message : null,
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: terminal
+                ? Qq8LoginStage.failed
+                : Qq8LoginStage.waitingQrScan,
+            qrToken: terminal ? null : _qrToken,
+            qrMessage: q.message,
+            error: terminal ? q.message : null,
+          ),
+        );
         return;
       }
 
@@ -3466,11 +3969,13 @@ class Qq8LoginService {
       // 成功响应的 0x119 就是用它加密的）。
       final uin = q.uin ?? 0;
       if (_expectedUin != 0 && uin != _expectedUin) {
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed,
-          uin: uin,
-          error: '扫码账号（$uin）与预期账号（$_expectedUin）不符',
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            uin: uin,
+            error: '扫码账号（$uin）与预期账号（$_expectedUin）不符',
+          ),
+        );
         return;
       }
       _device = (deviceBuilder ?? Qq8Device.generate)(uin).withTgtgt(q.tgtgt!);
@@ -3582,11 +4087,14 @@ class Qq8LoginService {
       data: req.data,
     );
     // 服务端从不回这个回执的包，必须只发不等；以前走 sendUni 会空等 10 秒。
-    unawaited(session
-        .sendUniNoReply('ConfigPushSvc.PushResp', body, seq: pushSeq)
-        .then((_) => _log.i('ConfigPushSvc.PushReq 已回执（type=${req.type}）'))
-        .catchError(
-            (Object e) => _log.d('ConfigPushSvc.PushResp 失败', error: e)));
+    unawaited(
+      session
+          .sendUniNoReply('ConfigPushSvc.PushResp', body, seq: pushSeq)
+          .then((_) => _log.i('ConfigPushSvc.PushReq 已回执（type=${req.type}）'))
+          .catchError(
+            (Object e) => _log.d('ConfigPushSvc.PushResp 失败', error: e),
+          ),
+    );
   }
 
   /// 收推送：解析成事件；被踢下线要改状态（否则 UI 一直以为还在线）。
@@ -3607,26 +4115,30 @@ class Qq8LoginService {
         if (pushedGid != null) _groupWindowIdle.remove(pushedGid);
       case Qq8KickPush(:final hint):
         _log.w('被服务端踢下线：$hint');
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.disconnected,
-          uin: uin,
-          error: hint.isEmpty ? '被服务端踢下线' : hint,
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.disconnected,
+            uin: uin,
+            error: hint.isEmpty ? '被服务端踢下线' : hint,
+          ),
+        );
       case Qq8NotifyPush(:final notifyType):
         _log.i('有新消息通知（type=$notifyType），去拉一次');
         // notifyType 可能是 null（畸形包）——那就只记日志，不猜
         if (notifyType != null) unawaited(_pullAfterNotify(notifyType));
       case Qq8ReqPush(
-          :final svrip,
-          :final pushType,
-          :final groupCode,
-          :final eventType,
-        ):
+        :final svrip,
+        :final pushType,
+        :final groupCode,
+        :final eventType,
+      ):
         // 「有新消息，自己来拉」——不带消息体。之前这个命令字落在 default
         // 分支被当未知包丢掉（四份真机日志里一次都没出现过，说明服务端
         // 压根没进到会推它的状态，但**丢掉它等于把唯一的唤醒信号扔掉**）。
         // 处理：回执（服务端在等）+ 触发一次拉取。不动事件语义。
-        _log.i('ReqPush 唤醒（pushType=$pushType gid=$groupCode event=$eventType）→ 回执 + 拉一次');
+        _log.i(
+          'ReqPush 唤醒（pushType=$pushType gid=$groupCode event=$eventType）→ 回执 + 拉一次',
+        );
         if (svrip != null) unawaited(_ackPushRaw(svrip, r.seq));
         unawaited(_pullNewMessages(reason: 'ReqPush 唤醒'));
       case Qq8TransPush(:final svrip, :final transCmd, :final groupCode):
@@ -3642,41 +4154,52 @@ class Qq8LoginService {
         // 推送通道不可用，于是只推配置类（不需要握手的）消息，
         // 真机 2026-10-24 全天 12 次 HelloPush 全被我们当"未注册"丢掉，
         // 这就是群消息/实时推送一直收不到的根因候选。
-        if (cmd == 'SSO.HelloPush' && _session != null &&
+        if (cmd == 'SSO.HelloPush' &&
+            _session != null &&
             _snapshot.stage == Qq8LoginStage.online) {
           _log.i('SSO.HelloPush → 回送握手（官方语义：原样回声）');
           // 服务端**不回**这条回声（官方是同一条长连接上单向回送，
           // setNeedCallback(false) 语义）。以前用 sendUni 等应答，必然空等
           // 10 秒再报失败——改用只发不等。
-          unawaited(_session!
-              .sendUniNoReply('SSO.HelloPush', Uint8List.fromList(r.payload),
-                  seq: r.seq)
-              .then((_) => _log.d('HelloPush 回送已发出'))
-              .catchError((Object e) {
-            _log.d('HelloPush 回送失败', error: e);
-          }));
+          unawaited(
+            _session!
+                .sendUniNoReply(
+                  'SSO.HelloPush',
+                  Uint8List.fromList(r.payload),
+                  seq: r.seq,
+                )
+                .then((_) => _log.d('HelloPush 回送已发出'))
+                .catchError((Object e) {
+                  _log.d('HelloPush 回送失败', error: e);
+                }),
+          );
         }
         // 官方对 StatSvc.QueryHB 的处理就是"重新注册推送"
         // （jadx-main msf/core/push/g.java:601-607，RegPushReason.serverPush）。
         // 服务端发 QueryHB 意思是"你还在吗，需要继续收推送吗"——
         // 不理它就会被降到只收配置推送（真机 11:41/12:12：QueryHB
         // 之后一条消息推送都没有）。这里照官方语义重注册 + 顺手拉一把。
-        if (cmd == 'StatSvc.QueryHB' && _session != null &&
+        if (cmd == 'StatSvc.QueryHB' &&
+            _session != null &&
             _snapshot.stage == Qq8LoginStage.online) {
           _log.i('QueryHB → 重新注册推送（官方语义）并补拉');
-          unawaited(_registerOnce(_session!).then((Qq8RegisterOutcome o) {
-            // QueryHB 触发的重注册也要统一提交结果（旧版只打日志）：
-            // 成功即恢复推送通道标记，未确认即置位，供在线检查降级。
-            _lastRegisterOutcome = o;
-            if (o == Qq8RegisterOutcome.confirmed) {
-              _pushChannelUnconfirmed = false;
-            } else if (o == Qq8RegisterOutcome.unconfirmed) {
-              _pushChannelUnconfirmed = true;
-            }
-            _log.d('QueryHB 触发的重注册完成：${o.name}');
-          }).catchError((Object e) {
-            _log.d('QueryHB 触发的重注册失败', error: e);
-          }));
+          unawaited(
+            _registerOnce(_session!)
+                .then((Qq8RegisterOutcome o) {
+                  // QueryHB 触发的重注册也要统一提交结果（旧版只打日志）：
+                  // 成功即恢复推送通道标记，未确认即置位，供在线检查降级。
+                  _lastRegisterOutcome = o;
+                  if (o == Qq8RegisterOutcome.confirmed) {
+                    _pushChannelUnconfirmed = false;
+                  } else if (o == Qq8RegisterOutcome.unconfirmed) {
+                    _pushChannelUnconfirmed = true;
+                  }
+                  _log.d('QueryHB 触发的重注册完成：${o.name}');
+                })
+                .catchError((Object e) {
+                  _log.d('QueryHB 触发的重注册失败', error: e);
+                }),
+          );
           unawaited(_pullNewMessages(reason: 'QueryHB 补拉'));
         }
         // ConfigPushSvc.PushReq：icqq（base-client.js:1263-1324）的语义是
@@ -3700,48 +4223,50 @@ class Qq8LoginService {
               _ackConfigPush(req, r.seq);
               final bigdata = req.data;
               if (req.type == 2 && bigdata.isNotEmpty) {
-              // icqq 两步解：`jce.decode(nested[2])[5][5]` 是 pb 的
-              // `{1281: {1: sig_session, 2: session_key, 3: [...]}}`
-              //（直接 pb.decode 会撞 wiretype 1，真机 15:13 实证）。
-              final j = Qq8Jce.decode(Uint8List.fromList(bigdata));
-              final l5 = j[5];
-              if (l5 is List) {
-                final inner5 = (l5 as List<Object?>)[4];
-                if (inner5 is List<int> && inner5.isNotEmpty) {
-                  final mi = Qq8Pb.decode(Uint8List.fromList(inner5));
-                  final inner = Qq8Pb.bytesAt(mi, 1281);
-                  if (inner != null) {
-                    final m = Qq8Pb.decode(inner);
-                    _bigdataSigSession = Qq8Pb.bytesAt(m, 1);
-                    _bigdataSessionKey = Qq8Pb.bytesAt(m, 2);
-                    // 1281.3 = [{1: 10, 2: [{2: ip(u32), 3: port}]}]（v[1]==10 才是
-                    // 上传通道；参考实现 base-client.ts:612-622）。
-                    final eps = m[3];
-                    if (eps != null) {
-                      for (final e in eps) {
-                        if (e is! Uint8List) continue;
-                        final em = Qq8Pb.decode(e);
-                        if (Qq8Pb.intAt(em, 1) != 10) continue;
-                        final list = em[2];
-                        if (list == null || list.isEmpty) continue;
-                        final first = list.first;
-                        if (first is! Uint8List) continue;
-                        final hm = Qq8Pb.decode(first);
-                        final ip = Qq8Pb.intAt(hm, 2);
-                        final port = Qq8Pb.intAt(hm, 3);
-                        if (ip != null && port != null && port > 0) {
-                          _bigdataHost = Qq8File.u32ToIp(ip);
-                          _bigdataPort = port;
+                // icqq 两步解：`jce.decode(nested[2])[5][5]` 是 pb 的
+                // `{1281: {1: sig_session, 2: session_key, 3: [...]}}`
+                //（直接 pb.decode 会撞 wiretype 1，真机 15:13 实证）。
+                final j = Qq8Jce.decode(Uint8List.fromList(bigdata));
+                final l5 = j[5];
+                if (l5 is List) {
+                  final inner5 = (l5 as List<Object?>)[4];
+                  if (inner5 is List<int> && inner5.isNotEmpty) {
+                    final mi = Qq8Pb.decode(Uint8List.fromList(inner5));
+                    final inner = Qq8Pb.bytesAt(mi, 1281);
+                    if (inner != null) {
+                      final m = Qq8Pb.decode(inner);
+                      _bigdataSigSession = Qq8Pb.bytesAt(m, 1);
+                      _bigdataSessionKey = Qq8Pb.bytesAt(m, 2);
+                      // 1281.3 = [{1: 10, 2: [{2: ip(u32), 3: port}]}]（v[1]==10 才是
+                      // 上传通道；参考实现 base-client.ts:612-622）。
+                      final eps = m[3];
+                      if (eps != null) {
+                        for (final e in eps) {
+                          if (e is! Uint8List) continue;
+                          final em = Qq8Pb.decode(e);
+                          if (Qq8Pb.intAt(em, 1) != 10) continue;
+                          final list = em[2];
+                          if (list == null || list.isEmpty) continue;
+                          final first = list.first;
+                          if (first is! Uint8List) continue;
+                          final hm = Qq8Pb.decode(first);
+                          final ip = Qq8Pb.intAt(hm, 2);
+                          final port = Qq8Pb.intAt(hm, 3);
+                          if (ip != null && port != null && port > 0) {
+                            _bigdataHost = Qq8File.u32ToIp(ip);
+                            _bigdataPort = port;
+                          }
                         }
                       }
-                    }
-                    _log.i('bigdata 会话已存（sig_session=${_bigdataSigSession!.length}B '
+                      _log.i(
+                        'bigdata 会话已存（sig_session=${_bigdataSigSession!.length}B '
                         'key=${_bigdataSessionKey!.length}B '
-                        '通道=${_bigdataHost ?? '-'}:${_bigdataPort ?? '-'}）');
+                        '通道=${_bigdataHost ?? '-'}:${_bigdataPort ?? '-'}）',
+                      );
+                    }
                   }
                 }
               }
-            }
             }
           } on Object catch (e) {
             _log.d('ConfigPush 处理失败', error: e);
@@ -3764,7 +4289,14 @@ class Qq8LoginService {
   /// 其余类型（84/87/525 群请求、187/191 好友请求、528 黑名单）要各自的命令字，
   /// 属于"好友申请/群申请"那条线，我们还没做（见 project-remaining-blocked）。
   static const Set<int> _notifyPullTypes = <int>{
-    33, 38, 85, 141, 166, 167, 208, 529,
+    33,
+    38,
+    85,
+    141,
+    166,
+    167,
+    208,
+    529,
   };
 
   /// 收到"有新消息"通知后主动拉一次；拉回来的消息**复用推送那条流水线**
@@ -3776,11 +4308,9 @@ class Qq8LoginService {
       final page = await pullMessages();
       for (final m in page.messages) {
         if (_events.isClosed) return;
-        _events.add(Qq8MessagePush(
-          Qq8PushCmd.notify,
-          message: m,
-          needsAck: false,
-        ));
+        _events.add(
+          Qq8MessagePush(Qq8PushCmd.notify, message: m, needsAck: false),
+        );
       }
     } on Object catch (e) {
       // 拉取失败不致命：下次通知还会再来，打开会话时也会补拉
@@ -3805,11 +4335,7 @@ class Qq8LoginService {
     final uin = _snapshot.uin;
     if (s == null || uin == null) return;
     try {
-      final body = Qq8Msg.buildRespPushAck(
-        uin: uin,
-        svrip: svrip,
-        seq: seq,
-      );
+      final body = Qq8Msg.buildRespPushAck(uin: uin, svrip: svrip, seq: seq);
       await s.sendUniNoReply(Qq8Msg.respPushCmd, body, seq: seq);
     } on Object catch (e) {
       _log.d('推送回执发送失败（$seq）', error: e);
@@ -3897,8 +4423,10 @@ class Qq8LoginService {
       _log.d('0x537 条目解析失败（${raw.length}B），跳过记录');
       return;
     }
-    _log.i('0x537 出口记录: uin=${entry.uin} ip=${entry.ipText} '
-        'time=${entry.time} ver=${entry.version}');
+    _log.i(
+      '0x537 出口记录: uin=${entry.uin} ip=${entry.ipText} '
+      'time=${entry.time} ver=${entry.version}',
+    );
     final rec = protocolDetRecorder;
     if (rec == null) return;
     try {
@@ -4074,8 +4602,10 @@ class Qq8LoginService {
     // "档案换了、实际清单变没变""某项是不是被 guard 滤掉了"都只能靠猜
     // （2026-09-21 的教训：9.3.60 有没有真发 0x553 无从确认）。
     final peek = Qq8LoginBody.peekBody(body);
-    _log.i('发登录包 uin=$uin subCmd=${peek.$1} TLV=${peek.$2.length}项 '
-        '${peek.$2.map((t) => '0x${t.toRadixString(16)}').join(',')}');
+    _log.i(
+      '发登录包 uin=$uin subCmd=${peek.$1} TLV=${peek.$2.length}项 '
+      '${peek.$2.map((t) => '0x${t.toRadixString(16)}').join(',')}',
+    );
     // 命令字按 **body 的实际子命令**定，不按有没有 token 猜：子命令 15
     // （A1 对）调进来时 token 是 null，但官方命令字仍是
     // `wtlogin.exchange_emp`（`request/z.java` 构造器 `this.v`），发成
@@ -4114,14 +4644,19 @@ class Qq8LoginService {
       rethrow;
     }
     onDiagnostic?.call(diagTag, frame, r);
-    _log.i('登录响应 uin=$uin type=${r.type} '
-        '${r.tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(',')}');
+    _log.i(
+      '登录响应 uin=$uin type=${r.type} '
+      '${r.tlvs.keys.map((t) => '0x${t.toRadixString(16)}').join(',')}',
+    );
     await _handleResponse(uin, r, smsStep: smsStep);
   }
 
   /// 手机号短信登录三步各自的响应判读。
   Future<void> _handleSmsResponse(
-      int uin, Qq8LoginResponse r, _SmsStep step) async {
+    int uin,
+    Qq8LoginResponse r,
+    _SmsStep step,
+  ) async {
     // 208 / 232：中间态，带回下一步要用的材料
     if (r.isSmsLoginStep) {
       final salt = r.smsLoginSalt;
@@ -4135,17 +4670,21 @@ class Qq8LoginService {
         _smsMsgCnt = limits.msgCnt;
         _smsTimeLimit = limits.timeLimit;
       }
-      _log.i('短信登录 ${step.name}：type=${r.type} '
-          '盐=${_t104.length}B random=${_smsRandom?.length}B msalt=$_smsMsalt '
-          '次数=$_smsMsgCnt 时限=$_smsTimeLimit s');
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.needsSmsCode,
-        uin: _snapshot.uin,
-        phone: r.smsLoginPhoneHint ?? _smsPhone,
-        // 检查那一步（208）服务端还没发短信；下发那一步（232）才发。
-        smsAutoSent: step == _SmsStep.refresh,
-        smsFlow: true,
-      ));
+      _log.i(
+        '短信登录 ${step.name}：type=${r.type} '
+        '盐=${_t104.length}B random=${_smsRandom?.length}B msalt=$_smsMsalt '
+        '次数=$_smsMsgCnt 时限=$_smsTimeLimit s',
+      );
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.needsSmsCode,
+          uin: _snapshot.uin,
+          phone: r.smsLoginPhoneHint ?? _smsPhone,
+          // 检查那一步（208）服务端还没发短信；下发那一步（232）才发。
+          smsAutoSent: step == _SmsStep.refresh,
+          smsFlow: true,
+        ),
+      );
       return;
     }
 
@@ -4159,13 +4698,15 @@ class Qq8LoginService {
       final resolved = r.uinHint;
       final mpasswd = _smsMpasswd;
       if (resolved == null || resolved == 0 || mpasswd == null) {
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed,
-          uin: _snapshot.uin,
-          error: resolved == null || resolved == 0
-              ? '验证码已通过，但响应里没有 uin（0x113），无法继续登录'
-              : '验证码已通过，但本地缺少口令材料（mpasswd），无法继续登录',
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            uin: _snapshot.uin,
+            error: resolved == null || resolved == 0
+                ? '验证码已通过，但响应里没有 uin（0x113），无法继续登录'
+                : '验证码已通过，但本地缺少口令材料（mpasswd），无法继续登录',
+          ),
+        );
         return;
       }
       _log.i('短信验证码通过：uin=$resolved，接着用 mpasswd 走一次口令登录');
@@ -4182,8 +4723,13 @@ class Qq8LoginService {
     final text = msg != null
         ? '${msg.$1}：${msg.$2}'
         : '短信登录（${step.name}）未通过（服务端返回 type=${r.type}）';
-    _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.failed, uin: _snapshot.uin, error: text.trim()));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: Qq8LoginStage.failed,
+        uin: _snapshot.uin,
+        error: text.trim(),
+      ),
+    );
   }
 
   /// 从响应 0x130 读服务端时间（毫秒）。body 长度不足 6 或解析失败都返回 null。
@@ -4211,8 +4757,11 @@ class Qq8LoginService {
     return sb.toString();
   }
 
-  Future<void> _handleResponse(int uin, Qq8LoginResponse r,
-      {_SmsStep? smsStep}) async {
+  Future<void> _handleResponse(
+    int uin,
+    Qq8LoginResponse r, {
+    _SmsStep? smsStep,
+  }) async {
     if (smsStep != null) {
       await _handleSmsResponse(uin, r, smsStep);
       return;
@@ -4222,8 +4771,13 @@ class Qq8LoginService {
     if (r.isSuccess) {
       final t119 = r.t119;
       if (t119 == null) {
-        _emit(Qq8LoginSnapshot(
-            stage: Qq8LoginStage.failed, uin: uin, error: '成功响应里没有票据块（0x119）'));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            uin: uin,
+            error: '成功响应里没有票据块（0x119）',
+          ),
+        );
         return;
       }
       final bundle = Qq8SigBundle.parse(t119, _device!.tgtgt);
@@ -4242,13 +4796,15 @@ class Qq8LoginService {
         final old = await tokenStore.load(uin);
         issuedAtMs = old?.issuedAtMs ?? nowMs;
       }
-      await tokenStore.save(Qq8TokenData.fromSigBundle(
-        uin,
-        bundle,
-        issuedAtMs: issuedAtMs,
-        serverTimeMs: serverTimeMs,
-        lifetimeTlvHex: lifetimeHex,
-      ).copyWith(renewedAtMs: _loginIsRenewal ? nowMs : null));
+      await tokenStore.save(
+        Qq8TokenData.fromSigBundle(
+          uin,
+          bundle,
+          issuedAtMs: issuedAtMs,
+          serverTimeMs: serverTimeMs,
+          lifetimeTlvHex: lifetimeHex,
+        ).copyWith(renewedAtMs: _loginIsRenewal ? nowMs : null),
+      );
       _loginIsRenewal = false;
       // 成功换票后材料标记用完即清（新票是全新的，不带任何失效结论）。
       _attemptMaterial = null;
@@ -4302,11 +4858,13 @@ class Qq8LoginService {
       } else {
         _t547 = null;
       }
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.needsSlider,
-        uin: uin,
-        sliderUrl: _sliderUrl,
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.needsSlider,
+          uin: uin,
+          sliderUrl: _sliderUrl,
+        ),
+      );
       return;
     }
 
@@ -4332,27 +4890,32 @@ class Qq8LoginService {
 
       if (_t104.isEmpty || _t174.isEmpty) {
         // 只有"从来没拿到过令牌"才是真失败（首包就不给，说明链路不对）。
-        _emit(Qq8LoginSnapshot(
-          stage: Qq8LoginStage.failed,
-          uin: uin,
-          error: '短信验证响应缺少盐或令牌（0x104/0x174），无法继续',
-        ));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            uin: uin,
+            error: '短信验证响应缺少盐或令牌（0x104/0x174），无法继续',
+          ),
+        );
         return;
       }
 
       // 本次是否属于"重新下发"：没有 0x204（设备锁文案）也没有新令牌。
-      final resent = (r.tlvs[0x204] == null) && (token == null || token.isEmpty);
+      final resent =
+          (r.tlvs[0x204] == null) && (token == null || token.isEmpty);
       final quota = r.smsResendQuota;
       if (quota != null) {
         _log.i('短信已重新下发：${quota.count} 次 / ${quota.seconds}s 内可再发');
       }
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.needsSmsCode,
-        uin: uin,
-        // 重新下发不带 0x178，用上一条记住的号码，避免界面突然显示"绑定手机"。
-        phone: phone ?? _verifyPhone,
-        smsAutoSent: resent,
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.needsSmsCode,
+          uin: uin,
+          // 重新下发不带 0x178，用上一条记住的号码，避免界面突然显示"绑定手机"。
+          phone: phone ?? _verifyPhone,
+          smsAutoSent: resent,
+        ),
+      );
       return;
     }
 
@@ -4360,15 +4923,22 @@ class Qq8LoginService {
     if (r.needsDeviceLock) {
       _t104 = r.tlvs[0x104] ?? Uint8List(0);
       if (_t104.isEmpty) {
-        _emit(Qq8LoginSnapshot(
-            stage: Qq8LoginStage.failed, uin: uin, error: '设备锁响应缺少盐（0x104）'));
+        _emit(
+          Qq8LoginSnapshot(
+            stage: Qq8LoginStage.failed,
+            uin: uin,
+            error: '设备锁响应缺少盐（0x104）',
+          ),
+        );
         return;
       }
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.needsDeviceLock,
-        uin: uin,
-        deviceLockHint: r.deviceLockHint,
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.needsDeviceLock,
+          uin: uin,
+          deviceLockHint: r.deviceLockHint,
+        ),
+      );
       return;
     }
 
@@ -4379,9 +4949,11 @@ class Qq8LoginService {
     // 这里先打原始 hex，供离线比对官方 g.b() 的换文案链路是否值得补。
     final notice = r.t508Notice;
     if (notice != null) {
-      _log.i('0x508 进阶提示: doFetch=${notice.doFetch} '
-          'timeout=${notice.timeoutMs}ms userBuf[${notice.userBuf.length}]='
-          '${notice.userBuf.map((v) => v.toRadixString(16).padLeft(2, '0')).join()}');
+      _log.i(
+        '0x508 进阶提示: doFetch=${notice.doFetch} '
+        'timeout=${notice.timeoutMs}ms userBuf[${notice.userBuf.length}]='
+        '${notice.userBuf.map((v) => v.toRadixString(16).padLeft(2, '0')).join()}',
+      );
     }
     // 服务端文案（0x146 = 标题 + 内容）——**必须进日志**：被拒时这是唯一能读到的
     // "服务端原话"（0x508 那份详情要么要再走 ts7/ts8 换明文，而那条路实测已死，
@@ -4397,10 +4969,14 @@ class Qq8LoginService {
     for (final tag in const <int>[0x543, 0x544, 0x546, 0x553, 0x130]) {
       final b = r.tlvs[tag];
       if (b == null) continue;
-      final hex =
-          b.take(64).map((v) => v.toRadixString(16).padLeft(2, '0')).join();
-      _log.i('TLV 0x${tag.toRadixString(16)} 长度=${b.length}'
-          '${b.length > 64 ? '（只显示前 64B）' : ''} hex=$hex');
+      final hex = b
+          .take(64)
+          .map((v) => v.toRadixString(16).padLeft(2, '0'))
+          .join();
+      _log.i(
+        'TLV 0x${tag.toRadixString(16)} 长度=${b.length}'
+        '${b.length > 64 ? '（只显示前 64B）' : ''} hex=$hex',
+      );
     }
     final text = msg == null
         ? '登录未通过（服务端返回 type=${r.type}）'
@@ -4415,10 +4991,12 @@ class Qq8LoginService {
     _loginIsRenewal = false;
     if (stage == Qq8LoginStage.rejected) {
       final why = msg == null ? '无文案' : msg.$1;
-      _log.w('服务端准入拒绝 type=${r.type}（$why）——不再自动重试；'
-          '连续重试只会让账号风险更高，请等待一段时间后再试一次。'
-          '注：2026-10-28 21:25 真机见到 235（验证通过后）与 45（提交包多带 '
-          '0x544/0x553）两种情况，但两次档案不同，尚未做干净单变量 A/B。');
+      _log.w(
+        '服务端准入拒绝 type=${r.type}（$why）——不再自动重试；'
+        '连续重试只会让账号风险更高，请等待一段时间后再试一次。'
+        '注：2026-10-28 21:25 真机见到 235（验证通过后）与 45（提交包多带 '
+        '0x544/0x553）两种情况，但两次档案不同，尚未做干净单变量 A/B。',
+      );
     } else if (stage == Qq8LoginStage.sessionExpired) {
       _log.w('凭证失效 type=${r.type} 停止重试，等待用户重新登录');
       // 服务端**已经判过**这张票失效：记下来，冷启动别白试一次。
@@ -4428,24 +5006,30 @@ class Qq8LoginService {
         if (old != null) {
           // 失效范围**只记到本次实际走的那条材料**（_attemptMaterial）。
           // 口令链为 null → legacy 整票语义（见 Qq8TokenData.materialKnownInvalid）。
-          await tokenStore.save(old.markInvalidated(
-            atMs: DateTime.now().millisecondsSinceEpoch,
-            type: r.type,
-            material: _attemptMaterial,
-          ));
-          _log.w('票据已标记失效（type=${r.type} 材料=${_attemptMaterial ?? '整票'}），'
-              '冷启动将跳过该材料');
+          await tokenStore.save(
+            old.markInvalidated(
+              atMs: DateTime.now().millisecondsSinceEpoch,
+              type: r.type,
+              material: _attemptMaterial,
+            ),
+          );
+          _log.w(
+            '票据已标记失效（type=${r.type} 材料=${_attemptMaterial ?? '整票'}），'
+            '冷启动将跳过该材料',
+          );
         }
       } catch (e) {
         _log.w('标记票据失效失败（不影响本次结论）', error: e);
       }
     }
-    _emit(Qq8LoginSnapshot(
-      stage: stage,
-      uin: uin,
-      error: text.trim(),
-      resultType: r.type,
-    ));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: stage,
+        uin: uin,
+        error: text.trim(),
+        resultType: r.type,
+      ),
+    );
   }
 
   /// 注册上线 + 起心跳；成功则进入 [Qq8LoginStage.online]。
@@ -4563,11 +5147,13 @@ class Qq8LoginService {
     _pullTimer?.cancel();
     _pullTimer = null;
     _log.w('连接已断开，进入统一恢复入口', error: error);
-    _emit(Qq8LoginSnapshot(
-      stage: Qq8LoginStage.disconnected,
-      uin: session.uin,
-      error: '连接已断开，正在尝试自动恢复',
-    ));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: Qq8LoginStage.disconnected,
+        uin: session.uin,
+        error: '连接已断开，正在尝试自动恢复',
+      ),
+    );
     unawaited(reconnect(uin: session.uin));
   }
 
@@ -4601,9 +5187,7 @@ class Qq8LoginService {
     _pullTimer?.cancel();
     _pullTimer = Timer.periodic(
       _activePullInterval,
-      (_) => unawaited(_pullNewMessages(
-            reason: _foreground ? '轮询' : '后台轮询',
-          )),
+      (_) => unawaited(_pullNewMessages(reason: _foreground ? '轮询' : '后台轮询')),
     );
   }
 
@@ -4636,7 +5220,7 @@ class Qq8LoginService {
   /// 新会话会误用旧会话那条永远回不来的 Future（表现：新会话上线 30 秒
   /// 内注册全部被「复用」成旧会话的 pending）。
   ({Qq8Session session, int epoch, Future<Qq8RegisterOutcome> future})?
-      _registerInFlight;
+  _registerInFlight;
 
   /// 注册 single-flight：同一时刻只允许一条 `StatSvc.register` 在途。
   ///
@@ -4670,7 +5254,10 @@ class Qq8LoginService {
   /// 只有明确被拒才回退状态——那时会话确实不可用，藏起来只会让用户
   /// 以为在线却什么都收不到。
   Future<void> _registerInBackground(
-      Qq8Session session, int uin, int epoch) async {
+    Qq8Session session,
+    int uin,
+    int epoch,
+  ) async {
     final Qq8RegisterOutcome outcome;
     try {
       outcome = await _registerOnce(session, timeout: registerTimeout);
@@ -4702,14 +5289,17 @@ class Qq8LoginService {
         break;
     }
     // 期间可能已经断线/重登，别把新会话的状态踩掉
-    if (!identical(_session, session) || _snapshot.stage != Qq8LoginStage.online) {
+    if (!identical(_session, session) ||
+        _snapshot.stage != Qq8LoginStage.online) {
       return;
     }
-    _emit(Qq8LoginSnapshot(
-      stage: Qq8LoginStage.failed,
-      uin: uin,
-      error: '登录已通过，但上线注册被拒（票据或设备信息不符）',
-    ));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: Qq8LoginStage.failed,
+        uin: uin,
+        error: '登录已通过，但上线注册被拒（票据或设备信息不符）',
+      ),
+    );
   }
 
   /// 发官方登录后那两个 JCE 检查：`PhSigLcId.Check` 与 `GrayUinPro.Check`。
@@ -4791,16 +5381,20 @@ class Qq8LoginService {
     if (e is! Qq8ServerRetcodeException || !e.authDead) return false;
     if (_authLost) return true;
     _authLost = true;
-    _log.w('$where：服务端判定身份已失效（retcode=${e.retcode}），'
-        '停止后台轮询，等用户重新登录');
+    _log.w(
+      '$where：服务端判定身份已失效（retcode=${e.retcode}），'
+      '停止后台轮询，等用户重新登录',
+    );
     _pullTimer?.cancel();
     _pullTimer = null;
     _session?.stopHeartbeat();
-    _emit(Qq8LoginSnapshot(
-      stage: Qq8LoginStage.sessionExpired,
-      uin: _snapshot.uin,
-      error: '登录凭证已失效，请重新登录',
-    ));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: Qq8LoginStage.sessionExpired,
+        uin: _snapshot.uin,
+        error: '登录凭证已失效，请重新登录',
+      ),
+    );
     return true;
   }
 
@@ -4859,11 +5453,9 @@ class Qq8LoginService {
       _log.i('$reason：${page.messages.length} 条新消息');
       for (final m in page.messages) {
         if (_events.isClosed) return;
-        _events.add(Qq8MessagePush(
-          Qq8PushCmd.notify,
-          message: m,
-          needsAck: false,
-        ));
+        _events.add(
+          Qq8MessagePush(Qq8PushCmd.notify, message: m, needsAck: false),
+        );
       }
     } on Object catch (e) {
       // 拉取失败不致命：轮询下一轮 / 下次通知还会再试
@@ -4914,8 +5506,10 @@ class Qq8LoginService {
       while (!_states.isClosed && attempt < reconnectAttempts) {
         if (offline) {
           if (!DateTime.now().isBefore(offlineDeadline)) {
-            _log.w('断线恢复：网络已中断超过 '
-                '${reconnectOfflineGiveUpAfter.inMinutes} 分钟，停在断线状态等手动重登');
+            _log.w(
+              '断线恢复：网络已中断超过 '
+              '${reconnectOfflineGiveUpAfter.inMinutes} 分钟，停在断线状态等手动重登',
+            );
             break;
           }
           await Future<void>.delayed(reconnectOfflineDelay);
@@ -4932,24 +5526,30 @@ class Qq8LoginService {
           _log.w('断线恢复：没有可用的免密材料（D2/A1 都缺），停在断线状态等手动重登');
           return;
         }
-        _log.i(offline
-            ? '断线恢复：等网络恢复后再试（票据续期，已尝试 $attempt/$reconnectAttempts 次）'
-            : '断线恢复：第 ${attempt + 1}/$reconnectAttempts 次（票据续期）');
+        _log.i(
+          offline
+              ? '断线恢复：等网络恢复后再试（票据续期，已尝试 $attempt/$reconnectAttempts 次）'
+              : '断线恢复：第 ${attempt + 1}/$reconnectAttempts 次（票据续期）',
+        );
         try {
           await loginWithToken(uin: uin);
         } on Object catch (e) {
           offline = _networkUnavailable(e.toString());
           if (!offline) attempt++;
           if (offline) {
-            _log.w('断线恢复：网络不可用，'
-                '${reconnectOfflineDelay.inSeconds}s 后再试（不计入 $reconnectAttempts 次上限）');
+            _log.w(
+              '断线恢复：网络不可用，'
+              '${reconnectOfflineDelay.inSeconds}s 后再试（不计入 $reconnectAttempts 次上限）',
+            );
             // 断网不是「登录失败」：让界面显示断线（可手动重连），别报成登录错误。
-            _emit(Qq8LoginSnapshot(
-              stage: Qq8LoginStage.disconnected,
-              uin: uin,
-              networkIssue: true,
-              error: '网络不可用，正在等待网络恢复后自动续连',
-            ));
+            _emit(
+              Qq8LoginSnapshot(
+                stage: Qq8LoginStage.disconnected,
+                uin: uin,
+                networkIssue: true,
+                error: '网络不可用，正在等待网络恢复后自动续连',
+              ),
+            );
           } else {
             _log.w('断线恢复第 $attempt 次抛异常', error: e);
           }
@@ -4969,8 +5569,10 @@ class Qq8LoginService {
         if (_snapshot.stage == Qq8LoginStage.rejected ||
             _snapshot.stage == Qq8LoginStage.sessionExpired) {
           if (_snapshot.stage == Qq8LoginStage.sessionExpired) {
-            _log.w('断线恢复遇到凭证失效（type=${_snapshot.resultType}），'
-                '凭证失效，停止重试，等用户重登');
+            _log.w(
+              '断线恢复遇到凭证失效（type=${_snapshot.resultType}），'
+              '凭证失效，停止重试，等用户重登',
+            );
           } else {
             _log.w('断线恢复遇到服务端准入拒绝（type=${_snapshot.resultType}），停止重试');
           }
@@ -4979,28 +5581,35 @@ class Qq8LoginService {
         // _fail 已把网络类失败归一成「网络不可用，请检查网络后重试」并打了
         // networkIssue 标；这里必须认那个标——只看错误文本会漏判（S3 回归：
         // 断网 5 轮被当成 3 次服务端失败直接停住）。
-        offline = _snapshot.networkIssue ||
+        offline =
+            _snapshot.networkIssue ||
             _networkUnavailable(_snapshot.error ?? '');
         if (!offline) attempt++;
         if (offline) {
-          _emit(Qq8LoginSnapshot(
-            stage: Qq8LoginStage.disconnected,
-            uin: uin,
-            networkIssue: true,
-            error: '网络不可用，正在等待网络恢复后自动续连',
-          ));
+          _emit(
+            Qq8LoginSnapshot(
+              stage: Qq8LoginStage.disconnected,
+              uin: uin,
+              networkIssue: true,
+              error: '网络不可用，正在等待网络恢复后自动续连',
+            ),
+          );
         }
-        _log.w(offline
-            ? '断线恢复：网络不可用（stage=${_snapshot.stage.name}），'
-                '${reconnectOfflineDelay.inSeconds}s 后再试'
-            : '断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试');
+        _log.w(
+          offline
+              ? '断线恢复：网络不可用（stage=${_snapshot.stage.name}），'
+                    '${reconnectOfflineDelay.inSeconds}s 后再试'
+              : '断线恢复第 $attempt 次未上线（stage=${_snapshot.stage.name}），退避后重试',
+        );
       }
       _log.w('断线恢复 $reconnectAttempts 次均失败，停在断线状态等手动重登');
-      _emit(Qq8LoginSnapshot(
-        stage: Qq8LoginStage.disconnected,
-        uin: uin,
-        error: '自动重连失败（已尝试 $reconnectAttempts 次），请手动重新登录',
-      ));
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.disconnected,
+          uin: uin,
+          error: '自动重连失败（已尝试 $reconnectAttempts 次），请手动重新登录',
+        ),
+      );
     } finally {
       _reconnecting = false;
     }
@@ -5011,14 +5620,16 @@ class Qq8LoginService {
     // 网络不可用不是"登录失败"：报 disconnected（可静默等网络），并在快照上
     // 打 networkIssue，让适配层不要往事件流里发 SessionFailure（缺陷②）。
     final network = _networkUnavailable(e.toString());
-    _emit(Qq8LoginSnapshot(
-      stage: network ? Qq8LoginStage.disconnected : Qq8LoginStage.failed,
-      uin: _snapshot.uin,
-      networkIssue: network,
-      error: network ? '网络不可用，请检查网络后重试' : '$what：$e',
-      // 只有真正的登录失败才带栈；断网那支不值得污染事件流。
-      stackTrace: network ? null : st,
-    ));
+    _emit(
+      Qq8LoginSnapshot(
+        stage: network ? Qq8LoginStage.disconnected : Qq8LoginStage.failed,
+        uin: _snapshot.uin,
+        networkIssue: network,
+        error: network ? '网络不可用，请检查网络后重试' : '$what：$e',
+        // 只有真正的登录失败才带栈；断网那支不值得污染事件流。
+        stackTrace: network ? null : st,
+      ),
+    );
   }
 
   void _emit(Qq8LoginSnapshot s) {
@@ -5080,14 +5691,14 @@ class Qq8SmsLoginState {
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'phone': phone,
-        't104': _hex(salt),
-        't126': _hex(random),
-        'msalt': msalt,
-        if (msgCnt != null) 'msg_cnt': msgCnt,
-        if (timeLimit != null) 'time_limit': timeLimit,
-        if (hintPhone != null) 'hint_phone': hintPhone,
-      };
+    'phone': phone,
+    't104': _hex(salt),
+    't126': _hex(random),
+    'msalt': msalt,
+    if (msgCnt != null) 'msg_cnt': msgCnt,
+    if (timeLimit != null) 'time_limit': timeLimit,
+    if (hintPhone != null) 'hint_phone': hintPhone,
+  };
 
   /// 反序列化；缺关键字段（手机号/盐/随机数）时返回 null——**不猜**。
   static Qq8SmsLoginState? fromJson(Map<String, Object?> json) {
@@ -5167,4 +5778,3 @@ String _randomMpasswd() {
   }
   return sb.toString();
 }
-

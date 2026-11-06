@@ -55,6 +55,20 @@ dependencies:
 
   cupertino_icons: ^1.0.8
 
+  # 相册选图：Flutter 官方团队维护（flutter/packages）。Android 13+ 走系统
+  # Photo Picker、低版本走 ACTION_GET_CONTENT，**不需要读相册权限**（只有
+  # 相机才要 CAMERA）。返回的是应用缓存里的临时 XFile，必须马上读字节。
+  # 为什么不用 file_selector：它只能选"文件"，在手机上是一堆目录树，不是
+  # 相册缩略图墙；为什么不自写 MethodChannel：官方插件已经把各版本系统 API
+  # 的差异和权限坑都填平了（见 docs 里 image_picker 的 issue 史）。
+  image_picker: ^1.1.2
+
+  # 纯 Dart 图像处理（发送前压缩/缩放）。**不能换成 dart:ui 的
+  # instantiateImageCodec**：那属于 Flutter，L1–L3 禁止 import Flutter
+  # （AGENTS.md §1.1），而压缩必须放在 infra 层给协议层复用。
+  # 代价：大图解码在纯 Dart 里慢几秒，所以统一丢进 Isolate.run 跑。
+  image: ^4.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

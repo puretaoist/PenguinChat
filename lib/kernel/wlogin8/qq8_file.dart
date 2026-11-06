@@ -188,16 +188,30 @@ abstract final class Qq8File {
 
   /// 主动查一次 bigdata 通道（`HttpConn.0x6ff_501`）。
   ///
-  /// 请求体照参考实现 `internal.ts`：`{1281: {1: uin, 2: 0, 3: 16, 4: 1, 6: 3, 7: 5}}`。
-  static Uint8List buildBigdataChannelBody({required int uin}) =>
+  /// 2026-11-05 第三轮：字段按 Lagrange.Core 的
+  /// `HighwaySessionService` 的 C501ReqBody 对齐（原来只发
+  /// `{1:uin,2:0,3:16,4:1,6:3,7:5}`）：
+  /// - `4 LoginSigType` 由 1 改 0，A2 改走 `5 LoginSigTicket`（原来完全没有 A2）；
+  /// - `7 ServiceTypes` 由单值 5 改成 `[1,5,10,21]`：语音 ptt 的业务号与离线文件
+  ///   不同，只申请 5 拿到的 ticket 在 `PicUp.DataUp` 上传时被服务端回 67；
+  /// - 补 `9:2 / 10:9 / 11:8 / 15:"1.0.1"`（客户端版本协商项）。
+  static Uint8List buildBigdataChannelBody({
+    required int uin,
+    Uint8List? loginSig,
+  }) =>
       Qq8Pb.encode(<int, Object?>{
         1281: <int, Object?>{
           1: uin,
           2: 0,
           3: 16,
-          4: 1,
+          4: 0,
+          if (loginSig != null && loginSig.isNotEmpty) 5: loginSig,
           6: 3,
-          7: 5,
+          7: <int>[1, 5, 10, 21],
+          9: 2,
+          10: 9,
+          11: 8,
+          15: '1.0.1',
         },
       });
 

@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 
 import '../../kernel/wlogin8/qq8_list.dart';
 import '../theme/telegram_theme.dart';
+import 'glass_sheet.dart';
 import 'telegram_avatar.dart';
 import 'telegram_list_item.dart';
 
@@ -48,18 +49,16 @@ class GroupMembersPanel extends StatefulWidget {
     required Future<List<Qq8GroupMember>> Function() loader,
     int ownerUin = 0,
     void Function(Qq8GroupMember member)? onMemberMenu,
-  }) =>
-      showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: TelegramColors.bgSidebar,
-        isScrollControlled: true,
-        builder: (_) => GroupMembersPanel(
-          title: title,
-          loader: loader,
-          ownerUin: ownerUin,
-          onMemberMenu: onMemberMenu,
-        ),
-      );
+  }) => showGlassSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => GroupMembersPanel(
+      title: title,
+      loader: loader,
+      ownerUin: ownerUin,
+      onMemberMenu: onMemberMenu,
+    ),
+  );
 
   @override
   State<GroupMembersPanel> createState() => _GroupMembersPanelState();
@@ -112,14 +111,20 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
                 IconButton(
                   key: const ValueKey('members-refresh'),
                   onPressed: _loading ? null : _load,
-                  icon: Icon(Icons.refresh,
-                      size: 20, color: TelegramColors.textSecondary),
+                  icon: Icon(
+                    Icons.refresh,
+                    size: 20,
+                    color: TelegramColors.textSecondary,
+                  ),
                   tooltip: '刷新',
                 ),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  icon: Icon(Icons.close,
-                      size: 20, color: TelegramColors.textSecondary),
+                  icon: Icon(
+                    Icons.close,
+                    size: 20,
+                    color: TelegramColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -132,51 +137,57 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
   }
 
   Widget _header(List<Qq8GroupMember>? members) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(widget.title,
-              key: const ValueKey('members-title'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: TelegramColors.textPrimary,
-                  fontSize: TelegramMetrics.fontTitle,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(
-            members == null ? '加载中…' : '${members.length} 位成员',
-            key: const ValueKey('members-count'),
-            style: TextStyle(
-                color: TelegramColors.textSecondary, fontSize: 12.5),
-          ),
-        ],
-      );
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: <Widget>[
+      Text(
+        widget.title,
+        key: const ValueKey('members-title'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: TelegramColors.textPrimary,
+          fontSize: TelegramMetrics.fontTitle,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        members == null ? '加载中…' : '${members.length} 位成员',
+        key: const ValueKey('members-count'),
+        style: TextStyle(color: TelegramColors.textSecondary, fontSize: 12.5),
+      ),
+    ],
+  );
 
   Widget _body(List<Qq8GroupMember>? members) {
     if (_error != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!,
-              key: const ValueKey('members-error'),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: TelegramColors.textSecondary, fontSize: 13)),
+          child: Text(
+            _error!,
+            key: const ValueKey('members-error'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: TelegramColors.textSecondary, fontSize: 13),
+          ),
         ),
       );
     }
     if (members == null) {
       return const Center(
         child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2)),
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       );
     }
     if (members.isEmpty) {
       return Center(
-        child: Text('没有成员数据',
-            style: TextStyle(color: TelegramColors.textMuted, fontSize: 13)),
+        child: Text(
+          '没有成员数据',
+          style: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
+        ),
       );
     }
     return ListView.builder(
@@ -207,9 +218,7 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
       leading: TelegramAvatar(name: m.displayName, size: 46),
       title: m.displayName,
       subtitle: subtitle.toString(),
-      onTap: widget.onMemberMenu == null
-          ? null
-          : () => widget.onMemberMenu!(m),
+      onTap: widget.onMemberMenu == null ? null : () => widget.onMemberMenu!(m),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -221,8 +230,11 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
             IconButton(
               key: ValueKey('member-menu-${m.uin}'),
               onPressed: () => widget.onMemberMenu!(m),
-              icon: Icon(Icons.more_vert,
-                  size: 18, color: TelegramColors.textSecondary),
+              icon: Icon(
+                Icons.more_vert,
+                size: 18,
+                color: TelegramColors.textSecondary,
+              ),
               tooltip: '成员管理',
             ),
         ],
@@ -231,11 +243,11 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
   }
 
   Widget _chip(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.18),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Text(label, style: TextStyle(color: color, fontSize: 11)),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Text(label, style: TextStyle(color: color, fontSize: 11)),
+  );
 }

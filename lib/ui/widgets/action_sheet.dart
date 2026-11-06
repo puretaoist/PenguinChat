@@ -10,6 +10,8 @@
 /// 这样每个状态下该出现哪个动作都能离线测。
 library;
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../theme/telegram_theme.dart';
@@ -47,47 +49,57 @@ class ActionSheet extends StatelessWidget {
     BuildContext context, {
     Widget? preview,
     required List<ActionSheetItem> items,
-  }) =>
-      showModalBottomSheet<void>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        isScrollControlled: true,
-        builder: (_) => ActionSheet(preview: preview, items: items),
-      );
+  }) => showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    // 遮罩压暗到 35%：默认的 54% 太重，TG 的底部弹层下面还能看清聊天。
+    barrierColor: Colors.black.withValues(alpha: 0.35),
+    isScrollControlled: true,
+    builder: (_) => ActionSheet(preview: preview, items: items),
+  );
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: TelegramColors.bgSidebar,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            if (preview != null) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-                child: preview!,
-              ),
-              Divider(height: 1, color: TelegramColors.divider),
-            ],
-            for (var i = 0; i < items.length; i++) ...[
-              // 末尾「取消」单独隔开（TG 的底部弹层都这么画）
-              if (i == items.length - 1)
-                Divider(height: 1, color: TelegramColors.divider),
-              _row(context, items[i]),
-            ],
-          ],
+    // 毛玻璃弹层：底下是聊天/图片时，纯色面板会把内容一刀切断；模糊一层
+    // 之后既看得见底下在动，又不抢文字的对比度。
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: TelegramColors.bgSidebar.withValues(alpha: 0.94),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (preview != null) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                    child: preview!,
+                  ),
+                  Divider(height: 1, color: TelegramColors.divider),
+                ],
+                for (var i = 0; i < items.length; i++) ...[
+                  // 末尾「取消」单独隔开（TG 的底部弹层都这么画）
+                  if (i == items.length - 1)
+                    Divider(height: 1, color: TelegramColors.divider),
+                  _row(context, items[i]),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
   Widget _row(BuildContext context, ActionSheetItem item) {
-    final color = item.danger ? TelegramColors.danger : TelegramColors.textPrimary;
+    final color = item.danger
+        ? TelegramColors.danger
+        : TelegramColors.textPrimary;
     return InkWell(
       key: item.key,
       onTap: item.onTap == null

@@ -59,6 +59,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
@@ -161,7 +162,8 @@ class ChatStore {
     required int groupCode,
     required String md5Hex,
     required int fileId,
-  })? imageUrlResolver;
+  })?
+  imageUrlResolver;
 
   /// 语音换链：拿消息里的 `ptt.3` uuid 去发 1200 换一条新的 /download 直链。
   ///
@@ -209,6 +211,16 @@ class ChatStore {
   final Map<String, bool> _hasMore = {};
   final Map<String, bool> _historyFetched = {};
   final Map<String, bool> _diskLoaded = {};
+
+  /// 每个会话**磁盘上已有的消息 ID**（磁盘加载完成时建立，重写时同步）。
+  ///
+  /// 内存去重（[_indexOf]）只在本次运行内有效：进程重启后内存是空的，
+  /// 服务端把同一条同步消息再发一遍就又会 append 一行。真机上同一个 ID 的
+  /// 消息因此在 jsonl 里堆了 5 行（m03823 的 private_3976045673）。
+  final Map<String, Set<String>> _diskIds = {};
+
+  /// 每个会话正在进行的磁盘加载任务（单飞：并发调用共享同一个 Future）。
+  final Map<String, Future<void>> _diskLoadTasks = {};
 
   /// 已经和某条 echo 事件配对过的本地临时 ID，避免同一条被匹配两次。
   final Set<String> _echoMatched = {};
@@ -275,7 +287,9 @@ class ChatStore {
     // 用户会看到一屏"正在下载"的占位——明明文件就在磁盘上。
     final cache = MediaCache(
       root: _mediaDir,
-      indexFile: File('${dataDir.path}${Platform.pathSeparator}media_index.json'),
+      indexFile: File(
+        '${dataDir.path}${Platform.pathSeparator}media_index.json',
+      ),
       fetcher: mediaFetcher,
       maxBytes: maxCacheBytes,
       categoryLimits: _mediaConcurrency,
@@ -288,7 +302,8 @@ class ChatStore {
 
     _sub = session.events.listen(
       _onEvent,
-      onError: (Object e, StackTrace s) => _log.e('会话事件流错误', error: e, stack: s),
+      onError: (Object e, StackTrace s) =>
+          _log.e('会话事件流错误', error: e, stack: s),
       cancelOnError: false,
     );
 
@@ -336,10 +351,11 @@ class ChatStore {
   /// 打开一个会话：懒加载磁盘消息 → 清未读 → 上报已读 → 首次拉历史。
   Future<void> openChat(String chatId) async {
     _activeChatId = chatId;
-    _ensureDiskLoaded(chatId);
+    await _ensureDiskLoaded(chatId);
     await markChatRead(chatId);
 
-    if (_historyFetched[chatId] != true && session.state == SessionState.ready) {
+    if (_historyFetched[chatId] != true &&
+        session.state == SessionState.ready) {
       try {
         final page = await session.fetchHistory(chatId, count: pageSize);
         _historyFetched[chatId] = true;
@@ -380,7 +396,7 @@ class ChatStore {
   /// 不把异常抛给调用方——失败态由消息自身的 [ChatMessage.sendState] 承载，
   /// 这样 UI 只需要渲染状态，不必到处 try/catch，也不会在异常路径上丢掉输入框内容。
   Future<void> send(String chatId, List<Segment> segments) async {
-    _ensureDiskLoaded(chatId);
+    await _ensureDiskLoaded(chatId);
     final uin = session.account?.uin ?? '';
     final local = ChatMessage.fromSegments(
       id: 'local:${++_localSeq}',
@@ -404,13 +420,15 @@ class ChatStore {
 
   /// 重发一条失败的消息。非失败态或 ID 不存在时是空操作。
   Future<void> retry(String chatId, String messageId) async {
-    _ensureDiskLoaded(chatId);
+    await _ensureDiskLoaded(chatId);
     final idx = _indexOf(chatId, messageId);
     if (idx < 0) return;
     final current = _messages[chatId]![idx];
     if (current.sendState != MessageSendState.failed) return;
 
-    _messages[chatId]![idx] = current.copyWith(sendState: MessageSendState.sending);
+    _messages[chatId]![idx] = current.copyWith(
+      sendState: MessageSendState.sending,
+    );
     _rewriteMessages(chatId);
     _emit(ChatStoreChangeKind.messages, chatId);
 
@@ -495,12 +513,21 @@ class ChatStore {
   }
 
   void _onIncoming(ChatMessage raw) {
+    // 磁盘加载改成异步后，事件处理也串行等待：先等历史读完再插，
+    // 否则读盘结果回来时可能插重复，或者撤回打在空列表上被忽略。
+    unawaited(_handleIncoming(raw));
+  }
+
+  Future<void> _handleIncoming(ChatMessage raw) async {
     final chatId = raw.chatId.isNotEmpty ? raw.chatId : (_activeChatId ?? '');
     if (chatId.isEmpty) {
       _log.d('收到无会话归属的消息 ${raw.id}，丢弃');
       return;
     }
-    _ensureDiskLoaded(chatId);
+    // 不 await 磁盘加载：推送不该等一次读盘才变成气泡（真机上历史大的会话
+    // 要几百毫秒）。内存优先——加载完成后的合并按 id 去重、最后统一排序，
+    // 磁盘里同 id 的旧版本不会覆盖事件里的新状态。
+    if (_diskLoaded[chatId] != true) unawaited(_ensureDiskLoaded(chatId));
     final message = raw.chatId.isEmpty ? raw.copyWith(chatId: chatId) : raw;
 
     // 幂等：历史与实时事件重叠、后端重推，都按 ID 去重。
@@ -525,7 +552,11 @@ class ChatStore {
   }
 
   void _onRecall(SessionMessageRecalled event) {
-    _ensureDiskLoaded(event.chatId);
+    unawaited(_handleRecall(event));
+  }
+
+  Future<void> _handleRecall(SessionMessageRecalled event) async {
+    await _ensureDiskLoaded(event.chatId);
     final idx = _indexOf(event.chatId, event.messageId);
     if (idx < 0) {
       _log.d('撤回的消息 ${event.messageId} 不在本地，忽略');
@@ -536,8 +567,9 @@ class ChatStore {
       if (event.time != null) 'time': event.time!.toIso8601String(),
       if (event.operatorId != null) 'operator': event.operatorId,
     });
-    _messages[event.chatId]![idx] =
-        _messages[event.chatId]![idx].recalled(recallInfo: info);
+    _messages[event.chatId]![idx] = _messages[event.chatId]![idx].recalled(
+      recallInfo: info,
+    );
     _rewriteMessages(event.chatId);
     _emit(ChatStoreChangeKind.messages, event.chatId);
   }
@@ -643,19 +675,21 @@ class ChatStore {
       final ref = mediaRefOf(seg);
       if (ref == null || ref.candidates.isEmpty) continue;
       if (cache.pathFor(ref.key) != null) continue;
-      unawaited(cache
-          .ensure(
-            key: ref.key,
-            category: ref.category,
-            url: ref.url,
-            altUrls: ref.altUrls,
-            foreground: false,
-          )
-          .then((path) {
-        if (path != null && !_disposed) {
-          _emit(ChatStoreChangeKind.media, message.chatId);
-        }
-      }));
+      unawaited(
+        cache
+            .ensure(
+              key: ref.key,
+              category: ref.category,
+              url: ref.url,
+              altUrls: ref.altUrls,
+              foreground: false,
+            )
+            .then((path) {
+              if (path != null && !_disposed) {
+                _emit(ChatStoreChangeKind.media, message.chatId);
+              }
+            }),
+      );
     }
   }
 
@@ -683,7 +717,9 @@ class ChatStore {
         if (f is! File) continue;
         final size = f.lengthSync();
         cacheBytes += size;
-        final rel = f.path.substring(media.path.length + 1).split(RegExp(r'[\\/]'));
+        final rel = f.path
+            .substring(media.path.length + 1)
+            .split(RegExp(r'[\\/]'));
         final category = rel.length > 1 ? rel.first : 'other';
         cacheByCategory[category] = (cacheByCategory[category] ?? 0) + size;
       }
@@ -694,8 +730,10 @@ class ChatStore {
       cacheBytes: cacheBytes,
       cacheByCategory: cacheByCategory,
       dbByChat: dbByChat,
-      messageCount:
-          _messages.values.fold<int>(0, (sum, list) => sum + list.length),
+      messageCount: _messages.values.fold<int>(
+        0,
+        (sum, list) => sum + list.length,
+      ),
       chatCount: _chats.length,
     );
   }
@@ -727,7 +765,9 @@ class ChatStore {
 
     var total = files.fold<int>(0, (sum, f) => sum + f.lengthSync());
     if (total > maxCacheBytes) {
-      files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+      files.sort(
+        (a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()),
+      );
       for (final f in files) {
         if (total <= maxCacheBytes) break;
         final size = f.lengthSync();
@@ -738,8 +778,10 @@ class ChatStore {
       }
     }
     if (freed > 0) {
-      _log.i('媒体缓存清理：释放 $freed 字节'
-          '（上限 $maxCacheBytes，保留期 ${keepMediaFor ?? '永久'}）');
+      _log.i(
+        '媒体缓存清理：释放 $freed 字节'
+        '（上限 $maxCacheBytes，保留期 ${keepMediaFor ?? '永久'}）',
+      );
       // 上面的删除是按目录走的，索引不知道；对齐一下，否则用量会虚报。
       _mediaCache?.reconcile();
     }
@@ -798,6 +840,9 @@ class ChatStore {
   }
 
   void _resetHistoryState(String chatId) {
+    // 三个调用点（清空单会话、清空全部、删除会话）都会把 jsonl 删掉，
+    // 磁盘 ID 集合必须一起清，否则重新收到的同一条消息会被当成「已在磁盘」。
+    _diskIds.remove(chatId);
     _cursors[chatId] = null;
     _hasMore[chatId] = false;
     _historyFetched[chatId] = false;
@@ -824,10 +869,8 @@ class ChatStore {
       _patchChat(chatId, (c) => c.copyWith(archived: archived));
 
   /// 草稿：随打随存（UI 侧做防抖），换会话/重启都还在。
-  Future<void> setDraft(String chatId, String draft) => _patchChat(
-        chatId,
-        (c) => c.copyWith(draft: draft.isEmpty ? '' : draft),
-      );
+  Future<void> setDraft(String chatId, String draft) =>
+      _patchChat(chatId, (c) => c.copyWith(draft: draft.isEmpty ? '' : draft));
 
   /// 标为未读：把"已读位置"往回退一条，让未读分隔线落在最后一条之前。
   ///
@@ -838,11 +881,7 @@ class ChatStore {
     final anchor = list.length >= 2 ? list[list.length - 2].id : null;
     return _patchChat(
       chatId,
-      (c) => c.copyWith(
-        unreadCount: 1,
-        lastReadId: anchor,
-        manualUnread: true,
-      ),
+      (c) => c.copyWith(unreadCount: 1, lastReadId: anchor, manualUnread: true),
     );
   }
 
@@ -982,9 +1021,7 @@ class ChatStore {
         if (seg is TextSegment || seg is FaceSegment || seg is ReplySegment) {
           continue;
         }
-        throw SessionException(
-          '这条消息里有「${seg.preview}」，转发还没做（要先做文件上传/下载）',
-        );
+        throw SessionException('这条消息里有「${seg.preview}」，转发还没做（要先做文件上传/下载）');
       }
     }
 
@@ -1073,7 +1110,7 @@ class ChatStore {
       throw const SessionException('还没连上后端，不能撤回');
     }
     await session.recall(chatId, messageId);
-    _ensureDiskLoaded(chatId);
+    await _ensureDiskLoaded(chatId);
     final idx = _indexOf(chatId, messageId);
     if (idx < 0) return;
     _messages[chatId]![idx] = _messages[chatId]![idx].recalled();
@@ -1087,7 +1124,7 @@ class ChatStore {
   /// 与 [ChatMessage.reveal] 对应；没撤回或已揭示的消息调用是空操作。
   /// 落盘走整文件重写（低频操作）。
   Future<void> revealMessage(String chatId, String messageId) async {
-    _ensureDiskLoaded(chatId);
+    await _ensureDiskLoaded(chatId);
     final idx = _indexOf(chatId, messageId);
     if (idx < 0) return;
     final m = _messages[chatId]![idx];
@@ -1112,8 +1149,9 @@ class ChatStore {
   ///
   /// 折叠只在**完全匹配失败之后**作为兜底，且要求回显那条真的带表情段：
   /// 这样不会把「两条不同的普通文本」误配到一起。
-  static final RegExp _faceLikeToken =
-      RegExp(r'\[[^\[\]]{1,8}\]|/[^\s/，。！？、,.!?~～:：;；]{1,8}');
+  static final RegExp _faceLikeToken = RegExp(
+    r'\[[^\[\]]{1,8}\]|/[^\s/，。！？、,.!?~～:：;；]{1,8}',
+  );
   static const String _facePlaceholder = '[表情]';
 
   static String _foldFaces(String text) =>
@@ -1149,8 +1187,10 @@ class ChatStore {
     final idx = _indexOf(chatId, localId);
     if (idx < 0) return;
     _echoMatched.add(localId);
-    _messages[chatId]![idx] = _messages[chatId]![idx]
-        .copyWith(id: serverId, sendState: MessageSendState.sent);
+    _messages[chatId]![idx] = _messages[chatId]![idx].copyWith(
+      id: serverId,
+      sendState: MessageSendState.sent,
+    );
     _rewriteMessages(chatId);
     _emit(ChatStoreChangeKind.messages, chatId);
   }
@@ -1171,7 +1211,8 @@ class ChatStore {
     // idx < 0 说明这条已经被 echo 配对换过 ID 了，不用再做一遍
     if (idx < 0) return;
     final current = _messages[chatId]![idx];
-    final hasServerId = serverId != null && serverId.isNotEmpty && serverId != current.id;
+    final hasServerId =
+        serverId != null && serverId.isNotEmpty && serverId != current.id;
     _messages[chatId]![idx] = current.copyWith(
       id: hasServerId ? serverId : current.id,
       sendState: MessageSendState.sent,
@@ -1185,8 +1226,9 @@ class ChatStore {
     _log.w('发送失败（$reason），消息保留待重试');
     final idx = _indexOf(chatId, messageId);
     if (idx < 0) return;
-    _messages[chatId]![idx] =
-        _messages[chatId]![idx].copyWith(sendState: MessageSendState.failed);
+    _messages[chatId]![idx] = _messages[chatId]![idx].copyWith(
+      sendState: MessageSendState.failed,
+    );
     _rewriteMessages(chatId);
     _emit(ChatStoreChangeKind.messages, chatId);
   }
@@ -1196,7 +1238,9 @@ class ChatStore {
   // ---------------------------------------------------------------------------
 
   int _indexOf(String chatId, String messageId) =>
-      (_messages[chatId] ?? const <ChatMessage>[]).indexWhere((m) => m.id == messageId);
+      (_messages[chatId] ?? const <ChatMessage>[]).indexWhere(
+        (m) => m.id == messageId,
+      );
 
   /// 插入一条消息（按 ID 去重）。返回是否真的插进去了。
   bool _insertMessage(ChatMessage message, {required bool persist}) {
@@ -1232,27 +1276,37 @@ class ChatStore {
   }
 
   void _mergePage(String chatId, HistoryPage page) {
+    final list = _messages.putIfAbsent(chatId, () => <ChatMessage>[]);
+    // 一次性批量去重后排序：原实现对每条消息调用 _insertMessage，每条都
+    // list.any + 全量 _sortMessages，翻一页 50 条就是 50 次排序，O(n²) 去重
+    // 与重复排序都压在 UI isolate 上（审计第 8 条）。
+    final ids = <String>{for (final m in list) m.id};
     var added = 0;
+    ChatMessage? newest;
     for (final m in page.messages) {
-      if (_insertMessage(m, persist: false)) added++;
+      if (ids.add(m.id)) {
+        list.add(m);
+        _prefetchMedia(m);
+        added++;
+      }
+      if (newest == null || m.time.isAfter(newest.time)) newest = m;
     }
     _cursors[chatId] = page.next;
     _hasMore[chatId] = page.hasMore;
     if (added == 0) return;
 
+    _sortMessages(chatId);
     _rewriteMessages(chatId);
-    if (page.messages.isNotEmpty) {
-      var newest = page.messages.first;
-      for (final m in page.messages) {
-        if (m.time.isAfter(newest.time)) newest = m;
-      }
-      _touchChat(chatId, newest);
-    }
+    if (newest != null) _touchChat(chatId, newest);
     _trim(chatId);
   }
 
   /// 更新会话摘要与未读数，并触发索引落盘。
-  void _touchChat(String chatId, ChatMessage message, {bool bumpUnread = false}) {
+  void _touchChat(
+    String chatId,
+    ChatMessage message, {
+    bool bumpUnread = false,
+  }) {
     var chat = _chats[chatId];
     if (chat == null) {
       // 不在列表里的会话（陌生人临时会话、后端补推）：建占位，
@@ -1267,7 +1321,8 @@ class ChatStore {
       _log.d('为未知会话 $chatId 建占位条目');
     }
 
-    final newer = chat.lastTime == null || !message.time.isBefore(chat.lastTime!);
+    final newer =
+        chat.lastTime == null || !message.time.isBefore(chat.lastTime!);
     if (newer) {
       chat = chat.copyWith(
         lastMessage: message.displayText,
@@ -1294,7 +1349,8 @@ class ChatStore {
   /// 摘要与时间取**更新的那个**（刚发出去的消息服务端列表里可能还没有）。
   Chat _mergeChat(Chat? local, Chat remote) {
     if (local == null) return remote;
-    final keepLocalPreview = local.lastTime != null &&
+    final keepLocalPreview =
+        local.lastTime != null &&
         (remote.lastTime == null || local.lastTime!.isAfter(remote.lastTime!));
     return remote.copyWith(
       pinned: local.pinned,
@@ -1337,48 +1393,71 @@ class ChatStore {
   // 持久化
   // ---------------------------------------------------------------------------
 
-  Directory get _chatsDir => Directory('${dataDir.path}${Platform.pathSeparator}chats');
+  Directory get _chatsDir =>
+      Directory('${dataDir.path}${Platform.pathSeparator}chats');
 
   /// 媒体缓存目录：`<dataDir>/media/<分类>/…`（分类见 [mediaCategories]）。
-  Directory get _mediaDir => Directory('${dataDir.path}${Platform.pathSeparator}media');
+  Directory get _mediaDir =>
+      Directory('${dataDir.path}${Platform.pathSeparator}media');
 
-  File get _indexFile => File('${dataDir.path}${Platform.pathSeparator}chats.json');
+  File get _indexFile =>
+      File('${dataDir.path}${Platform.pathSeparator}chats.json');
 
-  File _messageFile(String chatId) =>
-      File('${_chatsDir.path}${Platform.pathSeparator}${_safeName(chatId)}.jsonl');
+  File _messageFile(String chatId) => File(
+    '${_chatsDir.path}${Platform.pathSeparator}${_safeName(chatId)}.jsonl',
+  );
 
   /// chatId 来自后端，不能让它决定磁盘路径。
   String _safeName(String chatId) =>
       chatId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
 
-  void _ensureDiskLoaded(String chatId) {
-    if (_diskLoaded[chatId] == true) return;
-    _diskLoaded[chatId] = true;
+  /// 懒加载磁盘消息：读盘与 JSON 解析都不占 UI isolate。
+  ///
+  /// 同会话并发调用共享同一个 Future（单飞），避免重复读盘与重复合并；
+  /// 调用方必须 `await`——原来是同步返回、读完才继续，改成异步后顺序语义不变。
+  Future<void> _ensureDiskLoaded(String chatId) {
+    if (_diskLoaded[chatId] == true) return Future<void>.value();
+    final running = _diskLoadTasks[chatId];
+    if (running != null) return running;
+    final task = _loadDiskMessages(chatId);
+    _diskLoadTasks[chatId] = task;
+    return task;
+  }
 
-    final list = _messages.putIfAbsent(chatId, () => <ChatMessage>[]);
-    final file = _messageFile(chatId);
-    if (!file.existsSync()) return;
+  Future<void> _loadDiskMessages(String chatId) async {
+    try {
+      final file = _messageFile(chatId);
+      // 存在性用同步 stat：这一步只是几百微秒，却能让「没有磁盘历史」的会话
+      // 在同一个微任务里走完，不额外多一次异步跳。真正的大头（读盘 + 逐行
+      // jsonDecode）仍然是异步的，所以首帧不会被几百 KB 的历史卡住。
+      if (!file.existsSync()) return;
+      final bytes = await file.readAsBytes();
+      // jsonl 逐行 jsonDecode 放到独立 isolate：几百 KB 的历史在 UI isolate
+      // 上解析会卡首帧（审计第 8 条）。只回传纯 Map，ChatMessage 仍在主
+      // isolate 构造——`_messageFromJson` 依赖段的迁移逻辑，不跨 isolate。
+      final parsed = await Isolate.run<_ParsedMessageFile>(
+        () => _parseMessageFileLines(bytes),
+      );
 
-    var skipped = 0;
-    var ghosts = 0;
-    for (final line in file.readAsLinesSync()) {
-      if (line.trim().isEmpty) continue;
-      try {
-        final decoded = jsonDecode(line);
-        if (decoded is! Map) {
-          skipped++;
+      final list = _messages.putIfAbsent(chatId, () => <ChatMessage>[]);
+      // 读盘期间可能已有推送/本地发送插入，内存里的状态更新（换过服务端 ID、
+      // 打过撤回标记），所以以内存为准：磁盘版本只在 ID 还不存在时才补进来。
+      final ids = <String>{for (final m in list) m.id};
+      // 磁盘行的 ID（用来做跨进程去重）与重复行计数
+      final diskIds = <String>{};
+      var dupes = 0;
+      var ghosts = 0;
+      for (final row in parsed.rows) {
+        ChatMessage? message;
+        try {
+          message = _messageFromJson(row.cast<String, dynamic>());
+        } catch (_) {
           continue;
         }
-        final message = _messageFromJson(decoded.cast<String, dynamic>());
-        if (message == null) {
-          skipped++;
-          continue;
-        }
-        // 服务端「已删除」占位（time=0 / sender=0 / 正文「[已删除]」）曾经被
-        // 原样入库，重启后仍是 1970-01-01 的气泡。判定收在共享纯函数里，
-        // 与适配器入口用的是同一份条件。刻意只在读取路径过滤、不回写文件：
-        // 回写要在启动时重写每个 jsonl，中途被杀就是半个文件（同
-        // [_migrateSegments] 的理由）。
+        if (message == null) continue;
+        if (!diskIds.add(message.id)) dupes++;
+        // 服务端「已删除」占位只在读取路径过滤、不回写文件（回写要在启动时
+        // 重写每个 jsonl，中途被杀就是半个文件）。判定收在共享纯函数里。
         if (isServerDeletedPlaceholder(
           timeMs: message.time.millisecondsSinceEpoch,
           senderUin: int.tryParse(message.senderId) ?? -1,
@@ -1387,30 +1466,54 @@ class ChatStore {
           ghosts++;
           continue;
         }
-        if (!list.any((m) => m.id == message.id)) list.add(message);
-      } on FormatException {
-        // 半截 JSON：进程被杀时最后一行没写完，属预期情况，跳过即可
-        skipped++;
-      } catch (_) {
-        skipped++;
+        if (ids.add(message.id)) list.add(message);
       }
-    }
-    if (skipped > 0) {
-      _log.w('${file.path} 有 $skipped 行无法解析，已跳过');
-    }
-    if (ghosts > 0) {
-      _log.i('$chatId 跳过 $ghosts 条服务端删除占位（历史遗留，未回写磁盘）');
-    }
-    _sortMessages(chatId);
-    // 打开会话时把还没落盘的媒体补上。用户从聊天列表点进来的那一刻，
-    // 屏幕上大概率有一堆直链已经过期的老图——这里补下载，配合
-    // `ChatStoreChangeKind.media` 事件，图片会一张张自己出现。
-    for (final m in list) {
-      _prefetchMedia(m);
+      if (parsed.skipped > 0) {
+        _log.w('${file.path} 有 ${parsed.skipped} 行无法解析，已跳过');
+      }
+      if (ghosts > 0) {
+        _log.i('$chatId 跳过 $ghosts 条服务端删除占位（历史遗留，未回写磁盘）');
+      }
+      // 磁盘 ID 集合：读到的行 ∪ 内存里已有的（读盘期间推送进来的）。
+      // [_appendMessage] 之后靠它挡跨进程重复落盘。
+      _diskIds[chatId] = {
+        ...diskIds,
+        for (final m in list) m.id,
+      };
+      if (dupes > 0) {
+        // 历史遗留的重复行（每次启动各追加一次攒出来的）：内存此刻已是去重
+        // 版本，趁机整文件重写一次收口。只在真的读到重复时重写——启动时无条件
+        // 重写每个 jsonl，一旦中途被杀就是半个文件（见 [_rewriteMessages]）。
+        // 顺带把服务端删除占位也从文件里清掉（读路径本来就丢弃它们）。
+        _log.i('$chatId 磁盘有 $dupes 行重复消息，重写去重');
+        _rewriteMessages(chatId);
+      }
+      _sortMessages(chatId);
+      // 只暖最近 40 条的媒体：全历史预取会在打开会话时排队几百个下载，
+      // 拖慢首帧与滚动（审计第 8 条）。更早的图片滚到附近时由图片组件自己
+      // ensureMedia 按需取，不会缺。
+      const warmLimit = 40;
+      final startWarm = list.length > warmLimit ? list.length - warmLimit : 0;
+      for (var i = startWarm; i < list.length; i++) {
+        _prefetchMedia(list[i]);
+      }
+    } catch (e) {
+      _log.w('$chatId 读取磁盘消息失败', error: e);
+    } finally {
+      _diskLoaded[chatId] = true;
+      _diskLoadTasks.remove(chatId);
     }
   }
 
   void _appendMessage(ChatMessage message) {
+    // 跨进程去重：磁盘加载过之后，磁盘里已有的 ID 不再重复追加。
+    // 内存的 [_indexOf] 只在本次运行内有效，重登后服务端把同一条同步消息
+    // 再推一次就会重复落盘（真机 jsonl 里同一个 ID 5 行，m03823）。
+    final diskIds = _diskIds[message.chatId];
+    if (diskIds != null && !diskIds.add(message.id)) {
+      _log.d('${message.chatId} ${message.id} 已在磁盘，跳过重复落盘');
+      return;
+    }
     try {
       _chatsDir.createSync(recursive: true);
       final raf = _messageFile(message.chatId).openSync(mode: FileMode.append);
@@ -1425,16 +1528,20 @@ class ChatStore {
   }
 
   void _rewriteMessages(String chatId) {
+    final list = _messages[chatId] ?? const <ChatMessage>[];
     try {
       _chatsDir.createSync(recursive: true);
       final raf = _messageFile(chatId).openSync(mode: FileMode.write);
       try {
-        for (final m in _messages[chatId] ?? const <ChatMessage>[]) {
+        for (final m in list) {
           raf.writeStringSync('${jsonEncode(_messageToJson(m))}\n');
         }
       } finally {
         raf.closeSync();
       }
+      // 文件内容换成了这份，磁盘 ID 集合跟着换——否则清空历史后残留的旧 ID
+      // 会让重新收到的同一条消息被误判「已在磁盘」而不落盘。
+      _diskIds[chatId] = {for (final m in list) m.id};
     } catch (e) {
       _log.w('消息文件重写失败', error: e);
     }
@@ -1499,24 +1606,24 @@ class ChatStore {
   // ---------------------------------------------------------------------------
 
   Map<String, dynamic> _messageToJson(ChatMessage m) => {
-        'id': m.id,
-        'chat': m.chatId,
-        'time': m.time.millisecondsSinceEpoch,
-        'text': m.text,
-        'out': m.outgoing,
-        'senderId': m.senderId,
-        'senderName': m.senderName,
-        'segments': Segment.toArrayData(m.segments),
-        if (m.replyToId != null) 'replyTo': m.replyToId,
-        if (m.replyPreview != null) 'replyPreview': m.replyPreview,
-        if (m.deleted) 'deleted': true,
-        if (m.recallInfo != null) 'recallInfo': m.recallInfo,
-        if (m.revealed) 'revealed': true,
-        if (m.atMe) 'atMe': true,
-        if (m.system) 'system': true,
-        if (m.senderTitle != null) 'senderTitle': m.senderTitle,
-        if (m.sendState != MessageSendState.sent) 'send': m.sendState.name,
-      };
+    'id': m.id,
+    'chat': m.chatId,
+    'time': m.time.millisecondsSinceEpoch,
+    'text': m.text,
+    'out': m.outgoing,
+    'senderId': m.senderId,
+    'senderName': m.senderName,
+    'segments': Segment.toArrayData(m.segments),
+    if (m.replyToId != null) 'replyTo': m.replyToId,
+    if (m.replyPreview != null) 'replyPreview': m.replyPreview,
+    if (m.deleted) 'deleted': true,
+    if (m.recallInfo != null) 'recallInfo': m.recallInfo,
+    if (m.revealed) 'revealed': true,
+    if (m.atMe) 'atMe': true,
+    if (m.system) 'system': true,
+    if (m.senderTitle != null) 'senderTitle': m.senderTitle,
+    if (m.sendState != MessageSendState.sent) 'send': m.sendState.name,
+  };
 
   ChatMessage? _messageFromJson(Map<String, dynamic> j) {
     final id = j['id'];
@@ -1578,26 +1685,26 @@ class ChatStore {
   }
 
   Map<String, dynamic> _chatToJson(Chat c) => {
-        'id': c.id,
-        'title': c.title,
-        'type': c.type.wireName,
-        if (c.rawId != null) 'rawId': c.rawId,
-        if (c.avatarUrl != null) 'avatarUrl': c.avatarUrl,
-        if (c.memberCount != 0) 'memberCount': c.memberCount,
-        if (c.ownerUin != 0) 'ownerUin': c.ownerUin,
-        if (c.pinned) 'pinned': true,
-        if (c.muted) 'muted': true,
-        if (c.priority != 3) 'priority': c.priority,
-        'lastMessage': c.lastMessage,
-        if (c.lastSender.isNotEmpty) 'lastSender': c.lastSender,
-        if (c.lastTime != null) 'lastTime': c.lastTime!.millisecondsSinceEpoch,
-        if (c.unreadCount != 0) 'unread': c.unreadCount,
-        if (c.lastReadId != null) 'lastRead': c.lastReadId,
-        if (c.archived) 'archived': true,
-        if (c.draft.isNotEmpty) 'draft': c.draft,
-        if (c.manualUnread) 'manualUnread': true,
-        if (c.online) 'online': true,
-      };
+    'id': c.id,
+    'title': c.title,
+    'type': c.type.wireName,
+    if (c.rawId != null) 'rawId': c.rawId,
+    if (c.avatarUrl != null) 'avatarUrl': c.avatarUrl,
+    if (c.memberCount != 0) 'memberCount': c.memberCount,
+    if (c.ownerUin != 0) 'ownerUin': c.ownerUin,
+    if (c.pinned) 'pinned': true,
+    if (c.muted) 'muted': true,
+    if (c.priority != 3) 'priority': c.priority,
+    'lastMessage': c.lastMessage,
+    if (c.lastSender.isNotEmpty) 'lastSender': c.lastSender,
+    if (c.lastTime != null) 'lastTime': c.lastTime!.millisecondsSinceEpoch,
+    if (c.unreadCount != 0) 'unread': c.unreadCount,
+    if (c.lastReadId != null) 'lastRead': c.lastReadId,
+    if (c.archived) 'archived': true,
+    if (c.draft.isNotEmpty) 'draft': c.draft,
+    if (c.manualUnread) 'manualUnread': true,
+    if (c.online) 'online': true,
+  };
 
   // 解析逻辑搬到顶层 [chatFromIndexJson]：冷启动的会话预览要复用同一份，
   // 两处各写一遍迟早会漂（一个支持新字段、一个不支持）。
@@ -1626,11 +1733,14 @@ Chat? chatFromIndexJson(Map<String, dynamic> j) {
     priority: (j['priority'] as int?) ?? 3,
     // 历史脏数据里可能带着空 Elem 生成的占位前缀（[不支持显示的消息]），
     // 会话列表预览不该显示它 —— 解析器已修，这里顺手擦掉旧记录。
-    lastMessage: ((j['lastMessage'] as String?) ?? '')
-        .replaceFirst('[不支持显示的消息]', ''),
+    lastMessage: ((j['lastMessage'] as String?) ?? '').replaceFirst(
+      '[不支持显示的消息]',
+      '',
+    ),
     lastSender: (j['lastSender'] as String?) ?? '',
-    lastTime:
-        lastTime is int ? DateTime.fromMillisecondsSinceEpoch(lastTime) : null,
+    lastTime: lastTime is int
+        ? DateTime.fromMillisecondsSinceEpoch(lastTime)
+        : null,
     unreadCount: (j['unread'] as int?) ?? 0,
     lastReadId: j['lastRead'] as String?,
     archived: j['archived'] == true,
@@ -1704,6 +1814,36 @@ class StorageStats {
   }
 
   @override
-  String toString() => 'StorageStats(db=${formatBytes(dbBytes)}, '
+  String toString() =>
+      'StorageStats(db=${formatBytes(dbBytes)}, '
       'cache=${formatBytes(cacheBytes)}, chats=$chatCount, msgs=$messageCount)';
+}
+
+/// jsonl 解析结果：跨 isolate 只能传纯数据，所以回传 record 而不是 ChatMessage。
+typedef _ParsedMessageFile = ({List<Map<String, Object?>> rows, int skipped});
+
+/// 在独立 isolate 里把 jsonl 逐行解析成 JSON Map（**不做**模型迁移）。
+///
+/// 故意只做 `utf8.decode` + `jsonDecode`：[_messageFromJson] 依赖实例状态和段
+/// 迁移逻辑，搬进 isolate 就得把整个 ChatStore 一起搬，不划算。解析本身才是
+/// CPU 大头（几百 KB、上千行），模型构造留在主 isolate 很便宜。
+_ParsedMessageFile _parseMessageFileLines(List<int> bytes) {
+  final rows = <Map<String, Object?>>[];
+  var skipped = 0;
+  final text = utf8.decode(bytes, allowMalformed: true);
+  for (final line in const LineSplitter().convert(text)) {
+    if (line.isEmpty) continue;
+    try {
+      final decoded = jsonDecode(line);
+      if (decoded is Map) {
+        rows.add(decoded.cast<String, Object?>());
+      } else {
+        skipped++;
+      }
+    } catch (_) {
+      // 半行（进程被杀时最后一行可能截断）或历史脏行：跳过，不影响其余。
+      skipped++;
+    }
+  }
+  return (rows: rows, skipped: skipped);
 }

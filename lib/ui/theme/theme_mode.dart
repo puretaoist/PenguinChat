@@ -66,7 +66,9 @@ class ThemeModeNotifier extends StateNotifier<bool> {
 /// true = 暗色（默认，和现行 Telegram 的默认一致）。
 final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, bool>((ref) {
   final notifier = ThemeModeNotifier(
-    File('${ref.watch(dataDirProvider).path}${Platform.pathSeparator}ui_settings.json'),
+    File(
+      '${ref.watch(dataDirProvider).path}${Platform.pathSeparator}ui_settings.json',
+    ),
   );
   // load() 内部已吞掉所有异常，这里不 await 不会产生未处理的异步错误
   unawaited(notifier.load());
@@ -85,13 +87,14 @@ bool applyThemePalette(WidgetRef ref) {
   final dark = ref.watch(themeModeProvider);
   // 主题色也在这里 watch：调 applyThemePalette 的页面（HomeShell/各 Tab/设置页）
   // 因此都会订阅 accentId，改主题色时整棵界面自动重建，不用挨个接线。
-  final accentId =
-      ref.watch(uiPrefsProvider.select((UiPrefs p) => p.accentId));
+  final accentId = ref.watch(uiPrefsProvider.select((UiPrefs p) => p.accentId));
   final Color? accent = accentColorOrNull(accentId);
   // '跟随主题' 直接用调色板自带的强调色（否则亮色会被套上暗色紫）；
   // 只有选了具体颜色才派生一套。
-  TelegramColors.use(accent == null
-      ? (dark ? TelegramPalette.dark : TelegramPalette.light)
-      : paletteWithAccent(dark: dark, accent: accent));
+  TelegramColors.use(
+    accent == null
+        ? (dark ? TelegramPalette.dark : TelegramPalette.light)
+        : paletteWithAccent(dark: dark, accent: accent),
+  );
   return dark;
 }

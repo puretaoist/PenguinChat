@@ -103,10 +103,12 @@ class _KeepAliveScopeState extends ConsumerState<KeepAliveScope>
   /// 主线程多挂一帧；而 `KeepAliveController` 内部已经做了去重与异常吞没，
   /// 并发调用的最坏结果是多一次幂等的 start/stop。
   void _sync() {
-    unawaited(_controller.update(
-      appInBackground: _background,
-      sessionActive: _isSessionActive(_session),
-    ));
+    unawaited(
+      _controller.update(
+        appInBackground: _background,
+        sessionActive: _isSessionActive(_session),
+      ),
+    );
   }
 
   void _attach(Session? session) {
@@ -125,14 +127,13 @@ class _KeepAliveScopeState extends ConsumerState<KeepAliveScope>
   }
 
   static bool _isBackground(AppLifecycleState? state) => switch (state) {
-        // 彻底不可见：可以（也会）被系统回收，必须挂前台服务。
-        AppLifecycleState.paused ||
-        AppLifecycleState.hidden ||
-        AppLifecycleState.detached =>
-          true,
-        // resumed / inactive：还在屏幕上，进程不会被回收，挂服务纯属打扰。
-        _ => false,
-      };
+    // 彻底不可见：可以（也会）被系统回收，必须挂前台服务。
+    AppLifecycleState.paused ||
+    AppLifecycleState.hidden ||
+    AppLifecycleState.detached => true,
+    // resumed / inactive：还在屏幕上，进程不会被回收，挂服务纯属打扰。
+    _ => false,
+  };
 
   /// 会话是否"有连接可保"。
   ///
@@ -142,8 +143,7 @@ class _KeepAliveScopeState extends ConsumerState<KeepAliveScope>
     return switch (session.state) {
       SessionState.ready ||
       SessionState.connecting ||
-      SessionState.reconnecting =>
-        true,
+      SessionState.reconnecting => true,
       SessionState.disconnected || SessionState.closed => false,
     };
   }

@@ -73,14 +73,17 @@ class ContactsPage extends ConsumerWidget {
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: <Widget>[
-                            TelegramSectionHeader(text: '$name（${members.length}）'),
+                            TelegramSectionHeader(
+                              text: '$name（${members.length}）',
+                            ),
                             for (var i = 0; i < members.length; i++)
                               Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: <Widget>[
                                   TgUserRow(
                                     key: ValueKey<String>(
-                                        'contact-${members[i].uin}'),
+                                      'contact-${members[i].uin}',
+                                    ),
                                     leading: TelegramAvatar(
                                       name: members[i].displayName,
                                       size: 46,
@@ -88,19 +91,22 @@ class ContactsPage extends ConsumerWidget {
                                     ),
                                     title: members[i].displayName,
                                     // 备注与昵称相同时（服务端常这么返回）别再重复一遍名字。
-                                    subtitle: members[i].remark.isNotEmpty &&
+                                    subtitle:
+                                        members[i].remark.isNotEmpty &&
                                             members[i].nick.isNotEmpty &&
                                             members[i].remark != members[i].nick
                                         ? members[i].nick
                                         : 'QQ ${members[i].uin}',
-                                    onTap: () => _openProfile(
-                                        context, ref, members[i]),
+                                    onTap: () =>
+                                        _openProfile(context, ref, members[i]),
                                   ),
                                   if (i != members.length - 1)
                                     Container(
                                       height: 1,
                                       margin: const EdgeInsets.only(
-                                          left: 64, right: 12),
+                                        left: 64,
+                                        right: 12,
+                                      ),
                                       color: TelegramColors.divider,
                                     ),
                                 ],
@@ -132,8 +138,11 @@ class ContactsPage extends ConsumerWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            Icon(Icons.people_outline,
-                size: 96, color: TelegramColors.textMuted),
+            Icon(
+              Icons.people_outline,
+              size: 96,
+              color: TelegramColors.textMuted,
+            ),
             const SizedBox(height: 16),
             Text(
               '还没有好友',
@@ -159,7 +168,10 @@ class ContactsPage extends ConsumerWidget {
   }
 
   Future<void> _openProfile(
-      BuildContext context, WidgetRef ref, Qq8Friend friend) async {
+    BuildContext context,
+    WidgetRef ref,
+    Qq8Friend friend,
+  ) async {
     // 资料页「发消息」通过 pop 回来的 chatId 表达意图：本页负责把它交给
     // pendingOpenChatProvider（HomePage 唯一的"外部打开会话"入口），再切回
     // 聊天 tab。这样资料页不需要知道导航结构。

@@ -1086,6 +1086,57 @@ Future<void> testDropDeletedPlaceholder() async {
 }
 
 // ---------------------------------------------------------------------------
+// 7d. 落盘去重：同一个 ID 不跨进程重复追加
+// ---------------------------------------------------------------------------
+
+Future<void> testDiskDedupe() async {
+  section('7d. 落盘去重：同 ID 不跨进程只留一行');
+
+  // 真机 2026-11-05 现场（m03823）：服务端每次登录都把同一条同步消息再发一遍，
+  // 内存去重（_indexOf）只管本次运行，于是 jsonl 里同一个 ID 攒了 5 行。
+  final dir = newTempDir('diskdedupe');
+  final chatDir = Directory('${dir.path}/chats')..createSync(recursive: true);
+  final file = File('${chatDir.path}/group_12345.jsonl');
+  String body(String id, String text) => jsonEncode(_persistedMessage(id, text));
+  file.writeAsStringSync(
+    '${body('800', '同一条')}\n'
+    '${body('800', '同一条')}\n'
+    '${body('800', '同一条')}\n'
+    '${body('801', '另一条')}\n',
+  );
+  int lines() =>
+      file.readAsStringSync().trim().split('\n').length;
+
+  final session = FakeSession()..markReady();
+  final store = ChatStore(session: session, dataDir: dir);
+  await store.bootstrap();
+  // 推送比读盘先到：这一刻还不知道磁盘上有什么，只能先追加（历史重复的来源）
+  session.emit(SessionMessage(msg('802', '新到的', time: at(40))));
+  await waitUntil(() => store.messagesOf('group_12345').length == 1);
+  await store.openChat('group_12345');
+
+  checkEq('内存里是去重后的 3 条', store.messagesOf('group_12345').length, 3);
+  checkEq('磁盘重复行被收口成 3 行', lines(), 3);
+  checkEq('800 只剩一行',
+      '"id":"800"'.allMatches(file.readAsStringSync()).length, 1);
+
+  // 模拟"重启后再收到同一条同步消息"：新 store 内存是空的，只靠磁盘 ID 集合挡
+  await store.dispose();
+  final session2 = FakeSession()..markReady();
+  final store2 = ChatStore(session: session2, dataDir: dir);
+  await store2.bootstrap();
+  await store2.openChat('group_12345');
+  checkEq('重登后能读回 3 条', store2.messagesOf('group_12345').length, 3);
+  session2.emit(SessionMessage(msg('801', '另一条', time: t0)));
+  await sleep(80);
+  checkEq('重登后再收到同一条：磁盘仍是 3 行', lines(), 3);
+  checkEq('内存仍是 3 条', store2.messagesOf('group_12345').length, 3);
+
+  await store2.dispose();
+  await session2.dispose();
+}
+
+// ---------------------------------------------------------------------------
 // 8. 体积：淘汰最旧的，但不丢用户输入、不淘汰置顶会话
 // ---------------------------------------------------------------------------
 
@@ -1404,6 +1455,7 @@ Future<void> main() async {
     await testCorruptFiles();
     await testMigrateUnknownField9();
     await testDropDeletedPlaceholder();
+  await testDiskDedupe();
     await testRetention();
     await testSorting();
     await testForward();

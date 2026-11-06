@@ -45,31 +45,30 @@ class ChatActionsSheet extends StatelessWidget {
     VoidCallback? onToggleArchived,
     VoidCallback? onMarkUnread,
     VoidCallback? onDelete,
-  }) =>
-      ActionSheet.show(
-        context,
-        preview: _preview(chat),
-        items: _items(
-          chat,
-          onTogglePinned: onTogglePinned,
-          onToggleMuted: onToggleMuted,
-          onToggleArchived: onToggleArchived,
-          onMarkUnread: onMarkUnread,
-          onDelete: onDelete,
-        ),
-      );
+  }) => ActionSheet.show(
+    context,
+    preview: _preview(chat),
+    items: _items(
+      chat,
+      onTogglePinned: onTogglePinned,
+      onToggleMuted: onToggleMuted,
+      onToggleArchived: onToggleArchived,
+      onMarkUnread: onMarkUnread,
+      onDelete: onDelete,
+    ),
+  );
 
   static Widget _preview(Chat chat) => Text(
-        chat.title,
-        key: const ValueKey('chat-actions-preview'),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: TelegramColors.textPrimary,
-          fontSize: 15,
-          fontWeight: FontWeight.w600,
-        ),
-      );
+    chat.title,
+    key: const ValueKey('chat-actions-preview'),
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    style: TextStyle(
+      color: TelegramColors.textPrimary,
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
+    ),
+  );
 
   static List<ActionSheetItem> _items(
     Chat chat, {
@@ -78,48 +77,47 @@ class ChatActionsSheet extends StatelessWidget {
     VoidCallback? onToggleArchived,
     VoidCallback? onMarkUnread,
     VoidCallback? onDelete,
-  }) =>
-      <ActionSheetItem>[
-        ActionSheetItem(
-          key: const ValueKey('chat-action-pin'),
-          icon: chat.pinned ? Icons.push_pin : Icons.push_pin_outlined,
-          label: chat.pinned ? '取消置顶' : '置顶',
-          onTap: onTogglePinned,
-        ),
-        ActionSheetItem(
-          key: const ValueKey('chat-action-mute'),
-          icon: chat.muted
-              ? Icons.notifications_active_outlined
-              : Icons.notifications_off_outlined,
-          label: chat.muted ? '取消免打扰' : '消息免打扰',
-          onTap: onToggleMuted,
-        ),
-        ActionSheetItem(
-          key: const ValueKey('chat-action-unread'),
-          icon: Icons.mark_chat_unread_outlined,
-          label: '标为未读',
-          onTap: onMarkUnread,
-        ),
-        ActionSheetItem(
-          key: const ValueKey('chat-action-archive'),
-          icon: chat.archived ? Icons.unarchive_outlined : Icons.archive_outlined,
-          label: chat.archived ? '取消归档' : '归档',
-          onTap: onToggleArchived,
-        ),
-        ActionSheetItem(
-          key: const ValueKey('chat-action-delete'),
-          icon: Icons.delete_outline,
-          label: '删除会话（仅本地）',
-          danger: true,
-          onTap: onDelete,
-        ),
-        ActionSheetItem(
-          key: const ValueKey('chat-action-cancel'),
-          icon: Icons.close,
-          label: '取消',
-          onTap: () {},
-        ),
-      ];
+  }) => <ActionSheetItem>[
+    ActionSheetItem(
+      key: const ValueKey('chat-action-pin'),
+      icon: chat.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+      label: chat.pinned ? '取消置顶' : '置顶',
+      onTap: onTogglePinned,
+    ),
+    ActionSheetItem(
+      key: const ValueKey('chat-action-mute'),
+      icon: chat.muted
+          ? Icons.notifications_active_outlined
+          : Icons.notifications_off_outlined,
+      label: chat.muted ? '取消免打扰' : '消息免打扰',
+      onTap: onToggleMuted,
+    ),
+    ActionSheetItem(
+      key: const ValueKey('chat-action-unread'),
+      icon: Icons.mark_chat_unread_outlined,
+      label: '标为未读',
+      onTap: onMarkUnread,
+    ),
+    ActionSheetItem(
+      key: const ValueKey('chat-action-archive'),
+      icon: chat.archived ? Icons.unarchive_outlined : Icons.archive_outlined,
+      label: chat.archived ? '取消归档' : '归档',
+      onTap: onToggleArchived,
+    ),
+    ActionSheetItem(
+      key: const ValueKey('chat-action-delete'),
+      icon: Icons.delete_outline,
+      label: '删除会话（仅本地）',
+      danger: true,
+      onTap: onDelete,
+    ),
+    ActionSheetItem(
+      key: const ValueKey('chat-action-cancel'),
+      icon: Icons.close,
+      label: '取消',
+      onTap: () {},
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {

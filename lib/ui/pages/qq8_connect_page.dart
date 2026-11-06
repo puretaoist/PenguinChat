@@ -58,7 +58,10 @@ class Qq8ConnectPage extends ConsumerWidget {
   ///
   /// 用户取消（返回 null）时什么都不做——**不猜、不重试**。
   Future<void> _openVerifyPage(
-      BuildContext context, WidgetRef ref, String url) async {
+    BuildContext context,
+    WidgetRef ref,
+    String url,
+  ) async {
     final controller = ref.read(qq8ConnectControllerProvider.notifier);
     final ticket = await Navigator.of(context).push<String>(
       MaterialPageRoute<String>(builder: (_) => Qq8VerifyPage(url: url)),
@@ -73,8 +76,7 @@ class Qq8ConnectPage extends ConsumerWidget {
     final c = ref.read(qq8ConnectControllerProvider.notifier);
     // 日志目录：应用私有目录下。main.dart 注入的 dataDir 即 "…/logs" 的父目录。
     final dataDir = ref.read(dataDirProvider);
-    final logDir = Directory(
-        '${dataDir.path}${Platform.pathSeparator}logs');
+    final logDir = Directory('${dataDir.path}${Platform.pathSeparator}logs');
     return Scaffold(
       appBar: AppBar(title: const Text('QQ 账号登录')),
       body: Qq8ConnectView(
@@ -129,10 +131,9 @@ class Qq8ConnectPage extends ConsumerWidget {
               '${Directory.systemTemp.path}${Platform.pathSeparator}'
               '${LogExporter.fileNameFor(now, version: build.appVersion)}';
           File(tmp).writeAsStringSync(report);
-          await Share.shareXFiles(
-            <XFile>[XFile(tmp, mimeType: 'text/plain')],
-            subject: 'QQ 客户端日志',
-          );
+          await Share.shareXFiles(<XFile>[
+            XFile(tmp, mimeType: 'text/plain'),
+          ], subject: 'QQ 客户端日志');
         },
         onEnterApp: () => Navigator.of(context).pushReplacement(
           MaterialPageRoute<void>(builder: (_) => const HomePage()),
@@ -252,7 +253,8 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
   /// 很容易在确认之后才想起去点，白等一轮；而轮询本身开销极小。
   /// 服务层刻意不带定时器（节奏归 UI），所以计时器长在这里。
   void _syncQrPoll() {
-    final shouldPoll = widget.status.stage == Qq8LoginStage.waitingQrScan &&
+    final shouldPoll =
+        widget.status.stage == Qq8LoginStage.waitingQrScan &&
         widget.onPollQrcode != null;
     if (shouldPoll && _qrPoll == null) {
       _qrPoll = Timer.periodic(const Duration(seconds: 2), (_) {
@@ -320,13 +322,21 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         SegmentedButton<_LoginMode>(
           segments: const <ButtonSegment<_LoginMode>>[
             ButtonSegment<_LoginMode>(
-                value: _LoginMode.password, label: Text('密码')),
+              value: _LoginMode.password,
+              label: Text('密码'),
+            ),
             ButtonSegment<_LoginMode>(
-                value: _LoginMode.qrcode, label: Text('二维码')),
+              value: _LoginMode.qrcode,
+              label: Text('二维码'),
+            ),
             ButtonSegment<_LoginMode>(
-                value: _LoginMode.phone, label: Text('短信')),
+              value: _LoginMode.phone,
+              label: Text('短信'),
+            ),
             ButtonSegment<_LoginMode>(
-                value: _LoginMode.token, label: Text('免密')),
+              value: _LoginMode.token,
+              label: Text('免密'),
+            ),
           ],
           selected: <_LoginMode>{_effectiveMode},
           onSelectionChanged: _busy
@@ -361,7 +371,8 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
   /// 客户端档案一行（下拉 + 一句说明）。测试传空列表即整行不出现。
   List<Widget> _profileRow(BuildContext context) {
     if (widget.profileKeys.isEmpty) return const <Widget>[];
-    final current = widget.profileKey != null &&
+    final current =
+        widget.profileKey != null &&
             widget.profileKeys.contains(widget.profileKey)
         ? widget.profileKey
         : null;
@@ -382,10 +393,7 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
             hint: const Text('选择档案'),
             isDense: true,
             underline: const SizedBox.shrink(),
-            style: TextStyle(
-              color: TelegramColors.textPrimary,
-              fontSize: 13,
-            ),
+            style: TextStyle(color: TelegramColors.textPrimary, fontSize: 13),
             items: <DropdownMenuItem<String>>[
               for (final k in widget.profileKeys)
                 DropdownMenuItem<String>(value: k, child: Text(k)),
@@ -413,7 +421,10 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
 
   /// 按当前选中的登录方式渲染提取表单。
   List<Widget> _modeWidgets(
-      BuildContext context, Qq8ConnectStatus s, _LoginMode mode) {
+    BuildContext context,
+    Qq8ConnectStatus s,
+    _LoginMode mode,
+  ) {
     switch (mode) {
       case _LoginMode.password:
         return <Widget>[
@@ -535,16 +546,19 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
   /// 关键：**滑块等验证阶段的表单始终显示**，不因切了方式切换而丢失。
   Widget _statusCard(BuildContext context, Qq8ConnectStatus s) {
     return _card(<Widget>[
-      Row(children: <Widget>[
-        Icon(_busy ? Icons.sync : Icons.info_outline, size: 18),
-        const SizedBox(width: 8),
-        Expanded(child: Text(s.stateLabel)),
-        if (s.uin != null) Text('账号=${s.uin}'),
-      ]),
-      if (_busy) const Padding(
-        padding: EdgeInsets.only(top: 8),
-        child: LinearProgressIndicator(),
+      Row(
+        children: <Widget>[
+          Icon(_busy ? Icons.sync : Icons.info_outline, size: 18),
+          const SizedBox(width: 8),
+          Expanded(child: Text(s.stateLabel)),
+          if (s.uin != null) Text('账号=${s.uin}'),
+        ],
       ),
+      if (_busy)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: LinearProgressIndicator(),
+        ),
       ..._stageWidgets(context, s),
     ]);
   }
@@ -556,12 +570,13 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
       case Qq8LoginStage.needsSlider:
         return <Widget>[
           const SizedBox(height: 12),
-          const Text('需要完成滑动验证。点下面在本应用内打开验证页，'
-              '验证完成后会自动识别验证码：'),
+          const Text(
+            '需要完成滑动验证。点下面在本应用内打开验证页，'
+            '验证完成后会自动识别验证码：',
+          ),
           const SizedBox(height: 8),
           if (s.sliderUrl != null && s.sliderUrl!.isNotEmpty)
-            SelectableText(s.sliderUrl!,
-                key: const ValueKey('qq8-slider-url')),
+            SelectableText(s.sliderUrl!, key: const ValueKey('qq8-slider-url')),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             key: const ValueKey('qq8-open-browser'),
@@ -587,15 +602,19 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
       case Qq8LoginStage.needsSmsCode:
         // 两条短信线：手机号登录（smsFlow=true）与密码后补短信（false）。
         final smsFlow = s.smsFlow;
-        final requestNext =
-            smsFlow ? widget.onRefreshSmsLoginCode : widget.onRequestSms;
-        final submitCode =
-            smsFlow ? widget.onSubmitSmsLoginCode : widget.onSubmitSms;
+        final requestNext = smsFlow
+            ? widget.onRefreshSmsLoginCode
+            : widget.onRequestSms;
+        final submitCode = smsFlow
+            ? widget.onSubmitSmsLoginCode
+            : widget.onSubmitSms;
         return <Widget>[
           const SizedBox(height: 12),
-          Text(s.smsAutoSent
-              ? '服务端已向 ${s.phone ?? '绑定手机'} 下发验证码'
-              : '需要短信验证码（手机号 ${s.phone ?? '未知'}）'),
+          Text(
+            s.smsAutoSent
+                ? '服务端已向 ${s.phone ?? '绑定手机'} 下发验证码'
+                : '需要短信验证码（手机号 ${s.phone ?? '未知'}）',
+          ),
           if (smsFlow) const Text('（短信登录：验证码通过后会自动登录）'),
           const SizedBox(height: 8),
           TextField(
@@ -605,20 +624,23 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
             decoration: const InputDecoration(labelText: '6 位验证码'),
           ),
           const SizedBox(height: 8),
-          Wrap(spacing: 8, children: <Widget>[
-            FilledButton(
-              key: const ValueKey('qq8-submit-sms'),
-              onPressed: _busy || submitCode == null
-                  ? null
-                  : () => submitCode(_sms.text.trim()),
-              child: const Text('提交验证码'),
-            ),
-            OutlinedButton(
-              key: const ValueKey('qq8-request-sms'),
-              onPressed: _busy || requestNext == null ? null : requestNext,
-              child: Text(smsFlow ? '重发验证码' : '重新下发'),
-            ),
-          ]),
+          Wrap(
+            spacing: 8,
+            children: <Widget>[
+              FilledButton(
+                key: const ValueKey('qq8-submit-sms'),
+                onPressed: _busy || submitCode == null
+                    ? null
+                    : () => submitCode(_sms.text.trim()),
+                child: const Text('提交验证码'),
+              ),
+              OutlinedButton(
+                key: const ValueKey('qq8-request-sms'),
+                onPressed: _busy || requestNext == null ? null : requestNext,
+                child: Text(smsFlow ? '重发验证码' : '重新下发'),
+              ),
+            ],
+          ),
         ];
       case Qq8LoginStage.needsDeviceLock:
         return <Widget>[
@@ -627,7 +649,9 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
           const SizedBox(height: 8),
           FilledButton(
             key: const ValueKey('qq8-unlock'),
-            onPressed: _busy || widget.onUnlock == null ? null : widget.onUnlock,
+            onPressed: _busy || widget.onUnlock == null
+                ? null
+                : widget.onUnlock,
             child: const Text('解锁'),
           ),
         ];
@@ -650,18 +674,24 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         return <Widget>[
           const SizedBox(height: 12),
           if (s.error != null)
-            Text(s.error!,
-                key: const ValueKey('qq8-error'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(
+              s.error!,
+              key: const ValueKey('qq8-error'),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           if (s.resultType != null) ...<Widget>[
             const SizedBox(height: 8),
-            Text('服务端返回 type=${s.resultType}',
-                key: const ValueKey('qq8-expired-code')),
+            Text(
+              '服务端返回 type=${s.resultType}',
+              key: const ValueKey('qq8-expired-code'),
+            ),
           ],
           const SizedBox(height: 8),
-          const Text('这个账号的登录凭证已失效（票据过期或身份失效），重新登录一次即可继续，'
-              '不影响本地聊天记录。',
-              key: ValueKey('qq8-expired-hint')),
+          const Text(
+            '这个账号的登录凭证已失效（票据过期或身份失效），重新登录一次即可继续，'
+            '不影响本地聊天记录。',
+            key: ValueKey('qq8-expired-hint'),
+          ),
           const SizedBox(height: 8),
           FilledButton(
             key: const ValueKey('qq8-relogin'),
@@ -679,19 +709,25 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         return <Widget>[
           const SizedBox(height: 12),
           if (s.error != null)
-            Text(s.error!,
-                key: const ValueKey('qq8-error'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(
+              s.error!,
+              key: const ValueKey('qq8-error'),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           if (s.resultType != null) ...<Widget>[
             const SizedBox(height: 8),
-            Text('服务端返回 type=${s.resultType}',
-                key: const ValueKey('qq8-rejected-code')),
+            Text(
+              '服务端返回 type=${s.resultType}',
+              key: const ValueKey('qq8-rejected-code'),
+            ),
           ],
           const SizedBox(height: 8),
-          const Text('这是服务端对该账号的准入结论，不是口令或参数写错——原地重试不会变，\n'
-              '而且短时间连打会让账号风险升级（实测：静默 40 分钟后同参数可用，'
-              '被连试 5 次后立刻被拒）。',
-              key: ValueKey('qq8-rejected-hint')),
+          const Text(
+            '这是服务端对该账号的准入结论，不是口令或参数写错——原地重试不会变，\n'
+            '而且短时间连打会让账号风险升级（实测：静默 40 分钟后同参数可用，'
+            '被连试 5 次后立刻被拒）。',
+            key: ValueKey('qq8-rejected-hint'),
+          ),
           const SizedBox(height: 4),
           const Text('请先停手等 30 分钟以上，再用这个账号试一次；仍不行就换账号 / 设备。'),
         ];
@@ -703,12 +739,15 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
         return <Widget>[
           const SizedBox(height: 12),
           if (s.error != null)
-            Text(s.error!,
-                key: ValueKey(network ? 'qq8-network-hint' : 'qq8-error'),
-                style: TextStyle(
-                    color: network
-                        ? Theme.of(context).colorScheme.onSurfaceVariant
-                        : Theme.of(context).colorScheme.error)),
+            Text(
+              s.error!,
+              key: ValueKey(network ? 'qq8-network-hint' : 'qq8-error'),
+              style: TextStyle(
+                color: network
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : Theme.of(context).colorScheme.error,
+              ),
+            ),
         ];
       case Qq8LoginStage.idle:
       case Qq8LoginStage.connecting:
@@ -717,12 +756,12 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
   }
 
   Widget _card(List<Widget> children) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: children,
-          ),
-        ),
-      );
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    ),
+  );
 }

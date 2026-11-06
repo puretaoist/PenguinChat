@@ -50,9 +50,9 @@ class MessageListItem {
   String toString() => isDay
       ? 'Day(${day!.month}/${day!.day})'
       : isUnread
-          ? 'Unread'
-          : 'Msg(${message!.id.isNotEmpty ? message!.id : message!.text})'
-              '${showSenderName ? ' +name' : ''}${showAvatar ? ' +avatar' : ''}';
+      ? 'Unread'
+      : 'Msg(${message!.id.isNotEmpty ? message!.id : message!.text})'
+            '${showSenderName ? ' +name' : ''}${showAvatar ? ' +avatar' : ''}';
 }
 
 /// 同一条消息是否与下一条属于同一组（TG 的 5 分钟规则）。
@@ -100,14 +100,16 @@ List<MessageListItem> buildMessageItems(
         i > 0 && anchorIndex != i - 1 && sameGroup(messages[i - 1], m);
     final sameAsNext =
         i + 1 < messages.length &&
-            anchorIndex != i &&
-            sameGroup(m, messages[i + 1]);
-    items.add(MessageListItem._(
-      message: m,
-      showSenderName: !sameAsPrev,
-      showAvatar: showAvatars && !m.outgoing && !sameAsNext,
-      showAvatarSlot: showAvatars && !m.outgoing,
-    ));
+        anchorIndex != i &&
+        sameGroup(m, messages[i + 1]);
+    items.add(
+      MessageListItem._(
+        message: m,
+        showSenderName: !sameAsPrev,
+        showAvatar: showAvatars && !m.outgoing && !sameAsNext,
+        showAvatarSlot: showAvatars && !m.outgoing,
+      ),
+    );
     if (i == anchorIndex) items.add(const MessageListItem._(unread: true));
   }
   return items;
