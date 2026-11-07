@@ -120,6 +120,41 @@ log.d('tgtgt ${Redact.fingerprint('tgtgt', b)}'); // 敏感值只输出长度+�
 不需要反编译。**L3/L4（数据层、UI）与协议无关，不受本条约束**——
 但也正因为如此，不要在那里塞任何协议常量。
 
+### 1.8 前端：先吃透 TG 源码，再写第一行 UI（铁律）
+
+**不许"看着差不多"就动手。** 动任何 UI 代码之前，必须先在官方源码里把要写的那个东西读明白。
+
+**唯一合法的两个参数来源**：
+
+| 来源 | 位置 | 适用 |
+|---|---|---|
+| ① 官方源码实读 | `C:/Users/Administrator/penguis/telegram-src/TelegramAndroid/TMessagesProj/src/main/java/org/telegram/` | 一切几何、字号、圆角、透明度、动画时长、阴影、绘制顺序 |
+| ② 已取证表 | `docs/HANDOFF.md` §8、`docs/blur-parity.md`、`docs/ui-parity-matrix.md` | 上一轮已经逐行读过并记下来的值，**不许重复翻源码** |
+
+**两条硬要求**：
+
+1. **每个 UI 常量必须能说出出处 `文件:行号`**，写在该文件头部的文档注释里。
+   拿不出处就别写这个值——先读源码，读不懂就停下来问，不许猜。
+2. **拿不到官方依据时，必须显式标注"这是自定值"**（注释 + `docs/ui-parity-matrix.md` 登记），
+   **绝不许冒充"已对齐 TG"**。`ui-parity-matrix.md` 里的 ❓ 就是给这种情况用的。
+
+**禁止的做法**（都踩过，见 `docs/PITFALLS.md` C123）：
+
+- ❌ 先写完 UI，再回头补出处 —— 事后补的出处多半是编的，而且已经改不回去了
+- ❌ 用"截图看起来像"当依据 —— 截图没有行号，抄不出 0.4dp 描边和 4 段 alpha 渐变
+- ❌ 用"TG 应该差不多是这样"当依据 —— 官方很多值反直觉（`ActionBar` 高度**已含状态栏**、
+  玻璃底栏**始终半透明不能叠实色**、SettingCell **不画 divider**）
+- ❌ 拿别的第三方客户端（AyuGram 魔改版、Telegram X、Nagram）当 TG 依据 —— 只认本机
+  `telegram-src/` 这一份官方源码，魔改版的分支会把参数带偏
+
+**为什么必须这样**：UI 偏差不是审美问题，是**结构问题**。凭印象写的 56dp/70dp/0.76 透明度，
+看起来只差几个像素，但会连带出「行高挤」「tab 附近有实色板」「状态栏图标看不清」这类
+用户能立刻感知、却极难定位的缺陷（`docs/PITFALLS.md` C109/C111 就是这类）。补一次出处
+的成本是十分钟，返工一次的成本是一整天。
+
+**L3/L4 仍然与 QQ 协议无关**（§1.7 的例外继续有效）：本条款管的是 **UI 参数**，
+不是让你去读 QQ 的反编译。
+
 ---
 
 ## 2. 目录地图
@@ -252,7 +287,7 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 | `lib/ui/pages/connect_page.dart` | 地址 + 状态 + 环境检测 + 逐条确认 + 立即切断 |
 
 **「analyze 干净 + 逻辑层自测通过」≠「UI 能用」。** 真机验证清单见
-[`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) §7，共 9 条，目前一条都没验。
+[`docs/HANDOFF.md`](docs/HANDOFF.md) §6.3，共 3 条，均未验。
 
 ### 4.3 骨架，尚未完成
 
@@ -272,7 +307,7 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 **UI 接线已完成（2026-09-11），代码侧没有已知缺口。** 剩下的按优先级：
 
 1. **真机验证** —— 唯一还差的一步。装到手机上连本机的 NapCat，
-   逐条走 [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) §7 的 9 条。
+   逐条走 [`docs/HANDOFF.md`](docs/HANDOFF.md) §6.3 的清单。
    **在这一步之前，不要说「UI 能用了」**：本环境从没渲染过它。
 2. **构建体积 / 签名** —— 已解决（2026-09-11）：CI 限定
    `--target-platform android-arm64`（debug artifact 44.7MB，release
@@ -288,9 +323,9 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 先读这些（按顺序）：
 
 1. 本文件（你在读）
-2. [`docs/STATUS.md`](docs/STATUS.md) —— 每个文件的实现程度
+2. [`docs/HANDOFF.md`](docs/HANDOFF.md) —— **当前唯一有效的交接文档**：环境绝对路径、常用命令、162 项未提交改动、遗留清单、TG 已取证参数
 3. [`docs/PITFALLS.md`](docs/PITFALLS.md) —— 踩过的坑，**能省你几小时**
-4. [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) —— 刚做完的任务（含 9 条真机验证清单）
+4. [`docs/HANDOFF.md`](docs/HANDOFF.md) §7 与 `docs/PITFALLS.md` C 类 —— 最贵的坑
 5. `lib/client_api/session.dart` —— 内核接缝的契约，改 UI 前必读
 6. [`STRUCTURE.md`](STRUCTURE.md) —— 分层架构的完整理由
 
@@ -305,6 +340,7 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 | 测试命名 | `tool/<模块>_selftest.dart`，输出「通过 N 项，失败 M 项」 |
 | 提交信息 | 用 `feat:` / `fix:` / `docs:` / `chore:` 前缀，正文说清**为什么**和**验证方式** |
 | 魔法数字 | 必须带注释说明来源。协议里的"看起来没用但删了就登不上"的字段尤其 |
+| **UI 参数出处** | **动 UI 前必须先在 `telegram-src/` 读明白，每个常量写明 `文件:行号`**（§1.8）。拿不到官方依据就显式标"自定值"并登记到 `docs/ui-parity-matrix.md`，不许冒充对齐 |
 | 不要顺手优化 | 协议实现里很多字段看着冗余（如 `qq8BufUnknown`），删了会静默失败 |
 
 ---
@@ -313,8 +349,9 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 
 | 文件 | 内容 |
 |---|---|
-| [`docs/STATUS.md`](docs/STATUS.md) | 逐模块实现状态与测试规模 |
-| [`docs/NEXT-TASK.md`](docs/NEXT-TASK.md) | 当前任务（UI 接线）的完整规格 |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **开工必读**：现状 / 环境 / 命令 / 未提交改动 / 遗留 / TG 参数 |
+| [`docs/ui-parity-matrix.md`](docs/ui-parity-matrix.md) | 与 Telegram/AyuGram 的 UI 差异表 + **登记规则**（新增 UI 先登记再写码，见 §1.8） |
+| [`docs/blur-parity.md`](docs/blur-parity.md) | 模糊覆盖对照 |
 | [`docs/PITFALLS.md`](docs/PITFALLS.md) | 已踩过的坑与规避方式 |
 | [`../analysis/README.md`](../analysis/README.md) | **协议参数的出处**：反编译对照、提取脚本、如何重建产物（在仓库外，同级目录） |
 | [`STRUCTURE.md`](STRUCTURE.md) | 分层架构与依赖规则 |
@@ -323,5 +360,5 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 | [`STORAGE-DESIGN.md`](STORAGE-DESIGN.md) | 存储设计取舍 |
 | [`CI-BUILD.md`](CI-BUILD.md) | 云端构建与本机构建的坑 |
 | [`LIVE-TEST.md`](LIVE-TEST.md) | QQ8 线真机测试的两步流程 |
-| [`M1-REPORT.md`](M1-REPORT.md) [`M2-REPORT.md`](M2-REPORT.md) | 历史阶段报告 |
+| [`docs/archive/`](docs/archive/) | 历史文档（23 份，**已过期，只作追溯**） |
 | [`TOOLING.md`](TOOLING.md) | 逆向工具链 |

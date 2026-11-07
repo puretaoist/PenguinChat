@@ -28,7 +28,7 @@
 | 5 | 聊天页整页背后模糊（抽屉/浮层打开时） | ChatActivity.java:595 `BluredView blurredView`、:11859 构造、:17789-17825 `BlurBehindDrawable.TAG_DRAWING_AS_BACKGROUND` | ❌ 缺（无整页模糊层） |
 | 6 | 聊天页滚动遮罩模糊 | ChatActivity.java:1029 `scrimBlur3Factory` | ❌ 缺 |
 | 7 | 会话列表（上下边缘模糊 + 液态玻璃按钮 + 转场） | DialogsActivity.java:1702 `DialogsRecyclerView extends BlurredRecyclerView`、:2808-2821 `iBlur3Factory{FrostedLiquidGlass,LiquidGlass,Blur,Fade}`、:4880 fadeDrawable、:5451 转场 BlurredRecyclerView | ❌ 缺（chat_list_panel 实色滚动） |
-| 8 | 主界面底部 tab 胶囊玻璃 + 60dp 淡出 | MainTabsActivity.java:362-375（iBlur3SourceTabGlass + BlurredBackgroundWithFadeDrawable） | ✅ 已做（home_shell tab 胶囊 σ20 + 手机 60dp σ16） |
+| 8 | 主界面底部 tab 胶囊玻璃 + 60dp 淡出 | MainTabsActivity.java:362-375（iBlur3SourceTabGlass + BlurredBackgroundWithFadeDrawable） | ⚠️ 已做但参数偏差，见下 |
 | 9 | 附件面板 | Components/ChatAttachAlert.java（8 处，整屏面板玻璃） | ⚠️ 我方是底部弹层（已 GlassSheet 玻璃），形态与官方整屏 attach alert 不同 |
 | 10 | 所有 BottomSheet 底部弹层 | Components/ActionBar/BottomSheet.java 等框架级 | ✅ 已做（glass_sheet.dart，9 处弹层） |
 | 11 | 图片查看器背景模糊 | PhotoViewer.java（6 处） | ❌ 缺（我方无全屏查看器，message_content.dart:710 仅内联预览） |
@@ -45,7 +45,24 @@
 - 其中 #1/#3/#4 是每天可见的细节；#5/#6 是抽屉/浮层场景；#7 是会话列表滚动质感。
 - 我方实现手段是 Flutter `BackdropFilter`（每帧采样，配合 `ClipRect` 限制范围）；官方是 RenderNode 捕获 + RenderScript，能做"液态玻璃"（折射/饱和度）。Flutter 侧只能近似，无法 1:1 复刻折射。
 
-## 四、建议优先级
+## 四、主 tab 胶囊的模糊参数取证结果（2026-11-07）
+
+| 参数 | 官方值 | 取证 | 我方现值 | 状态 |
+|---|---|---|---|---|
+| blur 半径 | **查不到** | `Components/blur3/drawable/BlurredBackgroundSourceRenderNode.java:63-70` `setBlur(float radius)` 只接收外部传参；`BlurredBackgroundDrawableViewFactory`、`BlurredBackgroundDrawable` 均未写死；`MainTabsActivity.java:362-369` 创建玻璃背景时**没有**调用 `setBlur` | `sigmaX/Y: 20`（`home_shell.dart:506-507`） | ⚠️ **自定值**。参照物：`Stories/PeerStoriesView.java:549` 用 `dp(8)`、`iv/RichMediaCell.java:153` 用 `dp(24)`、`community/cells/CommunityPendingRequestCell.java:76` 用 `dp(7)` |
+| 底色 alpha | 0.76 / 0.85 | `BlurredBackgroundProviderImpl.java:24` | 0.80 | ❌ 待改为 `solveSrcColor` 反解 |
+| 叠色算法 | 反解源色 | `BlurredBackgroundProviderImpl.java:304-332` `src = clamp(round((out - bg*(1-a))/a),0,255)` | 直接叠 alpha | ❌ 待改 |
+| 描边宽 | 0.4dp | `BlurredBackgroundProviderImpl.java:33` | 1.0dp | ❌ 待改 |
+| 描边色（亮） | top `0x11000000` / bottom `0x20000000` | `BlurredBackgroundProviderImpl.java:29-30` | `divider` 单色 | ❌ 待改 |
+| 描边色（暗） | top `0x06FFFFFF` / bottom `0x11FFFFFF` | 同上 | `divider` 单色 | ⚠️ **用户已决定不做白色玻璃描边**（m00304） |
+| 阴影 | `0x20000000`(亮)/`0x04FFFFFF`(暗)、σ`2.667dp`、dy`0.85dp` | `BlurredBackgroundProviderImpl.java:31-32` | 黑 0.28、σ16、dy4 | ❌ 待改 |
+| 底部淡出高度 | 60dp，`setFadeHeight(dp(60), true)` | `MainTabsActivity.java:375-376` | `60 + bottomInset` | ✅ 一致 |
+| 液态玻璃 | `LiteMode.isEnabled(FLAG_LIQUID_GLASS)` | `MainTabsActivity.java:364` | 无 | ❌ Flutter 无法做折射/饱和度 |
+
+**结论**：官方主 tab 胶囊的 blur 半径在本机源码中**无法取证**（只传参不写死），我方 σ20 只能登记为自定值；
+其余 5 项参数（alpha 算法、描边、阴影）有明确出处，可严格对齐。完整 68 项见 `docs/ui-parity-matrix.md` §A。
+
+## 五、建议优先级
 
 - P1：聊天页顶栏玻璃、聊天页底部 fade 改为聊天页内实现、下滚圆按钮玻璃。
 - P2：会话列表上下边缘模糊 + 会话列表 FAB 玻璃。

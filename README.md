@@ -26,7 +26,10 @@ dart run tool/selftest.dart
 
 ## 文档
 
-- [`AGENTS.md`](AGENTS.md) —— 项目结构、工程约定、当前状态
+- [`AGENTS.md`](AGENTS.md) —— 项目结构、工程约定
+- [`docs/HANDOFF.md`](docs/HANDOFF.md) —— **交接文档：现状、环境、命令、未提交改动、遗留**
+- [`docs/PITFALLS.md`](docs/PITFALLS.md) —— 踩过的坑（139 条）
+- [`docs/archive/`](docs/archive/) —— 历史文档（已过期）
 
 ## 许可
 
