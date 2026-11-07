@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../client_api/objects.dart';
 import '../theme/telegram_theme.dart';
 import 'glass_surface.dart';
+import 'search_field_box.dart';
 import 'telegram_avatar.dart';
 
 /// 聊天页头部——**三块悬浮玻璃胶囊**，不是一整条通栏。
@@ -32,6 +33,11 @@ class ChatHeader extends StatelessWidget {
     this.onOpenGroupSettings,
     this.onOpenSettings,
     this.onSearch,
+    this.searching = false,
+    this.searchController,
+    this.searchFocus,
+    this.onExitSearch,
+    this.onSearchChanged,
     this.hideStatus = false,
     this.centerTitle = false,
   });
@@ -46,6 +52,27 @@ class ChatHeader extends StatelessWidget {
   /// 头部搜索（TG 顶栏右侧第一个图标就是放大镜）。
   final VoidCallback? onSearch;
 
+  /// 是否处于搜索态。
+  ///
+  /// 官方是 ActionBar **原地变形**：藏掉头像 + 标题（`headerItem`）、附件
+  /// （`attachItem`）、右侧菜单（`otherIcon`）与输入框（`editTextItem`），
+  /// 只留搜索框和左侧那个会从放大镜形变成返回箭头的按钮
+  /// （`ChatActivity.java:35364-35409`，`openSearchWithText`）。
+  /// 这里保留左侧胶囊的几何，把搜索框铺满它右边——官方展开后 ActionBar
+  /// 就只剩这两件东西，高度不变（`ActionBarMenuItem.toggleSearch` 是
+  /// 150ms 的 alpha 交叉，没有宽度动画）。
+  final bool searching;
+
+  /// 搜索态的输入控制器与焦点（[searching] 为真时必须提供）。
+  final TextEditingController? searchController;
+  final FocusNode? searchFocus;
+
+  /// 搜索态左侧按钮：退出搜索。
+  final VoidCallback? onExitSearch;
+
+  /// 搜索词变化（官方边输入边搜 `searchMessagesInChat`）。
+  final ValueChanged<String>? onSearchChanged;
+
   /// 是否隐藏副标题（在线状态 / 成员数）。抄 `ExteraConfig.hideActionBarStatus`。
   final bool hideStatus;
 
@@ -58,6 +85,55 @@ class ChatHeader extends StatelessWidget {
     const double p = 6.0; // ActionBar.java:2232 dp(6)
     const double s = 46.0; // :2232 dp(46)
     const double capsuleH = s + 2 * p; // 58，与 s+2p 一致
+
+    if (searching && searchController != null && searchFocus != null) {
+      return SizedBox(
+        height: capsuleH,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            Positioned(
+              left: 0,
+              top: 0,
+              width: capsuleH,
+              height: capsuleH,
+              child: GlassSurface.capsule(
+                radius: 23,
+                alignment: Alignment.center,
+                padding: EdgeInsets.zero,
+                child: IconButton(
+                  key: const ValueKey<String>('chat-search-back'),
+                  onPressed: onExitSearch,
+                  tooltip: '退出搜索',
+                  icon: Icon(
+                    Icons.arrow_back,
+                    color: TelegramColors.textSecondary,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: capsuleH,
+              right: p,
+              top: 0,
+              height: capsuleH,
+              child: Center(
+                child: SearchFieldBox(
+                  controller: searchController!,
+                  focusNode: searchFocus!,
+                  height: 46,
+                  radius: 23,
+                  hintText: '搜索本会话',
+                  onChanged: onSearchChanged,
+                  onCleared: () => onSearchChanged?.call(''),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     const double iconSlot = 48.0; // 官方每个 action item 占 48dp（menuWidth）
     const double leftDefault = s + p; // 52，中胶囊左界（:2249）
 

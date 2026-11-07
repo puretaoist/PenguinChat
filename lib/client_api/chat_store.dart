@@ -942,15 +942,19 @@ class ChatStore {
   ///   （官方是云端搜索，需要另一套协议），所以"搜不到"可能只是"这条还没拉下来"；
   /// * 大小写不敏感只对 ASCII 有意义；中文是子串匹配；
   /// * 结果按时间倒序（新的在前），最多 [limit] 条。
+  /// * [chatId] 非空时只搜这个会话——聊天页的会话内搜索走这条路（官方
+  ///   `ChatActivity.openSearchWithText` 最后调的是 `searchMessagesInChat`）。
   List<({String chatId, ChatMessage message})> searchMessages(
     String query, {
     int limit = 50,
+    String? chatId,
   }) {
     final q = query.trim();
     if (q.isEmpty) return const [];
     final needle = q.toLowerCase();
     final hits = <({String chatId, ChatMessage message})>[];
     for (final entry in _messages.entries) {
+      if (chatId != null && entry.key != chatId) continue;
       for (final m in entry.value) {
         if (m.text.toLowerCase().contains(needle)) {
           hits.add((chatId: entry.key, message: m));

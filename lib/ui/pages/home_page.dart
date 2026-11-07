@@ -58,6 +58,7 @@ import '../widgets/group_settings_panel.dart';
 import '../widgets/action_sheet.dart';
 import '../widgets/telegram_list_item.dart';
 import '../widgets/chat_header.dart';
+import '../widgets/chat_search_panel.dart';
 import '../widgets/message_action_popup.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/chat_input_bar.dart';
@@ -138,6 +139,32 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 窄屏时用于切换列表/对话。
   bool _showChatList = true;
+
+  /// 列表侧搜索是否展开。
+  ///
+  /// 官方不跳页：`DialogsActivity:3222` 的 `searchItem.setIsSearchField(true)`
+  /// 是把 ActionBar 原地变成搜索头、把列表换成搜索结果，所以这里也只用
+  /// 一个覆盖层标志，不给它安排路由与转场。
+  bool _searchOpen = false;
+
+  /// 会话内搜索是否展开（官方 `ChatActivity.openSearchWithText`，`:35364`）。
+  ///
+  /// 与 [_searchOpen] 互斥：搜索只可能发生在“列表或某个会话”其中一侧。
+  bool _chatSearchOpen = false;
+
+  /// 会话内搜索词（官方边输入边 `searchMessagesInChat`，`:35364`）。
+  String _chatSearchQuery = '';
+
+  /// 会话内搜索的控制器与焦点：顶栏要原地变形成搜索框，得把这两样交给它。
+  final TextEditingController _chatSearchController = TextEditingController();
+  final FocusNode _chatSearchFocus = FocusNode();
+
+  /// 结果面板当前是不是「以列表方式查看」。
+  ///
+  /// 官方 `ChatActivity.java:12972 showMessagesSearchListView(boolean)`：
+  /// 列表态看结果列表，聊天态回到聊天流里逐条跳；面板文案随之切换
+  /// （`:27299-27320`：列表态「N 条消息」、聊天态「2 of 20」）。
+  bool _chatSearchListMode = true;
 
   /// 本次 build 解析出的会话 id，供滚动/发送回调使用。
   String? _resolvedChatId;
@@ -271,6 +298,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _chatListController.dispose();
+    _chatSearchController.dispose();
+    _chatSearchFocus.dispose();
     super.dispose();
   }
 
@@ -469,6 +498,9 @@ class _HomePageState extends ConsumerState<HomePage> {
     setState(() {
       _selectedChatId = chat.id;
       _showChatList = false;
+      // 从搜索结果点进来时，搜索态要一起收起，否则会话被搜索层盖着。
+      _searchOpen = false;
+      _chatSearchOpen = false;
     });
     widget.onChatPaneVisibilityChanged?.call(true);
     unawaited(_ensureOpened(chat.id));
@@ -1411,9 +1443,18 @@ class _HomePageState extends ConsumerState<HomePage> {
                   MediaQuery.sizeOf(context).width,
                 ),
                 // 视口铺到底，末项避让由各列表的内部 padding 负责。
-                child: _wideLeftPane(wideTab, sidebar),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _wideLeftPane(wideTab, sidebar),
+                    // 搜索只换本栏（ActionBar 原地变形），右栏不动。
+                    if (_searchOpen) _searchOverlay(),
+                  ],
+                ),
               ),
               Container(width: 1, color: TelegramColors.divider),
+              // 会话内搜索由 _buildChatSearchPane 原地替换右栏内容
+              // （顶栏变形 + 结果列表 + 底部计数面板），这里不再叠覆盖层。
               Expanded(child: _chatPaneView(chats, store, topInset: topInset)),
             ],
           ),
@@ -1423,41 +1464,57 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 窄屏（手机）：列表与对话二选一。
     // 系统返回键：在对话页时先回列表，别直接退出应用（canPop=false 拦下）。
     return PopScope(
-      canPop: _showChatList,
+      // 搜索态下返回先关搜索，再谈“回列表”。
+      canPop: _showChatList && !_searchOpen && !_chatSearchOpen,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _backToChatList();
+        if (didPop) return;
+        if (_searchOpen || _chatSearchOpen) {
+          _closeSearch();
+          return;
+        }
+        _backToChatList();
       },
       child: Scaffold(
         backgroundColor: TelegramColors.bgApp,
         body: SafeArea(
           top: false,
           bottom: false,
-          child: AnimatedSwitcher(
-            // Telegram 的开页转场：150ms + DecelerateInterpolator(1.5)。
-            // 出处 ActionBarLayout.startLayoutAnimation 的非预览分支
-            // （duration :1061、decelerateInterpolator :318）；
-            // 这两处在 AyuGram 里与 TG 原版逐字相同（TG :1830 / :614），
-            // 所以「抄 AyuGram」= 抄 TG 这套参数。
-            duration: _kChatSwitchDuration,
-            transitionBuilder: _chatSwitchTransition,
-            // 两页都是全屏尺寸：用 Stack 叠着做交叉淡入。默认 layoutBuilder
-            // 会把新旧子树各自按内容大小居中排，手机上会看到位置跳一下。
-            layoutBuilder: (current, previous) =>
-                Stack(fit: StackFit.expand, children: [...previous, ?current]),
-            child: _showChatList
-                ? KeyedSubtree(
-                    key: const ValueKey<String>('chat-list'),
-                    child: sidebar,
-                  )
-                : KeyedSubtree(
-                    key: const ValueKey<String>('chat-pane'),
-                    child: _chatPaneView(
-                      chats,
-                      store,
-                      onBack: _backToChatList,
-                      topInset: topInset,
-                    ),
-                  ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              AnimatedSwitcher(
+                // Telegram 的开页转场：150ms + DecelerateInterpolator(1.5)。
+                // 出处 ActionBarLayout.startLayoutAnimation 的非预览分支
+                // （duration :1061、decelerateInterpolator :318）；
+                // 这两处在 AyuGram 里与 TG 原版逐字相同（TG :1830 / :614），
+                // 所以「抄 AyuGram」= 抄 TG 这套参数。
+                duration: _kChatSwitchDuration,
+                transitionBuilder: _chatSwitchTransition,
+                // 两页都是全屏尺寸：用 Stack 叠着做交叉淡入。默认 layoutBuilder
+                // 会把新旧子树各自按内容大小居中排，手机上会看到位置跳一下。
+                layoutBuilder: (current, previous) => Stack(
+                  fit: StackFit.expand,
+                  children: [...previous, ?current],
+                ),
+                child: _showChatList
+                    ? KeyedSubtree(
+                        key: const ValueKey<String>('chat-list'),
+                        child: sidebar,
+                      )
+                    : KeyedSubtree(
+                        key: const ValueKey<String>('chat-pane'),
+                        child: _chatPaneView(
+                          chats,
+                          store,
+                          onBack: _backToChatList,
+                          topInset: topInset,
+                        ),
+                      ),
+              ),
+              // 列表侧搜索是全局的、原地换这一侧；会话内搜索走
+              // _buildChatSearchPane，不在这里叠层。
+              if (_searchOpen) _searchOverlay(),
+            ],
           ),
         ),
       ),
@@ -2276,14 +2333,62 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  /// 打开搜索页（会话按名字、消息按已加载内容）。
-  void _openSearch() {
-    final chats = ref.read(chatsProvider).valueOrNull ?? const <Chat>[];
-    final store = ref.read(chatStoreProvider);
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) =>
-            SearchPage(chats: chats, store: store, onOpenChat: _openChat),
+  /// 打开列表侧搜索（会话按名字、消息按已加载内容）。
+  ///
+  /// 官方是 ActionBar 原地变形（`DialogsActivity:3222` `setIsSearchField`），
+  /// 不推页、没有转场——宽屏只换左栏，右栏保持不动。
+  void _openSearch() => setState(() => _searchOpen = true);
+
+  /// 打开会话内搜索（官方 `ChatActivity.openSearchWithText`，`:35364`）。
+  ///
+  /// 官方这条路上顶栏原地变形，然后只调 `searchMessagesInChat(...)` 搜当前
+  /// 会话，所以这里也只是把当前栏换成搜索视图，不跳出会话。
+  void _openChatSearch() {
+    setState(() {
+      _chatSearchOpen = true;
+      _chatSearchQuery = '';
+      _chatSearchController.clear();
+    });
+    // 官方 `openSearch(openSearchKeyboard)` 会立刻把焦点交给搜索框并弹键盘
+    // （`ActionBarMenuItem.java:938-1051`）；这里顶栏刚换形态，得等一帧。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _chatSearchFocus.requestFocus();
+    });
+  }
+
+  /// 退出会话内搜索，回到正常聊天。
+  void _closeChatSearch() {
+    _chatSearchFocus.unfocus();
+    _chatSearchController.clear();
+    setState(() {
+      _chatSearchOpen = false;
+      _chatSearchQuery = '';
+    });
+  }
+
+  void _closeSearch() => setState(() {
+    _searchOpen = false;
+    _chatSearchOpen = false;
+  });
+
+  /// 搜索覆盖层：铺满它所在的那一栏（宽屏左/右栏，窄屏整屏）。
+  ///
+  /// [scope] 非空 = 会话内搜索，只搜这个会话的消息。
+  Widget _searchOverlay({Chat? scope}) {
+    final chats = ref.watch(chatsProvider).valueOrNull ?? const <Chat>[];
+    final store = ref.watch(chatStoreProvider);
+    return Positioned.fill(
+      child: Material(
+        color: TelegramColors.bgApp,
+        child: SearchView(
+          chats: chats,
+          store: store,
+          scope: scope,
+          topInset: MediaQuery.paddingOf(context).top,
+          bottomContentInset: widget.bottomContentInset,
+          onOpenChat: _openChat,
+          onClose: _closeSearch,
+        ),
       ),
     );
   }
@@ -2422,6 +2527,21 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
     final uiPrefs = paneRef.watch(uiPrefsProvider);
 
+    // 会话内搜索：整栏换成「顶栏搜索态 + 命中消息 + 底部计数面板」。
+    // 官方也是原地换而不是跳页（`ChatActivity.java:7605-7615` 把
+    // `messagesSearchListContainer` 盖在聊天上，输入栏换成 `searchContainer`）。
+    // 官方两种看法（`ChatActivity.java:12972 showMessagesSearchListView`）：
+    // 列表态看结果列表；聊天态回聊天流逐条跳。这里只在列表态换成结果列表，
+    // 聊天态继续渲染真实聊天流，只把输入栏换成底部计数面板。
+    if (_chatSearchOpen && _chatSearchListMode) {
+      return _buildChatSearchPane(
+        chat,
+        store,
+        onBack: onBack,
+        topInset: topInset,
+      );
+    }
+
     return HomeChatPane(
       chat: chat,
       items: items,
@@ -2439,22 +2559,36 @@ class _HomePageState extends ConsumerState<HomePage> {
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
         child: KeyedSubtree(
-          key: ValueKey<bool>(_selecting),
+          // 搜索态进出也要交叉：官方 `ActionBarMenuItem.toggleSearch` 是
+          // 150ms 的 alpha 交叉（`:938-1051`），不是瞬切。
+          key: ValueKey<String>('${_selecting}_$_chatSearchOpen'),
           child: _buildHeader(chat, onBack),
         ),
       ),
-      inputBar: ChatInputBar(
-        enabled: store != null,
-        controller: _inputController,
-        replyTarget: _replyTarget,
-        onSend: _send,
-        onAttachImage: () => unawaited(_pickAndSendImages()),
-        onAttachImagePath: () => unawaited(_sendImageFromPath()),
-        onAttachFile: () => unawaited(_sendFileFromPath()),
-        onOpenFaces: _openFacePicker,
-        onCancelReply: _cancelReply,
-        onVoiceRecorded: _sendVoice,
-      ),
+      // 会话内搜索时输入栏被底部计数面板顶掉（官方 `openSearchWithText` 里
+      // `editTextItem.setVisibility(INVISIBLE)`，换成 `searchContainer`）。
+      inputBar: _chatSearchOpen
+          ? SafeArea(
+              top: false,
+              child: ChatSearchPanel(
+                count: _chatSearchHits(store, chat).length,
+                listMode: _chatSearchListMode,
+                onToggleMode: () =>
+                    setState(() => _chatSearchListMode = !_chatSearchListMode),
+              ),
+            )
+          : ChatInputBar(
+              enabled: store != null,
+              controller: _inputController,
+              replyTarget: _replyTarget,
+              onSend: _send,
+              onAttachImage: () => unawaited(_pickAndSendImages()),
+              onAttachImagePath: () => unawaited(_sendImageFromPath()),
+              onAttachFile: () => unawaited(_sendFileFromPath()),
+              onOpenFaces: _openFacePicker,
+              onCancelReply: _cancelReply,
+              onVoiceRecorded: _sendVoice,
+            ),
       itemBuilder: (context, _, item) {
         final day = item.day;
         if (day != null) return DateChip(day: day);
@@ -2636,7 +2770,105 @@ class _HomePageState extends ConsumerState<HomePage> {
       onOpenGroupFiles: () => unawaited(_openGroupFiles(chat)),
       onOpenGroupSettings: () => unawaited(_openGroupSettings(chat)),
       onOpenSettings: _openSettings,
-      onSearch: _openSearch,
+      onSearch: _openChatSearch,
+      searching: _chatSearchOpen,
+      searchController: _chatSearchOpen ? _chatSearchController : null,
+      searchFocus: _chatSearchOpen ? _chatSearchFocus : null,
+      onExitSearch: _closeChatSearch,
+      onSearchChanged: (String value) =>
+          setState(() => _chatSearchQuery = value),
+    );
+  }
+
+  /// 当前会话里命中 [ _chatSearchQuery ] 的消息（官方 `searchMessagesInChat`）。
+  List<({String chatId, ChatMessage message})> _chatSearchHits(
+    ChatStore? store,
+    Chat chat,
+  ) {
+    final String query = _chatSearchQuery.trim();
+    if (query.isEmpty) return const <({String chatId, ChatMessage message})>[];
+    return store?.searchMessages(query, chatId: chat.id) ??
+        const <({String chatId, ChatMessage message})>[];
+  }
+
+  /// 会话内搜索的结果视图。
+  ///
+  /// 官方那层是玻璃（`BlurredBackgroundProviderImpl.topPanelChatActivitySearchListBg`，
+  /// `ChatActivity.java:7605-7615`）+ 上下 48dp fade（`ChatActivitySearchContainer.java:28-30`）。
+  /// 这里用不透明底色 + 真气泡：全屏 BackdropFilter 在真机上掉帧，而那一层玻璃
+  /// 在官方是给 ActionBar 当模糊源的，肉眼差别主要在“结果出现时聊天内容变了”。
+  Widget _buildChatSearchPane(
+    Chat chat,
+    ChatStore? store, {
+    VoidCallback? onBack,
+    double topInset = 0,
+  }) {
+    final String query = _chatSearchQuery.trim();
+    final List<({String chatId, ChatMessage message})> hits = _chatSearchHits(
+      store,
+      chat,
+    );
+
+    return Container(
+      color: TelegramColors.bgChat,
+      child: Column(
+        children: <Widget>[
+          Padding(
+            padding: EdgeInsets.only(top: topInset, left: 12, right: 12),
+            child: _buildHeader(chat, onBack),
+          ),
+          Expanded(
+            child: hits.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Text(
+                        query.isEmpty
+                            ? '搜索本会话的消息'
+                            : '没有找到。\n只会搜已经加载到本地的消息，更早的还没拉下来。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: TelegramColors.textMuted,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    key: const ValueKey<String>('chat-search-results'),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: hits.length,
+                    itemBuilder: (BuildContext context, int index) {
+                      final ChatMessage m = hits[index].message;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: MessageBubble(
+                          key: ValueKey<String>('chat-search-msg-${m.id}'),
+                          message: m,
+                          showSenderName: chat.type == ChatType.group,
+                          senderLabel: _senderLabelOf(m, chat),
+                          showAvatarColumn: false,
+                          avatarVisible: false,
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          SafeArea(
+            top: false,
+            child: ChatSearchPanel(
+              count: hits.length,
+              listMode: _chatSearchListMode,
+              onToggleMode: () =>
+                  setState(() => _chatSearchListMode = !_chatSearchListMode),
+            ),
+          ),
+          // 键盘占位：官方把这一条挂在输入栏的位子上
+          // （`ChatActivity.java:10593-10631`，父容器是 `chatInputBubbleContainer`），
+          // 输入栏本来就随键盘上移，所以它也得跟着上去，否则会被键盘盖住。
+          SizedBox(height: MediaQuery.viewInsetsOf(context).bottom),
+        ],
+      ),
     );
   }
 }

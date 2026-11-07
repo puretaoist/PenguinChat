@@ -18,11 +18,13 @@ class _FakeStore implements ChatStore {
   List<({String chatId, ChatMessage message})> searchMessages(
     String query, {
     int limit = 50,
+    String? chatId,
   }) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return const [];
     final hits = <({String chatId, ChatMessage message})>[];
     for (final e in messages.entries) {
+      if (chatId != null && e.key != chatId) continue;
       for (final m in e.value) {
         if (m.text.toLowerCase().contains(q)) {
           hits.add((chatId: e.key, message: m));
@@ -163,5 +165,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('search-msg-m1')), findsNothing);
     expect(find.textContaining('输入名字找会话'), findsOneWidget);
+  });
+
+  testWidgets('会话内搜索：只搜本会话，且不出会话段', (tester) async {
+    final store = _FakeStore();
+    store.messages['private_20002'] = <ChatMessage>[
+      _msg('m1', '会议改到三点', chatId: 'private_20002'),
+    ];
+    store.messages['group_12345'] = <ChatMessage>[
+      _msg('m2', '会议取消了', chatId: 'group_12345'),
+    ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SearchView(
+            chats: chats,
+            store: store,
+            scope: chats.first,
+            onOpenChat: (_) {},
+            onClose: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('搜索本会话'), findsOneWidget, reason: '进去先说清搜的是什么');
+
+    await tester.enterText(find.byKey(const ValueKey('search-input')), '会议');
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('search-msg-m1')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('search-msg-m2')),
+      findsNothing,
+      reason: '别的会话的消息不该出现，官方走的是 searchMessagesInChat',
+    );
+    expect(
+      find.byKey(const ValueKey('search-chat-private_20002')),
+      findsNothing,
+      reason: '会话内搜索不该出会话段',
+    );
+  });
+
+  testWidgets('取消按钮走 onClose，不自己 pop', (tester) async {
+    var closed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SearchView(
+            chats: chats,
+            store: _FakeStore(),
+            onOpenChat: (_) {},
+            onClose: () => closed = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('search-cancel')));
+    await tester.pumpAndSettle();
+    expect(closed, isTrue);
   });
 }
