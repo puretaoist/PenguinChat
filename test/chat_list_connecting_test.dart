@@ -24,33 +24,34 @@ Future<void> _pump(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
-  await tester.pumpWidget(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: buildTelegramTheme(),
-    home: Scaffold(
-      body: ChatListPanel(
-        chats: chats,
-        store: null,
-        connecting: connecting,
-        selectedChatId: null,
-        onOpenChat: (_) {},
-        onLongPressChat: (_, _) {},
-        onRefresh: () async {},
-        onOpenSearch: () {},
-        onToggleTheme: () {},
-        onOpenSettings: () {},
-        onOpenArchive: (_, _) {},
-        onOpenConnect: () {},
-        onOpenQq8Login: () {},
+  await tester.pumpWidget(
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: buildTelegramTheme(),
+      home: Scaffold(
+        body: ChatListPanel(
+          chats: chats,
+          store: null,
+          connecting: connecting,
+          selectedChatId: null,
+          onOpenChat: (_) {},
+          onLongPressChat: (_, _) {},
+          onRefresh: () async {},
+          onOpenSearch: () {},
+          onToggleTheme: () {},
+          onOpenSettings: () {},
+          onOpenArchive: (_, _) {},
+          onOpenConnect: () {},
+          onOpenQq8Login: () {},
+        ),
       ),
     ),
-  ));
+  );
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('恢复中：显示「正在连接…」，不出现假的「未连接后端」与配置入口',
-      (tester) async {
+  testWidgets('恢复中：显示「正在连接…」，不出现假的「未连接后端」与配置入口', (tester) async {
     await _pump(tester, connecting: true);
 
     expect(find.text('正在连接…'), findsOneWidget);
@@ -60,8 +61,7 @@ void main() {
     expect(find.text('QQ 账号登录（自实现协议）'), findsNothing);
   });
 
-  testWidgets('有缓存会话预览：直接画列表 + 顶部进度条，不出现空态文案',
-      (tester) async {
+  testWidgets('有缓存会话预览：直接画列表 + 顶部进度条，不出现空态文案', (tester) async {
     // 冷启动"第一帧就是列表"的那条路径：store 还没建好（登录中），
     // 会话来自磁盘索引预览。此时必须画真实的行，而不是「正在连接…」空态。
     await _pump(
@@ -91,7 +91,10 @@ void main() {
     expect(find.text('久有凌云志'), findsOneWidget);
     expect(find.text('正在连接…'), findsNothing);
     expect(find.text('未连接后端'), findsNothing);
-    expect(find.byKey(const ValueKey('preview-connecting-line')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('preview-connecting-line')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('没在恢复：仍显示「未连接后端」与两个入口', (tester) async {

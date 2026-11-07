@@ -142,8 +142,8 @@ abstract final class Qq8Msg {
 
   /// 文本元素（`Elem.text`，字段 1）。
   static Uint8List textElem(String text) => Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{1: text},
-      });
+    1: <int, Object?>{1: text},
+  });
 
   /// 表情元素。id ≤ 0xFF 走 `Elem.face`（字段 2），更大的"超级表情"走
   /// `Elem.common_elem`（字段 53）。
@@ -159,8 +159,16 @@ abstract final class Qq8Msg {
         2: <int, Object?>{
           1: id,
           2: old,
-          11: Uint8List.fromList(
-              const <int>[0x00, 0x01, 0x00, 0x04, 0x52, 0xCC, 0xF5, 0xD0]),
+          11: Uint8List.fromList(const <int>[
+            0x00,
+            0x01,
+            0x00,
+            0x04,
+            0x52,
+            0xCC,
+            0xF5,
+            0xD0,
+          ]),
         },
       });
     }
@@ -196,21 +204,20 @@ abstract final class Qq8Msg {
     required int uin,
     required int svrip,
     required int seq,
-  }) =>
-      Qq8Jce.encodeWrapper(
-        service: 'OnlinePush',
-        method: 'SvcRespPushMsg',
-        requestId: seq,
-        attributes: <String, Uint8List>{
-          'r': Qq8Jce.encodeStruct(<int, Object?>{
-            0: uin,
-            1: <Object?>[], // items：空
-            2: svrip & 0xFFFFFFFF,
-            // 3 号参考实现给 null（不写这个字段）
-            4: 0,
-          }),
-        },
-      );
+  }) => Qq8Jce.encodeWrapper(
+    service: 'OnlinePush',
+    method: 'SvcRespPushMsg',
+    requestId: seq,
+    attributes: <String, Uint8List>{
+      'r': Qq8Jce.encodeStruct(<int, Object?>{
+        0: uin,
+        1: <Object?>[], // items：空
+        2: svrip & 0xFFFFFFFF,
+        // 3 号参考实现给 null（不写这个字段）
+        4: 0,
+      }),
+    },
+  );
 
   /// 把有序的内容元素编成 `RichText`：`{2: [引用?, ...元素, 保留元素]}`。
   ///
@@ -219,16 +226,11 @@ abstract final class Qq8Msg {
     List<Uint8List> elems, {
     Qq8ReplyInfo? reply,
     Uint8List? ptt,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        2: <Object?>[
-          if (reply != null) srcMsgElem(reply),
-          ...elems,
-          pbReserver,
-        ],
-        // 语音不是 elems 里的一项，而是 RichText 的第 4 个字段（与解析侧一致）。
-        4: ?ptt,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    2: <Object?>[if (reply != null) srcMsgElem(reply), ...elems, pbReserver],
+    // 语音不是 elems 里的一项，而是 RichText 的第 4 个字段（与解析侧一致）。
+    4: ?ptt,
+  });
 
   /// 纯文本的 `rich`（即 `{2: elems}` 编码后的字节）。
   static Uint8List textRich(String text, {Qq8ReplyInfo? reply}) =>
@@ -243,7 +245,8 @@ abstract final class Qq8Msg {
   ///
   /// [Qq8ReplyInfo.preview] 作为被引用消息的唯一元素带上——官方客户端会拿它
   /// 渲染引用条；真机上若显示异常，先看这里。
-  static Uint8List srcMsgElem(Qq8ReplyInfo reply) => Qq8Pb.encode(<int, Object?>{
+  static Uint8List srcMsgElem(Qq8ReplyInfo reply) =>
+      Qq8Pb.encode(<int, Object?>{
         45: <int, Object?>{
           1: reply.seq & 0xFFFFFFFF,
           2: reply.senderUin,
@@ -267,19 +270,18 @@ abstract final class Qq8Msg {
     required int r5,
     required int r9,
     required int r11,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: nowSeconds,
-        2: nowSeconds,
-        3: seed,
-        4: (0xFFFFFFFF - seed) & 0xFFFFFFFF,
-        5: r5,
-        9: r9,
-        11: r11,
-        12: seed & 0xFF,
-        13: nowSeconds,
-        14: 0,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: nowSeconds,
+    2: nowSeconds,
+    3: seed,
+    4: (0xFFFFFFFF - seed) & 0xFFFFFFFF,
+    5: r5,
+    9: r9,
+    11: r11,
+    12: seed & 0xFF,
+    13: nowSeconds,
+    14: 0,
+  });
 
   /// 私聊请求体。
   ///
@@ -298,25 +300,22 @@ abstract final class Qq8Msg {
     required int syncR11,
     Qq8ReplyInfo? reply,
     Uint8List? ptt,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: <int, Object?>{1: uid},
-        },
-        2: pbContent,
-        3: <int, Object?>{
-          1: richElems(elems, reply: reply, ptt: ptt),
-        },
-        4: seq,
-        5: rand,
-        6: buildSyncCookie(
-          seed: syncCookieSeed,
-          nowSeconds: nowSeconds,
-          r5: syncR5,
-          r9: syncR9,
-          r11: syncR11,
-        ),
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{
+      1: <int, Object?>{1: uid},
+    },
+    2: pbContent,
+    3: <int, Object?>{1: richElems(elems, reply: reply, ptt: ptt)},
+    4: seq,
+    5: rand,
+    6: buildSyncCookie(
+      seed: syncCookieSeed,
+      nowSeconds: nowSeconds,
+      r5: syncR5,
+      r9: syncR9,
+      r11: syncR11,
+    ),
+  });
 
   /// 群聊请求体（普通群，路由 `RoutingHead.grp`）。
   ///
@@ -329,20 +328,17 @@ abstract final class Qq8Msg {
     required int rand32,
     Qq8ReplyInfo? reply,
     Uint8List? ptt,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          // RoutingHead.grp（字段 2）：普通群。讨论组才是字段 4（dis）。
-          2: <int, Object?>{1: gid},
-        },
-        2: pbContent,
-        3: <int, Object?>{
-          1: richElems(elems, reply: reply, ptt: ptt),
-        },
-        4: rand16,
-        5: rand32,
-        8: 0,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{
+      // RoutingHead.grp（字段 2）：普通群。讨论组才是字段 4（dis）。
+      2: <int, Object?>{1: gid},
+    },
+    2: pbContent,
+    3: <int, Object?>{1: richElems(elems, reply: reply, ptt: ptt)},
+    4: rand16,
+    5: rand32,
+    8: 0,
+  });
 
   /// 解析发送响应（protobuf）：`{1: 结果码, 2: 错误文案, 3: 时间, 14: 消息序号}`。
   /// [groupSend] 为 true 时按群聊判据（不要求字段 14，见 [Qq8MsgSendResult.groupSend]）。
@@ -409,7 +405,8 @@ abstract final class Qq8Msg {
   }
 
   /// 纯文本消息的 UTF-8 字节（便于调用方统计长度/分片）。
-  static Uint8List textBytes(String text) => Uint8List.fromList(utf8.encode(text));
+  static Uint8List textBytes(String text) =>
+      Uint8List.fromList(utf8.encode(text));
 
   /// 私聊消息 ID（参考实现 `genDmMessageId` 同款打包，base64）。
   ///
@@ -422,14 +419,15 @@ abstract final class Qq8Msg {
     required int rand,
     required int time,
     required bool outgoing,
-  }) =>
-      base64.encode((ByteWriter()
-            ..u32(peerUin & 0xFFFFFFFF)
-            ..u32(seq & 0xFFFFFFFF)
-            ..u32(rand & 0xFFFFFFFF)
-            ..u32(time & 0xFFFFFFFF)
-            ..u8(outgoing ? 1 : 0))
-          .build());
+  }) => base64.encode(
+    (ByteWriter()
+          ..u32(peerUin & 0xFFFFFFFF)
+          ..u32(seq & 0xFFFFFFFF)
+          ..u32(rand & 0xFFFFFFFF)
+          ..u32(time & 0xFFFFFFFF)
+          ..u8(outgoing ? 1 : 0))
+        .build(),
+  );
 
   /// 群消息 ID（参考实现 `genGroupMessageId` 同款打包，base64）。
   ///
@@ -442,24 +440,24 @@ abstract final class Qq8Msg {
     required int rand,
     required int time,
     int pktNum = 1,
-  }) =>
-      base64.encode((ByteWriter()
-            ..u32(gid & 0xFFFFFFFF)
-            ..u32(senderUin & 0xFFFFFFFF)
-            ..u32(seq & 0xFFFFFFFF)
-            ..u32(rand & 0xFFFFFFFF)
-            ..u32(time & 0xFFFFFFFF)
-            ..u8(pktNum > 1 ? pktNum : 1))
-          .build());
+  }) => base64.encode(
+    (ByteWriter()
+          ..u32(gid & 0xFFFFFFFF)
+          ..u32(senderUin & 0xFFFFFFFF)
+          ..u32(seq & 0xFFFFFFFF)
+          ..u32(rand & 0xFFFFFFFF)
+          ..u32(time & 0xFFFFFFFF)
+          ..u8(pktNum > 1 ? pktNum : 1))
+        .build(),
+  );
 
   // -------------------------------------------------------------------------
   // 消息 ID 反解（撤回 / 已读上报要拿 seq/rand/time 去定位消息）
   // -------------------------------------------------------------------------
 
   /// 解私聊消息 ID（[dmMessageId] 的逆运算）。格式不对返回 null。
-  static ({int peerUin, int seq, int rand, int time, int flag})? parseDmMessageId(
-    String id,
-  ) {
+  static ({int peerUin, int seq, int rand, int time, int flag})?
+  parseDmMessageId(String id) {
     try {
       final b = base64.decode(id);
       if (b.length < 17) return null;
@@ -480,7 +478,7 @@ abstract final class Qq8Msg {
 
   /// 解群消息 ID（[groupMessageId] 的逆运算）。格式不对返回 null。
   static ({int gid, int senderUin, int seq, int rand, int time, int pktNum})?
-      parseGroupMessageId(String id) {
+  parseGroupMessageId(String id) {
     try {
       final b = base64.decode(id);
       if (b.length < 21) return null;
@@ -527,20 +525,19 @@ abstract final class Qq8Msg {
     required int seq,
     required int rand,
     required int time,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: <int, Object?>{
-            1: selfUin,
-            2: peerUin,
-            3: seq & 0xFFFFFFFF,
-            4: rand2uuid(rand),
-            5: time & 0xFFFFFFFF,
-            6: rand & 0xFFFFFFFF,
-          },
-          2: 0, // long_message_flag
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{
+      1: <int, Object?>{
+        1: selfUin,
+        2: peerUin,
+        3: seq & 0xFFFFFFFF,
+        4: rand2uuid(rand),
+        5: time & 0xFFFFFFFF,
+        6: rand & 0xFFFFFFFF,
+      },
+      2: 0, // long_message_flag
+    },
+  });
 
   /// 群撤回体。
   ///
@@ -567,21 +564,14 @@ abstract final class Qq8Msg {
     final n = pktNum > 1 ? pktNum : 1;
     final msgs = <Object?>[
       for (var i = 0; i < n; i++)
-        <int, Object?>{
-          1: (seq + i) & 0xFFFFFFFF,
-          2: rand & 0xFFFFFFFF,
-        },
+        <int, Object?>{1: (seq + i) & 0xFFFFFFFF, 2: rand & 0xFFFFFFFF},
     ];
     final userdef = n > 1
         ? <int, Object?>{
             1: 1,
             2: <Object?>[
               for (var i = 0; i < n; i++)
-                <int, Object?>{
-                  1: (seq + i) & 0xFFFFFFFF,
-                  3: n,
-                  4: i,
-                },
+                <int, Object?>{1: (seq + i) & 0xFFFFFFFF, 3: n, 4: i},
             ],
           }
         : <int, Object?>{1: 0};
@@ -611,10 +601,7 @@ abstract final class Qq8Msg {
       return (result: -1, errmsg: '响应里没有${group ? '群' : '私聊'}分支');
     }
     final r = Qq8Pb.decode(inner);
-    return (
-      result: Qq8Pb.intAt(r, 1) ?? -1,
-      errmsg: Qq8Pb.textAt(r, 2) ?? '',
-    );
+    return (result: Qq8Pb.intAt(r, 1) ?? -1, errmsg: Qq8Pb.textAt(r, 2) ?? '');
   }
 
   // -------------------------------------------------------------------------
@@ -636,10 +623,7 @@ abstract final class Qq8Msg {
   /// `{1: type1, 2: type2, 3: 0, 4: body, 6: 'android <ver>'}`，
   /// 见 [buildOidbWrapper]。
   static Uint8List buildGroupPokeBody({required int uid, required int gid}) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: uid & 0xFFFFFFFF,
-        2: gid & 0xFFFFFFFF,
-      });
+      Qq8Pb.encode(<int, Object?>{1: uid & 0xFFFFFFFF, 2: gid & 0xFFFFFFFF});
 
   /// 私聊戳一戳请求体（参考实现 `friend.ts:389-393`）：
   /// `{1: self ? 我的uin : 对方uin, 5: 对方uin}`。
@@ -649,11 +633,10 @@ abstract final class Qq8Msg {
     required int selfUin,
     required int peerUin,
     bool self = false,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: (self ? selfUin : peerUin) & 0xFFFFFFFF,
-        5: peerUin & 0xFFFFFFFF,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: (self ? selfUin : peerUin) & 0xFFFFFFFF,
+    5: peerUin & 0xFFFFFFFF,
+  });
 
   /// OIDB 统一外壳（参考实现 `client.ts:584-598` 的 `sendOidb`）。
   ///
@@ -665,14 +648,13 @@ abstract final class Qq8Msg {
     required int type2,
     required Uint8List body,
     required String apkVersion,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: type1,
-        2: type2,
-        3: 0,
-        4: body,
-        6: 'android $apkVersion',
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: type1,
+    2: type2,
+    3: 0,
+    4: body,
+    6: 'android $apkVersion',
+  });
 
   /// 解析戳一戳应答。
   ///
@@ -709,25 +691,17 @@ abstract final class Qq8Msg {
   static Uint8List buildC2cReadReportBody({
     required int peerUin,
     required int lastReadTime,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        3: <int, Object?>{
-          2: <int, Object?>{
-            1: peerUin,
-            2: lastReadTime & 0xFFFFFFFF,
-          },
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    3: <int, Object?>{
+      2: <int, Object?>{1: peerUin, 2: lastReadTime & 0xFFFFFFFF},
+    },
+  });
 
   /// 群已读体：`1 grp_read_report` → `{1 group_code, 2 last_read_seq}`。
   static Uint8List buildGroupReadReportBody({
     required int gid,
     required int lastReadSeq,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: gid & 0xFFFFFFFF,
-          2: lastReadSeq & 0xFFFFFFFF,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{1: gid & 0xFFFFFFFF, 2: lastReadSeq & 0xFFFFFFFF},
+  });
 }

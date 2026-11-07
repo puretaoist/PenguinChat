@@ -65,11 +65,7 @@ class Qq8DeviceState {
 
   const Qq8DeviceState({this.androidId, this.ksid, this.qimei});
 
-  Qq8DeviceState copyWith({
-    String? androidId,
-    String? ksid,
-    String? qimei,
-  }) =>
+  Qq8DeviceState copyWith({String? androidId, String? ksid, String? qimei}) =>
       Qq8DeviceState(
         androidId: androidId ?? this.androidId,
         ksid: ksid ?? this.ksid,
@@ -92,14 +88,15 @@ class Qq8DeviceState {
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
-        if (androidId != null) 'android_id': androidId,
-        if (ksid != null) 'ksid': ksid,
-        if (qimei != null) 'qimei': qimei,
-      };
+    if (androidId != null) 'android_id': androidId,
+    if (ksid != null) 'ksid': ksid,
+    if (qimei != null) 'qimei': qimei,
+  };
 
   /// 诊断用。**不打印 qimei 全值**（它是跨业务共享的设备标识）。
   @override
-  String toString() => 'Qq8DeviceState('
+  String toString() =>
+      'Qq8DeviceState('
       'androidId=${androidId ?? '无'}, '
       'ksid=${ksid == null ? '无' : '有'}, '
       'qimei=${qimei == null ? '无' : '${qimei!.length}字符'})';
@@ -196,9 +193,9 @@ class FileQq8DeviceStore implements Qq8DeviceStore {
       // 先写临时文件再 rename：进程在写一半时被杀，不会留下半个 JSON
       // （半个 JSON 会让下次启动读失败 → androidId 重新生成 → 设备信任归零）。
       final tmp = File('${f.path}.tmp');
-      tmp.writeAsStringSync(const JsonEncoder.withIndent('  ').convert(
-        merged.toJson(),
-      ));
+      tmp.writeAsStringSync(
+        const JsonEncoder.withIndent('  ').convert(merged.toJson()),
+      );
       tmp.renameSync(f.path);
       _log.i('设备状态已保存: $merged');
     } catch (e) {

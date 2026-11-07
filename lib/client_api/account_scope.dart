@@ -60,8 +60,8 @@ class AccountScope {
   static bool isValidUin(int uin) => uin >= minUin && uin <= maxUin;
 
   /// 所有账号目录的父目录（`<dataDir>/accounts`）。**不保证已存在**。
-  static Directory accountsRoot(Directory dataDir) => Directory(
-      '${dataDir.path}${Platform.pathSeparator}$accountsDirName');
+  static Directory accountsRoot(Directory dataDir) =>
+      Directory('${dataDir.path}${Platform.pathSeparator}$accountsDirName');
 
   /// 取（不创建）账号根。uin 不合法时抛 [ArgumentError]。
   ///

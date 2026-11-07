@@ -19,24 +19,28 @@ import 'package:penguinchat/ui/widgets/telegram_avatar.dart';
 final bool goldenSkip = !Platform.isWindows;
 
 Chat _group() => Chat(
-      id: 'group_1',
-      title: '产品讨论组',
-      lastMessage: '',
-      lastTime: DateTime(2026, 10, 30, 9, 12),
-      type: ChatType.group,
-      memberCount: 42,
-    );
+  id: 'group_1',
+  title: '产品讨论组',
+  lastMessage: '',
+  lastTime: DateTime(2026, 10, 30, 9, 12),
+  type: ChatType.group,
+  memberCount: 42,
+);
 
 Chat _priv({bool online = true}) => Chat(
-      id: 'private_2',
-      title: '李四',
-      lastMessage: '',
-      lastTime: DateTime(2026, 10, 30, 8, 5),
-      online: online,
-    );
+  id: 'private_2',
+  title: '李四',
+  lastMessage: '',
+  lastTime: DateTime(2026, 10, 30, 8, 5),
+  online: online,
+);
 
-Future<void> _pump(WidgetTester tester, Widget child,
-    {Size size = const Size(360, 120), bool dark = true}) async {
+Future<void> _pump(
+  WidgetTester tester,
+  Widget child, {
+  Size size = const Size(360, 120),
+  bool dark = true,
+}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
@@ -44,10 +48,12 @@ Future<void> _pump(WidgetTester tester, Widget child,
   // 颜色是全局单例（TelegramColors.use），测试里必须自己切，否则"亮色"图仍是暗的。
   TelegramColors.use(dark ? TelegramPalette.dark : TelegramPalette.light);
   addTearDown(() => TelegramColors.use(TelegramPalette.dark));
-  await tester.pumpWidget(MaterialApp(
-    theme: buildTelegramTheme(dark: dark),
-    home: Scaffold(body: child),
-  ));
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: buildTelegramTheme(dark: dark),
+      home: Scaffold(body: child),
+    ),
+  );
   await tester.pumpAndSettle();
 }
 
@@ -55,10 +61,14 @@ void main() {
   testWidgets('几何：胶囊高 58、标题 17.5 w700、副标题 13.5、头像 40', (tester) async {
     await _pump(tester, ChatHeader(chat: _group(), onOpenSettings: () {}));
     expect(tester.getSize(find.byType(ChatHeader)).height, 58);
-    final title = tester.widget<Text>(find.byKey(const ValueKey('chat-header-title')));
+    final title = tester.widget<Text>(
+      find.byKey(const ValueKey('chat-header-title')),
+    );
     expect(title.style!.fontSize, 17.5);
     expect(title.style!.fontWeight, FontWeight.w700);
-    final sub = tester.widget<Text>(find.byKey(const ValueKey('chat-header-subtitle')));
+    final sub = tester.widget<Text>(
+      find.byKey(const ValueKey('chat-header-subtitle')),
+    );
     expect(sub.style!.fontSize, 13.5);
     expect(sub.data, '群聊 · 42 人');
     final avatar = tester.widget<TelegramAvatar>(find.byType(TelegramAvatar));
@@ -104,12 +114,20 @@ void main() {
 
   testWidgets('私聊显示在线/离线，没有群工具菜单', (tester) async {
     await _pump(tester, ChatHeader(chat: _priv()));
-    expect(tester.widget<Text>(find.byKey(const ValueKey('chat-header-subtitle'))).data,
-        '在线');
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('chat-header-subtitle')))
+          .data,
+      '在线',
+    );
     expect(find.byKey(const ValueKey('group-menu')), findsNothing);
     await _pump(tester, ChatHeader(chat: _priv(online: false)));
-    expect(tester.widget<Text>(find.byKey(const ValueKey('chat-header-subtitle'))).data,
-        '离线');
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('chat-header-subtitle')))
+          .data,
+      '离线',
+    );
   });
 
   testWidgets('群工具菜单三项，回调按项触发', (tester) async {
@@ -144,15 +162,19 @@ void main() {
 
   testWidgets('金样：群聊头部（暗）', (tester) async {
     await _pump(tester, ChatHeader(chat: _group(), onOpenSettings: () {}));
-    await expectLater(find.byType(ChatHeader),
-        matchesGoldenFile('goldens/chat_header_group.png'),
-        skip: goldenSkip);
+    await expectLater(
+      find.byType(ChatHeader),
+      matchesGoldenFile('goldens/chat_header_group.png'),
+      skip: goldenSkip,
+    );
   });
 
   testWidgets('金样：私聊头部（亮）', (tester) async {
     await _pump(tester, ChatHeader(chat: _priv()), dark: false);
-    await expectLater(find.byType(ChatHeader),
-        matchesGoldenFile('goldens/chat_header_private_light.png'),
-        skip: goldenSkip);
+    await expectLater(
+      find.byType(ChatHeader),
+      matchesGoldenFile('goldens/chat_header_private_light.png'),
+      skip: goldenSkip,
+    );
   });
 }

@@ -85,11 +85,11 @@ class Qq8ProtocolDetEntry {
       : ip.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'uin': uin,
-        'ip': ipText,
-        'time': time,
-        'version': version,
-      };
+    'uin': uin,
+    'ip': ipText,
+    'time': time,
+    'version': version,
+  };
 
   @override
   String toString() =>
@@ -201,12 +201,14 @@ abstract final class Qq8ProtocolDet {
       final ip = Uint8List.sublistView(raw, off + 9, off + 9 + mlen);
       final time = _readU32(raw, off + 9 + mlen);
       final version = _readU32(raw, off + 13 + mlen);
-      out.add(Qq8ProtocolDetEntry(
-        uin: uin,
-        ip: Uint8List.fromList(ip),
-        time: time,
-        version: version,
-      ));
+      out.add(
+        Qq8ProtocolDetEntry(
+          uin: uin,
+          ip: Uint8List.fromList(ip),
+          time: time,
+          version: version,
+        ),
+      );
       off = need;
     }
     return out;

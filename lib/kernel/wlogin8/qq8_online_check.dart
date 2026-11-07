@@ -74,10 +74,12 @@ abstract final class Qq8OnlineCheck {
   /// 长度改写**：一旦 uin 位数变化，字段长度就不匹配了，宁可整体不替换，
   /// 让服务端明确拒绝（日志里能看出来），也不要送一个自相矛盾的包。
   static Uint8List _replay(String hex, int uin) {
-    final bytes = Uint8List.fromList(List<int>.generate(
-      hex.length ~/ 2,
-      (i) => int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16),
-    ));
+    final bytes = Uint8List.fromList(
+      List<int>.generate(
+        hex.length ~/ 2,
+        (i) => int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16),
+      ),
+    );
     final want = '$uin';
     if (want.length != _capturedUin.length) return bytes;
     final needle = ascii.encode(_capturedUin);

@@ -52,6 +52,6 @@ Color? accentColorOrNull(String id) {
 
 /// 按 id 取颜色；认不出的 id 一律回第一档（跟随主题），不抛异常。
 AccentChoice accentChoiceOf(String id) => accentChoices.firstWhere(
-      (AccentChoice c) => c.id == id,
-      orElse: () => accentChoices.first,
-    );
+  (AccentChoice c) => c.id == id,
+  orElse: () => accentChoices.first,
+);

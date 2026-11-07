@@ -64,16 +64,16 @@ enum MediaFetchFailureKind {
 
 /// 中文短标签。日志与 UI 占位文案共用，避免两处各写一份而漂移。
 String mediaFetchFailureLabel(MediaFetchFailureKind kind) => switch (kind) {
-      MediaFetchFailureKind.none => '成功',
-      MediaFetchFailureKind.expired => '图片链接已过期',
-      MediaFetchFailureKind.missing => '图片已失效',
-      MediaFetchFailureKind.rejected => '地址被拒绝',
-      MediaFetchFailureKind.rateLimited => '请求过于频繁',
-      MediaFetchFailureKind.network => '网络错误',
-      MediaFetchFailureKind.tooLarge => '文件过大',
-      MediaFetchFailureKind.badUrl => '地址不合法',
-      MediaFetchFailureKind.unknown => '加载失败',
-    };
+  MediaFetchFailureKind.none => '成功',
+  MediaFetchFailureKind.expired => '图片链接已过期',
+  MediaFetchFailureKind.missing => '图片已失效',
+  MediaFetchFailureKind.rejected => '地址被拒绝',
+  MediaFetchFailureKind.rateLimited => '请求过于频繁',
+  MediaFetchFailureKind.network => '网络错误',
+  MediaFetchFailureKind.tooLarge => '文件过大',
+  MediaFetchFailureKind.badUrl => '地址不合法',
+  MediaFetchFailureKind.unknown => '加载失败',
+};
 
 /// 取图结果。
 sealed class MediaFetchOutcome {
@@ -99,12 +99,7 @@ class MediaFetchFailed extends MediaFetchOutcome {
   /// 服务端 retmsg（同上）。
   final String? retmsg;
 
-  const MediaFetchFailed(
-    this.kind, {
-    this.status,
-    this.retcode,
-    this.retmsg,
-  });
+  const MediaFetchFailed(this.kind, {this.status, this.retcode, this.retmsg});
 
   @override
   String toString() =>
@@ -123,8 +118,10 @@ abstract class MediaFetcher {
   ///
   /// 默认实现退化为 [fetch]（假实现只覆盖 [fetch] 也能用），细节见
   /// [HttpMediaFetcher.fetchOutcome]。
-  Future<MediaFetchOutcome> fetchOutcome(String url,
-      {int maxBytes = kDefaultMediaMaxBytes}) async {
+  Future<MediaFetchOutcome> fetchOutcome(
+    String url, {
+    int maxBytes = kDefaultMediaMaxBytes,
+  }) async {
     final bytes = await fetch(url, maxBytes: maxBytes);
     if (bytes == null) {
       return const MediaFetchFailed(MediaFetchFailureKind.unknown);
@@ -153,9 +150,7 @@ MediaFetchFailureKind classifyMediaHttpFailure(int status, int? retcode) {
   // 5xx 是服务端临时问题，值得退避重试（与 4xx 的"换个地址"不同）。
   if (status >= 500) return MediaFetchFailureKind.network;
   if (retcode == -5503007) return MediaFetchFailureKind.expired;
-  if (retcode == -5503010 ||
-      retcode == -5503011 ||
-      retcode == -5503037) {
+  if (retcode == -5503010 || retcode == -5503011 || retcode == -5503037) {
     return MediaFetchFailureKind.rejected;
   }
   if (status >= 400) return MediaFetchFailureKind.rejected;
@@ -193,15 +188,19 @@ class HttpMediaFetcher implements MediaFetcher {
     ..userAgent = 'Mozilla/5.0 (Linux; Android 13) penguinchat/1.0';
 
   @override
-  Future<Uint8List?> fetch(String url,
-      {int maxBytes = kDefaultMediaMaxBytes}) async {
+  Future<Uint8List?> fetch(
+    String url, {
+    int maxBytes = kDefaultMediaMaxBytes,
+  }) async {
     final outcome = await fetchOutcome(url, maxBytes: maxBytes);
     return outcome is MediaFetchOk ? outcome.bytes : null;
   }
 
   @override
-  Future<MediaFetchOutcome> fetchOutcome(String url,
-      {int maxBytes = kDefaultMediaMaxBytes}) async {
+  Future<MediaFetchOutcome> fetchOutcome(
+    String url, {
+    int maxBytes = kDefaultMediaMaxBytes,
+  }) async {
     if (url.isEmpty) {
       return const MediaFetchFailed(MediaFetchFailureKind.badUrl);
     }

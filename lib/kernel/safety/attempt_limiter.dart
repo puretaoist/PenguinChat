@@ -50,18 +50,18 @@ class AttemptRecord {
   });
 
   Map<String, dynamic> toJson() => {
-        'at': at.toIso8601String(),
-        'ok': success,
-        if (reasonCode != null) 'rc': reasonCode,
-        if (pending) 'pending': true,
-      };
+    'at': at.toIso8601String(),
+    'ok': success,
+    if (reasonCode != null) 'rc': reasonCode,
+    if (pending) 'pending': true,
+  };
 
   static AttemptRecord fromJson(Map<String, dynamic> j) => AttemptRecord(
-        at: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
-        success: j['ok'] as bool? ?? false,
-        reasonCode: j['rc'] as String?,
-        pending: j['pending'] as bool? ?? false,
-      );
+    at: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
+    success: j['ok'] as bool? ?? false,
+    reasonCode: j['rc'] as String?,
+    pending: j['pending'] as bool? ?? false,
+  );
 }
 
 /// 限制器状态，用于界面展示（必须让用户看见还剩几次）。
@@ -97,8 +97,8 @@ class AttemptStatus {
     final human = s >= 3600
         ? '${(s / 3600).toStringAsFixed(1)} 小时'
         : s >= 60
-            ? '${(s / 60).round()} 分钟'
-            : '$s 秒';
+        ? '${(s / 60).round()} 分钟'
+        : '$s 秒';
     return '已锁定，需等待 $human${reason == null ? '' : '（$reason）'}';
   }
 }
@@ -153,8 +153,8 @@ class LoginAttemptLimiter {
   /// `<Temp>/qqclient-logs/qqclient-attempts.json`。两个文件各自记着一半历史
   /// （一份 fails=4、一份 fails=2），交错跑时谁都没到 5 次的硬锁线。
   static File defaultFileFor(Directory logDir) => File(
-        '${logDir.parent.path}${Platform.pathSeparator}qqclient-attempts.json',
-      );
+    '${logDir.parent.path}${Platform.pathSeparator}qqclient-attempts.json',
+  );
 
   LoginAttemptLimiter({
     this.window = const Duration(minutes: 10),
@@ -186,7 +186,9 @@ class LoginAttemptLimiter {
       // 老格式没有 lastFailureAt：从记录里回推最后一条失败的尝试
       // （占位记录与失败记录在旧格式里不可区分，取最后一条即可——
       //  旧格式下它要么是失败、要么是刚记下的那次，误差只在几十秒内）。
-      if (_lastFailureAt == null && _consecutiveFailures > 0 && _records.isNotEmpty) {
+      if (_lastFailureAt == null &&
+          _consecutiveFailures > 0 &&
+          _records.isNotEmpty) {
         _lastFailureAt = _records.last.at;
       }
       // 「要求验证」不是失败：老数据里被按失败累计的那些（type=2 / type=204）
@@ -316,8 +318,7 @@ class LoginAttemptLimiter {
   /// —— 清掉本地票据重新走登录；oicq 同样删 token 后 3 秒原样重发。
   /// 服务端能回 15/16 说明口令分支**已经通过**（口令错只会回 type=1），
   /// 它不是"凭据错误"，按失败累计会把自己锁死在服务端要求的状态机里。
-  static bool isTransientCode(String? rc) =>
-      rc == 'type=15' || rc == 'type=16';
+  static bool isTransientCode(String? rc) => rc == 'type=15' || rc == 'type=16';
 
   /// 「服务端准入拒绝」响应码：`type=45`（版本过低 / 禁止登录）、
   /// `type=155`（太久没有操作 / 请重新登录）。
@@ -339,8 +340,7 @@ class LoginAttemptLimiter {
   /// "will clean sig for uin"，清票据重登是有意义的动作）。两条路都落到
   /// `recordProgress`，但判据分开写——同一个布尔里塞两种意思，
   /// 以后想单独调整任一条就无从下手。
-  static bool isRejectedCode(String? rc) =>
-      rc == 'type=45' || rc == 'type=155';
+  static bool isRejectedCode(String? rc) => rc == 'type=45' || rc == 'type=155';
 
   /// 从记录尾部重算连败次数：跳过"要求验证"、瞬态重试、服务端准入拒绝与
   /// 未定结果的占位记录，遇到成功即止。
@@ -385,26 +385,29 @@ class LoginAttemptLimiter {
   /// 事后看记录能分辨"当时是要验证"还是"当时被拒了"。
   Future<void> recordProgress({String? reasonCode, DateTime? now}) async {
     if (_records.isEmpty) {
-      _records.add(AttemptRecord(
-        at: now ?? DateTime.now(),
-        success: false,
-        reasonCode: reasonCode,
-      ));
+      _records.add(
+        AttemptRecord(
+          at: now ?? DateTime.now(),
+          success: false,
+          reasonCode: reasonCode,
+        ),
+      );
     } else {
       final last = _records.removeLast();
-      _records.add(AttemptRecord(
-        at: last.at,
-        success: last.success,
-        reasonCode: reasonCode ?? last.reasonCode,
-      ));
+      _records.add(
+        AttemptRecord(
+          at: last.at,
+          success: last.success,
+          reasonCode: reasonCode ?? last.reasonCode,
+        ),
+      );
     }
     await _save();
   }
 
-  List<AttemptRecord> _windowRecords(DateTime now) => _records
-      .where((r) => now.difference(r.at) < window)
-      .toList()
-    ..sort((a, b) => a.at.compareTo(b.at));
+  List<AttemptRecord> _windowRecords(DateTime now) =>
+      _records.where((r) => now.difference(r.at) < window).toList()
+        ..sort((a, b) => a.at.compareTo(b.at));
 
   int _usedInWindow(DateTime now) => _windowRecords(now).length;
 
@@ -419,7 +422,8 @@ class LoginAttemptLimiter {
     final st = status(now);
     if (!st.allowed) return st;
     _records.add(
-        AttemptRecord(at: now ?? DateTime.now(), success: false, pending: true));
+      AttemptRecord(at: now ?? DateTime.now(), success: false, pending: true),
+    );
     await _save();
     return st;
   }
@@ -430,14 +434,18 @@ class LoginAttemptLimiter {
     final t = now ?? DateTime.now();
     _lastFailureAt = t;
     if (_records.isEmpty) {
-      _records.add(AttemptRecord(at: t, success: false, reasonCode: reasonCode));
+      _records.add(
+        AttemptRecord(at: t, success: false, reasonCode: reasonCode),
+      );
     } else {
       final last = _records.removeLast();
-      _records.add(AttemptRecord(
-        at: last.at,
-        success: false,
-        reasonCode: reasonCode ?? last.reasonCode,
-      ));
+      _records.add(
+        AttemptRecord(
+          at: last.at,
+          success: false,
+          reasonCode: reasonCode ?? last.reasonCode,
+        ),
+      );
     }
 
     if (_consecutiveFailures >= hardLockAfter) {

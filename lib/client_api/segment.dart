@@ -170,18 +170,15 @@ class FaceSegment extends Segment {
   const FaceSegment(this.id, {this.isBig = false});
 
   factory FaceSegment.fromData(Map<String, dynamic> data) => FaceSegment(
-        (data['id'] as String?) ?? '',
-        isBig: data['is_big'] == true || data['is_big'] == 1,
-      );
+    (data['id'] as String?) ?? '',
+    isBig: data['is_big'] == true || data['is_big'] == 1,
+  );
 
   @override
   String get type => 'face';
 
   @override
-  Map<String, dynamic> toData() => {
-        'id': id,
-        if (isBig) 'is_big': true,
-      };
+  Map<String, dynamic> toData() => {'id': id, if (isBig) 'is_big': true};
 
   @override
   String get preview => '[表情]';
@@ -202,10 +199,8 @@ class AtSegment extends Segment {
 
   const AtSegment(this.qq, {this.name});
 
-  factory AtSegment.fromData(Map<String, dynamic> data) => AtSegment(
-        (data['qq'] ?? '').toString(),
-        name: data['name'] as String?,
-      );
+  factory AtSegment.fromData(Map<String, dynamic> data) =>
+      AtSegment((data['qq'] ?? '').toString(), name: data['name'] as String?);
 
   bool get isAll => qq == 'all';
 
@@ -275,16 +270,16 @@ class ImageSegment extends Segment {
   });
 
   factory ImageSegment.fromData(Map<String, dynamic> data) => ImageSegment(
-        (data['file'] as String?) ?? '',
-        url: data['url'] as String?,
-        summary: data['summary'] as String?,
-        flash: data['type'] == 'flash',
-        width: _intOf(data['width']),
-        height: _intOf(data['height']),
-        md5: data['md5'] as String?,
-        fileId: _intOf(data['fileId']),
-        groupCode: _intOf(data['groupCode']),
-      );
+    (data['file'] as String?) ?? '',
+    url: data['url'] as String?,
+    summary: data['summary'] as String?,
+    flash: data['type'] == 'flash',
+    width: _intOf(data['width']),
+    height: _intOf(data['height']),
+    md5: data['md5'] as String?,
+    fileId: _intOf(data['fileId']),
+    groupCode: _intOf(data['groupCode']),
+  );
 
   static int? _intOf(Object? v) =>
       v is int ? v : (v == null ? null : int.tryParse('$v'));
@@ -304,16 +299,16 @@ class ImageSegment extends Segment {
 
   @override
   Map<String, dynamic> toData() => {
-        'file': file,
-        if (url != null) 'url': url,
-        if (summary != null) 'summary': summary,
-        if (width != null) 'width': width,
-        if (height != null) 'height': height,
-        if (flash) 'type': 'flash',
-        if (md5 != null) 'md5': md5,
-        if (fileId != null) 'fileId': fileId,
-        if (groupCode != null) 'groupCode': groupCode,
-      };
+    'file': file,
+    if (url != null) 'url': url,
+    if (summary != null) 'summary': summary,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (flash) 'type': 'flash',
+    if (md5 != null) 'md5': md5,
+    if (fileId != null) 'fileId': fileId,
+    if (groupCode != null) 'groupCode': groupCode,
+  };
 
   @override
   String get preview => summary?.isNotEmpty == true ? summary! : '[图片]';
@@ -364,15 +359,15 @@ class RecordSegment extends Segment {
   });
 
   factory RecordSegment.fromData(Map<String, dynamic> data) => RecordSegment(
-        (data['file'] as String?) ?? '',
-        url: data['url'] as String?,
-        text: data['text'] as String?,
-        magic: data['magic'] == true || data['magic'] == 1,
-        seconds: _asInt(data['seconds'] ?? data['duration']),
-        size: _asInt(data['size']),
-        localPath: data['localPath'] as String?,
-        uuid: data['uuid'] as String?,
-      );
+    (data['file'] as String?) ?? '',
+    url: data['url'] as String?,
+    text: data['text'] as String?,
+    magic: data['magic'] == true || data['magic'] == 1,
+    seconds: _asInt(data['seconds'] ?? data['duration']),
+    size: _asInt(data['size']),
+    localPath: data['localPath'] as String?,
+    uuid: data['uuid'] as String?,
+  );
 
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
 
@@ -381,14 +376,14 @@ class RecordSegment extends Segment {
 
   @override
   Map<String, dynamic> toData() => {
-        'file': file,
-        if (url != null) 'url': url,
-        if (seconds != null) 'seconds': seconds,
-        if (size != null) 'size': size,
-        if (magic) 'magic': '1',
-        if (localPath != null) 'localPath': localPath,
-        if (uuid != null) 'uuid': uuid,
-      };
+    'file': file,
+    if (url != null) 'url': url,
+    if (seconds != null) 'seconds': seconds,
+    if (size != null) 'size': size,
+    if (magic) 'magic': '1',
+    if (localPath != null) 'localPath': localPath,
+    if (uuid != null) 'uuid': uuid,
+  };
 
   @override
   String get preview => '[语音]';
@@ -413,12 +408,12 @@ class VideoSegment extends Segment {
   const VideoSegment(this.file, {this.url, this.name, this.seconds, this.size});
 
   factory VideoSegment.fromData(Map<String, dynamic> data) => VideoSegment(
-        (data['file'] as String?) ?? '',
-        url: data['url'] as String?,
-        name: data['name'] as String?,
-        seconds: _asInt(data['seconds'] ?? data['duration']),
-        size: _asInt(data['size']),
-      );
+    (data['file'] as String?) ?? '',
+    url: data['url'] as String?,
+    name: data['name'] as String?,
+    seconds: _asInt(data['seconds'] ?? data['duration']),
+    size: _asInt(data['size']),
+  );
 
   String get bestSource => (url != null && url!.isNotEmpty) ? url! : file;
 
@@ -427,12 +422,12 @@ class VideoSegment extends Segment {
 
   @override
   Map<String, dynamic> toData() => {
-        'file': file,
-        if (url != null) 'url': url,
-        if (name != null) 'name': name,
-        if (seconds != null) 'seconds': seconds,
-        if (size != null) 'size': size,
-      };
+    'file': file,
+    if (url != null) 'url': url,
+    if (name != null) 'name': name,
+    if (seconds != null) 'seconds': seconds,
+    if (size != null) 'size': size,
+  };
 
   @override
   String get preview => '[视频]';
@@ -457,21 +452,21 @@ class FileSegment extends Segment {
   const FileSegment(this.file, {this.fileId, this.name, this.size});
 
   factory FileSegment.fromData(Map<String, dynamic> data) => FileSegment(
-        (data['file'] as String?) ?? '',
-        fileId: (data['file_id'] ?? data['id'])?.toString(),
-        name: data['name'] as String?,
-        size: _asInt(data['size']),
-      );
+    (data['file'] as String?) ?? '',
+    fileId: (data['file_id'] ?? data['id'])?.toString(),
+    name: data['name'] as String?,
+    size: _asInt(data['size']),
+  );
 
   @override
   String get type => 'file';
 
   @override
   Map<String, dynamic> toData() => {
-        'file': file,
-        if (name != null) 'name': name,
-        if (fileId != null) 'file_id': fileId,
-      };
+    'file': file,
+    if (name != null) 'name': name,
+    if (fileId != null) 'file_id': fileId,
+  };
 
   @override
   String get preview => name?.isNotEmpty == true ? '[文件] $name' : '[文件]';
@@ -497,20 +492,20 @@ class ReplySegment extends Segment {
   const ReplySegment(this.messageId, {this.text, this.qq, this.time});
 
   factory ReplySegment.fromData(Map<String, dynamic> data) => ReplySegment(
-        (data['id'] ?? data['message_id'] ?? '').toString(),
-        text: data['text'] as String?,
-        qq: data['qq']?.toString(),
-        time: _asDateTime(data['time']),
-      );
+    (data['id'] ?? data['message_id'] ?? '').toString(),
+    text: data['text'] as String?,
+    qq: data['qq']?.toString(),
+    time: _asDateTime(data['time']),
+  );
 
   @override
   String get type => 'reply';
 
   @override
   Map<String, dynamic> toData() => {
-        'id': messageId,
-        if (text != null) 'text': text,
-      };
+    'id': messageId,
+    if (text != null) 'text': text,
+  };
 
   @override
   String get preview => text?.isNotEmpty == true ? '[回复]$text' : '[回复]';
@@ -530,12 +525,12 @@ class ForwardSegment extends Segment {
   const ForwardSegment(this.id, {this.content});
 
   factory ForwardSegment.fromData(Map<String, dynamic> data) => ForwardSegment(
-        (data['id'] ?? '') .toString(),
-        content: (data['content'] as List?)
-            ?.whereType<Map>()
-            .map((e) => ForwardNode.fromMap(e.cast<String, dynamic>()))
-            .toList(),
-      );
+    (data['id'] ?? '').toString(),
+    content: (data['content'] as List?)
+        ?.whereType<Map>()
+        .map((e) => ForwardNode.fromMap(e.cast<String, dynamic>()))
+        .toList(),
+  );
 
   @override
   String get type => 'forward';
@@ -587,18 +582,18 @@ class JsonSegment extends Segment {
   const JsonSegment(this.data, {this.summary = ''});
 
   factory JsonSegment.fromData(Map<String, dynamic> d) => JsonSegment(
-        (d['data'] as String?) ?? '',
-        summary: (d['summary'] as String?) ?? '',
-      );
+    (d['data'] as String?) ?? '',
+    summary: (d['summary'] as String?) ?? '',
+  );
 
   @override
   String get type => 'json';
 
   @override
   Map<String, dynamic> toData() => {
-        'data': data,
-        if (summary.isNotEmpty) 'summary': summary,
-      };
+    'data': data,
+    if (summary.isNotEmpty) 'summary': summary,
+  };
 
   @override
   String get preview => summary.isNotEmpty ? '[轻应用] $summary' : '[轻应用消息]';
@@ -617,18 +612,18 @@ class XmlSegment extends Segment {
   const XmlSegment(this.data, {this.summary = ''});
 
   factory XmlSegment.fromData(Map<String, dynamic> d) => XmlSegment(
-        (d['data'] as String?) ?? '',
-        summary: (d['summary'] as String?) ?? '',
-      );
+    (d['data'] as String?) ?? '',
+    summary: (d['summary'] as String?) ?? '',
+  );
 
   @override
   String get type => 'xml';
 
   @override
   Map<String, dynamic> toData() => {
-        'data': data,
-        if (summary.isNotEmpty) 'summary': summary,
-      };
+    'data': data,
+    if (summary.isNotEmpty) 'summary': summary,
+  };
 
   @override
   String get preview => summary.isNotEmpty ? '[卡片] $summary' : '[卡片消息]';
@@ -651,16 +646,14 @@ class PokeSegment extends Segment {
   String get type => 'poke';
 
   @override
-  Map<String, dynamic> toData() => {
-        if (id != null) 'id': id,
-      };
+  Map<String, dynamic> toData() => {if (id != null) 'id': id};
 
   @override
   String get preview => switch (kind) {
-        'dice' => '[骰子]',
-        'rps' => '[猜拳]',
-        _ => '[戳一戳]',
-      };
+    'dice' => '[骰子]',
+    'rps' => '[猜拳]',
+    _ => '[戳一戳]',
+  };
 
   @override
   String toString() => 'PokeSegment($kind)';

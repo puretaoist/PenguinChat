@@ -108,8 +108,9 @@ abstract final class Qq8Jce {
     required Map<String, Uint8List> attributes,
     int requestId = 0,
   }) {
-    final payload =
-        encode(<int, Object?>{0: Map<Object?, Object?>.of(attributes)});
+    final payload = encode(<int, Object?>{
+      0: Map<Object?, Object?>.of(attributes),
+    });
     return encode(<int, Object?>{
       1: 3, // iVersion（参考实现默认 3）
       2: 0, // cPacketType

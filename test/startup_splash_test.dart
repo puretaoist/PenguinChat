@@ -31,7 +31,9 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: StartupSplash()));
     await tester.pump(const Duration(milliseconds: 500));
     final opacity = tester.widget<Opacity>(
-      find.ancestor(of: find.byType(Icon), matching: find.byType(Opacity)).first,
+      find
+          .ancestor(of: find.byType(Icon), matching: find.byType(Opacity))
+          .first,
     );
     expect(opacity.opacity, 1.0);
   });

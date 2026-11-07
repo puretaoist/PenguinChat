@@ -139,30 +139,21 @@ abstract final class Qq8MultiMsg {
     required int rand,
     required Uint8List rich,
     String? nickname,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: senderUin,
-          2: target,
-          3: dm ? dmElemType : groupElemType,
-          4: dm ? dmNodeFlag : null,
-          5: seq & 0xFFFF,
-          6: time,
-          7: rand2uuid(rand),
-          9: dm
-              ? null
-              : <int, Object?>{
-                  1: target,
-                  4: nickname ?? '',
-                },
-          14: dm ? (nickname ?? '') : null,
-          20: <int, Object?>{
-            1: 0,
-            2: rand & 0xFFFFFFFF,
-          },
-        },
-        3: <int, Object?>{1: rich},
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{
+      1: senderUin,
+      2: target,
+      3: dm ? dmElemType : groupElemType,
+      4: dm ? dmNodeFlag : null,
+      5: seq & 0xFFFF,
+      6: time,
+      7: rand2uuid(rand),
+      9: dm ? null : <int, Object?>{1: target, 4: nickname ?? ''},
+      14: dm ? (nickname ?? '') : null,
+      20: <int, Object?>{1: 0, 2: rand & 0xFFFFFFFF},
+    },
+    3: <int, Object?>{1: rich},
+  });
 
   /// 把节点列表编成转发内容（未压缩）。
   static Uint8List buildContent(List<Uint8List> nodes) =>
@@ -184,24 +175,17 @@ abstract final class Qq8MultiMsg {
     required int size,
     required Uint8List md5,
     required String apkVersion,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 1,
-        2: 5,
-        3: 9,
-        4: 3,
-        5: apkVersion,
-        6: <Object?>[
-          <int, Object?>{
-            1: target,
-            2: size,
-            3: md5,
-            4: 3,
-            5: 0,
-          },
-        ],
-        8: 1,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 1,
+    2: 5,
+    3: 9,
+    4: 3,
+    5: apkVersion,
+    6: <Object?>[
+      <int, Object?>{1: target, 2: size, 3: md5, 4: 3, 5: 0},
+    ],
+    8: 1,
+  });
 
   /// 解析 `MultiMsg.ApplyUp` 的应答。
   ///
@@ -231,20 +215,14 @@ abstract final class Qq8MultiMsg {
     required int target,
     required Uint8List compressed,
     required Uint8List uploadKey,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 1,
-        2: 5,
-        3: 9,
-        4: <Object?>[
-          <int, Object?>{
-            2: target,
-            4: compressed,
-            5: 2,
-            6: uploadKey,
-          },
-        ],
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 1,
+    2: 5,
+    3: 9,
+    4: <Object?>[
+      <int, Object?>{2: target, 4: compressed, 5: 2, 6: uploadKey},
+    ],
+  });
 
   /// 生成"聊天记录"XML 卡片（`action="viewMultiMsg"`）。
   ///
@@ -270,7 +248,8 @@ abstract final class Qq8MultiMsg {
     sb.write('" m_fileSize="');
     sb.write(fileSize);
     sb.write(
-        '"><item layout="1"><title color="#000000" size="34">转发的聊天记录</title>');
+      '"><item layout="1"><title color="#000000" size="34">转发的聊天记录</title>',
+    );
     for (final p in previews) {
       sb.write('<title color="#777777" size="26">');
       sb.write(_escapeXml(p));
@@ -293,10 +272,7 @@ abstract final class Qq8MultiMsg {
     body[0] = 0x01;
     body.setRange(1, body.length, packed);
     return Qq8Pb.encode(<int, Object?>{
-      12: <int, Object?>{
-        1: body,
-        2: serviceId,
-      },
+      12: <int, Object?>{1: body, 2: serviceId},
     });
   }
 

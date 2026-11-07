@@ -183,7 +183,13 @@ class SessionNotice extends SessionEvent {
   final String? operatorId;
   final Map<String, dynamic> raw;
 
-  const SessionNotice(this.kind, this.chatId, {this.userId, this.operatorId, this.raw = const {}});
+  const SessionNotice(
+    this.kind,
+    this.chatId, {
+    this.userId,
+    this.operatorId,
+    this.raw = const {},
+  });
 }
 
 /// 请求类事件（加好友 / 加群）。
@@ -198,7 +204,13 @@ class SessionRequest extends SessionEvent {
   final String? chatId;
   final String? comment;
 
-  const SessionRequest(this.kind, this.flag, this.userId, {this.chatId, this.comment});
+  const SessionRequest(
+    this.kind,
+    this.flag,
+    this.userId, {
+    this.chatId,
+    this.comment,
+  });
 }
 
 /// 传输层错误。
@@ -234,7 +246,8 @@ class AccessRejectedException implements Exception {
   const AccessRejectedException(this.message, [this.resultType]);
 
   @override
-  String toString() => 'AccessRejectedException: $message${resultType == null ? '' : ' (type=$resultType)'}';
+  String toString() =>
+      'AccessRejectedException: $message${resultType == null ? '' : ' (type=$resultType)'}';
 }
 
 /// 会话层操作失败。
@@ -244,7 +257,8 @@ class SessionException implements Exception {
   const SessionException(this.message, {this.cause});
 
   @override
-  String toString() => 'SessionException: $message${cause == null ? '' : ' (cause: $cause)'}';
+  String toString() =>
+      'SessionException: $message${cause == null ? '' : ' (cause: $cause)'}';
 }
 
 // ---------------------------------------------------------------------------

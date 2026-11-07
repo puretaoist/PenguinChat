@@ -98,7 +98,8 @@ class Qq8RecoveryAvailability {
       hasA2: _nonEmpty(t.tgt),
       hasD2: _nonEmpty(t.d2) && !d2KeyInvalid,
       hasD2Key: _nonEmpty(t.d2key) && !d2KeyInvalid,
-      hasA2Key: _nonEmpty(t.a2Key) &&
+      hasA2Key:
+          _nonEmpty(t.a2Key) &&
           !t.materialKnownInvalid(Qq8TokenData.materialA2Key),
       hasA1: _nonEmpty(t.a1) && !a1Invalid,
       hasNoPicSig: _nonEmpty(t.noPicSig) && !a1Invalid,
@@ -109,16 +110,17 @@ class Qq8RecoveryAvailability {
 
   /// 该材料是否"手上真有"。
   bool has(Qq8RecoveryMaterial m) => switch (m) {
-        // 4 元组：A2+D2+KEY 三样齐（WtloginHelper.java:607-690），body 带 0x143。
-        Qq8RecoveryMaterial.d2Key => hasA2 && hasD2 && hasD2Key,
-        // 3 元组：A2+A2KEY 两样齐，body 不带 0x143（故不要求 hasD2）。
-        Qq8RecoveryMaterial.a2Key => hasA2 && hasA2Key,
-        Qq8RecoveryMaterial.a1NoPicSig => hasA1 && hasNoPicSig,
-        Qq8RecoveryMaterial.a2Only => hasA2,
-      };
+    // 4 元组：A2+D2+KEY 三样齐（WtloginHelper.java:607-690），body 带 0x143。
+    Qq8RecoveryMaterial.d2Key => hasA2 && hasD2 && hasD2Key,
+    // 3 元组：A2+A2KEY 两样齐，body 不带 0x143（故不要求 hasD2）。
+    Qq8RecoveryMaterial.a2Key => hasA2 && hasA2Key,
+    Qq8RecoveryMaterial.a1NoPicSig => hasA1 && hasNoPicSig,
+    Qq8RecoveryMaterial.a2Only => hasA2,
+  };
 
   @override
-  String toString() => 'Qq8RecoveryAvailability(a2=$hasA2, d2=$hasD2, '
+  String toString() =>
+      'Qq8RecoveryAvailability(a2=$hasA2, d2=$hasD2, '
       'd2key=$hasD2Key, a2key=$hasA2Key, a1=$hasA1, noPicSig=$hasNoPicSig)';
 }
 
@@ -166,15 +168,14 @@ class Qq8RecoveryStop extends Qq8RecoveryDecision {
 /// 最后手段。
 const List<Qq8RecoveryMaterial> qq8RecoveryOrderedMaterials =
     <Qq8RecoveryMaterial>[
-  Qq8RecoveryMaterial.d2Key,
-  Qq8RecoveryMaterial.a2Key,
-  Qq8RecoveryMaterial.a1NoPicSig,
-  Qq8RecoveryMaterial.a2Only,
-];
+      Qq8RecoveryMaterial.d2Key,
+      Qq8RecoveryMaterial.a2Key,
+      Qq8RecoveryMaterial.a1NoPicSig,
+      Qq8RecoveryMaterial.a2Only,
+    ];
 
 /// 固定顺序（同 [qq8RecoveryOrderedMaterials]，供实例/测试使用）。
-List<Qq8RecoveryMaterial> get orderedMaterials =>
-    qq8RecoveryOrderedMaterials;
+List<Qq8RecoveryMaterial> get orderedMaterials => qq8RecoveryOrderedMaterials;
 
 /// **已经过真机证据确认可用**的恢复材料集合。
 ///
@@ -240,20 +241,17 @@ Qq8RecoveryDecision planNext({
       message: '手上只有未经真机验证的恢复材料，默认不自动试；请重新登录一次',
     );
   }
-  return const Qq8RecoveryStop(
-    code: 'exhausted',
-    message: '登录凭证不足，请重新登录一次',
-  );
+  return const Qq8RecoveryStop(code: 'exhausted', message: '登录凭证不足，请重新登录一次');
 }
 
 /// 材料名（与 `Qq8TokenData.materialD2Key` 等字符串常量一一对应）。
 /// 用于把失效结论写进票据，跨模块不反向 import 枚举。
 String qq8RecoveryMaterialName(Qq8RecoveryMaterial m) => switch (m) {
-      Qq8RecoveryMaterial.d2Key => Qq8TokenData.materialD2Key,
-      Qq8RecoveryMaterial.a2Key => Qq8TokenData.materialA2Key,
-      Qq8RecoveryMaterial.a1NoPicSig => Qq8TokenData.materialA1NoPicSig,
-      Qq8RecoveryMaterial.a2Only => Qq8TokenData.materialA2Only,
-    };
+  Qq8RecoveryMaterial.d2Key => Qq8TokenData.materialD2Key,
+  Qq8RecoveryMaterial.a2Key => Qq8TokenData.materialA2Key,
+  Qq8RecoveryMaterial.a1NoPicSig => Qq8TokenData.materialA1NoPicSig,
+  Qq8RecoveryMaterial.a2Only => Qq8TokenData.materialA2Only,
+};
 
 String _whyFor(
   Qq8RecoveryMaterial m,

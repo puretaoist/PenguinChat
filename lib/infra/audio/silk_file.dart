@@ -107,7 +107,11 @@ class SilkFile {
       pos += 2;
       if (pos + len > bytes.length) {
         throw FormatException(
-            'SILK 帧被截断：声明 ' + len.toString() + ' 字节，仅余 ' + (bytes.length - pos).toString());
+          'SILK 帧被截断：声明 ' +
+              len.toString() +
+              ' 字节，仅余 ' +
+              (bytes.length - pos).toString(),
+        );
       }
       frames.add(Uint8List.fromList(bytes.sublist(pos, pos + len)));
       pos += len;

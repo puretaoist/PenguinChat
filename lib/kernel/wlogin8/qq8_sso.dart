@@ -46,7 +46,18 @@ import 'qq8_tlv.dart';
 /// 12 字节，含义未明。**不要"顺手优化"成零** —— 它很可能参与服务端的
 /// 版本/分支判定，改了就登不上，而且报错信息不会指向这里。
 const List<int> qq8BufUnknown = <int>[
-  0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
 ];
 
 /// SSO 包头里的命令字。
@@ -119,12 +130,12 @@ class Qq8SigInfo {
     Uint8List? sigKey,
     Uint8List? ticketKey,
     Uint8List? srmToken,
-  })  : tgt = tgt ?? _emptyBytes,
-        d2 = d2 ?? _emptyBytes,
-        d2key = d2key ?? _emptyBytes,
-        sigKey = sigKey ?? _emptyBytes,
-        ticketKey = ticketKey ?? _emptyBytes,
-        srmToken = srmToken ?? _emptyBytes;
+  }) : tgt = tgt ?? _emptyBytes,
+       d2 = d2 ?? _emptyBytes,
+       d2key = d2key ?? _emptyBytes,
+       sigKey = sigKey ?? _emptyBytes,
+       ticketKey = ticketKey ?? _emptyBytes,
+       srmToken = srmToken ?? _emptyBytes;
 }
 
 /// 共享的空字节常量（`Uint8List` 没有 const 构造，只能这样给默认值）。
@@ -226,8 +237,10 @@ class Qq8SsoContext {
   /// `apkName` 优先取 [Qq8ApkInfo.ksidName]（官方 8.2.11 是 33 字符的
   /// `A8.2.11.0153f87a8.2.11.0153f87a`，不是 `name` 那个 `A8.2.11.4530`）。
   Uint8List get ksid => Uint8List.fromList(
-        utf8.encode('|${device.imei}|${ksidNameOverride ?? apk.ksidName ?? apk.name}'),
-      );
+    utf8.encode(
+      '|${device.imei}|${ksidNameOverride ?? apk.ksidName ?? apk.name}',
+    ),
+  );
 
   /// SSO 头里 imei 槽的**实际内容**。
   ///
@@ -403,27 +416,29 @@ abstract final class Qq8Sso {
     final uin = uinOverride ?? ctx.uin;
 
     // 内层：SSO 信封
-    var sso = (ByteWriter()
-          ..u32(ctx.seqId)
-          ..u32(subId)
-          ..u32(subId)
-          ..raw(qq8BufUnknown)
-          ..let((w) => _withLength(w, ctx.sig.tgt))
-          ..let((w) => _withLength(w, utf8.encode(cmd)))
-          ..let((w) => _withLength(w, ctx.sessionId))
-          ..let((w) => _withLength(w, ctx.imeiSlot))
-          // ksid 原始字节槽。没有 ksid 时写 withLength(空) = `00 00 00 04`，
-          // 与 oicq 2.3.1 的 `.writeU32(4)` 逐字节相同（那正是空载荷形态）。
-          ..let((w) => _withLength(w, ctx.ksidRaw))
-          ..u16(ksid.length + 2)
-          ..raw(ksid)
-          ..let((w) => _writeReserveFields(w, ctx)))
-        .build();
+    var sso =
+        (ByteWriter()
+              ..u32(ctx.seqId)
+              ..u32(subId)
+              ..u32(subId)
+              ..raw(qq8BufUnknown)
+              ..let((w) => _withLength(w, ctx.sig.tgt))
+              ..let((w) => _withLength(w, utf8.encode(cmd)))
+              ..let((w) => _withLength(w, ctx.sessionId))
+              ..let((w) => _withLength(w, ctx.imeiSlot))
+              // ksid 原始字节槽。没有 ksid 时写 withLength(空) = `00 00 00 04`，
+              // 与 oicq 2.3.1 的 `.writeU32(4)` 逐字节相同（那正是空载荷形态）。
+              ..let((w) => _withLength(w, ctx.ksidRaw))
+              ..u16(ksid.length + 2)
+              ..raw(ksid)
+              ..let((w) => _writeReserveFields(w, ctx)))
+            .build();
 
-    sso = (ByteWriter()
-          ..let((w) => _withLength(w, sso))
-          ..let((w) => _withLength(w, body)))
-        .build();
+    sso =
+        (ByteWriter()
+              ..let((w) => _withLength(w, sso))
+              ..let((w) => _withLength(w, body)))
+            .build();
 
     if (type == Qq8LoginType.online) {
       sso = qqTeaEncrypt(sso, ctx.sig.d2key);
@@ -432,14 +447,15 @@ abstract final class Qq8Sso {
     }
 
     // 外层：登录信封
-    final outer = (ByteWriter()
-          ..u32(0x0A)
-          ..u8(type)
-          ..let((w) => _withLength(w, ctx.sig.d2))
-          ..u8(0)
-          ..let((w) => _withLength(w, utf8.encode('$uin')))
-          ..raw(sso))
-        .build();
+    final outer =
+        (ByteWriter()
+              ..u32(0x0A)
+              ..u8(type)
+              ..let((w) => _withLength(w, ctx.sig.d2))
+              ..u8(0)
+              ..let((w) => _withLength(w, utf8.encode('$uin')))
+              ..raw(sso))
+            .build();
 
     return (ByteWriter()..let((w) => _withLength(w, outer))).build();
   }
@@ -490,22 +506,27 @@ abstract final class Qq8Uni {
     required Uint8List d2key,
   }) {
     if (session.length != 4) {
-      throw ArgumentError.value(session.length, 'session', 'UNI 包的 session 必须是 4 字节');
+      throw ArgumentError.value(
+        session.length,
+        'session',
+        'UNI 包的 session 必须是 4 字节',
+      );
     }
     final cmdBytes = utf8.encode(cmd);
     // 头部（第一个 u32 之后的部分）：cmdLen + 20 —— 与收包侧 parseSSO 的
     // `headlen`（= 头总长 - 4）同义。
     final headLen = cmdBytes.length + 20;
-    final inner = (ByteWriter()
-          ..u32(headLen)
-          ..u32(cmdBytes.length + 4)
-          ..raw(cmdBytes)
-          ..u32(8) // session 字段长度（含自身 4 字节）
-          ..raw(session)
-          ..u32(4) // 固定值
-          ..u32(body.length + 4)
-          ..raw(body))
-        .build();
+    final inner =
+        (ByteWriter()
+              ..u32(headLen)
+              ..u32(cmdBytes.length + 4)
+              ..raw(cmdBytes)
+              ..u32(8) // session 字段长度（含自身 4 字节）
+              ..raw(session)
+              ..u32(4) // 固定值
+              ..u32(body.length + 4)
+              ..raw(body))
+            .build();
     final encrypted = qqTeaEncrypt(inner, d2key);
     final uinBytes = utf8.encode('$uin');
     return (ByteWriter()
@@ -599,7 +620,8 @@ Uint8List qq8KsidBytes(String injected) {
   final n = injected.length ~/ 2;
   final out = Uint8List(n);
   for (var i = 0; i < n; i++) {
-    out[i] = (_qq8HexNibble(injected.codeUnitAt(i * 2)) << 4) |
+    out[i] =
+        (_qq8HexNibble(injected.codeUnitAt(i * 2)) << 4) |
         _qq8HexNibble(injected.codeUnitAt(i * 2 + 1));
   }
   return out;

@@ -61,7 +61,8 @@ class ChatHeader extends StatelessWidget {
     const double iconSlot = 48.0; // 官方每个 action item 占 48dp（menuWidth）
     const double leftDefault = s + p; // 52，中胶囊左界（:2249）
 
-    final int menuItems = (onSearch != null ? 1 : 0) +
+    final int menuItems =
+        (onSearch != null ? 1 : 0) +
         (chat.isGroup ? 1 : (onOpenSettings != null ? 1 : 0));
     final double menuWidth = menuItems * iconSlot;
     final double menuCapsuleW = (menuWidth > s ? menuWidth : s) + 2 * p;
@@ -76,8 +77,9 @@ class ChatHeader extends StatelessWidget {
       color: chat.online ? TelegramColors.online : TelegramColors.textSecondary,
       fontSize: 13.5, // :762
     );
-    final String subText =
-        chat.isGroup ? '群聊 · ${chat.memberCount} 人' : (chat.online ? '在线' : '离线');
+    final String subText = chat.isGroup
+        ? '群聊 · ${chat.memberCount} 人'
+        : (chat.online ? '在线' : '离线');
 
     return SizedBox(
       height: capsuleH,
@@ -94,11 +96,14 @@ class ChatHeader extends StatelessWidget {
           );
           // 官方 getVisualWidth 有头像时加 dp(52+18)=70，再 +2p(12) 得胶囊宽。
           final double desired = textW + 82.0;
-          final double middleW =
-              math.min(maxMiddle > 0 ? maxMiddle : 0.0, desired);
+          final double middleW = math.min(
+            maxMiddle > 0 ? maxMiddle : 0.0,
+            desired,
+          );
           final double centered = (rightDefault + leftDefault - middleW) / 2;
-          final double middleLeft =
-              centered < leftDefault ? leftDefault : centered;
+          final double middleLeft = centered < leftDefault
+              ? leftDefault
+              : centered;
 
           return Stack(
             clipBehavior: Clip.none,
@@ -156,7 +161,9 @@ class ChatHeader extends StatelessWidget {
                                 chat.title,
                                 key: const ValueKey('chat-header-title'),
                                 maxLines: 1,
-                                textAlign: centerTitle ? TextAlign.center : null,
+                                textAlign: centerTitle
+                                    ? TextAlign.center
+                                    : null,
                                 overflow: TextOverflow.ellipsis,
                                 style: titleStyle,
                               ),

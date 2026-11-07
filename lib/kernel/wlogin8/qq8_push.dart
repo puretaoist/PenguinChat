@@ -44,7 +44,7 @@
 ///   3 = random（消息 rand！）  9 = font_name
 /// ```
 ///
-/// 读法交叉验证：参考实现 `lib/internal/onlinepush.ts`（命令字注册）+ 
+/// 读法交叉验证：参考实现 `lib/internal/onlinepush.ts`（命令字注册）+
 /// `lib/message/message.ts` / `parser.ts`（`rand = attr[3] || msg_uid 低 32 位`、
 /// `text = elem.text.str`、`@` 信息在 `text[3]`）。
 ///
@@ -218,10 +218,10 @@ class Qq8IncomingMessage {
   ///
   /// 私聊里"对方" = `fromUin == selfUin ? toUin : fromUin`。
   int chatId(int selfUin) => switch (kind) {
-        Qq8IncomingKind.group => groupCode ?? 0,
-        Qq8IncomingKind.discuss => discussUin ?? 0,
-        Qq8IncomingKind.c2c => isSelf(selfUin) ? toUin : fromUin,
-      };
+    Qq8IncomingKind.group => groupCode ?? 0,
+    Qq8IncomingKind.discuss => discussUin ?? 0,
+    Qq8IncomingKind.c2c => isSelf(selfUin) ? toUin : fromUin,
+  };
 
   /// 消息 ID：私聊 `genDmMessageId` / 群 `genGroupMessageId`（参考实现同款）。
   ///
@@ -370,6 +370,7 @@ final class Qq8TransPush extends Qq8PushEvent {
     required this.payloadLength,
   });
 }
+
 /// 我们不认识的推送（原样交给上层，附一句说明）。
 final class Qq8UnknownPush extends Qq8PushEvent {
   final int payloadLength;
@@ -377,10 +378,7 @@ final class Qq8UnknownPush extends Qq8PushEvent {
   /// 为什么没认出来（缺字段 / JCE 解不开 / 命令字没注册）。
   final String? note;
 
-  const Qq8UnknownPush(super.cmd, {
-    required this.payloadLength,
-    this.note,
-  });
+  const Qq8UnknownPush(super.cmd, {required this.payloadLength, this.note});
 }
 
 /// 解析一条推送（纯函数）。
@@ -404,8 +402,7 @@ Qq8PushEvent qq8ParsePush(String cmd, Uint8List payload) {
     case Qq8PushCmd.pushTransMsg:
       return _parseTransMsg(cmd, payload);
     default:
-      return Qq8UnknownPush(cmd,
-          payloadLength: payload.length, note: '命令字未注册');
+      return Qq8UnknownPush(cmd, payloadLength: payload.length, note: '命令字未注册');
   }
 }
 
@@ -417,8 +414,11 @@ Qq8PushEvent _parseMessagePush(String cmd, Uint8List payload) {
   final top = Qq8Pb.decode(payload);
   final msgBytes = Qq8Pb.bytesAt(top, 1);
   if (msgBytes == null) {
-    return Qq8UnknownPush(cmd,
-        payloadLength: payload.length, note: '没有 msg(1) 字段');
+    return Qq8UnknownPush(
+      cmd,
+      payloadLength: payload.length,
+      note: '没有 msg(1) 字段',
+    );
   }
   final kind = switch (cmd) {
     Qq8PushCmd.pushGroup => Qq8IncomingKind.group,
@@ -427,8 +427,11 @@ Qq8PushEvent _parseMessagePush(String cmd, Uint8List payload) {
   };
   final message = qq8ParseMsg(msgBytes, kindHint: kind);
   if (message == null) {
-    return Qq8UnknownPush(cmd,
-        payloadLength: payload.length, note: 'msg 里没有 msg_head(1)');
+    return Qq8UnknownPush(
+      cmd,
+      payloadLength: payload.length,
+      note: 'msg 里没有 msg_head(1)',
+    );
   }
   return Qq8MessagePush(
     cmd,
@@ -456,7 +459,8 @@ Qq8IncomingMessage? qq8ParseMsg(
   final head = Qq8Pb.decode(headBytes);
 
   final msgType = Qq8Pb.intAt(head, 3) ?? 0;
-  final kind = kindHint ??
+  final kind =
+      kindHint ??
       switch (msgType) {
         82 => Qq8IncomingKind.group,
         83 => Qq8IncomingKind.discuss,
@@ -504,7 +508,8 @@ Qq8IncomingMessage? qq8ParseMsg(
     }
     // 私聊离线文件也不在 elems 里：它在 MsgBody.msg_content（字段 2）。
     final msgContent = Qq8Pb.bytesAt(Qq8Pb.decode(bodyBytes), 2);
-    if (msgContent != null && msgContent.isNotEmpty) scan.scanMsgContent(msgContent);
+    if (msgContent != null && msgContent.isNotEmpty)
+      scan.scanMsgContent(msgContent);
   }
 
   return Qq8IncomingMessage(
@@ -557,8 +562,11 @@ Qq8PushEvent _parseKick(String cmd, Uint8List payload) {
         : '[${_str(nested[1]) ?? ''}]${_str(nested[2]) ?? ''}';
     return Qq8KickPush(cmd, hint: hint);
   } on Object catch (e) {
-    return Qq8UnknownPush(cmd,
-        payloadLength: payload.length, note: '被踢包 JCE 解不开：$e');
+    return Qq8UnknownPush(
+      cmd,
+      payloadLength: payload.length,
+      note: '被踢包 JCE 解不开：$e',
+    );
   }
 }
 
@@ -580,8 +588,11 @@ Qq8PushEvent _parseNotify(String cmd, Uint8List payload) {
     final nested = Qq8Jce.decodeWrapper(payload);
     return Qq8NotifyPush(cmd, notifyType: _int(nested[5]));
   } on Object catch (e) {
-    return Qq8UnknownPush(cmd,
-        payloadLength: payload.length, note: '通知 JCE 解不开：$e');
+    return Qq8UnknownPush(
+      cmd,
+      payloadLength: payload.length,
+      note: '通知 JCE 解不开：$e',
+    );
   }
 }
 
@@ -625,8 +636,11 @@ Qq8PushEvent _parseReqPush(String cmd, Uint8List payload) {
       }
     }
   } on Object catch (e) {
-    return Qq8UnknownPush(cmd,
-        payloadLength: payload.length, note: 'ReqPush 解不开：$e');
+    return Qq8UnknownPush(
+      cmd,
+      payloadLength: payload.length,
+      note: 'ReqPush 解不开：$e',
+    );
   }
   return Qq8ReqPush(
     cmd,
@@ -655,8 +669,11 @@ Qq8PushEvent _parseTransMsg(String cmd, Uint8List payload) {
       payloadLength: payload.length,
     );
   } on Object catch (e) {
-    return Qq8UnknownPush(cmd,
-        payloadLength: payload.length, note: 'TransMsg 解不开：$e');
+    return Qq8UnknownPush(
+      cmd,
+      payloadLength: payload.length,
+      note: 'TransMsg 解不开：$e',
+    );
   }
 }
 
@@ -683,6 +700,7 @@ int? _beU32(List<int> b, int offset) {
       (b[offset + 2] << 8) |
       b[offset + 3];
 }
+
 String? _str(Object? v) {
   if (v is String) return v;
   if (v is Uint8List) return utf8.decode(v, allowMalformed: true);

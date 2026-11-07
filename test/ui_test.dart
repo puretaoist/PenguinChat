@@ -41,20 +41,17 @@ import 'package:penguinchat/ui/theme/theme_mode.dart';
 late Directory _dataDir;
 
 List<Override> _overrides() => <Override>[
-      dataDirProvider.overrideWithValue(_dataDir),
-      backendRegistryProvider.overrideWithValue(
-        BackendProfileRegistry.fromJsonStrings(const <String>[]),
-      ),
-      safetyGateProvider.overrideWithValue(SafetyGate()),
-    ];
+  dataDirProvider.overrideWithValue(_dataDir),
+  backendRegistryProvider.overrideWithValue(
+    BackendProfileRegistry.fromJsonStrings(const <String>[]),
+  ),
+  safetyGateProvider.overrideWithValue(SafetyGate()),
+];
 
 Widget _wrap(Widget child) => ProviderScope(
-      overrides: _overrides(),
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        home: child,
-      ),
-    );
+  overrides: _overrides(),
+  child: MaterialApp(debugShowCheckedModeBanner: false, home: child),
+);
 
 void main() {
   setUp(() {
@@ -75,8 +72,10 @@ void main() {
       addTearDown(container.dispose);
 
       expect(container.read(dataDirProvider), isA<Directory>());
-      expect(container.read(backendRegistryProvider),
-          isA<BackendProfileRegistry>());
+      expect(
+        container.read(backendRegistryProvider),
+        isA<BackendProfileRegistry>(),
+      );
       expect(container.read(safetyGateProvider), isA<SafetyGate>());
     });
 
@@ -110,8 +109,11 @@ void main() {
       await tester.pumpWidget(_wrap(const HomePage()));
       await tester.pump();
 
-      expect(tester.takeException(), isNull,
-          reason: '未连接状态下构建 HomePage 不应该抛异常');
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '未连接状态下构建 HomePage 不应该抛异常',
+      );
       expect(find.byType(HomePage), findsOneWidget);
     });
 
@@ -119,8 +121,11 @@ void main() {
       await tester.pumpWidget(_wrap(const HomePage()));
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(tester.takeException(), isNull,
-          reason: '会话列表为空时应有空态，而不是索引越界之类的错误');
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '会话列表为空时应有空态，而不是索引越界之类的错误',
+      );
     });
 
     testWidgets('宽屏与窄屏都能量出布局（不依赖具体断点数值）', (tester) async {
@@ -150,10 +155,12 @@ void main() {
       final container = ProviderContainer(overrides: _overrides());
       addTearDown(container.dispose);
 
-      await tester.pumpWidget(UncontrolledProviderScope(
-        container: container,
-        child: const MaterialApp(home: HomePage()),
-      ));
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MaterialApp(home: HomePage()),
+        ),
+      );
       await tester.pump();
 
       // 默认暗色：provider 为 true，且页面构建时把调色板设成了暗色。
@@ -162,8 +169,11 @@ void main() {
       expect(container.read(themeModeProvider), isTrue);
       expect(TelegramColors.isDark, isTrue);
       expect(TelegramColors.current.accent, TelegramPalette.dark.accent);
-      expect(find.byIcon(Icons.light_mode), findsOneWidget,
-          reason: '暗色下按钮应提示"切到亮色"');
+      expect(
+        find.byIcon(Icons.light_mode),
+        findsOneWidget,
+        reason: '暗色下按钮应提示"切到亮色"',
+      );
 
       await tester.tap(find.byKey(const ValueKey('toggle-theme')));
       await tester.pumpAndSettle();
@@ -199,8 +209,11 @@ void main() {
       void check(String section, Map<String, String> fields) {
         final map = json[section] as Map<String, dynamic>;
         for (final e in fields.entries) {
-          expect(map[e.key], e.value,
-              reason: 'theme.json 的 $section.${e.key} 与 TelegramPalette 不一致');
+          expect(
+            map[e.key],
+            e.value,
+            reason: 'theme.json 的 $section.${e.key} 与 TelegramPalette 不一致',
+          );
         }
       }
 
@@ -267,12 +280,12 @@ void main() {
       });
 
       List<Override> overrides() => <Override>[
-            dataDirProvider.overrideWithValue(dir),
-            backendRegistryProvider.overrideWithValue(
-              BackendProfileRegistry.fromJsonStrings(const <String>[]),
-            ),
-            safetyGateProvider.overrideWithValue(SafetyGate()),
-          ];
+        dataDirProvider.overrideWithValue(dir),
+        backendRegistryProvider.overrideWithValue(
+          BackendProfileRegistry.fromJsonStrings(const <String>[]),
+        ),
+        safetyGateProvider.overrideWithValue(SafetyGate()),
+      ];
 
       // 第一次启动：切到亮色
       final c1 = ProviderContainer(overrides: overrides());
@@ -280,7 +293,9 @@ void main() {
       await c1.read(themeModeProvider.notifier).toggle();
       expect(c1.read(themeModeProvider), isFalse);
 
-      final settings = File('${dir.path}${Platform.pathSeparator}ui_settings.json');
+      final settings = File(
+        '${dir.path}${Platform.pathSeparator}ui_settings.json',
+      );
       expect(settings.existsSync(), isTrue, reason: '选择应写到 ui_settings.json');
       expect(jsonDecode(settings.readAsStringSync())['dark'], isFalse);
 
@@ -299,13 +314,15 @@ void main() {
       File('${dir.path}${Platform.pathSeparator}ui_settings.json')
           .writeAsStringSync('{ 这不是 JSON');
 
-      final container = ProviderContainer(overrides: <Override>[
-        dataDirProvider.overrideWithValue(dir),
-        backendRegistryProvider.overrideWithValue(
-          BackendProfileRegistry.fromJsonStrings(const <String>[]),
-        ),
-        safetyGateProvider.overrideWithValue(SafetyGate()),
-      ]);
+      final container = ProviderContainer(
+        overrides: <Override>[
+          dataDirProvider.overrideWithValue(dir),
+          backendRegistryProvider.overrideWithValue(
+            BackendProfileRegistry.fromJsonStrings(const <String>[]),
+          ),
+          safetyGateProvider.overrideWithValue(SafetyGate()),
+        ],
+      );
       addTearDown(container.dispose);
 
       await container.read(themeModeProvider.notifier).load();
@@ -314,8 +331,7 @@ void main() {
   });
 
   group('表情面板', () {
-    testWidgets('点表情按钮 → 面板出来 → 选一个插进输入框（断开也能用）',
-        (tester) async {
+    testWidgets('点表情按钮 → 面板出来 → 选一个插进输入框（断开也能用）', (tester) async {
       await tester.pumpWidget(_wrap(const HomePage()));
       await tester.pump();
 
@@ -342,8 +358,11 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.byType(ConnectPage), findsOneWidget);
-      expect(find.textContaining(kDefaultOneBotAddress), findsWidgets,
-          reason: '连接页应把默认地址展示出来，用户才知道该填什么');
+      expect(
+        find.textContaining(kDefaultOneBotAddress),
+        findsWidgets,
+        reason: '连接页应把默认地址展示出来，用户才知道该填什么',
+      );
     });
 
     testWidgets('默认处于离线模式（不联网）', (tester) async {
@@ -351,8 +370,11 @@ void main() {
       addTearDown(container.dispose);
 
       // 安全层的第一道闸：默认必须不连真实服务器。
-      expect(container.read(safetyGateProvider).isOffline, isTrue,
-          reason: 'SafetyGate 默认必须是离线模式');
+      expect(
+        container.read(safetyGateProvider).isOffline,
+        isTrue,
+        reason: 'SafetyGate 默认必须是离线模式',
+      );
     });
 
     testWidgets('能输入文本（输入框可用）', (tester) async {

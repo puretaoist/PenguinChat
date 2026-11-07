@@ -90,14 +90,14 @@ class Qq8SessionAdapter implements Session {
 
   SessionState _state = SessionState.disconnected;
 
-/// 上一次上报给上游的状态原因；用于「状态没变但原因变了」时也能刷出去。
-String? _lastStateReason;
+  /// 上一次上报给上游的状态原因；用于「状态没变但原因变了」时也能刷出去。
+  String? _lastStateReason;
 
-/// 上一次已上报的失败指纹（stage|返回码|文案）；同一份失败不重复上报。
-String? _lastFailureKey;
+  /// 上一次已上报的失败指纹（stage|返回码|文案）；同一份失败不重复上报。
+  String? _lastFailureKey;
 
-/// 上次见到的用户动作序号（[Qq8LoginService.actionSerial]）。
-int _seenActionSerial = -1;
+  /// 上次见到的用户动作序号（[Qq8LoginService.actionSerial]）。
+  int _seenActionSerial = -1;
   AccountInfo? _account;
   bool _disposed = false;
 
@@ -152,14 +152,17 @@ int _seenActionSerial = -1;
     final target = uin;
     if (target == null) {
       throw const SessionException(
-          '协议线 connect() 需要 uin（构造时传入）；口令/扫码登录请直接用 Qq8LoginService 的动作');
+        '协议线 connect() 需要 uin（构造时传入）；口令/扫码登录请直接用 Qq8LoginService 的动作',
+      );
     }
     await service.loginWithToken(uin: target);
     // 状态流是异步投递的：这里直接从快照同步一次，否则"刚登录完就调别的动作"
     // 会撞上"还没 ready"的假象（真机与自测都踩得到）。
     _onStage(service.snapshot);
     if (state != SessionState.ready) {
-      throw SessionException(service.snapshot.error ?? '登录未完成（${service.snapshot.stage.name}）');
+      throw SessionException(
+        service.snapshot.error ?? '登录未完成（${service.snapshot.stage.name}）',
+      );
     }
   }
 
@@ -234,7 +237,8 @@ int _seenActionSerial = -1;
       // 游标看**原始页**有没有消息，不看过滤后的可见条数：一页全是
       // 删除占位时，可见列表为空但历史远没到头。
       final messages = <ChatMessage>[
-        for (final m in page.messages.map(_toChatMessage).whereType<ChatMessage>())
+        for (final m
+            in page.messages.map(_toChatMessage).whereType<ChatMessage>())
           m,
       ]..sort((a, b) => b.time.compareTo(a.time));
       return HistoryPage(
@@ -259,7 +263,8 @@ int _seenActionSerial = -1;
       endSeq: end,
     );
     final messages = <ChatMessage>[
-      for (final m in page.messages.map(_toChatMessage).whereType<ChatMessage>())
+      for (final m
+          in page.messages.map(_toChatMessage).whereType<ChatMessage>())
         m,
     ]..sort((a, b) => b.time.compareTo(a.time));
     return HistoryPage(
@@ -338,7 +343,8 @@ int _seenActionSerial = -1;
       );
       if (!r.ok) {
         throw SessionException(
-            '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+          '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}',
+        );
       }
       return Qq8Msg.dmMessageId(
         peerUin: key.id!,
@@ -366,7 +372,9 @@ int _seenActionSerial = -1;
         gid: key.type == ChatType.group ? key.id : null,
       );
       if (!r.ok) {
-        throw SessionException('发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+        throw SessionException(
+          '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}',
+        );
       }
       return key.type == ChatType.private
           ? Qq8Msg.dmMessageId(
@@ -391,7 +399,9 @@ int _seenActionSerial = -1;
     if (key.type == ChatType.private) {
       final r = await service.sendC2c(uid: key.id!, elems: elems, reply: reply);
       if (!r.ok) {
-        throw SessionException('发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+        throw SessionException(
+          '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}',
+        );
       }
       return Qq8Msg.dmMessageId(
         peerUin: key.id!,
@@ -403,7 +413,9 @@ int _seenActionSerial = -1;
     }
     final r = await service.sendGroup(gid: key.id!, elems: elems, reply: reply);
     if (!r.ok) {
-      throw SessionException('发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}');
+      throw SessionException(
+        '发送失败：${r.message.isEmpty ? 'code=${r.code}' : r.message}',
+      );
     }
     // 群发**不能**编 ID：群消息的 seq 是服务端分配的（`PbSendMsg` 应答里
     // 没有字段 14，只有 code），而消息 ID 是 `(gid, sender, seq, rand, time)`
@@ -473,7 +485,8 @@ int _seenActionSerial = -1;
       );
       if (r.result > 2) {
         throw SessionException(
-            '撤回失败：${r.errmsg.isEmpty ? 'result=${r.result}' : r.errmsg}');
+          '撤回失败：${r.errmsg.isEmpty ? 'result=${r.result}' : r.errmsg}',
+        );
       }
       return;
     }
@@ -491,7 +504,8 @@ int _seenActionSerial = -1;
     );
     if (r.result != 0) {
       throw SessionException(
-          '撤回失败：${r.errmsg.isEmpty ? 'result=${r.result}' : r.errmsg}');
+        '撤回失败：${r.errmsg.isEmpty ? 'result=${r.result}' : r.errmsg}',
+      );
     }
   }
 
@@ -505,8 +519,7 @@ int _seenActionSerial = -1;
     }
     if (key.type == ChatType.private) {
       final m = Qq8Msg.parseDmMessageId(messageId);
-      final time = m?.time ??
-          (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+      final time = m?.time ?? (DateTime.now().millisecondsSinceEpoch ~/ 1000);
       await service.reportC2cRead(peerUin: key.id!, lastReadTime: time);
       return;
     }
@@ -572,7 +585,8 @@ int _seenActionSerial = -1;
     );
     if (!r.ok) {
       throw SessionException(
-          '合并转发失败：${r.message.isEmpty ? '服务端返回 ${r.code}' : r.message}');
+        '合并转发失败：${r.message.isEmpty ? '服务端返回 ${r.code}' : r.message}',
+      );
     }
   }
 
@@ -673,14 +687,16 @@ int _seenActionSerial = -1;
       final failureKey = '${s.stage.name}|${s.resultType}|${s.error}';
       if (failureKey == _lastFailureKey) return;
       _lastFailureKey = failureKey;
-      _emit(SessionFailure(
-        s.stage == Qq8LoginStage.sessionExpired
-            ? SessionExpiredException(s.error!, s.resultType)
-            : s.stage == Qq8LoginStage.rejected
-                ? AccessRejectedException(s.error!, s.resultType)
-                : StateError(s.error!),
-        s.stackTrace,
-      ));
+      _emit(
+        SessionFailure(
+          s.stage == Qq8LoginStage.sessionExpired
+              ? SessionExpiredException(s.error!, s.resultType)
+              : s.stage == Qq8LoginStage.rejected
+              ? AccessRejectedException(s.error!, s.resultType)
+              : StateError(s.error!),
+          s.stackTrace,
+        ),
+      );
     }
   }
 
@@ -688,7 +704,8 @@ int _seenActionSerial = -1;
     if (_disposed) return;
     switch (ev) {
       case Qq8MessagePush(:final message):
-        if (message.kind == Qq8IncomingKind.group && message.groupCode != null) {
+        if (message.kind == Qq8IncomingKind.group &&
+            message.groupCode != null) {
           final gid = message.groupCode!;
           final seen = _groupSeq[gid] ?? 0;
           if (message.seq > seen) _groupSeq[gid] = message.seq;
@@ -752,9 +769,11 @@ int _seenActionSerial = -1;
     // 或者内核记到了原始元素名，就说明它确实带着内容，交给下面正常处理——
     // 宁可留个空气泡给人看，也不能吞掉真消息。
     if (m.text.isEmpty && m.elems.isEmpty && m.elemKinds.isEmpty) {
-      _log('debug',
-          '丢弃空内容条目（无文本/无元素/无元素名） from=${m.fromUin} '
-          'to=${m.toUin} type=${m.msgType} c2cCmd=${m.c2cCmd} gid=${m.groupCode}');
+      _log(
+        'debug',
+        '丢弃空内容条目（无文本/无元素/无元素名） from=${m.fromUin} '
+            'to=${m.toUin} type=${m.msgType} c2cCmd=${m.c2cCmd} gid=${m.groupCode}',
+      );
       return null;
     }
     if (isDeletedPlaceholder(m)) {
@@ -766,8 +785,7 @@ int _seenActionSerial = -1;
     // 真机 2026-10-26 现场：这类消息按 c2c 取 chatId 会得到群号，
     // 于是会话库多出一条 `private_<群号>` 的占位条目，
     // 侧栏显示成一个只有数字的"人"，点进去还和真群对不上（m01106）。
-    final isGroup =
-        m.kind == Qq8IncomingKind.group || m.groupCode != null;
+    final isGroup = m.kind == Qq8IncomingKind.group || m.groupCode != null;
     // 群号取 groupCode 优先：c2c 型的临时会话 `chatId()` 返回的是**对方 uin**，
     // 拿它当群号会拼出 `group_<别人uin>` 这种假会话。
     final rawId = (isGroup && (m.groupCode ?? 0) > 0)
@@ -795,7 +813,8 @@ int _seenActionSerial = -1;
     final scopedName = (isGroup && (m.groupCode ?? 0) > 0)
         ? service.groupMemberNameOf(m.groupCode!, m.fromUin)
         : service.displayNameOf(m.fromUin);
-    final senderName = scopedName ??
+    final senderName =
+        scopedName ??
         m.fromNick ??
         _nickCache[m.fromUin] ??
         (outgoing ? (_account?.nickname ?? '') : '');
@@ -821,12 +840,10 @@ int _seenActionSerial = -1;
       outgoing: outgoing,
       senderName: senderName,
       senderId: '${m.fromUin}',
-      chatId: Chat.keyOf(
-        isGroup ? ChatType.group : ChatType.private,
-        rawId,
-      ),
-      replyPreview:
-          reply != null && reply.preview.isNotEmpty ? reply.preview : null,
+      chatId: Chat.keyOf(isGroup ? ChatType.group : ChatType.private, rawId),
+      replyPreview: reply != null && reply.preview.isNotEmpty
+          ? reply.preview
+          : null,
       atMe: m.mentions(self),
       system: m.text.isEmpty,
     );
@@ -834,77 +851,88 @@ int _seenActionSerial = -1;
 
   /// 内核元素 → 消息段（[ChatMessage.segments]）。
   static Segment _toSegment(Qq8Elem e, {int? groupCode}) => switch (e) {
-        Qq8TextElem(:final text) => TextSegment(text),
-        Qq8AtElem(:final target, :final name) => AtSegment(target, name: name),
-        Qq8FaceElem(:final id, :final isBig) => FaceSegment(id, isBig: isBig),
-        Qq8ImageElem(
-          :final file,
-          :final url,
-          :final width,
-          :final height,
-          :final flash,
-          :final md5,
-          :final fileId,
-          :final group,
-        ) =>
-          ImageSegment(file,
-              url: url,
-              summary: e.summary,
-              flash: flash,
-              width: width,
-              height: height,
-              md5: md5,
-              fileId: fileId,
-              groupCode: group ? groupCode : null),
-        Qq8VoiceElem(
-          :final md5,
-          :final url,
-          :final seconds,
-          :final size,
-          :final uuid
-        ) =>
-          RecordSegment(md5 ?? '',
-              url: url, seconds: seconds, size: size, uuid: uuid),
-        Qq8VideoElem(
-          :final fileId,
-          :final md5,
-          :final name,
-          :final seconds,
-          :final size
-        ) =>
-          VideoSegment(fileId ?? md5 ?? '',
-              name: name, seconds: seconds, size: size),
-        Qq8FileElem(:final fileId, :final name, :final size, :final md5) =>
-          FileSegment(fileId ?? md5 ?? '',
-              fileId: fileId, name: name, size: size),
-        Qq8CardElem(:final kind, :final raw, :final summary) => kind == 'json'
-            ? JsonSegment(raw, summary: summary)
-            : XmlSegment(raw, summary: summary),
-        Qq8PokeElem(:final id) => PokeSegment('poke', id: id?.toString()),
-        // 引用：气泡的引用条读 ChatMessage.replyPreview（上面单独设了），
-        // 段里留一份是为了**存储与转发时引用不丢**（plainText 会跳过它）
-        Qq8ReplyElem(:final preview) => ReplySegment('', text: preview),
-        // 认不出的：用官方的 `[不支持显示的消息]` 当文案（UnknownSegment.preview 会
-        // 包成 `[文案]`），字段名与类型名塞进 data —— 存盘、日志、排查都还在，
-        // 但界面上不会出现"一个空气泡"
-        Qq8UnsupportedElem(:final name, :final field) => UnknownSegment(
-            '不支持显示的消息',
-            <String, dynamic>{'elem': name, 'field': field},
-          ),
-      };
+    Qq8TextElem(:final text) => TextSegment(text),
+    Qq8AtElem(:final target, :final name) => AtSegment(target, name: name),
+    Qq8FaceElem(:final id, :final isBig) => FaceSegment(id, isBig: isBig),
+    Qq8ImageElem(
+      :final file,
+      :final url,
+      :final width,
+      :final height,
+      :final flash,
+      :final md5,
+      :final fileId,
+      :final group,
+    ) =>
+      ImageSegment(
+        file,
+        url: url,
+        summary: e.summary,
+        flash: flash,
+        width: width,
+        height: height,
+        md5: md5,
+        fileId: fileId,
+        groupCode: group ? groupCode : null,
+      ),
+    Qq8VoiceElem(
+      :final md5,
+      :final url,
+      :final seconds,
+      :final size,
+      :final uuid,
+    ) =>
+      RecordSegment(
+        md5 ?? '',
+        url: url,
+        seconds: seconds,
+        size: size,
+        uuid: uuid,
+      ),
+    Qq8VideoElem(
+      :final fileId,
+      :final md5,
+      :final name,
+      :final seconds,
+      :final size,
+    ) =>
+      VideoSegment(
+        fileId ?? md5 ?? '',
+        name: name,
+        seconds: seconds,
+        size: size,
+      ),
+    Qq8FileElem(:final fileId, :final name, :final size, :final md5) =>
+      FileSegment(fileId ?? md5 ?? '', fileId: fileId, name: name, size: size),
+    Qq8CardElem(:final kind, :final raw, :final summary) =>
+      kind == 'json'
+          ? JsonSegment(raw, summary: summary)
+          : XmlSegment(raw, summary: summary),
+    Qq8PokeElem(:final id) => PokeSegment('poke', id: id?.toString()),
+    // 引用：气泡的引用条读 ChatMessage.replyPreview（上面单独设了），
+    // 段里留一份是为了**存储与转发时引用不丢**（plainText 会跳过它）
+    Qq8ReplyElem(:final preview) => ReplySegment('', text: preview),
+    // 认不出的：用官方的 `[不支持显示的消息]` 当文案（UnknownSegment.preview 会
+    // 包成 `[文案]`），字段名与类型名塞进 data —— 存盘、日志、排查都还在，
+    // 但界面上不会出现"一个空气泡"
+    Qq8UnsupportedElem(:final name, :final field) => UnknownSegment(
+      '不支持显示的消息',
+      <String, dynamic>{'elem': name, 'field': field},
+    ),
+  };
 
   static SessionState _mapStage(Qq8LoginStage s) => switch (s) {
-        Qq8LoginStage.idle => SessionState.disconnected,
-        Qq8LoginStage.online => SessionState.ready,
-        Qq8LoginStage.disconnected => SessionState.disconnected,
-        Qq8LoginStage.failed => SessionState.disconnected,
-        // rejected 也必须是 disconnected，**不能落到下面的 connecting**：
-        // 服务端已经明确不放行，停在 connecting 会让上游以为「还在连、等着就好」，
-        // 顺手就把它当可重试状态再推一轮。
-        Qq8LoginStage.rejected => SessionState.disconnected,
-      Qq8LoginStage.sessionExpired => SessionState.disconnected,
-        _ => SessionState.connecting,
-      };
+    Qq8LoginStage.idle => SessionState.disconnected,
+    Qq8LoginStage.online => SessionState.ready,
+    Qq8LoginStage.disconnected => SessionState.disconnected,
+    Qq8LoginStage.failed => SessionState.disconnected,
+    // rejected 也必须是 disconnected，**不能落到下面的 connecting**：
+    // 服务端已经明确不放行，停在 connecting 会让上游以为「还在连、等着就好」，
+    // 顺手就把它当可重试状态再推一轮。
+    Qq8LoginStage.rejected => SessionState.disconnected,
+    Qq8LoginStage.sessionExpired => SessionState.disconnected,
+    _ => SessionState.connecting,
+  };
 
   void _setState(SessionState s) {
     if (_state == s) return;
@@ -1036,8 +1064,7 @@ int _seenActionSerial = -1;
   }
 
   /// 表情名候选的终止符（空白与常见标点）。
-  static final RegExp _faceNameStop =
-      RegExp(r'[\s\u3000，。！？、,.!?~～:：;；]');
+  static final RegExp _faceNameStop = RegExp(r'[\s\u3000，。！？、,.!?~～:：;；]');
 
   void _log(String level, String message, [Object? detail]) {
     onLog?.call(level, message, detail);

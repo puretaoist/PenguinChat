@@ -92,8 +92,10 @@ void main() {
       // 最旧的（index 0，标识为全 0）必须最先被淘汰
       expect(targets.first.value, '0'.padLeft(64, '0'));
       // 最新的（index 5）不应被淘汰
-      expect(targets.map((e) => e.value),
-          isNot(contains('5'.padLeft(64, '0'))));
+      expect(
+        targets.map((e) => e.value),
+        isNot(contains('5'.padLeft(64, '0'))),
+      );
     });
 
     test('受保护内容不参与淘汰', () {

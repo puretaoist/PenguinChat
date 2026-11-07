@@ -126,8 +126,9 @@ class Qq8GetMsgPage {
   bool get ok => result == 0;
 
   /// 摊平成一条流（按会话块的顺序）。
-  List<Qq8IncomingMessage> get messages =>
-      <Qq8IncomingMessage>[for (final b in blocks) ...b.messages];
+  List<Qq8IncomingMessage> get messages => <Qq8IncomingMessage>[
+    for (final b in blocks) ...b.messages,
+  ];
 }
 
 /// 拉消息与历史的组包 / 解析。
@@ -148,30 +149,28 @@ abstract final class Qq8History {
     Uint8List? syncCookie,
     int latestRambleNumber = 20,
     int otherRambleNumber = 3,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 0, // sync_flag
-        if (syncCookie != null && syncCookie.isNotEmpty) 2: syncCookie,
-        3: 0, // ramble_flag
-        4: latestRambleNumber,
-        5: otherRambleNumber,
-        6: 1, // online_sync_flag
-        7: 1, // context_flag
-        9: 1, // msg_req_type
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 0, // sync_flag
+    if (syncCookie != null && syncCookie.isNotEmpty) 2: syncCookie,
+    3: 0, // ramble_flag
+    4: latestRambleNumber,
+    5: otherRambleNumber,
+    6: 1, // online_sync_flag
+    7: 1, // context_flag
+    9: 1, // msg_req_type
+  });
 
   /// 私聊历史请求体（`getChatHistory` 同款：只给 uin / 时间 / 条数）。
   static Uint8List buildOneDayRoamBody({
     required int peerUin,
     required int lastMsgTime,
     int readCnt = 20,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: peerUin,
-        2: lastMsgTime,
-        3: 0, // random
-        4: readCnt,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: peerUin,
+    2: lastMsgTime,
+    3: 0, // random
+    4: readCnt,
+  });
 
   /// `OidbSvc.0x88d_0`：问服务端"这个群最新一条消息的 seq 是多少"。
   ///
@@ -186,14 +185,13 @@ abstract final class Qq8History {
   static Uint8List buildGroupLastSeqBody({
     required int subAppId,
     required int groupCode,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: subAppId,
-        2: Qq8Pb.encode(<int, Object?>{
-          1: groupCode,
-          2: Qq8Pb.encode(<int, Object?>{22: 0}),
-        }),
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: subAppId,
+    2: Qq8Pb.encode(<int, Object?>{
+      1: groupCode,
+      2: Qq8Pb.encode(<int, Object?>{22: 0}),
+    }),
+  });
 
   /// 返回群最新 seq；取不到（结构变了/权限没了）返回 null。
   static int? parseGroupLastSeq(Uint8List oidbPayload) {
@@ -209,13 +207,12 @@ abstract final class Qq8History {
     required int groupCode,
     required int beginSeq,
     required int endSeq,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: groupCode,
-        2: beginSeq,
-        3: endSeq,
-        6: 0, // public_group
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: groupCode,
+    2: beginSeq,
+    3: endSeq,
+    6: 0, // public_group
+  });
 
   /// 解析 `PbGetMsg` 响应。
   static Qq8GetMsgPage parseGetMsg(Uint8List payload) {
@@ -230,11 +227,13 @@ abstract final class Qq8History {
         final msg = qq8ParseMsg(raw);
         if (msg != null) msgs.add(msg);
       }
-      blocks.add(Qq8UinPairBlock(
-        peerUin: Qq8Pb.intAt(p, 2) ?? 0,
-        unreadCount: Qq8Pb.intAt(p, 5) ?? 0,
-        messages: msgs,
-      ));
+      blocks.add(
+        Qq8UinPairBlock(
+          peerUin: Qq8Pb.intAt(p, 2) ?? 0,
+          unreadCount: Qq8Pb.intAt(p, 5) ?? 0,
+          messages: msgs,
+        ),
+      );
     }
     return Qq8GetMsgPage(
       result: Qq8Pb.intAt(m, 1) ?? -1,

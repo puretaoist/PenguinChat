@@ -161,10 +161,7 @@ class Qq8Device {
     // guid = MD5(IMEI + MAC)，与参考实现一致
     final imei = _syntheticImei(uin);
     final mac = _syntheticMac(hash);
-    final guid = md5Bytes(<int>[
-      ..._ascii(imei),
-      ..._ascii(mac),
-    ]);
+    final guid = md5Bytes(<int>[..._ascii(imei), ..._ascii(mac)]);
 
     return Qq8Device(
       product: 'MRS4S',
@@ -173,10 +170,12 @@ class Qq8Device {
       brand: 'OICQX',
       model: 'Konata 2020',
       bootloader: 'U-boot',
-      fingerprint: 'OICQX/MRS4S/HIM188MOE:10/${_androidId(uin, hash)}/'
+      fingerprint:
+          'OICQX/MRS4S/HIM188MOE:10/${_androidId(uin, hash)}/'
           '${_incremental(hash)}:user/release-keys',
       bootId: _uuidFrom(hash),
-      procVersion: 'Linux version 4.19.71-${_u16(hash, 4)} '
+      procVersion:
+          'Linux version 4.19.71-${_u16(hash, 4)} '
           '(konata@takayama.github.com)',
       baseband: '',
       sim: 'T-Mobile',
@@ -269,31 +268,31 @@ class Qq8Device {
   /// 同款）。其余字段（imei/guid/mac…）必须保持与上次登录一致，否则
   /// "同一账号同一设备"的前提就破了。
   Qq8Device withTgtgt(Uint8List newTgtgt) => Qq8Device(
-        product: product,
-        device: device,
-        board: board,
-        brand: brand,
-        model: model,
-        bootloader: bootloader,
-        fingerprint: fingerprint,
-        bootId: bootId,
-        procVersion: procVersion,
-        baseband: baseband,
-        sim: sim,
-        apn: apn,
-        osType: osType,
-        macAddress: macAddress,
-        ipAddress: ipAddress,
-        wifiBssid: wifiBssid,
-        wifiSsid: wifiSsid,
-        imei: imei,
-        androidId: androidId,
-        version: version,
-        imsi: imsi,
-        tgtgt: newTgtgt,
-        guid: guid,
-        ksid: ksid,
-      );
+    product: product,
+    device: device,
+    board: board,
+    brand: brand,
+    model: model,
+    bootloader: bootloader,
+    fingerprint: fingerprint,
+    bootId: bootId,
+    procVersion: procVersion,
+    baseband: baseband,
+    sim: sim,
+    apn: apn,
+    osType: osType,
+    macAddress: macAddress,
+    ipAddress: ipAddress,
+    wifiBssid: wifiBssid,
+    wifiSsid: wifiSsid,
+    imei: imei,
+    androidId: androidId,
+    version: version,
+    imsi: imsi,
+    tgtgt: newTgtgt,
+    guid: guid,
+    ksid: ksid,
+  );
 
   /// 诊断用。
   @override
@@ -336,10 +335,7 @@ class Qq8Device {
   /// 这个值决定 `0x106` 里的一个槽 + 整个 `0x144` 的 TEA 密钥，而 `0x144`
   /// 里包着 0x109/0x52D/0x124/0x128/0x16E 全部设备信息 —— 掺不掺 guid
   /// 会让服务端看到两种不同的设备摘要。
-  static Uint8List _deriveTgtgt(
-    Uint8List Function(int n) rnd,
-    Uint8List guid,
-  ) {
+  static Uint8List _deriveTgtgt(Uint8List Function(int n) rnd, Uint8List guid) {
     final seed = rnd(16);
     return md5Bytes(<int>[...seed, ...guid]);
   }
@@ -367,10 +363,14 @@ class Qq8Device {
     }
     if (b < 1000000) {
       final s = '$uin';
-      b = int.parse(s.substring(0, min(4, s.length)) +
-          s.substring(0, min(3, s.length)));
+      b = int.parse(
+        s.substring(0, min(4, s.length)) + s.substring(0, min(3, s.length)),
+      );
     }
-    p += '$a' '0' '$b';
+    p +=
+        '$a'
+        '0'
+        '$b';
 
     // Luhn
     var sum = 0;
@@ -663,6 +663,7 @@ class Qq8DeviceIdentity {
 
   /// 诊断用（**不打印 qimei 全值**，它是跨业务共享的设备标识）。
   @override
-  String toString() => 'Qq8DeviceIdentity(androidId=$androidId, mac=$macAddress, '
+  String toString() =>
+      'Qq8DeviceIdentity(androidId=$androidId, mac=$macAddress, '
       'guid=${guidHex ?? '(派生)'}, qimei=${qimei == null ? '无' : '有(${qimei!.length}字符)'})';
 }

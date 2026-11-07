@@ -69,7 +69,8 @@ class FileLogSink extends LogSink {
   Object? lastError;
 
   @override
-  bool accepts(LogLevel level) => _enabled && level.severity >= minLevel.severity;
+  bool accepts(LogLevel level) =>
+      _enabled && level.severity >= minLevel.severity;
 
   /// 打开（或复用）当前日志文件。
   Future<void> _ensureOpen() async {
@@ -90,9 +91,9 @@ class FileLogSink extends LogSink {
   }
 
   File _fileFor(DateTime t) => File(
-        '${directory.path}${Platform.pathSeparator}'
-        '$logFilePrefix${_two(t.year, 4)}-${_two(t.month)}-${_two(t.day)}.log',
-      );
+    '${directory.path}${Platform.pathSeparator}'
+    '$logFilePrefix${_two(t.year, 4)}-${_two(t.month)}-${_two(t.day)}.log',
+  );
 
   static String _two(int v, [int w = 2]) => v.toString().padLeft(w, '0');
 
@@ -159,8 +160,7 @@ class FileLogSink extends LogSink {
       final c = _current;
       _closeQuietly();
       if (c != null && c.existsSync()) {
-        final rotated =
-            File('${c.path}.${now.millisecondsSinceEpoch}');
+        final rotated = File('${c.path}.${now.millisecondsSinceEpoch}');
         c.renameSync(rotated.path);
         _prune(AgeAnchor(now));
       }
@@ -190,8 +190,12 @@ class FileLogSink extends LogSink {
       final files = directory
           .listSync()
           .whereType<File>()
-          .where((f) => f.path.split(Platform.pathSeparator).last
-              .startsWith(logFilePrefix))
+          .where(
+            (f) => f.path
+                .split(Platform.pathSeparator)
+                .last
+                .startsWith(logFilePrefix),
+          )
           .toList();
 
       // 1. 按保留期删
@@ -204,15 +208,21 @@ class FileLogSink extends LogSink {
       }
 
       // 2. 按总量删（最旧的先删，但当前正在写的那个不动）
-      final rest = directory
-          .listSync()
-          .whereType<File>()
-          .where((f) => f.path.split(Platform.pathSeparator).last
-              .startsWith(logFilePrefix))
-          .where((f) => _current == null || f.path != _current!.path)
-          .toList()
-        ..sort((a, b) =>
-            a.statSync().modified.compareTo(b.statSync().modified));
+      final rest =
+          directory
+              .listSync()
+              .whereType<File>()
+              .where(
+                (f) => f.path
+                    .split(Platform.pathSeparator)
+                    .last
+                    .startsWith(logFilePrefix),
+              )
+              .where((f) => _current == null || f.path != _current!.path)
+              .toList()
+            ..sort(
+              (a, b) => a.statSync().modified.compareTo(b.statSync().modified),
+            );
 
       var total = 0;
       for (final f in rest) {
@@ -275,7 +285,9 @@ abstract final class LogExporter {
     final t = version.trim();
     // `unknown` 是「没拿到」的占位，写进文件名没有信息量，反而让人以为有。
     if (t.isEmpty || t == 'unknown') return null;
-    final safe = t.replaceAll('+', '_').replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '');
+    final safe = t
+        .replaceAll('+', '_')
+        .replaceAll(RegExp(r'[^0-9A-Za-z._-]'), '');
     return safe.isEmpty ? null : safe;
   }
 
@@ -330,8 +342,10 @@ abstract final class LogExporter {
       b.writeln('');
     }
 
-    b.writeln('--- 内存缓冲（最近 ${Log.memory.length} 条，'
-        '级别 >= ${minLevel.name}）---');
+    b.writeln(
+      '--- 内存缓冲（最近 ${Log.memory.length} 条，'
+      '级别 >= ${minLevel.name}）---',
+    );
     final mem = Log.memory.snapshotAtLeast(minLevel);
     if (mem.isEmpty) {
       b.writeln('  (空)');
@@ -349,14 +363,20 @@ abstract final class LogExporter {
 
     if (includeFileLogs && logDirectory != null && logDirectory.existsSync()) {
       b.writeln('--- 落盘日志 ---');
-      final files = logDirectory
-          .listSync()
-          .whereType<File>()
-          .where((f) =>
-              f.path.split(Platform.pathSeparator).last.startsWith(logFilePrefix))
-          .toList()
-        ..sort((a, b) =>
-            a.statSync().modified.compareTo(b.statSync().modified));
+      final files =
+          logDirectory
+              .listSync()
+              .whereType<File>()
+              .where(
+                (f) => f.path
+                    .split(Platform.pathSeparator)
+                    .last
+                    .startsWith(logFilePrefix),
+              )
+              .toList()
+            ..sort(
+              (a, b) => a.statSync().modified.compareTo(b.statSync().modified),
+            );
       if (files.isEmpty) {
         b.writeln('  (无)');
       } else {

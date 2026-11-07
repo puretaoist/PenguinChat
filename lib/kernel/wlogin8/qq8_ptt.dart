@@ -75,7 +75,8 @@ class Qq8PttUploadTicket {
       host != null && host!.isNotEmpty && port != null && port! > 0;
 
   @override
-  String toString() => 'PttUploadTicket(code=$code, host=$host, port=$port, '
+  String toString() =>
+      'PttUploadTicket(code=$code, host=$host, port=$port, '
       'uuid=${uuid?.length ?? 0}B, key=${uploadKey?.length ?? 0}B, '
       'exist=$fileExists, packSize=$packSize, ipList=${ipList.length}, '
       'dns=$dns)';
@@ -108,16 +109,17 @@ abstract final class Qq8PttHttp {
     if (data.isEmpty) throw Qq8PttException('要上传的语音是空的');
     final authority = port == 80 ? host : '$host:$port';
     final bmd5 = _md5HexLower(data);
-    final uri = Uri.parse('http://$authority/qqcommfileupload'
-        '?ver=100'
-        '&ukey=${Uri.encodeQueryComponent(uploadKeyHex)}'
-        '&filekey=$fileKeyHex'
-        '&filesize=${data.length}'
-        '&bmd5=$bmd5'
-        '&range=0'
-        '&voice_codec=0');
-    final client = HttpClient()
-      ..connectionTimeout = connectTimeout;
+    final uri = Uri.parse(
+      'http://$authority/qqcommfileupload'
+      '?ver=100'
+      '&ukey=${Uri.encodeQueryComponent(uploadKeyHex)}'
+      '&filekey=$fileKeyHex'
+      '&filesize=${data.length}'
+      '&bmd5=$bmd5'
+      '&range=0'
+      '&voice_codec=0',
+    );
+    final client = HttpClient()..connectionTimeout = connectTimeout;
     try {
       final req = await client.postUrl(uri).timeout(timeout);
       req.headers.set('Range', 'bytes=0-');
@@ -127,16 +129,23 @@ abstract final class Qq8PttHttp {
       onProgress?.call(0.05);
       final resp = await req.close().timeout(timeout);
       final body = await resp
-          .fold<BytesBuilder>(BytesBuilder(copy: false), (b, chunk) => b..add(chunk))
+          .fold<BytesBuilder>(
+            BytesBuilder(copy: false),
+            (b, chunk) => b..add(chunk),
+          )
           .timeout(timeout);
-      final ret = resp.headers.value('user-returncode') ??
+      final ret =
+          resp.headers.value('user-returncode') ??
           resp.headers.value('User-ReturnCode');
-      final ok = resp.statusCode == 200 &&
+      final ok =
+          resp.statusCode == 200 &&
           (ret == null || ret == '0' || ret == '9223372036854775807');
       if (!ok) {
         final text = String.fromCharCodes(body.toBytes().take(200).toList());
-        throw Qq8PttException('PTT 上传被拒：HTTP ${resp.statusCode} '
-            'User-ReturnCode=$ret 回包=$text');
+        throw Qq8PttException(
+          'PTT 上传被拒：HTTP ${resp.statusCode} '
+          'User-ReturnCode=$ret 回包=$text',
+        );
       }
       onProgress?.call(1);
     } on Qq8PttException {
@@ -197,29 +206,28 @@ abstract final class Qq8Ptt {
     int netType = 1,
     int voiceType = 0,
     int bdhCmdId = 500,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 500,
-        2: seq,
-        7: <int, Object?>{
-          10: uin,
-          20: peerUin,
-          30: applyFileType,
-          40: fileSize,
-          50: fileName,
-          60: md5,
-        },
-        101: businessId,
-        102: clientType,
-        99999: <int, Object?>{
-          1: 3,
-          2: bdhCmdId,
-          90200: pttFormat,
-          90400: netType,
-          90500: voiceType,
-          90800: voiceSeconds,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 500,
+    2: seq,
+    7: <int, Object?>{
+      10: uin,
+      20: peerUin,
+      30: applyFileType,
+      40: fileSize,
+      50: fileName,
+      60: md5,
+    },
+    101: businessId,
+    102: clientType,
+    99999: <int, Object?>{
+      1: 3,
+      2: bdhCmdId,
+      90200: pttFormat,
+      90400: netType,
+      90500: voiceType,
+      90800: voiceSeconds,
+    },
+  });
 
   static Qq8PttUploadTicket parseApplyUploadResponse(Uint8List payload) {
     // 回包是 \`cmd0x346.RspBody\`：真正的内容在 7=msg_apply_upload_rsp（V2/V3 是 18/19）。
@@ -267,19 +275,13 @@ abstract final class Qq8Ptt {
     int seq = 0,
     int filetype = elemFileType,
     int ownerType = ownerTypeSelf,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 1200,
-        2: seq,
-        14: <int, Object?>{
-          10: uin,
-          20: uuid,
-          30: ownerType,
-          50: filetype,
-        },
-        101: businessId,
-        102: clientType,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 1200,
+    2: seq,
+    14: <int, Object?>{10: uin, 20: uuid, 30: ownerType, 50: filetype},
+    101: businessId,
+    102: clientType,
+  });
 
   /// ApplyDownloadReq.uint32_owner_type：1=自己（发送方回读），2=对方。
   static const int ownerTypeSelf = 1;
@@ -299,6 +301,7 @@ abstract final class Qq8Ptt {
       return null;
     }
   }
+
   /// 构造 RichText.ptt。
   ///
   /// [dm] 为 true 走私聊（官方不填 server_ip/port/time）；群聊要 file_id、
@@ -317,23 +320,22 @@ abstract final class Qq8Ptt {
     int format = formatSilk,
     Uint8List? pbReserve,
     int srcUin = 0,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: fileType,
-        if (srcUin > 0) 2: srcUin,
-        3: fileUuid,
-        4: fileMd5,
-        5: fileName,
-        6: fileSize,
-        // C2C 的 reserve 走 #7，群走 #22（官方 getRichText 两个分支不同）。
-        if (dm) 7: ?pbReserve,
-        if (!dm && fileId != null && fileId > 0) 8: fileId,
-        if (!dm) 18: ?groupFileKey,
-        if (!dm) 19: seconds,
-        20: downPara,
-        if (!dm) 21: format,
-        if (!dm) 22: ?pbReserve,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: fileType,
+    if (srcUin > 0) 2: srcUin,
+    3: fileUuid,
+    4: fileMd5,
+    5: fileName,
+    6: fileSize,
+    // C2C 的 reserve 走 #7，群走 #22（官方 getRichText 两个分支不同）。
+    if (dm) 7: ?pbReserve,
+    if (!dm && fileId != null && fileId > 0) 8: fileId,
+    if (!dm) 18: ?groupFileKey,
+    if (!dm) 19: seconds,
+    20: downPara,
+    if (!dm) 21: format,
+    if (!dm) 22: ?pbReserve,
+  });
 }
 
 /// PTT 真实上传通道（2026-11-01 真机实证：3547B SILK → HTTP 200 / ack code=0 →
@@ -376,6 +378,7 @@ abstract final class Qq8PttHighway {
   /// 文件从未真正登记，对端因此显示「消息已过期」。
   static Uint8List buildFrame({
     required int seq,
+
     /// `DataHighwayHead.f2 Uin` 在协议定义里是 **string**（Lagrange.Core
     /// Internal/Packets/Service/Highway.cs 的 `DataHighwayHead.Uin` 声明为 string?，
     /// HighwayContext.cs:69 填 `Keystore.Uin.ToString()`）。2026-11-05 我曾误改成 int，
@@ -465,7 +468,8 @@ abstract final class Qq8PttHighway {
 
   static Map<int, List<Object>>? _ackHead(Uint8List body) {
     if (body.length < 9 || body[0] != 0x28) return null;
-    final headLen = (body[1] << 24) | (body[2] << 16) | (body[3] << 8) | body[4];
+    final headLen =
+        (body[1] << 24) | (body[2] << 16) | (body[3] << 8) | body[4];
     if (9 + headLen > body.length) return null;
     try {
       return Qq8Pb.decode(body.sublist(9, 9 + headLen));
@@ -473,5 +477,4 @@ abstract final class Qq8PttHighway {
       return null;
     }
   }
-
 }

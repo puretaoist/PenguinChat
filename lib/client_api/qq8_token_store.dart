@@ -183,28 +183,27 @@ class Qq8TokenData {
     required int atMs,
     required int type,
     String? material,
-  }) =>
-      Qq8TokenData(
-        uin: uin,
-        savedAt: savedAt,
-        tgt: tgt,
-        d2: d2,
-        d2key: d2key,
-        sigKey: sigKey,
-        ticketKey: ticketKey,
-        srmToken: srmToken,
-        a1: a1,
-        a2Key: a2Key,
-        noPicSig: noPicSig,
-        issuedAtMs: issuedAtMs,
-        renewedAtMs: renewedAtMs,
-        expireAtMs: expireAtMs,
-        serverTimeMs: serverTimeMs,
-        lifetimeTlvHex: lifetimeTlvHex,
-        invalidatedAtMs: atMs,
-        invalidatedType: type,
-        invalidatedMaterial: material,
-      );
+  }) => Qq8TokenData(
+    uin: uin,
+    savedAt: savedAt,
+    tgt: tgt,
+    d2: d2,
+    d2key: d2key,
+    sigKey: sigKey,
+    ticketKey: ticketKey,
+    srmToken: srmToken,
+    a1: a1,
+    a2Key: a2Key,
+    noPicSig: noPicSig,
+    issuedAtMs: issuedAtMs,
+    renewedAtMs: renewedAtMs,
+    expireAtMs: expireAtMs,
+    serverTimeMs: serverTimeMs,
+    lifetimeTlvHex: lifetimeTlvHex,
+    invalidatedAtMs: atMs,
+    invalidatedType: type,
+    invalidatedMaterial: material,
+  );
 
   /// 复制并覆盖部分字段。**传 null 表示保持原值**——不引入哨兵值。
   Qq8TokenData copyWith({
@@ -226,29 +225,27 @@ class Qq8TokenData {
     int? invalidatedAtMs,
     int? invalidatedType,
     String? invalidatedMaterial,
-  }) =>
-      Qq8TokenData(
-        uin: uin,
-        savedAt: savedAt ?? this.savedAt,
-        tgt: tgt ?? this.tgt,
-        d2: d2 ?? this.d2,
-        d2key: d2key ?? this.d2key,
-        sigKey: sigKey ?? this.sigKey,
-        ticketKey: ticketKey ?? this.ticketKey,
-        srmToken: srmToken ?? this.srmToken,
-        a1: a1 ?? this.a1,
-        a2Key: a2Key ?? this.a2Key,
-        noPicSig: noPicSig ?? this.noPicSig,
-        issuedAtMs: issuedAtMs ?? this.issuedAtMs,
-        renewedAtMs: renewedAtMs ?? this.renewedAtMs,
-        expireAtMs: expireAtMs ?? this.expireAtMs,
-        serverTimeMs: serverTimeMs ?? this.serverTimeMs,
-        lifetimeTlvHex: lifetimeTlvHex ?? this.lifetimeTlvHex,
-        invalidatedAtMs: invalidatedAtMs ?? this.invalidatedAtMs,
-        invalidatedType: invalidatedType ?? this.invalidatedType,
-        invalidatedMaterial:
-            invalidatedMaterial ?? this.invalidatedMaterial,
-      );
+  }) => Qq8TokenData(
+    uin: uin,
+    savedAt: savedAt ?? this.savedAt,
+    tgt: tgt ?? this.tgt,
+    d2: d2 ?? this.d2,
+    d2key: d2key ?? this.d2key,
+    sigKey: sigKey ?? this.sigKey,
+    ticketKey: ticketKey ?? this.ticketKey,
+    srmToken: srmToken ?? this.srmToken,
+    a1: a1 ?? this.a1,
+    a2Key: a2Key ?? this.a2Key,
+    noPicSig: noPicSig ?? this.noPicSig,
+    issuedAtMs: issuedAtMs ?? this.issuedAtMs,
+    renewedAtMs: renewedAtMs ?? this.renewedAtMs,
+    expireAtMs: expireAtMs ?? this.expireAtMs,
+    serverTimeMs: serverTimeMs ?? this.serverTimeMs,
+    lifetimeTlvHex: lifetimeTlvHex ?? this.lifetimeTlvHex,
+    invalidatedAtMs: invalidatedAtMs ?? this.invalidatedAtMs,
+    invalidatedType: invalidatedType ?? this.invalidatedType,
+    invalidatedMaterial: invalidatedMaterial ?? this.invalidatedMaterial,
+  );
 
   /// 这张票现在还能用吗。**纯函数**（时间由调用方给，便于自测）。
   ///
@@ -277,50 +274,49 @@ class Qq8TokenData {
     int? issuedAtMs,
     int? serverTimeMs,
     String? lifetimeTlvHex,
-  }) =>
-      Qq8TokenData(
-        uin: uin,
-        savedAt: DateTime.now().toIso8601String(),
-        tgt: b.tgt ?? Uint8List(0),
-        d2: b.d2 ?? Uint8List(0),
-        d2key: b.d2key ?? Uint8List(0),
-        sigKey: b.sigKey ?? Uint8List(0),
-        ticketKey: b.ticketKey ?? Uint8List(0),
-        srmToken: b.srmToken ?? Uint8List(0),
-        a1: b.t106 ?? Uint8List(0),
-        // A2KEY = 0x119 明文里的 TLV 0x10d（官方 tk_file 的 WloginSigInfo._TGTKey）。
-        // 依据：WtloginHelper.java:607-690 的 A2+A2KEY 3 元组分支把第二个参数
-        // 原样当 tgtgt 用（不做 MD5）；oicq_request.java 把 tlv_t10a/tlv_t10d
-        // 一起 put_siginfo（TGT / TGTKey）。空值不落盘（语义 = 没有这份材料）。
-        a2Key: (b.t10d != null && b.t10d!.isNotEmpty) ? b.t10d : null,
-        issuedAtMs: issuedAtMs,
-        serverTimeMs: serverTimeMs,
-        lifetimeTlvHex: lifetimeTlvHex,
-      );
+  }) => Qq8TokenData(
+    uin: uin,
+    savedAt: DateTime.now().toIso8601String(),
+    tgt: b.tgt ?? Uint8List(0),
+    d2: b.d2 ?? Uint8List(0),
+    d2key: b.d2key ?? Uint8List(0),
+    sigKey: b.sigKey ?? Uint8List(0),
+    ticketKey: b.ticketKey ?? Uint8List(0),
+    srmToken: b.srmToken ?? Uint8List(0),
+    a1: b.t106 ?? Uint8List(0),
+    // A2KEY = 0x119 明文里的 TLV 0x10d（官方 tk_file 的 WloginSigInfo._TGTKey）。
+    // 依据：WtloginHelper.java:607-690 的 A2+A2KEY 3 元组分支把第二个参数
+    // 原样当 tgtgt 用（不做 MD5）；oicq_request.java 把 tlv_t10a/tlv_t10d
+    // 一起 put_siginfo（TGT / TGTKey）。空值不落盘（语义 = 没有这份材料）。
+    a2Key: (b.t10d != null && b.t10d!.isNotEmpty) ? b.t10d : null,
+    issuedAtMs: issuedAtMs,
+    serverTimeMs: serverTimeMs,
+    lifetimeTlvHex: lifetimeTlvHex,
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'uin': uin,
-        'saved_at': savedAt,
-        'tgt': _plainHex(tgt),
-        'd2': _plainHex(d2),
-        'd2key': _plainHex(d2key),
-        'sig_key': _plainHex(sigKey),
-        'ticket_key': _plainHex(ticketKey),
-        'srm_token': _plainHex(srmToken),
-        'a1': _plainHex(a1),
-        if (a2Key != null && a2Key!.isNotEmpty) 'a2_key': _plainHex(a2Key!),
-        if (noPicSig != null && noPicSig!.isNotEmpty)
-          'no_pic_sig': _plainHex(noPicSig!),
-        if (issuedAtMs != null) 'issued_at_ms': issuedAtMs,
-        if (renewedAtMs != null) 'renewed_at_ms': renewedAtMs,
-        if (expireAtMs != null) 'expire_at_ms': expireAtMs,
-        if (serverTimeMs != null) 'server_time_ms': serverTimeMs,
-        if (lifetimeTlvHex != null) 'lifetime_tlv': lifetimeTlvHex,
-        if (invalidatedAtMs != null) 'invalidated_at_ms': invalidatedAtMs,
-        if (invalidatedType != null) 'invalidated_type': invalidatedType,
-        if (invalidatedMaterial != null)
-          'invalidated_material': invalidatedMaterial,
-      };
+    'uin': uin,
+    'saved_at': savedAt,
+    'tgt': _plainHex(tgt),
+    'd2': _plainHex(d2),
+    'd2key': _plainHex(d2key),
+    'sig_key': _plainHex(sigKey),
+    'ticket_key': _plainHex(ticketKey),
+    'srm_token': _plainHex(srmToken),
+    'a1': _plainHex(a1),
+    if (a2Key != null && a2Key!.isNotEmpty) 'a2_key': _plainHex(a2Key!),
+    if (noPicSig != null && noPicSig!.isNotEmpty)
+      'no_pic_sig': _plainHex(noPicSig!),
+    if (issuedAtMs != null) 'issued_at_ms': issuedAtMs,
+    if (renewedAtMs != null) 'renewed_at_ms': renewedAtMs,
+    if (expireAtMs != null) 'expire_at_ms': expireAtMs,
+    if (serverTimeMs != null) 'server_time_ms': serverTimeMs,
+    if (lifetimeTlvHex != null) 'lifetime_tlv': lifetimeTlvHex,
+    if (invalidatedAtMs != null) 'invalidated_at_ms': invalidatedAtMs,
+    if (invalidatedType != null) 'invalidated_type': invalidatedType,
+    if (invalidatedMaterial != null)
+      'invalidated_material': invalidatedMaterial,
+  };
 
   static Qq8TokenData fromJson(Map<String, dynamic> j) {
     final uin = j['uin'];
@@ -376,7 +372,9 @@ class Qq8TokenData {
       renewedAtMs: intField('renewed_at_ms'),
       expireAtMs: intField('expire_at_ms'),
       serverTimeMs: intField('server_time_ms'),
-      lifetimeTlvHex: lifetime is String && lifetime.isNotEmpty ? lifetime : null,
+      lifetimeTlvHex: lifetime is String && lifetime.isNotEmpty
+          ? lifetime
+          : null,
       invalidatedAtMs: intField('invalidated_at_ms'),
       invalidatedType: intField('invalidated_type'),
       invalidatedMaterial: stringField('invalidated_material'),
@@ -561,9 +559,13 @@ class EncryptedFileQq8TokenStore implements Qq8TokenStore {
         nonce: base64Decode('${raw['nonce']}'),
         mac: Mac(base64Decode('${raw['mac']}')),
       );
-      final clear = await _algo.decrypt(box, secretKey: SecretKey(await _key()));
+      final clear = await _algo.decrypt(
+        box,
+        secretKey: SecretKey(await _key()),
+      );
       final decoded = jsonDecode(utf8.decode(clear));
-      if (decoded is Map<String, dynamic>) return Qq8TokenData.fromJson(decoded);
+      if (decoded is Map<String, dynamic>)
+        return Qq8TokenData.fromJson(decoded);
     } on Object catch (e) {
       // 密钥不对 / 密文被改 / 文件损坏都落这里：**一律当作没有票据**，
       // 由上层走"重新登录"，绝不把半截数据交给协议层。

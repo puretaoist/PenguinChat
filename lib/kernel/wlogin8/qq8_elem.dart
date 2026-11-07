@@ -132,8 +132,8 @@ class Qq8ImageElem extends Qq8Elem {
   String get summary => flash
       ? '[闪照]'
       : asFace
-          ? '[动画表情]'
-          : '[图片]';
+      ? '[动画表情]'
+      : '[图片]';
 
   @override
   String toString() =>
@@ -225,11 +225,7 @@ class Qq8CardElem extends Qq8Elem {
   /// 从属性里抠出来的摘要（抠不到为空串）。
   final String summary;
 
-  const Qq8CardElem({
-    required this.kind,
-    required this.raw,
-    this.summary = '',
-  });
+  const Qq8CardElem({required this.kind, required this.raw, this.summary = ''});
 
   /// 从卡片原文里抠一句摘要：`summary=` / `brief=` / `desc=` / `title=` /
   /// `"prompt"`（JSON 卡片）。抠不到就空串（UI 退回 `[卡片消息]` 这类通用文案）。
@@ -277,12 +273,7 @@ class Qq8ReplyElem extends Qq8Elem {
   /// 引用原文（从被引用消息的元素里抠的，可能是空串）。
   final String preview;
 
-  const Qq8ReplyElem({
-    this.seq,
-    this.senderUin,
-    this.time,
-    this.preview = '',
-  });
+  const Qq8ReplyElem({this.seq, this.senderUin, this.time, this.preview = ''});
 
   @override
   String toString() => 'Qq8ReplyElem(seq=$seq "$preview")';
@@ -521,17 +512,19 @@ class Qq8ElemScan {
     final suffix = Qq8Pb.textAt(p, 20);
     kinds.add('voice');
     text.write('[语音]');
-    elems.add(Qq8VoiceElem(
-      uuid: Qq8Pb.textAt(p, 3),
-      md5: _hex(Qq8Pb.bytesAt(p, 4)),
-      size: Qq8Pb.intAt(p, 6),
-      seconds: Qq8Pb.intAt(p, 19),
-      url: suffix == null
-          ? null
-          : (suffix.startsWith('http')
-              ? suffix
-              : 'https://grouptalk.c2c.qq.com$suffix'),
-    ));
+    elems.add(
+      Qq8VoiceElem(
+        uuid: Qq8Pb.textAt(p, 3),
+        md5: _hex(Qq8Pb.bytesAt(p, 4)),
+        size: Qq8Pb.intAt(p, 6),
+        seconds: Qq8Pb.intAt(p, 19),
+        url: suffix == null
+            ? null
+            : (suffix.startsWith('http')
+                  ? suffix
+                  : 'https://grouptalk.c2c.qq.com$suffix'),
+      ),
+    );
   }
 
   /// 私聊离线文件：**不在 `rich_text.elems` 里**，而是 `MsgBody.msg_content`
@@ -551,12 +544,14 @@ class Qq8ElemScan {
       if (fid == null && name == null) return;
       kinds.add('file');
       text.write('[文件]');
-      elems.add(Qq8FileElem(
-        fileId: fid,
-        md5: _hex(Qq8Pb.bytesAt(f, 4)),
-        name: name,
-        size: Qq8Pb.intAt(f, 6),
-      ));
+      elems.add(
+        Qq8FileElem(
+          fileId: fid,
+          md5: _hex(Qq8Pb.bytesAt(f, 4)),
+          name: name,
+          size: Qq8Pb.intAt(f, 6),
+        ),
+      );
     } catch (_) {
       return; // 畸形数据只丢这一个元素，别带崩整条消息
     }
@@ -610,7 +605,8 @@ class Qq8ElemScan {
     // 少解一层就会把 richMsg 自己的编码头当成"压缩标志"（这个坑自测抓到了）：
     // `Elem.rich_msg` / `Elem.light_app` 本身是个 message，真正的卡片字节在它的
     // 1 号字段里——参考实现也是 `proto[1].toBuffer()` 之后才看首字节。
-    final payload = Qq8Pb.bytesAt(Qq8Pb.decode(richMsgBytes), 1) ?? Uint8List(0);
+    final payload =
+        Qq8Pb.bytesAt(Qq8Pb.decode(richMsgBytes), 1) ?? Uint8List(0);
     final body = payload.length > 1 ? payload.sublist(1) : Uint8List(0);
     String raw;
     if (payload.isNotEmpty && payload[0] > 0) {
@@ -623,14 +619,19 @@ class Qq8ElemScan {
       raw = utf8.decode(body, allowMalformed: true);
     }
     return Qq8CardElem(
-        kind: kind, raw: raw, summary: Qq8CardElem.extractSummary(raw));
+      kind: kind,
+      raw: raw,
+      summary: Qq8CardElem.extractSummary(raw),
+    );
   }
 
   /// `Elem.text`：解两层才是 `1 = str`、`3 = @信息`。
   void _scanText(Uint8List textBytes) {
     final t = Qq8Pb.decode(textBytes);
     final strBytes = Qq8Pb.bytesAt(t, 1);
-    final s = strBytes == null ? '' : utf8.decode(strBytes, allowMalformed: true);
+    final s = strBytes == null
+        ? ''
+        : utf8.decode(strBytes, allowMalformed: true);
 
     final atBuf = Qq8Pb.bytesAt(t, 3);
     if (atBuf != null && atBuf.length >= 7 && atBuf[1] == 1) {
@@ -647,10 +648,8 @@ class Qq8ElemScan {
           elems.add(Qq8AtElem('all', name: name));
         }
       } else if (atBuf.length >= 11) {
-        final target = (atBuf[7] << 24) |
-            (atBuf[8] << 16) |
-            (atBuf[9] << 8) |
-            atBuf[10];
+        final target =
+            (atBuf[7] << 24) | (atBuf[8] << 16) | (atBuf[9] << 8) | atBuf[10];
         atTargets.add(target);
         if (s.isEmpty) {
           text.write('@$target');
@@ -718,8 +717,11 @@ class Qq8ElemScan {
   }
 
   /// 图片元素 → 模型。字段号见文件头。
-  Qq8ImageElem _parseImage(Uint8List bytes,
-      {required bool group, bool flash = false}) {
+  Qq8ImageElem _parseImage(
+    Uint8List bytes, {
+    required bool group,
+    bool flash = false,
+  }) {
     final i = Qq8Pb.decode(bytes);
 
     final String? md5;
@@ -750,12 +752,13 @@ class Qq8ElemScan {
       // `https://gchat.qpic.cn&rkey=…`，域名后直接接 `&`，连 DNS 都过不去。
       final n34 = _sub(i, 34);
       final p34 = n34 == null ? null : Qq8Pb.textAt(n34, 30);
-      url = _pathUrl('https://gchat.qpic.cn', p34) ??
+      url =
+          _pathUrl('https://gchat.qpic.cn', p34) ??
           _pathUrl('https://gchat.qpic.cn', Qq8Pb.textAt(i, 16)) ??
           _pathUrl('https://c2cpicdw.qpic.cn', Qq8Pb.textAt(i, 15)) ??
           (md5 != null
               ? 'https://gchat.qpic.cn/gchatpic_new/0/0-0-'
-                  '${md5.toUpperCase()}/0'
+                    '${md5.toUpperCase()}/0'
               : null);
       asFace = _flag1(i, 34);
     } else {
@@ -771,7 +774,8 @@ class Qq8ElemScan {
       // 私聊的 29.30 是路径但**不带 qkey**，必须自己补 `&spec=0&rf=naio`
       // （参考实现同款）；15 号可能是完整路径也可能只是 query，一律走校验。
       final fromSu = _pathUrl('https://c2cpicdw.qpic.cn', su);
-      url = (fromSu == null ? null : '$fromSu&spec=0&rf=naio') ??
+      url =
+          (fromSu == null ? null : '$fromSu&spec=0&rf=naio') ??
           _pathUrl('https://c2cpicdw.qpic.cn', Qq8Pb.textAt(i, 15)) ??
           (fid != null && fid.isNotEmpty
               ? 'https://c2cpicdw.qpic.cn/offpic_new/0/$fid/0'
@@ -808,44 +812,43 @@ String buildImageFileParam({
   int? width,
   int? height,
   int? type,
-}) =>
-    '$md5${size ?? 0}-${width ?? 0}-${height ?? 0}.${imageExt(type)}';
+}) => '$md5${size ?? 0}-${width ?? 0}-${height ?? 0}.${imageExt(type)}';
 
 /// 图片类型码 → 扩展名（参考实现 `image.ts` 的 `EXT` 表）。
 String imageExt(int? type) => switch (type) {
-      3 => 'png',
-      4 => 'face',
-      1000 => 'jpg',
-      1001 => 'png',
-      1002 => 'webp',
-      1003 => 'jpg',
-      1005 => 'bmp',
-      2000 => 'gif',
-      2001 => 'png',
-      _ => 'jpg',
-    };
+  3 => 'png',
+  4 => 'face',
+  1000 => 'jpg',
+  1001 => 'png',
+  1002 => 'webp',
+  1003 => 'jpg',
+  1005 => 'bmp',
+  2000 => 'gif',
+  2001 => 'png',
+  _ => 'jpg',
+};
 
 /// 元素字段名 → 诊断用类型名（对不上的走 `unknown(n)`，别猜）。
 String elemName(int n) => switch (n) {
-      1 => 'text',
-      2 => 'face',
-      3 => 'online_image',
-      4 => 'image',
-      5 => 'trans',
-      6 => 'bface',
-      8 => 'group_image',
-      12 => 'xml',
-      16 => 'extra',
-      19 => 'video',
-      21 => 'anon',
-      31 => 'mirai',
-      34 => 'sface',
-      37 => 'flags',
-      45 => 'reply',
-      51 => 'json',
-      53 => 'common',
-      _ => 'unknown($n)',
-    };
+  1 => 'text',
+  2 => 'face',
+  3 => 'online_image',
+  4 => 'image',
+  5 => 'trans',
+  6 => 'bface',
+  8 => 'group_image',
+  12 => 'xml',
+  16 => 'extra',
+  19 => 'video',
+  21 => 'anon',
+  31 => 'mirai',
+  34 => 'sface',
+  37 => 'flags',
+  45 => 'reply',
+  51 => 'json',
+  53 => 'common',
+  _ => 'unknown($n)',
+};
 
 String? _hex(Uint8List? bytes) {
   if (bytes == null || bytes.isEmpty) return null;
@@ -1525,28 +1528,138 @@ abstract final class Qq8FaceNames {
   /// 面板里摆出来的表情：经典表情里 id ≤ 233 的那一段（超级表情是 `/名字`
   /// 文本形式，输入法里打，不摆面板）。id 顺序按"常用的靠前"排过，不是表序。
   static const List<int> common = <int>[
-    14, 13, 20, 21, 12, 11,
-    9, 5, 15, 27, 25, 26,
-    4, 16, 0, 1, 2, 6,
-    22, 23, 28, 29, 30, 31,
-    32, 33, 36, 38, 39, 46,
-    49, 53, 55, 63, 66, 69,
-    74, 76, 78, 79, 85, 89,
-    96, 97, 98, 99, 101, 104,
-    105, 106, 107, 108, 112, 113,
-    114, 115, 116, 117, 119, 120,
-    121, 122, 123, 124, 132, 133,
-    134, 136, 137, 138, 144, 146,
-    147, 148, 151, 158, 168, 169,
-    171, 172, 173, 174, 175, 176,
-    177, 178, 180, 181, 182, 183,
-    184, 185, 187, 188, 190, 192,
-    193, 194, 197, 198, 199, 200,
-    201, 202, 203, 204, 205, 206,
-    207, 208, 210, 211, 212, 214,
-    215, 216, 217, 218, 219, 220,
-    221, 222, 223, 224, 225, 226,
-    227, 228, 229, 230, 231, 232,
+    14,
+    13,
+    20,
+    21,
+    12,
+    11,
+    9,
+    5,
+    15,
+    27,
+    25,
+    26,
+    4,
+    16,
+    0,
+    1,
+    2,
+    6,
+    22,
+    23,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    36,
+    38,
+    39,
+    46,
+    49,
+    53,
+    55,
+    63,
+    66,
+    69,
+    74,
+    76,
+    78,
+    79,
+    85,
+    89,
+    96,
+    97,
+    98,
+    99,
+    101,
+    104,
+    105,
+    106,
+    107,
+    108,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    132,
+    133,
+    134,
+    136,
+    137,
+    138,
+    144,
+    146,
+    147,
+    148,
+    151,
+    158,
+    168,
+    169,
+    171,
+    172,
+    173,
+    174,
+    175,
+    176,
+    177,
+    178,
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    187,
+    188,
+    190,
+    192,
+    193,
+    194,
+    197,
+    198,
+    199,
+    200,
+    201,
+    202,
+    203,
+    204,
+    205,
+    206,
+    207,
+    208,
+    210,
+    211,
+    212,
+    214,
+    215,
+    216,
+    217,
+    218,
+    219,
+    220,
+    221,
+    222,
+    223,
+    224,
+    225,
+    226,
+    227,
+    228,
+    229,
+    230,
+    231,
+    232,
     233,
   ];
 }

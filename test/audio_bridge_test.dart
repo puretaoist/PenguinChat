@@ -13,10 +13,14 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const methodChannel = MethodChannel(AudioBridge.methodChannelName);
-  const playbackChannel =
-      MethodChannel(AudioBridge.playbackEventChannelName, StandardMethodCodec());
-  const recordChannel =
-      MethodChannel(AudioBridge.recordEventChannelName, StandardMethodCodec());
+  const playbackChannel = MethodChannel(
+    AudioBridge.playbackEventChannelName,
+    StandardMethodCodec(),
+  );
+  const recordChannel = MethodChannel(
+    AudioBridge.recordEventChannelName,
+    StandardMethodCodec(),
+  );
 
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -86,8 +90,12 @@ void main() {
       expect(await bridge.resume(), 1234);
       expect(await bridge.stop(), 1234);
       expect(await bridge.position(), 1234);
-      expect(calls.map((c) => c.method).toList(),
-          <String>['pause', 'resume', 'stop', 'position']);
+      expect(calls.map((c) => c.method).toList(), <String>[
+        'pause',
+        'resume',
+        'stop',
+        'position',
+      ]);
     });
 
     test('setSpeed 发送 speed 并解析 bool', () async {
@@ -114,10 +122,10 @@ void main() {
 
     test('recordStop 解析 path/durationMs/size', () async {
       responder = (call) => <String, Object?>{
-            'path': '/cache/rec.pcm',
-            'durationMs': 2500,
-            'size': 80000,
-          };
+        'path': '/cache/rec.pcm',
+        'durationMs': 2500,
+        'size': 80000,
+      };
       final bridge = AudioBridge();
       final pcm = await bridge.recordStop();
       expect(pcm, isNotNull);
@@ -158,11 +166,17 @@ void main() {
       final bridge = AudioBridge();
       await expectLater(
         bridge.pause(),
-        throwsA(isA<UnsupportedError>().having(
-          (e) => e.message,
-          'message',
-          allOf(contains('penguinchat/audio'), contains('pause'), contains('boom')),
-        )),
+        throwsA(
+          isA<UnsupportedError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('penguinchat/audio'),
+              contains('pause'),
+              contains('boom'),
+            ),
+          ),
+        ),
       );
     });
   });
@@ -189,7 +203,10 @@ void main() {
       await push(<String, Object?>{'event': 'completed', 'positionMs': 2000});
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(events.map((e) => e.event).toList(), <String>['progress', 'completed']);
+      expect(events.map((e) => e.event).toList(), <String>[
+        'progress',
+        'completed',
+      ]);
       expect(events.first.positionMs, 100);
       expect(events.first.isProgress, isTrue);
       expect(events.last.positionMs, 2000);

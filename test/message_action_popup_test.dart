@@ -19,25 +19,27 @@ Future<void> _pump(
 }) async {
   TelegramColors.use(TelegramPalette.dark);
   addTearDown(() => TelegramColors.use(TelegramPalette.dark));
-  await tester.pumpWidget(MaterialApp(
-    theme: buildTelegramTheme(),
-    home: Scaffold(
-      body: Builder(
-        builder: (ctx) => Center(
-          child: ElevatedButton(
-            key: const ValueKey('open-popup'),
-            onPressed: () => showMessageActionPopup(
-              ctx,
-              anchor: anchor,
-              outgoing: outgoing,
-              items: items,
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: buildTelegramTheme(),
+      home: Scaffold(
+        body: Builder(
+          builder: (ctx) => Center(
+            child: ElevatedButton(
+              key: const ValueKey('open-popup'),
+              onPressed: () => showMessageActionPopup(
+                ctx,
+                anchor: anchor,
+                outgoing: outgoing,
+                items: items,
+              ),
+              child: const Text('打开'),
             ),
-            child: const Text('打开'),
           ),
         ),
       ),
     ),
-  ));
+  );
   await tester.pumpAndSettle();
 }
 
@@ -72,8 +74,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('popup-reply')));
     await tester.pumpAndSettle();
     expect(tapped, 1);
-    expect(find.byKey(const ValueKey('popup-reply')), findsNothing,
-        reason: '点完要关掉浮层');
+    expect(
+      find.byKey(const ValueKey('popup-reply')),
+      findsNothing,
+      reason: '点完要关掉浮层',
+    );
   });
 
   testWidgets('点遮罩：只关闭，不执行任何动作', (tester) async {
@@ -117,10 +122,14 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('open-popup')));
     await tester.pumpAndSettle();
-    final leftOfOutgoing =
-        tester.getTopLeft(find.byKey(const ValueKey('popup-a'))).dx;
-    expect(leftOfOutgoing, lessThanOrEqualTo(300 - 8),
-        reason: '菜单右缘要落在气泡左边 8dp 处');
+    final leftOfOutgoing = tester
+        .getTopLeft(find.byKey(const ValueKey('popup-a')))
+        .dx;
+    expect(
+      leftOfOutgoing,
+      lessThanOrEqualTo(300 - 8),
+      reason: '菜单右缘要落在气泡左边 8dp 处',
+    );
     expect(
       tester.getSize(find.byKey(const ValueKey('popup-a'))).width,
       kMessagePopupWidth,

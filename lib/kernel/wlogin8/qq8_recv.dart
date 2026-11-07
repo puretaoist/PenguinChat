@@ -91,7 +91,8 @@ Qq8SsoResponse qq8UnwrapRecv(Uint8List frame, {Uint8List? d2key}) {
   }
 
   // ---------- ① 外壳 ----------
-  final magic = (frame[0] << 24) | (frame[1] << 16) | (frame[2] << 8) | frame[3];
+  final magic =
+      (frame[0] << 24) | (frame[1] << 16) | (frame[2] << 8) | frame[3];
   if (magic == 0x0B) {
     return _unwrapUni(frame, d2key: d2key);
   }
@@ -102,7 +103,8 @@ Qq8SsoResponse qq8UnwrapRecv(Uint8List frame, {Uint8List? d2key}) {
     );
   }
   final flag = frame[4];
-  final d2Len = (frame[5] << 24) | (frame[6] << 16) | (frame[7] << 8) | frame[8];
+  final d2Len =
+      (frame[5] << 24) | (frame[6] << 16) | (frame[7] << 8) | frame[8];
   if (d2Len != 0) {
     throw Qq8LoginException(
       '响应外壳里 d2 长度=$d2Len：非空 d2 的字段顺序尚无样本核对，'
@@ -242,7 +244,9 @@ Qq8SsoResponse _unwrapUni(Uint8List frame, {Uint8List? d2key}) {
   if (trace) {
     final n = plain.length < 64 ? plain.length : 64;
     final hex = List<String>.generate(
-        n, (i) => plain[i].toRadixString(16).padLeft(2, '0')).join();
+      n,
+      (i) => plain[i].toRadixString(16).padLeft(2, '0'),
+    ).join();
     // ignore: avoid_print
     print('[recv] SSO 头 headlen=$headlen seq=$seq retcode=$retcode 前$n=$hex');
   }
@@ -266,14 +270,18 @@ Qq8SsoResponse _unwrapUni(Uint8List frame, {Uint8List? d2key}) {
   var offset = u32At(12) + 12;
   final cmdLen = u32At(offset);
   if (cmdLen < 4 || offset + cmdLen > plain.length) {
-    throw Qq8LoginException('SSO cmd 长度非法：$cmdLen（off=$offset/${plain.length}）');
+    throw Qq8LoginException(
+      'SSO cmd 长度非法：$cmdLen（off=$offset/${plain.length}）',
+    );
   }
   final cmd = String.fromCharCodes(plain.sublist(offset + 4, offset + cmdLen));
   offset += cmdLen;
 
   final sessLen = u32At(offset);
   if (sessLen < 4 || offset + sessLen > plain.length) {
-    throw Qq8LoginException('SSO session 长度非法：$sessLen（off=$offset/${plain.length}）');
+    throw Qq8LoginException(
+      'SSO session 长度非法：$sessLen（off=$offset/${plain.length}）',
+    );
   }
   offset += sessLen;
   final compressed = i32At(offset);

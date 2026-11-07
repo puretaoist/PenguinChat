@@ -89,15 +89,10 @@ abstract final class Qq8GroupAdmin {
     required int gid,
     required int uid,
     bool rejectAddRequest = false,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: gid,
-        2: <int, Object?>{
-          1: 5,
-          2: uid,
-          3: rejectAddRequest ? 1 : 0,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: gid,
+    2: <int, Object?>{1: 5, 2: uid, 3: rejectAddRequest ? 1 : 0},
+  });
 
   /// 踢人应答：`[4][2][1] == 0` 才算成功（参考实现同判据）。
   static ({bool ok, int? code, String? message}) parseKick(Uint8List payload) {

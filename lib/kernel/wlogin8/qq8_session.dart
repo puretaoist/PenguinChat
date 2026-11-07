@@ -115,8 +115,10 @@ class Qq8ServerRetcodeException implements Exception {
 enum Qq8RegisterOutcome {
   /// 服务端回执 cReplyCode == 0（官方判据 msf/core/push/e.java:196-235）。
   confirmed,
+
   /// 收到回执但被明确拒绝（票据/设备信息不符）。
   rejected,
+
   /// 没有任何回执（超时或等回应时断线）：推送通道是否已建立未知。
   unconfirmed,
 }
@@ -202,9 +204,9 @@ class Qq8Session {
     Uint8List? randomKey,
     int seqStart = 0,
     this.qimei36,
-  })  : sig = sig ?? Qq8SigInfo(),
-        randomKey = randomKey ?? _secureBytes(16),
-        _seq = seqStart;
+  }) : sig = sig ?? Qq8SigInfo(),
+       randomKey = randomKey ?? _secureBytes(16),
+       _seq = seqStart;
 
   /// 服务端主动下发的帧（没有匹配请求的那些）。
   Stream<Qq8SsoResponse> get pushes => _pushes.stream;
@@ -285,17 +287,17 @@ class Qq8Session {
   }
 
   Qq8SsoContext _ctx(int seq) => Qq8SsoContext(
-        uin: uin,
-        apk: profile.apk,
-        device: device,
-        sessionId: sessionId,
-        randomKey: randomKey,
-        ecdhPublicKey: ecdhPublicKey,
-        ecdhShareKey: ecdhShareKey,
-        sig: sig,
-        seqId: seq,
-        qimei36: qimei36,
-      );
+    uin: uin,
+    apk: profile.apk,
+    device: device,
+    sessionId: sessionId,
+    randomKey: randomKey,
+    ecdhPublicKey: ecdhPublicKey,
+    ecdhShareKey: ecdhShareKey,
+    sig: sig,
+    seqId: seq,
+    qimei36: qimei36,
+  );
 
   Future<Qq8SsoResponse> _send(
     int seq,
@@ -311,8 +313,7 @@ class Qq8Session {
       }
       final left = deadline.difference(DateTime.now());
       if (left <= Duration.zero) {
-        throw Qq8TransportException(
-            '等待响应超时（seq=$seq，${timeout.inSeconds}s）');
+        throw Qq8TransportException('等待响应超时（seq=$seq，${timeout.inSeconds}s）');
       }
       final r = await _awaitResponse(seq, packet, left);
       if (r.retcode == 0) {
@@ -324,20 +325,18 @@ class Qq8Session {
       // 连着回了 -10008，我们每条都当超时丢掉，请求全部石沉大海。
       if (r.retcode == qq8RetcodeResend && resends < 1) {
         resends++;
-        onError?.call(Qq8ServerRetcodeException(
-          retcode: r.retcode,
-          seq: seq,
-          cmd: r.cmd,
-          resent: true,
-        ));
+        onError?.call(
+          Qq8ServerRetcodeException(
+            retcode: r.retcode,
+            seq: seq,
+            cmd: r.cmd,
+            resent: true,
+          ),
+        );
         continue;
       }
       if (r.retcode == qq8RetcodeResend) _noteResendExhausted();
-      throw Qq8ServerRetcodeException(
-        retcode: r.retcode,
-        seq: seq,
-        cmd: r.cmd,
-      );
+      throw Qq8ServerRetcodeException(retcode: r.retcode, seq: seq, cmd: r.cmd);
     }
   }
 
@@ -400,10 +399,12 @@ class Qq8Session {
       return c.future;
     }();
     try {
-      return await work.timeout(timeout, onTimeout: () {
-        throw Qq8TransportException(
-            '等待响应超时（seq=$seq，${timeout.inSeconds}s）');
-      });
+      return await work.timeout(
+        timeout,
+        onTimeout: () {
+          throw Qq8TransportException('等待响应超时（seq=$seq，${timeout.inSeconds}s）');
+        },
+      );
     } on Object {
       _pending.remove(seq);
       rethrow;
@@ -643,8 +644,12 @@ class Qq8Session {
   /// `Heartbeat.Alive`：登录层 type=0、空 body。
   ///
   /// 出处：oicq js `lib/wtlogin/wt.js` 的 `heartbeat()`。
-  Future<Qq8SsoResponse> heartbeatAlive() =>
-      sendLoginLayer('Heartbeat.Alive', Uint8List(0), type: Qq8LoginType.heartbeat);
+  Future<Qq8SsoResponse> heartbeatAlive() => sendLoginLayer(
+    'Heartbeat.Alive',
+    Uint8List(0),
+    type: Qq8LoginType.heartbeat,
+  );
+
   /// `Client.CorrectTime`：登录层 type=0、body = 4 个零字节；
   /// 响应的前 4 字节是服务端时间（i32），据此更新 [timeDiffSeconds]。
   ///
@@ -658,7 +663,8 @@ class Qq8Session {
     if (r.payload.length < 4) {
       throw Qq8LoginException('CorrectTime 响应太短（${r.payload.length} 字节）');
     }
-    final ts = (r.payload[0] << 24) |
+    final ts =
+        (r.payload[0] << 24) |
         (r.payload[1] << 16) |
         (r.payload[2] << 8) |
         r.payload[3];

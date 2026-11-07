@@ -38,16 +38,20 @@ class _FakeStore implements ChatStore {
       throw UnimplementedError('${invocation.memberName} 不该在这条用例里被调到');
 }
 
-ChatMessage _msg(String id, String text, {required String chatId, int minute = 0}) =>
-    ChatMessage(
-      id: id,
-      text: text,
-      segments: <Segment>[TextSegment(text)],
-      time: DateTime(2026, 9, 12, 10, minute),
-      chatId: chatId,
-      senderId: '20002',
-      senderName: '小明',
-    );
+ChatMessage _msg(
+  String id,
+  String text, {
+  required String chatId,
+  int minute = 0,
+}) => ChatMessage(
+  id: id,
+  text: text,
+  segments: <Segment>[TextSegment(text)],
+  time: DateTime(2026, 9, 12, 10, minute),
+  chatId: chatId,
+  senderId: '20002',
+  senderName: '小明',
+);
 
 void main() {
   final chats = <Chat>[
@@ -55,15 +59,20 @@ void main() {
     const Chat(id: 'group_12345', title: '测试群', type: ChatType.group),
   ];
 
-  Future<void> pump(WidgetTester tester, _FakeStore store,
-      {void Function(Chat)? onOpen}) async {
-    await tester.pumpWidget(MaterialApp(
-      home: SearchPage(
-        chats: chats,
-        store: store,
-        onOpenChat: onOpen ?? (_) {},
+  Future<void> pump(
+    WidgetTester tester,
+    _FakeStore store, {
+    void Function(Chat)? onOpen,
+  }) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SearchPage(
+          chats: chats,
+          store: store,
+          onOpenChat: onOpen ?? (_) {},
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
   }
 
@@ -80,12 +89,17 @@ void main() {
     await tester.enterText(find.byKey(const ValueKey('search-input')), '测试');
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('search-chat-group_12345')), findsOneWidget);
-    expect(find.byKey(const ValueKey('search-chat-private_20002')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('search-chat-group_12345')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('search-chat-private_20002')),
+      findsNothing,
+    );
   });
 
-  testWidgets('按内容搜消息：显示会话名 + 文本，点一下回调打开该会话',
-      (tester) async {
+  testWidgets('按内容搜消息：显示会话名 + 文本，点一下回调打开该会话', (tester) async {
     final store = _FakeStore();
     store.messages['private_20002'] = <ChatMessage>[
       _msg('m1', '会议改到三点', chatId: 'private_20002'),

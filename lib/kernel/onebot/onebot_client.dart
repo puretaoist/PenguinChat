@@ -199,7 +199,8 @@ class OneBotMetaEvent extends OneBotEvent {
 
   /// `lifecycle` 时表示是否已连接。
   bool get isOnline =>
-      ((raw['status'] as Map?)?['online'] as bool?) ?? metaEventType == 'heartbeat';
+      ((raw['status'] as Map?)?['online'] as bool?) ??
+      metaEventType == 'heartbeat';
 
   @override
   int? get time => _asInt(raw['time']);
@@ -369,18 +370,17 @@ class OneBotClient {
     required this.config,
     this.onLog,
     OneBotSocketFactory? socketFactory,
-  })  : _effectiveAddress = config.address,
-        _socketFactory = socketFactory ?? _defaultSocketFactory;
+  }) : _effectiveAddress = config.address,
+       _socketFactory = socketFactory ?? _defaultSocketFactory;
 
   /// 默认建连实现。
   static Future<WebSocket> _defaultSocketFactory(
     Uri uri, {
     Map<String, dynamic>? headers,
-  }) =>
-      WebSocket.connect(
-        uri.toString(),
-        headers: headers,
-      ).timeout(const Duration(seconds: 15));
+  }) => WebSocket.connect(
+    uri.toString(),
+    headers: headers,
+  ).timeout(const Duration(seconds: 15));
 
   /// 事件流（连接状态 / 四类 OneBot 事件 / 传输错误）。
   Stream<OneBotEvent> get events => _events.stream;
@@ -454,9 +454,7 @@ class OneBotClient {
   static String _redacted(Uri uri) {
     final params = uri.queryParameters;
     if (!params.containsKey('access_token')) return '$uri';
-    return '${uri.replace(
-      queryParameters: {...params, 'access_token': '***'},
-    )}';
+    return '${uri.replace(queryParameters: {...params, 'access_token': '***'})}';
   }
 
   /// 主动关闭。之后不再自动重连。
@@ -477,7 +475,10 @@ class OneBotClient {
     _socket = null;
     _heartbeatTimer?.cancel();
     _rejectAll(
-      OneBotApiException('*', '连接断开${reason == null || reason.isEmpty ? '' : ': $reason'}'),
+      OneBotApiException(
+        '*',
+        '连接断开${reason == null || reason.isEmpty ? '' : ': $reason'}',
+      ),
     );
     if (_closedByUser) {
       _setState(OneBotState.closed);
@@ -492,8 +493,10 @@ class OneBotClient {
         _setState(OneBotState.disconnected, reason: 'normal-close');
         return;
       case 1015: // TLS 错误 —— 可选降级为明文 ws://
-        if (config.allowPlaintextFallback && _effectiveAddress.startsWith('wss://')) {
-          _effectiveAddress = 'ws://${_effectiveAddress.substring('wss://'.length)}';
+        if (config.allowPlaintextFallback &&
+            _effectiveAddress.startsWith('wss://')) {
+          _effectiveAddress =
+              'ws://${_effectiveAddress.substring('wss://'.length)}';
           _log('warn', 'TLS 失败，降级为 $_effectiveAddress');
           _retryCount = 0;
         }
@@ -576,7 +579,9 @@ class OneBotClient {
     });
 
     try {
-      socket.add(jsonEncode({'action': action, 'params': params, 'echo': echo}));
+      socket.add(
+        jsonEncode({'action': action, 'params': params, 'echo': echo}),
+      );
     } on Object catch (e) {
       _pending.remove(echo);
       return Future.error(OneBotApiException(action, '发送失败: $e'));
@@ -648,12 +653,16 @@ class OneBotClient {
       // 原样透传：data 可能是对象、数组或 null，由上层按 API 决定怎么解释
       pending.complete(data['data']);
     } else {
-      final msg = [data['msg'], data['wording']]
-          .whereType<String>()
-          .where((s) => s.isNotEmpty)
-          .join(' / ');
+      final msg = [
+        data['msg'],
+        data['wording'],
+      ].whereType<String>().where((s) => s.isNotEmpty).join(' / ');
       pending.completeError(
-        OneBotApiException('echo:$echo', msg.isEmpty ? '未知错误' : msg, retcode: retcode),
+        OneBotApiException(
+          'echo:$echo',
+          msg.isEmpty ? '未知错误' : msg,
+          retcode: retcode,
+        ),
       );
     }
   }
@@ -663,22 +672,25 @@ class OneBotClient {
     switch (post) {
       case 'message':
       case 'message_sent':
-        _emit(OneBotMessageEvent(
-          data,
-          (data['message_type'] as String?) ?? 'private',
-          post,
-        ));
+        _emit(
+          OneBotMessageEvent(
+            data,
+            (data['message_type'] as String?) ?? 'private',
+            post,
+          ),
+        );
       case 'notice':
-        _emit(OneBotNoticeEvent(
-          data,
-          (data['notice_type'] as String?) ?? '',
-          (data['sub_type'] as String?) ?? '',
-        ));
+        _emit(
+          OneBotNoticeEvent(
+            data,
+            (data['notice_type'] as String?) ?? '',
+            (data['sub_type'] as String?) ?? '',
+          ),
+        );
       case 'request':
-        _emit(OneBotRequestEvent(
-          data,
-          (data['request_type'] as String?) ?? '',
-        ));
+        _emit(
+          OneBotRequestEvent(data, (data['request_type'] as String?) ?? ''),
+        );
       case 'meta_event':
         final meta = OneBotMetaEvent(
           data,

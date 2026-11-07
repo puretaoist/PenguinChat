@@ -202,7 +202,8 @@ abstract final class Qq8Register {
     int? largeSeq,
     int? helloInterval,
     int? batteryInterval,
-  })? parsePushState(Uint8List payload) {
+  })?
+  parsePushState(Uint8List payload) {
     try {
       final rsp = Qq8Jce.decodeWrapper(payload);
       int? at(int k) {

@@ -83,13 +83,13 @@ abstract final class Qq8QrcodeResult {
 
   /// 给人看的一句话。
   static String describe(int retcode) => switch (retcode) {
-        confirmed => '已确认，正在登录',
-        timeout => '二维码超时，请重新获取',
-        waitingForScan => '二维码尚未扫描',
-        waitingForConfirm => '已扫描，请在手机上确认',
-        canceled => '二维码被取消，请重新获取',
-        _ => '扫码遇到未知错误（retcode=$retcode），请重新获取',
-      };
+    confirmed => '已确认，正在登录',
+    timeout => '二维码超时，请重新获取',
+    waitingForScan => '二维码尚未扫描',
+    waitingForConfirm => '已扫描，请在手机上确认',
+    canceled => '二维码被取消，请重新获取',
+    _ => '扫码遇到未知错误（retcode=$retcode），请重新获取',
+  };
 }
 
 /// 取码结果。
@@ -207,18 +207,19 @@ abstract final class Qq8Qrcode {
 
   /// 轮询请求体（子命令 5）：
   /// `u16 5 ‖ u8 1 ‖ u32 8 ‖ u32 16 ‖ tlv(qrsig) ‖ u64 0 ‖ u8 8 ‖ tlv(空) ‖ u16 0`。
-  static Uint8List buildQueryBody(Uint8List qrsig) => (ByteWriter()
-        ..u16(5)
-        ..u8(1)
-        ..u32(8)
-        ..u32(16)
-        ..u16(qrsig.length)
-        ..raw(qrsig)
-        ..u64(0)
-        ..u8(8)
-        ..u16(0) // tlv(BUF0)
-        ..u16(0))
-      .build();
+  static Uint8List buildQueryBody(Uint8List qrsig) =>
+      (ByteWriter()
+            ..u16(5)
+            ..u8(1)
+            ..u32(8)
+            ..u32(16)
+            ..u16(qrsig.length)
+            ..raw(qrsig)
+            ..u64(0)
+            ..u8(8)
+            ..u16(0) // tlv(BUF0)
+            ..u16(0))
+          .build();
 
   /// code2d 包：先套 code2d 内层，再走 `wtlogin.trans_emp` 信封
   /// （uin=0 / cmdid=0x812 / subid=手表档案）。
@@ -230,30 +231,35 @@ abstract final class Qq8Qrcode {
     required Qq8ApkInfo watch,
     required int timestampSeconds,
   }) {
-    final inner = (ByteWriter()
-          ..u32(head)
-          ..u32(0x1000)
-          ..u16(0)
-          ..u32(0x72000000)
-          ..u32(timestampSeconds)
-          ..u8(2)
-          ..u16(44 + body.length)
-          ..u16(cmdid)
-          ..raw(Uint8List(21))
-          ..u8(3)
-          ..u16(0)
-          ..u16(50)
-          ..u32(ctx.seqId + 1)
-          ..u64(0)
-          ..raw(body)
-          ..u8(3))
-        .build();
+    final inner =
+        (ByteWriter()
+              ..u32(head)
+              ..u32(0x1000)
+              ..u16(0)
+              ..u32(0x72000000)
+              ..u32(timestampSeconds)
+              ..u8(2)
+              ..u16(44 + body.length)
+              ..u16(cmdid)
+              ..raw(Uint8List(21))
+              ..u8(3)
+              ..u16(0)
+              ..u16(50)
+              ..u32(ctx.seqId + 1)
+              ..u64(0)
+              ..raw(body)
+              ..u8(3))
+            .build();
 
     return Qq8Sso.buildLoginPacket(
       ctx,
       qq8TransEmpCmd,
-      Qq8Sso.buildOicqPacket(ctx, inner,
-          uinOverride: 0, cmdIdOverride: cmdIdTransEmp),
+      Qq8Sso.buildOicqPacket(
+        ctx,
+        inner,
+        uinOverride: 0,
+        cmdIdOverride: cmdIdTransEmp,
+      ),
       Qq8LoginType.login,
       uinOverride: 0,
       subIdOverride: watch.subid,
@@ -324,7 +330,11 @@ abstract final class Qq8Qrcode {
 
     p += 4;
     if (p + 4 > plain.length) throw Qq8LoginException('轮询响应在 uin 处截断');
-    final uin = (plain[p] << 24) | (plain[p + 1] << 16) | (plain[p + 2] << 8) | plain[p + 3];
+    final uin =
+        (plain[p] << 24) |
+        (plain[p + 1] << 16) |
+        (plain[p + 2] << 8) |
+        plain[p + 3];
     p += 4 + 6;
     if (p > plain.length) throw Qq8LoginException('轮询响应在 TLV 区处截断');
     final tlvs = qq8ReadTlv(plain, offset: p, tolerateTruncated: true);

@@ -64,8 +64,11 @@ void main() {
 
   test('时长够就返回文件', () async {
     final fake = _FakeRecorder();
-    fake.nextResult =
-        const RecordedPcm(path: '/tmp/a.pcm', durationMs: 1200, size: 38400);
+    fake.nextResult = const RecordedPcm(
+      path: '/tmp/a.pcm',
+      durationMs: 1200,
+      size: 38400,
+    );
     final c = VoiceRecorderController(recorder: fake);
     await c.start();
     fake.push(1200, 0.4);
@@ -79,8 +82,11 @@ void main() {
 
   test('太短（<700ms）丢弃并撤掉临时文件', () async {
     final fake = _FakeRecorder();
-    fake.nextResult =
-        const RecordedPcm(path: '/tmp/a.pcm', durationMs: 400, size: 12800);
+    fake.nextResult = const RecordedPcm(
+      path: '/tmp/a.pcm',
+      durationMs: 400,
+      size: 12800,
+    );
     final c = VoiceRecorderController(recorder: fake);
     await c.start();
     expect(await c.finish(), isNull);
@@ -103,27 +109,33 @@ void main() {
 
   testWidgets('按住录音浮层出现，松手把 PCM 交给回调', (tester) async {
     final fake = _FakeRecorder();
-    fake.nextResult =
-        const RecordedPcm(path: '/tmp/a.pcm', durationMs: 1500, size: 48000);
+    fake.nextResult = const RecordedPcm(
+      path: '/tmp/a.pcm',
+      durationMs: 1500,
+      size: 48000,
+    );
     final c = VoiceRecorderController(recorder: fake);
     String? path;
     int? ms;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: VoiceRecordButton(
-            controller: c,
-            onRecorded: (pcm, waveform) async {
-              path = pcm.path;
-              ms = pcm.durationMs;
-            },
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: VoiceRecordButton(
+              controller: c,
+              onRecorded: (pcm, waveform) async {
+                path = pcm.path;
+                ms = pcm.durationMs;
+              },
+            ),
           ),
         ),
       ),
-    ));
+    );
 
-    final gesture = await tester
-        .startGesture(tester.getCenter(find.byType(VoiceRecordButton)));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(VoiceRecordButton)),
+    );
     await tester.pump(const Duration(milliseconds: 700));
     expect(find.byKey(const ValueKey('voice-record-overlay')), findsOneWidget);
     await gesture.up();
@@ -137,22 +149,28 @@ void main() {
 
   testWidgets('上滑超过阈值松手 = 取消，不回调', (tester) async {
     final fake = _FakeRecorder();
-    fake.nextResult =
-        const RecordedPcm(path: '/tmp/a.pcm', durationMs: 1500, size: 48000);
+    fake.nextResult = const RecordedPcm(
+      path: '/tmp/a.pcm',
+      durationMs: 1500,
+      size: 48000,
+    );
     final c = VoiceRecorderController(recorder: fake);
     var called = false;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: VoiceRecordButton(
-            controller: c,
-            onRecorded: (pcm, waveform) async => called = true,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: VoiceRecordButton(
+              controller: c,
+              onRecorded: (pcm, waveform) async => called = true,
+            ),
           ),
         ),
       ),
-    ));
-    final gesture = await tester
-        .startGesture(tester.getCenter(find.byType(VoiceRecordButton)));
+    );
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(VoiceRecordButton)),
+    );
     await tester.pump(const Duration(milliseconds: 700));
     await gesture.moveBy(const Offset(0, -120));
     await tester.pump();

@@ -137,7 +137,8 @@ class EnvironmentReport {
 
   /// 按严重程度排序的发现列表。
   List<EnvFinding> get sortedFindings =>
-      findings.toList()..sort((a, b) => b.severity.index.compareTo(a.severity.index));
+      findings.toList()
+        ..sort((a, b) => b.severity.index.compareTo(a.severity.index));
 
   String summary() {
     final sb = StringBuffer();
@@ -177,54 +178,101 @@ class EnvironmentProbe {
     final findings = <EnvFinding>[];
 
     Future<void> run(
-        String id, String label, EnvRiskLevel sev, Future<String?> Function() fn,
-        {String? advice}) async {
+      String id,
+      String label,
+      EnvRiskLevel sev,
+      Future<String?> Function() fn, {
+      String? advice,
+    }) async {
       try {
         final detail = await fn().timeout(perCheckTimeout);
         if (detail != null) {
-          findings.add(EnvFinding(
-            id: id,
-            label: label,
-            severity: sev,
-            detail: detail,
-            advice: advice,
-          ));
+          findings.add(
+            EnvFinding(
+              id: id,
+              label: label,
+              severity: sev,
+              detail: detail,
+              advice: advice,
+            ),
+          );
         }
       } catch (_) {
         // 检测本身失败不是风险信号，忽略
       }
     }
 
-    await run('su_binary', 'su 可执行文件', EnvRiskLevel.high,
-        _checkSuBinaries,
-        advice: '存在 root 提权工具路径。腾讯安全 SDK（libfekit）在 native 层查这些路径。');
+    await run(
+      'su_binary',
+      'su 可执行文件',
+      EnvRiskLevel.high,
+      _checkSuBinaries,
+      advice: '存在 root 提权工具路径。腾讯安全 SDK（libfekit）在 native 层查这些路径。',
+    );
 
-    await run('magisk', 'Magisk 痕迹', EnvRiskLevel.high, _checkMagisk,
-        advice: '检测到 Magisk 相关文件。注意：Magisk DenyList/Zygisk 属于用户态隐藏，'
-            '对 native 层检测无效。');
+    await run(
+      'magisk',
+      'Magisk 痕迹',
+      EnvRiskLevel.high,
+      _checkMagisk,
+      advice:
+          '检测到 Magisk 相关文件。注意：Magisk DenyList/Zygisk 属于用户态隐藏，'
+          '对 native 层检测无效。',
+    );
 
-    await run('hook_framework', 'Hook 框架痕迹', EnvRiskLevel.critical,
-        _checkHookFrameworks,
-        advice: '检测到 Xposed/LSPosed 类框架。这是腾讯判定最重的信号之一'
-            '（xposed 字样出现在 34/41 个 dex 中）。');
+    await run(
+      'hook_framework',
+      'Hook 框架痕迹',
+      EnvRiskLevel.critical,
+      _checkHookFrameworks,
+      advice:
+          '检测到 Xposed/LSPosed 类框架。这是腾讯判定最重的信号之一'
+          '（xposed 字样出现在 34/41 个 dex 中）。',
+    );
 
-    await run('frida', 'Frida 调试框架', EnvRiskLevel.critical, _checkFrida,
-        advice: '检测到 Frida。libfekit 会读 /proc/self/maps 找注入的 .so，'
-            '这属于其重点检测项。');
+    await run(
+      'frida',
+      'Frida 调试框架',
+      EnvRiskLevel.critical,
+      _checkFrida,
+      advice:
+          '检测到 Frida。libfekit 会读 /proc/self/maps 找注入的 .so，'
+          '这属于其重点检测项。',
+    );
 
-    await run('emulator', '模拟器环境', EnvRiskLevel.high, _checkEmulator,
-        advice: '模拟器的设备特征与真实机差异明显，且极易被识别。'
-            '建议改用一台真实手机。');
+    await run(
+      'emulator',
+      '模拟器环境',
+      EnvRiskLevel.high,
+      _checkEmulator,
+      advice:
+          '模拟器的设备特征与真实机差异明显，且极易被识别。'
+          '建议改用一台真实手机。',
+    );
 
-    await run('debuggable', '系统可调试', EnvRiskLevel.medium,
-        _checkDebuggableProps,
-        advice: '系统 ro.debuggable=1。正式手机应为 0。');
+    await run(
+      'debuggable',
+      '系统可调试',
+      EnvRiskLevel.medium,
+      _checkDebuggableProps,
+      advice: '系统 ro.debuggable=1。正式手机应为 0。',
+    );
 
-    await run('adb', 'ADB 相关痕迹', EnvRiskLevel.low, _checkAdbTraces,
-        advice: '设备曾启用 USB 调试。单独不致命，但会和其他信号叠加。');
+    await run(
+      'adb',
+      'ADB 相关痕迹',
+      EnvRiskLevel.low,
+      _checkAdbTraces,
+      advice: '设备曾启用 USB 调试。单独不致命，但会和其他信号叠加。',
+    );
 
-    await run('build_tags', '测试版系统', EnvRiskLevel.medium, _checkBuildTags,
-        advice: '系统为 test-keys 签名的非正式版。');
+    await run(
+      'build_tags',
+      '测试版系统',
+      EnvRiskLevel.medium,
+      _checkBuildTags,
+      advice: '系统为 test-keys 签名的非正式版。',
+    );
 
     return EnvironmentReport(
       findings: findings,

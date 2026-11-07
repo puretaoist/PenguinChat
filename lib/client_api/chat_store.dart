@@ -1476,10 +1476,7 @@ class ChatStore {
       }
       // 磁盘 ID 集合：读到的行 ∪ 内存里已有的（读盘期间推送进来的）。
       // [_appendMessage] 之后靠它挡跨进程重复落盘。
-      _diskIds[chatId] = {
-        ...diskIds,
-        for (final m in list) m.id,
-      };
+      _diskIds[chatId] = {...diskIds, for (final m in list) m.id};
       if (dupes > 0) {
         // 历史遗留的重复行（每次启动各追加一次攒出来的）：内存此刻已是去重
         // 版本，趁机整文件重写一次收口。只在真的读到重复时重写——启动时无条件

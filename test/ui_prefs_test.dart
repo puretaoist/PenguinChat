@@ -78,7 +78,8 @@ void main() {
         disableNumberRounding: true,
       );
       expect(UiPrefs.fromJson(p.toJson()), p);
-      final decoded = jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>;
+      final decoded =
+          jsonDecode(jsonEncode(p.toJson())) as Map<String, Object?>;
       expect(UiPrefs.fromJson(decoded), p);
     });
 
@@ -117,9 +118,13 @@ void main() {
     test('头像圆角越界/类型错都夹回 0–30', () {
       final tooBig = UiPrefs.fromJson(<String, Object?>{'avatar_corners': 99});
       expect(tooBig.avatarCorners, 30.0);
-      final negative = UiPrefs.fromJson(<String, Object?>{'avatar_corners': -5});
+      final negative = UiPrefs.fromJson(<String, Object?>{
+        'avatar_corners': -5,
+      });
       expect(negative.avatarCorners, 0.0);
-      final wrongType = UiPrefs.fromJson(<String, Object?>{'avatar_corners': 'round'});
+      final wrongType = UiPrefs.fromJson(<String, Object?>{
+        'avatar_corners': 'round',
+      });
       expect(wrongType.avatarCorners, 30.0);
     });
 

@@ -45,28 +45,40 @@ class _FakePreparer implements VoicePreparer {
   Future<PreparedVoice?> prepare(String localPath) async {
     calls++;
     if (fail) return null;
-    return PreparedVoice('/tmp/decoded.pcm',
-        durationMs: 4200, waveform: const <double>[0.4, 0.9, 0.3]);
+    return PreparedVoice(
+      '/tmp/decoded.pcm',
+      durationMs: 4200,
+      waveform: const <double>[0.4, 0.9, 0.3],
+    );
   }
 }
 
 Widget _wrap(Widget child) => MaterialApp(
-      home: Scaffold(backgroundColor: Colors.black, body: Center(child: child)),
-    );
+  home: Scaffold(
+    backgroundColor: Colors.black,
+    body: Center(child: child),
+  ),
+);
 
 void main() {
   testWidgets('点一下开始播放：解码 → engine.play，图标变暂停', (tester) async {
     final engine = _FakeEngine();
     final preparer = _FakePreparer();
-    final controller =
-        VoicePlaybackController(preparer: preparer, engine: engine);
-    await tester.pumpWidget(_wrap(VoiceMessage(
-      segment: const RecordSegment('abc123', seconds: 4, size: 6400),
-      isOut: false,
-      mediaKey: 'voice:abc123',
-      retryMedia: (_) async => '/tmp/a.slk',
-      controllerOverride: controller,
-    )));
+    final controller = VoicePlaybackController(
+      preparer: preparer,
+      engine: engine,
+    );
+    await tester.pumpWidget(
+      _wrap(
+        VoiceMessage(
+          segment: const RecordSegment('abc123', seconds: 4, size: 6400),
+          isOut: false,
+          mediaKey: 'voice:abc123',
+          retryMedia: (_) async => '/tmp/a.slk',
+          controllerOverride: controller,
+        ),
+      ),
+    );
     await tester.tap(find.byType(VoiceMessage));
     await tester.pumpAndSettle();
     expect(preparer.calls, 1);
@@ -78,15 +90,21 @@ void main() {
   testWidgets('再点一下暂停，再点继续（不重新解码）', (tester) async {
     final engine = _FakeEngine();
     final preparer = _FakePreparer();
-    final controller =
-        VoicePlaybackController(preparer: preparer, engine: engine);
-    await tester.pumpWidget(_wrap(VoiceMessage(
-      segment: const RecordSegment('abc123', seconds: 4),
-      isOut: true,
-      mediaKey: 'voice:abc123',
-      retryMedia: (_) async => '/tmp/a.slk',
-      controllerOverride: controller,
-    )));
+    final controller = VoicePlaybackController(
+      preparer: preparer,
+      engine: engine,
+    );
+    await tester.pumpWidget(
+      _wrap(
+        VoiceMessage(
+          segment: const RecordSegment('abc123', seconds: 4),
+          isOut: true,
+          mediaKey: 'voice:abc123',
+          retryMedia: (_) async => '/tmp/a.slk',
+          controllerOverride: controller,
+        ),
+      ),
+    );
     await tester.tap(find.byType(VoiceMessage));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(VoiceMessage));
@@ -99,19 +117,25 @@ void main() {
   testWidgets('取不到本地文件：显示下载失败，点按重试会再走一次', (tester) async {
     final engine = _FakeEngine();
     final preparer = _FakePreparer();
-    final controller =
-        VoicePlaybackController(preparer: preparer, engine: engine);
+    final controller = VoicePlaybackController(
+      preparer: preparer,
+      engine: engine,
+    );
     var attempts = 0;
-    await tester.pumpWidget(_wrap(VoiceMessage(
-      segment: const RecordSegment('abc123', seconds: 4),
-      isOut: false,
-      mediaKey: 'voice:abc123',
-      retryMedia: (_) async {
-        attempts++;
-        return null;
-      },
-      controllerOverride: controller,
-    )));
+    await tester.pumpWidget(
+      _wrap(
+        VoiceMessage(
+          segment: const RecordSegment('abc123', seconds: 4),
+          isOut: false,
+          mediaKey: 'voice:abc123',
+          retryMedia: (_) async {
+            attempts++;
+            return null;
+          },
+          controllerOverride: controller,
+        ),
+      ),
+    );
     await tester.tap(find.byType(VoiceMessage));
     await tester.pumpAndSettle();
     expect(attempts, 1);
@@ -127,14 +151,20 @@ void main() {
   testWidgets('解码失败：显示无法解码，不调 engine.play', (tester) async {
     final engine = _FakeEngine();
     final controller = VoicePlaybackController(
-        preparer: _FakePreparer(fail: true), engine: engine);
-    await tester.pumpWidget(_wrap(VoiceMessage(
-      segment: const RecordSegment('abc123', seconds: 4),
-      isOut: false,
-      mediaKey: 'voice:abc123',
-      retryMedia: (_) async => '/tmp/a.slk',
-      controllerOverride: controller,
-    )));
+      preparer: _FakePreparer(fail: true),
+      engine: engine,
+    );
+    await tester.pumpWidget(
+      _wrap(
+        VoiceMessage(
+          segment: const RecordSegment('abc123', seconds: 4),
+          isOut: false,
+          mediaKey: 'voice:abc123',
+          retryMedia: (_) async => '/tmp/a.slk',
+          controllerOverride: controller,
+        ),
+      ),
+    );
     await tester.tap(find.byType(VoiceMessage));
     await tester.pumpAndSettle();
     expect(find.text('无法解码这条语音'), findsOneWidget);

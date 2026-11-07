@@ -45,11 +45,7 @@ typedef AttachTarget = ({int uin, int epoch});
 
 /// 一轮待执行的 attach。
 class AttachPlan {
-  const AttachPlan({
-    required this.uin,
-    required this.epoch,
-    required this.gen,
-  });
+  const AttachPlan({required this.uin, required this.epoch, required this.gen});
 
   final int uin;
 
@@ -92,7 +88,6 @@ class AccountCleanupBarrier {
     return next;
   }
 }
-
 
 /// [AttachCoordinator.update] 的返回：可能要启动一轮，也可能要交还旧资源。
 typedef AttachUpdate<R> = ({AttachPlan? plan, R? retired});
@@ -157,7 +152,8 @@ class AttachCoordinator<R extends Object> {
     }
 
     // ---- 3. 取消在跑的轮次（目标不同 / 不在线 / 同号新会话代）----
-    final pendingStale = _pendingTarget != null &&
+    final pendingStale =
+        _pendingTarget != null &&
         (_pendingTarget!.uin != uin ||
             epoch == null ||
             _pendingTarget!.epoch != epoch);

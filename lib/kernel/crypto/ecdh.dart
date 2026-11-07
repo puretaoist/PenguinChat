@@ -108,7 +108,9 @@ class Ecdh {
     final serverPoint = _decodePoint(serverPublicKey);
 
     final agreement = ECDHBasicAgreement()..init(priv);
-    final secret = agreement.calculateAgreement(ECPublicKey(serverPoint, domain));
+    final secret = agreement.calculateAgreement(
+      ECPublicKey(serverPoint, domain),
+    );
 
     final secretBytes = _encodeBigInt(secret, 32);
     final seed = Uint8List.sublistView(secretBytes, 0, 16);

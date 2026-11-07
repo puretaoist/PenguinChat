@@ -63,16 +63,16 @@ class LibraryEntry {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id.value,
-        'name': name,
-        'at': addedAt.toIso8601String(),
-      };
+    'id': id.value,
+    'name': name,
+    'at': addedAt.toIso8601String(),
+  };
 
   static LibraryEntry fromJson(Map<String, dynamic> j) => LibraryEntry(
-        id: BlobId(j['id'] as String),
-        name: j['name'] as String,
-        addedAt: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
-      );
+    id: BlobId(j['id'] as String),
+    name: j['name'] as String,
+    addedAt: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
+  );
 }
 
 /// 存储占用快照，用于设置页展示与上报。
@@ -120,11 +120,9 @@ class StorageManager {
   final StorageBudget budget;
   final Directory root;
 
-  StorageManager({
-    required this.root,
-    StorageBudget? budget,
-  })  : budget = budget ?? const StorageBudget(),
-        blobs = BlobStore(Directory('${root.path}/data'));
+  StorageManager({required this.root, StorageBudget? budget})
+    : budget = budget ?? const StorageBudget(),
+      blobs = BlobStore(Directory('${root.path}/data'));
 
   File get _manifestFile => File('${root.path}/library.json');
 
@@ -169,8 +167,7 @@ class StorageManager {
   Future<void> _saveManifest() async {
     final m = _manifest ?? {};
     final list = m.values.map((e) => e.toJson()).toList();
-    await _manifestFile
-        .writeAsString(jsonEncode(list), flush: true);
+    await _manifestFile.writeAsString(jsonEncode(list), flush: true);
   }
 
   // ---------------------------------------------------------------
@@ -248,8 +245,7 @@ class StorageManager {
   Future<List<LibraryEntry>> listLibrary() async {
     await init();
     final m = await _loadManifest();
-    return m.values.toList()
-      ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+    return m.values.toList()..sort((a, b) => b.addedAt.compareTo(a.addedAt));
   }
 
   /// 把内容导出到外部路径（用户显式动作，此时才发生真正的复制）。

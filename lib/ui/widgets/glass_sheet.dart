@@ -57,5 +57,6 @@ Future<T?> showGlassSheet<T>({
   backgroundColor: Colors.transparent,
   isScrollControlled: isScrollControlled,
   barrierColor: barrierColor,
-  builder: (BuildContext ctx) => GlassSheet(radius: radius, child: builder(ctx)),
+  builder: (BuildContext ctx) =>
+      GlassSheet(radius: radius, child: builder(ctx)),
 );

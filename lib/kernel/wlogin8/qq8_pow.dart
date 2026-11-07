@@ -194,20 +194,21 @@ Qq8PowAnswer? qq8SolvePow(
   }
 
   final elapsedMs = now().difference(start).inMilliseconds;
-  final body = (ByteWriter()
-        ..u8(ch.a)
-        ..u8(ch.typ)
-        ..u8(ch.c)
-        ..u8(1) // ok：解出来就是 1（官方写完把 d 置 1）
-        ..u16(ch.e)
-        ..u16(ch.f)
-        ..bytes16(ch.src)
-        ..bytes16(ch.tgt)
-        ..bytes16(ch.cpy)
-        ..bytes16(counter)
-        ..u32(elapsedMs)
-        ..u32(iterations))
-      .build();
+  final body =
+      (ByteWriter()
+            ..u8(ch.a)
+            ..u8(ch.typ)
+            ..u8(ch.c)
+            ..u8(1) // ok：解出来就是 1（官方写完把 d 置 1）
+            ..u16(ch.e)
+            ..u16(ch.f)
+            ..bytes16(ch.src)
+            ..bytes16(ch.tgt)
+            ..bytes16(ch.cpy)
+            ..bytes16(counter)
+            ..u32(elapsedMs)
+            ..u32(iterations))
+          .build();
   return Qq8PowAnswer(
     body: body,
     iterations: iterations,
@@ -254,27 +255,32 @@ Qq8PowAnswer qq8BuildClientPow548({
   final dst = _bigIntToBytes(_bytesToBigInt(src) + BigInt.from(10000), 128);
   final tgt = _sha256(dst);
 
-  final inner = (ByteWriter()
-        ..u8(1)
-        ..u8(2)
-        ..u8(1)
-        // 构造时 ok 写 2（≠0 表示未解出）；calcPoW 解完会重写成 1。
-        ..u8(2)
-        ..u16(10) // maxIndex
-        ..u8(0)
-        ..u8(0) // reserve
-        ..bytes16(src)
-        ..bytes16(tgt))
-      .build();
+  final inner =
+      (ByteWriter()
+            ..u8(1)
+            ..u8(2)
+            ..u8(1)
+            // 构造时 ok 写 2（≠0 表示未解出）；calcPoW 解完会重写成 1。
+            ..u8(2)
+            ..u16(10) // maxIndex
+            ..u8(0)
+            ..u8(0) // reserve
+            ..bytes16(src)
+            ..bytes16(tgt))
+          .build();
 
   // raw(inner) 提供头部+src+tgt，尾部 tlv(inner) 作为解析器读回的 cpy。
-  final challenge = (ByteWriter()
-        ..raw(inner)
-        ..bytes16(inner))
-      .build();
+  final challenge =
+      (ByteWriter()
+            ..raw(inner)
+            ..bytes16(inner))
+          .build();
 
-  final answer =
-      qq8SolvePow(challenge, clock: clock, maxIterations: maxIterations);
+  final answer = qq8SolvePow(
+    challenge,
+    clock: clock,
+    maxIterations: maxIterations,
+  );
   if (answer == null) {
     throw StateError('0x548 自构造 PoW 解不出（题型固定为 typ=2，不应发生）');
   }

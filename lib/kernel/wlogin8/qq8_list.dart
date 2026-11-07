@@ -179,35 +179,35 @@ abstract final class Qq8List {
     required int uin,
     int startIndex = 0,
     int count = 150,
-  }) =>
-      Qq8Jce.encodeWrapper(
-        service: _service,
-        method: 'GetFriendListReq',
-        attributes: <String, Uint8List>{
-          'FL': Qq8Jce.encodeStruct(<int, Object?>{
-            0: 3, // reqtype
-            1: 1, // ifReflush
-            2: uin,
-            3: startIndex,
-            4: count,
-            5: 0, // groupid（只要 0 号分组？官方语义如此，照参考实现）
-            6: 1, // ifGetGroupInfo（要分组）
-            7: 0, // groupstartIndex
-            8: 0, // getgroupCount
-            9: 0, // ifGetMSFGroup
-            10: 1, // ifShowTermType
-            11: 31, // version
-            13: 0, // eAppType
-            14: 0, // ifGetDOVId
-            15: 0, // ifGetBothFlag
-            16: _d50, // vec0xd50Req
-            18: <int>[13580, 13581, 13582], // vecSnsTypelist
-          }),
-        },
-      );
+  }) => Qq8Jce.encodeWrapper(
+    service: _service,
+    method: 'GetFriendListReq',
+    attributes: <String, Uint8List>{
+      'FL': Qq8Jce.encodeStruct(<int, Object?>{
+        0: 3, // reqtype
+        1: 1, // ifReflush
+        2: uin,
+        3: startIndex,
+        4: count,
+        5: 0, // groupid（只要 0 号分组？官方语义如此，照参考实现）
+        6: 1, // ifGetGroupInfo（要分组）
+        7: 0, // groupstartIndex
+        8: 0, // getgroupCount
+        9: 0, // ifGetMSFGroup
+        10: 1, // ifShowTermType
+        11: 31, // version
+        13: 0, // eAppType
+        14: 0, // ifGetDOVId
+        15: 0, // ifGetBothFlag
+        16: _d50, // vec0xd50Req
+        18: <int>[13580, 13581, 13582], // vecSnsTypelist
+      }),
+    },
+  );
 
   /// 群列表请求体（`GetTroopListReqV2Simplify`，9 个字段）。
-  static Uint8List buildGroupListBody({required int uin}) => Qq8Jce.encodeWrapper(
+  static Uint8List buildGroupListBody({required int uin}) =>
+      Qq8Jce.encodeWrapper(
         service: _service,
         method: 'GetTroopListReqV2Simplify',
         attributes: <String, Uint8List>{
@@ -229,20 +229,19 @@ abstract final class Qq8List {
     final f = Qq8Jce.decodeWrapper(payload);
     final classes = <Qq8FriendClass>[];
     for (final v in _structs(f[14])) {
-      classes.add(Qq8FriendClass(
-        id: _int(v[0]),
-        name: _str(v[1]),
-      ));
+      classes.add(Qq8FriendClass(id: _int(v[0]), name: _str(v[1])));
     }
     final friends = <Qq8Friend>[];
     for (final v in _structs(f[7])) {
-      friends.add(Qq8Friend(
-        uin: _int(v[0]),
-        groupId: _int(v[1]),
-        remark: _str(v[3]),
-        nick: _str(v[14]),
-        sex: _int(v[31]),
-      ));
+      friends.add(
+        Qq8Friend(
+          uin: _int(v[0]),
+          groupId: _int(v[1]),
+          remark: _str(v[3]),
+          nick: _str(v[14]),
+          sex: _int(v[31]),
+        ),
+      );
     }
     return Qq8FriendListPage(
       result: _int(f[15]),
@@ -259,17 +258,19 @@ abstract final class Qq8List {
     for (final v in _structs(f[5])) {
       final shutupWholeTs = _int(v[9]);
       final myShutupTs = _int(v[10]);
-      groups.add(Qq8Group(
-        gid: _int(v[1]),
-        name: _str(v[4]),
-        memberCount: _int(v[19]),
-        maxMemberCount: _int(v[29]),
-        ownerUin: _int(v[23]),
-        admin: _int(v[11]) != 0,
-        shutupWhole: shutupWholeTs != 0,
-        shutupMeUntil: myShutupTs,
-        joinTime: _int(v[27]),
-      ));
+      groups.add(
+        Qq8Group(
+          gid: _int(v[1]),
+          name: _str(v[4]),
+          memberCount: _int(v[19]),
+          maxMemberCount: _int(v[29]),
+          ownerUin: _int(v[23]),
+          admin: _int(v[11]) != 0,
+          shutupWhole: shutupWholeTs != 0,
+          shutupMeUntil: myShutupTs,
+          joinTime: _int(v[27]),
+        ),
+      );
     }
     return Qq8GroupListPage(
       result: _int(f[2]),
@@ -315,23 +316,22 @@ abstract final class Qq8List {
     required int uin,
     required int gid,
     int nextUin = 0,
-  }) =>
-      Qq8Jce.encodeWrapper(
-        service: _service,
-        method: 'GetTroopMemberListReq',
-        attributes: <String, Uint8List>{
-          'GTML': Qq8Jce.encodeStruct(<int, Object?>{
-            0: uin,
-            1: gid,
-            2: nextUin,
-            3: Qq8Msg.code2uin(gid),
-            4: 2, // Version
-            5: 0, // ReqType
-            6: 0, // GetListAppointTime
-            7: 0, // cRichCardNameVer
-          }),
-        },
-      );
+  }) => Qq8Jce.encodeWrapper(
+    service: _service,
+    method: 'GetTroopMemberListReq',
+    attributes: <String, Uint8List>{
+      'GTML': Qq8Jce.encodeStruct(<int, Object?>{
+        0: uin,
+        1: gid,
+        2: nextUin,
+        3: Qq8Msg.code2uin(gid),
+        4: 2, // Version
+        5: 0, // ReqType
+        6: 0, // GetListAppointTime
+        7: 0, // cRichCardNameVer
+      }),
+    },
+  );
 
   /// 解析群成员列表响应。
   ///
@@ -344,20 +344,22 @@ abstract final class Qq8List {
     final members = <Qq8GroupMember>[];
     for (final v in _structs(f[3])) {
       final flag = _int(v[18]);
-      members.add(Qq8GroupMember(
-        uin: _int(v[0]),
-        age: _int(v[2]),
-        gender: _int(v[3]),
-        nick: _str(v[4]),
-        card: _str(v[8]),
-        level: _int(v[14]),
-        joinTime: _int(v[15]),
-        lastSpeakTime: _int(v[16]),
-        admin: (flag & 1) == 1,
-        title: _str(v[23]),
-        titleExpireTime: _int(v[24]) & 0xFFFFFFFF,
-        shutupUntil: _int(v[30]),
-      ));
+      members.add(
+        Qq8GroupMember(
+          uin: _int(v[0]),
+          age: _int(v[2]),
+          gender: _int(v[3]),
+          nick: _str(v[4]),
+          card: _str(v[8]),
+          level: _int(v[14]),
+          joinTime: _int(v[15]),
+          lastSpeakTime: _int(v[16]),
+          admin: (flag & 1) == 1,
+          title: _str(v[23]),
+          titleExpireTime: _int(v[24]) & 0xFFFFFFFF,
+          shutupUntil: _int(v[30]),
+        ),
+      );
     }
     return Qq8GroupMemberPage(
       result: _int(f[5]),
@@ -422,10 +424,10 @@ class Qq8GroupMember {
 
   /// 性别文字。
   String get genderLabel => switch (gender) {
-        0 => '男',
-        -1 => '未知',
-        _ => '女',
-      };
+    0 => '男',
+    -1 => '未知',
+    _ => '女',
+  };
 }
 
 /// 群成员列表一页。

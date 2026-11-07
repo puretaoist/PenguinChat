@@ -82,7 +82,8 @@ class Qq8QimeiResult {
 /// 灯塔 OLA 取号。
 abstract final class Qq8Qimei {
   /// 参考实现用的端点（oicq `device.ts`）。
-  static const String endpointOlaAndroid = 'https://snowflake.qq.com/ola/android';
+  static const String endpointOlaAndroid =
+      'https://snowflake.qq.com/ola/android';
 
   /// 官方新版 SDK 用的端点（TIM `com/tencent/qimei/x/b.java`）。
   static const String endpointOlaV2 = 'https://snowflake.qq.com/ola/v2';
@@ -131,8 +132,10 @@ abstract final class Qq8Qimei {
       now: DateTime.now(),
     );
     final req = buildRequest(payload, random: rnd);
-    onLog?.call('取号请求: payload ${payload.length}B / 明文 params '
-        '${req.plainParams.length}B / sign ${req.sign.length} 字符');
+    onLog?.call(
+      '取号请求: payload ${payload.length}B / 明文 params '
+      '${req.plainParams.length}B / sign ${req.sign.length} 字符',
+    );
 
     final failures = <String>[];
     for (final endpoint in <String>[endpointOlaAndroid, endpointOlaV2]) {
@@ -170,7 +173,8 @@ abstract final class Qq8Qimei {
       return sb.toString();
     }
 
-    final month = '${now.year.toString().padLeft(4, '0')}-'
+    final month =
+        '${now.year.toString().padLeft(4, '0')}-'
         '${now.month.toString().padLeft(2, '0')}-01';
     final rand1 = 100000 + random.nextInt(900000);
     final rand2 = 100000000 + random.nextInt(900000000);
@@ -214,7 +218,8 @@ abstract final class Qq8Qimei {
       'oz': 'UhYmelwouA+V2nPWbOvLTgN2/m8jwGB+yUB5v9tysQg=',
       'oo': 'Xecjt+9S1+f8Pz2VLSxgpw==',
       'kelong': '0',
-      'uptimes': '${now.year.toString().padLeft(4, '0')}-'
+      'uptimes':
+          '${now.year.toString().padLeft(4, '0')}-'
           '${now.month.toString().padLeft(2, '0')}-'
           '${now.day.toString().padLeft(2, '0')} '
           '${now.hour.toString().padLeft(2, '0')}:'
@@ -247,7 +252,8 @@ abstract final class Qq8Qimei {
       'model': device.model,
       'networkType': 'unknown',
       'oaid': '',
-      'osVersion': 'Android ${device.version.release},level ${device.version.sdk}',
+      'osVersion':
+          'Android ${device.version.release},level ${device.version.sdk}',
       'qimei': '',
       'qimei36': '',
       'sdkVersion': olaSdkVersion,
@@ -278,8 +284,11 @@ abstract final class Qq8Qimei {
     final nonce = rand16();
     final keyB64 = _rsaEncryptB64(cryptKey);
     final paramsB64 = aesCbcEncryptB64(payloadJson, cryptKey);
-    final sign = _hex(md5Bytes(Uint8List.fromList(
-        utf8.encode('$keyB64$paramsB64$ts$nonce$secret'))));
+    final sign = _hex(
+      md5Bytes(
+        Uint8List.fromList(utf8.encode('$keyB64$paramsB64$ts$nonce$secret')),
+      ),
+    );
     final body = jsonEncode(<String, Object?>{
       'key': keyB64,
       'params': paramsB64,
@@ -300,7 +309,9 @@ abstract final class Qq8Qimei {
   ///
   /// 响应格式：`{"code":0,"data":"<base64>"}`；解出来的 JSON 里有 `q16/q36`。
   static ({String q16, String q36}) decodeResponse(
-      String responseJson, String cryptKey) {
+    String responseJson,
+    String cryptKey,
+  ) {
     final m = jsonDecode(responseJson);
     if (m is! Map) {
       throw Qq8QimeiException('取号响应不是 JSON 对象');
@@ -346,8 +357,10 @@ abstract final class Qq8Qimei {
       req.add(bytes);
       final rsp = await req.close().timeout(timeout);
       final text = await rsp.transform(utf8.decoder).join().timeout(timeout);
-      onLog?.call('取号响应（$endpoint）：HTTP ${rsp.statusCode} / '
-          '${text.length} 字节');
+      onLog?.call(
+        '取号响应（$endpoint）：HTTP ${rsp.statusCode} / '
+        '${text.length} 字节',
+      );
       if (rsp.statusCode != 200) return null;
       final r = decodeResponse(text, cryptKey);
       return Qq8QimeiResult(q16: r.q16, q36: r.q36, endpoint: endpoint);
@@ -362,39 +375,51 @@ abstract final class Qq8Qimei {
     // `PublicKeyParameter<PublicKey>` 而运行时类型不符（踩过一次）。
     final eng = PKCS1Encoding(RSAEngine())
       ..init(
-          true,
-          PublicKeyParameter<RSAPublicKey>(
-              RSAPublicKey(rsaModulus, rsaExponent)));
+        true,
+        PublicKeyParameter<RSAPublicKey>(RSAPublicKey(rsaModulus, rsaExponent)),
+      );
     final out = eng.process(Uint8List.fromList(utf8.encode(text)));
     return base64.encode(out);
   }
 
   /// AES-128-CBC（PKCS7）+ base64。密钥与 IV 都是本次的 cryptKey（照参考实现）。
   static String aesCbcEncryptB64(String plain, String key) {
-    final cipher = PaddedBlockCipherImpl(
-      PKCS7Padding(),
-      CBCBlockCipher(AESEngine()),
-    )..init(true, PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>,
-            KeyParameter>(
-        ParametersWithIV<KeyParameter>(
-            KeyParameter(Uint8List.fromList(utf8.encode(key))),
-            Uint8List.fromList(utf8.encode(key))),
-        null));
+    final cipher =
+        PaddedBlockCipherImpl(PKCS7Padding(), CBCBlockCipher(AESEngine()))
+          ..init(
+            true,
+            PaddedBlockCipherParameters<
+              ParametersWithIV<KeyParameter>,
+              KeyParameter
+            >(
+              ParametersWithIV<KeyParameter>(
+                KeyParameter(Uint8List.fromList(utf8.encode(key))),
+                Uint8List.fromList(utf8.encode(key)),
+              ),
+              null,
+            ),
+          );
     final out = cipher.process(Uint8List.fromList(utf8.encode(plain)));
     return base64.encode(out);
   }
 
   /// 与 [aesCbcEncryptB64] 对称（解取号响应 / 自测往返用）。
   static String aesCbcDecrypt(String b64, String key) {
-    final cipher = PaddedBlockCipherImpl(
-      PKCS7Padding(),
-      CBCBlockCipher(AESEngine()),
-    )..init(false, PaddedBlockCipherParameters<ParametersWithIV<KeyParameter>,
-            KeyParameter>(
-        ParametersWithIV<KeyParameter>(
-            KeyParameter(Uint8List.fromList(utf8.encode(key))),
-            Uint8List.fromList(utf8.encode(key))),
-        null));
+    final cipher =
+        PaddedBlockCipherImpl(PKCS7Padding(), CBCBlockCipher(AESEngine()))
+          ..init(
+            false,
+            PaddedBlockCipherParameters<
+              ParametersWithIV<KeyParameter>,
+              KeyParameter
+            >(
+              ParametersWithIV<KeyParameter>(
+                KeyParameter(Uint8List.fromList(utf8.encode(key))),
+                Uint8List.fromList(utf8.encode(key)),
+              ),
+              null,
+            ),
+          );
     final out = cipher.process(base64.decode(b64));
     return utf8.decode(out);
   }

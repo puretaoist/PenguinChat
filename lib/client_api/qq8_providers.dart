@@ -79,7 +79,8 @@ import 'session_providers.dart'
 /// 例：`qq8TokenStoreProvider.overrideWithValue(FileQq8TokenStore(dir))`
 final qq8TokenStoreProvider = Provider<Qq8TokenStore>(
   (ref) => throw UnimplementedError(
-      'qq8TokenStoreProvider 必须被 override（见 main.dart：注入数据目录）'),
+    'qq8TokenStoreProvider 必须被 override（见 main.dart：注入数据目录）',
+  ),
 );
 
 /// 使用的客户端档案（默认见 [qq8DefaultProfile]，**可在登录页直接切换**）。
@@ -97,7 +98,8 @@ final qq8ProfileProvider = StateProvider<Qq8ClientProfile>(
 
 /// 传输层构造器——测试可 override 成脚本传输；生产就是真实 TCP。
 final qq8TransportBuilderProvider = Provider<Qq8Transport Function()>(
-  (ref) => () => Qq8TcpTransport(),
+  (ref) =>
+      () => Qq8TcpTransport(),
 );
 
 /// 真机身份材料——**优先级三级**，取到第一个可用的就停。
@@ -138,7 +140,8 @@ final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
   final log = Log.get('QQ8');
   final dir = ref.watch(dataDirProvider);
   final f = File(
-      '${dir.path}${Platform.pathSeparator}qq8${Platform.pathSeparator}identity.json');
+    '${dir.path}${Platform.pathSeparator}qq8${Platform.pathSeparator}identity.json',
+  );
   if (!f.existsSync()) return null;
   try {
     final decoded = jsonDecode(f.readAsStringSync());
@@ -163,7 +166,8 @@ final qq8DeviceIdentityProvider = Provider<Qq8DeviceIdentity?>((ref) {
 final qq8DeviceStoreProvider = Provider<Qq8DeviceStore>((ref) {
   final dir = ref.watch(dataDirProvider);
   return FileQq8DeviceStore(
-      Directory('${dir.path}${Platform.pathSeparator}qq8'));
+    Directory('${dir.path}${Platform.pathSeparator}qq8'),
+  );
 });
 
 /// 解析最终生效的设备身份（**启动路径调用一次**，结果注入
@@ -188,17 +192,20 @@ Future<Qq8DeviceIdentity?> resolveQq8DeviceIdentity({
 }) async {
   final l = log ?? Log.get('QQ8');
   final store = FileQq8DeviceStore(
-      Directory('${dataDir.path}${Platform.pathSeparator}qq8'));
+    Directory('${dataDir.path}${Platform.pathSeparator}qq8'),
+  );
 
   // ---- ① identity.json（人工注入，含官方用过的 guid/qimei）----
   final idFile = File(
-      '${dataDir.path}${Platform.pathSeparator}qq8${Platform.pathSeparator}identity.json');
+    '${dataDir.path}${Platform.pathSeparator}qq8${Platform.pathSeparator}identity.json',
+  );
   if (idFile.existsSync()) {
     try {
       final decoded = jsonDecode(idFile.readAsStringSync());
       if (decoded is Map) {
-        final id =
-            Qq8DeviceIdentity.fromJson(Map<String, Object?>.from(decoded));
+        final id = Qq8DeviceIdentity.fromJson(
+          Map<String, Object?>.from(decoded),
+        );
         if (id != null) {
           l.i('设备身份来源: identity.json（人工注入）→ $id');
           return id;
@@ -270,7 +277,6 @@ Future<Qq8DeviceIdentity?> resolveQq8DeviceIdentity({
   return id;
 }
 
-
 /// 历史登录出口 IP 缓存（官方 `ProtocolDet` / `files/pd2.dat`）的读取接缝。
 ///
 /// 官方每次登录成功后往 `pd2.dat` 追加一条「uin + 出口 IP + 时间 + subAppId」，
@@ -289,8 +295,10 @@ Future<Qq8DeviceIdentity?> resolveQq8DeviceIdentity({
 final qq8ProtocolDetProvider = Provider<Uint8List?>((ref) {
   final log = Log.get('QQ8');
   final dir = ref.watch(dataDirProvider);
-  final f = File('${dir.path}${Platform.pathSeparator}qq8'
-      '${Platform.pathSeparator}${Qq8ProtocolDet.cacheFileName}');
+  final f = File(
+    '${dir.path}${Platform.pathSeparator}qq8'
+    '${Platform.pathSeparator}${Qq8ProtocolDet.cacheFileName}',
+  );
   if (!f.existsSync()) return null;
   try {
     final raw = f.readAsBytesSync();
@@ -299,8 +307,10 @@ final qq8ProtocolDetProvider = Provider<Uint8List?>((ref) {
       log.w('pd2.dat 存在但解不出条目（${raw.length} 字节），按无历史处理');
       return null;
     }
-    log.i('pd2.dat: ${entries.length} 条历史出口 '
-        '(${entries.map((e) => e.ipText).join(', ')})');
+    log.i(
+      'pd2.dat: ${entries.length} 条历史出口 '
+      '(${entries.map((e) => e.ipText).join(', ')})',
+    );
     return Qq8ProtocolDet.encode(entries);
   } catch (e) {
     log.w('pd2.dat 读取失败，按无历史处理', error: e);
@@ -320,11 +330,7 @@ final qq8ProtocolDetProvider = Provider<Uint8List?>((ref) {
 /// 一旦丢了就形成死循环——失败 → 没有 ksid → 更像新设备 → 失败。
 ///
 /// 写盘失败只记日志，绝不影响登录（与 `pd2.dat` 同一原则）。
-void _recordDeviceState(
-  Ref ref, {
-  String? ksid,
-  String? qimei,
-}) {
+void _recordDeviceState(Ref ref, {String? ksid, String? qimei}) {
   if (ksid == null && qimei == null) return;
   final log = Log.get('QQ8');
   try {
@@ -345,8 +351,10 @@ void _recordDeviceState(
 void _recordProtocolDetEntry(Ref ref, Qq8ProtocolDetEntry entry) {
   final log = Log.get('QQ8');
   final dir = ref.read(dataDirProvider);
-  final f = File('${dir.path}${Platform.pathSeparator}qq8'
-      '${Platform.pathSeparator}${Qq8ProtocolDet.cacheFileName}');
+  final f = File(
+    '${dir.path}${Platform.pathSeparator}qq8'
+    '${Platform.pathSeparator}${Qq8ProtocolDet.cacheFileName}',
+  );
   try {
     final existing = f.existsSync()
         ? Qq8ProtocolDet.decodeFile(f.readAsBytesSync())
@@ -380,8 +388,9 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
     transportBuilder: ref.watch(qq8TransportBuilderProvider),
     gate: ref.watch(safetyGateProvider),
     // 有真机身份就用它，否则沿用默认的 uin 派生
-    deviceBuilder:
-        identity == null ? null : (int uin) => Qq8Device.fromIdentity(identity),
+    deviceBuilder: identity == null
+        ? null
+        : (int uin) => Qq8Device.fromIdentity(identity),
     qimei: identity?.qimei,
     // 身份文件没带 QIMEI 时自动向灯塔取号（纯 HTTPS，无需 root/hook，
     // 见 `lib/kernel/wlogin8/qq8_qimei.dart`）。取号只提交设备属性，
@@ -390,11 +399,11 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
     qimeiFetcher: identity?.qimei != null
         ? null
         : (Qq8Device device) => Qq8Qimei.fetch(
-              device: device,
-              apk: profile.apk,
-              beaconAppKey: profile.beaconAppKey,
-              onLog: (line) => Log.get('QQ8').d('QIMEI 取号: $line'),
-            ).then((r) => r.q16),
+            device: device,
+            apk: profile.apk,
+            beaconAppKey: profile.beaconAppKey,
+            onLog: (line) => Log.get('QQ8').d('QIMEI 取号: $line'),
+          ).then((r) => r.q16),
     // 0x525 内嵌 0x536：历史登录出口 IP（官方 ProtocolDet）。
     // 没有 pd2.dat 时返回 null → TLV 层退回官方空形态 `01 00`。
     protocolDetBuilder: () => ref.read(qq8ProtocolDetProvider),
@@ -530,21 +539,21 @@ class Qq8ConnectStatus {
       stage == Qq8LoginStage.waitingQrScan;
 
   String get stateLabel => switch (stage) {
-        Qq8LoginStage.idle => '未连接',
-        Qq8LoginStage.connecting => '连接中…',
-        Qq8LoginStage.needsSlider => '需要完成滑动验证',
-        Qq8LoginStage.needsSmsCode => '需要短信验证码',
-        Qq8LoginStage.needsDeviceLock => '需要设备锁验证',
-        Qq8LoginStage.waitingQrScan => '等待扫码确认',
-        Qq8LoginStage.online => '已上线',
-        Qq8LoginStage.disconnected => networkIssue ? '等待网络恢复' : '已断开',
-        Qq8LoginStage.failed => '登录失败',
-        // 与 failed 分开说：failed 是「这次没成，可以再试」，rejected 是
-        // 「服务端不放这个账号进，重试没用」。用同一句「登录失败」会让用户
-        // 一直点重试，点到把尝试次数耗光。
-        Qq8LoginStage.rejected => '服务端拒绝登录',
-        Qq8LoginStage.sessionExpired => '登录已过期',
-      };
+    Qq8LoginStage.idle => '未连接',
+    Qq8LoginStage.connecting => '连接中…',
+    Qq8LoginStage.needsSlider => '需要完成滑动验证',
+    Qq8LoginStage.needsSmsCode => '需要短信验证码',
+    Qq8LoginStage.needsDeviceLock => '需要设备锁验证',
+    Qq8LoginStage.waitingQrScan => '等待扫码确认',
+    Qq8LoginStage.online => '已上线',
+    Qq8LoginStage.disconnected => networkIssue ? '等待网络恢复' : '已断开',
+    Qq8LoginStage.failed => '登录失败',
+    // 与 failed 分开说：failed 是「这次没成，可以再试」，rejected 是
+    // 「服务端不放这个账号进，重试没用」。用同一句「登录失败」会让用户
+    // 一直点重试，点到把尝试次数耗光。
+    Qq8LoginStage.rejected => '服务端拒绝登录',
+    Qq8LoginStage.sessionExpired => '登录已过期',
+  };
 }
 
 /// 一次 attach 建出来的**一对**资源。
@@ -605,8 +614,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   /// 单飞壳：冷启动时多处（构造期、页面 initState、连接回调）可能同时触发，
   /// 只跑一次；后来者直接拿到 null（不抛、不重复发包）。
-  final Qq8RecoveryCoordinator _autoLoginCoordinator =
-      Qq8RecoveryCoordinator();
+  final Qq8RecoveryCoordinator _autoLoginCoordinator = Qq8RecoveryCoordinator();
 
   /// 启动自动登录：票据目录里有号就挑「文件最新修改的那个」用票据续期上线。
   ///
@@ -637,7 +645,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     if (state.stage != Qq8LoginStage.idle || _busy) return;
     // 本次运行内已经拿到准入拒绝结论：别再自动登，否则就是把同一句拒绝
     // 再问一遍。
-    // 
+    //
     // 注意范围：`rejected` **不跨进程持久化**。冷启动时 service 是新的、
     // snapshot 是 idle，这里拦不住，仍然会试一次。这是有意保留的——冷启动
     // 一次尝试的量级可以接受，而且万一服务端在这期间放开了，用户就自动回来了；
@@ -647,11 +655,15 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     if (service.snapshot.stage == Qq8LoginStage.rejected ||
         service.snapshot.stage == Qq8LoginStage.sessionExpired) {
       if (service.snapshot.stage == Qq8LoginStage.sessionExpired) {
-        log?.call('w',
-            '上次登录凭证失效（type=${service.snapshot.resultType}），跳过自动登录，等用户重新登录');
+        log?.call(
+          'w',
+          '上次登录凭证失效（type=${service.snapshot.resultType}），跳过自动登录，等用户重新登录',
+        );
       } else {
-        log?.call('w',
-            '上次登录被服务端拒绝（type=${service.snapshot.resultType}），跳过自动登录');
+        log?.call(
+          'w',
+          '上次登录被服务端拒绝（type=${service.snapshot.resultType}），跳过自动登录',
+        );
       }
       return;
     }
@@ -669,10 +681,13 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
         final t = await service.tokenStore.load(u);
         if (t == null) continue;
         final v = t.evaluateValidity(DateTime.now());
-        if (v == Qq8TokenValidity.invalidated || v == Qq8TokenValidity.expired) {
+        if (v == Qq8TokenValidity.invalidated ||
+            v == Qq8TokenValidity.expired) {
           skippedExpired++;
-          log?.call('w',
-              '启动自动登录跳过 $u：票据不可用（$v${t.invalidatedType == null ? '' : '，type=${t.invalidatedType}'}）');
+          log?.call(
+            'w',
+            '启动自动登录跳过 $u：票据不可用（$v${t.invalidatedType == null ? '' : '，type=${t.invalidatedType}'}）',
+          );
           continue;
         }
         usable.add(u);
@@ -702,8 +717,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       // 但整个账号处在风控观察期时，少一次陌生客户端的连接就少一次风险信号。
       final left = _activeCooldown(best);
       if (left != null) {
-        log?.call('w', '启动自动登录跳过：该账号冷却中（还剩 '
-            '${(left.inSeconds / 60).ceil()} 分钟）');
+        log?.call(
+          'w',
+          '启动自动登录跳过：该账号冷却中（还剩 '
+              '${(left.inSeconds / 60).ceil()} 分钟）',
+        );
         return;
       }
       // planner 的决策先进日志：出问题时第一句要看的就是"它选了哪份材料、
@@ -718,11 +736,9 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
         challengeActive: false,
       )) {
         case Qq8RecoveryStop(:final code, :final message):
-          log?.call(
-              'w', '启动自动登录：planner 停 code=$code（$message）材料=$avail');
+          log?.call('w', '启动自动登录：planner 停 code=$code（$message）材料=$avail');
         case Qq8RecoveryAttempt(:final material, :final why):
-          log?.call(
-              'i', '启动自动登录：planner 选材料=$material（$why）材料=$avail');
+          log?.call('i', '启动自动登录：planner 选材料=$material（$why）材料=$avail');
       }
       await loginWithToken(best);
     } on Object catch (e) {
@@ -744,7 +760,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   /// 上线/断开时把"当前后端"报出去（UI 侧的 sessionProvider 靠它切换）。
   final void Function(Qq8SessionAdapter? session, ChatStore? store)?
-      onBackendChanged;
+  onBackendChanged;
 
   StreamSubscription<Qq8LoginSnapshot>? _sub;
   Qq8LoginSnapshot _snap = const Qq8LoginSnapshot(stage: Qq8LoginStage.idle);
@@ -799,8 +815,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       _cooldownUin = (j['uin'] as num?)?.toInt();
       _cooldownType = (j['type'] as num?)?.toInt();
       if (DateTime.now().isBefore(until)) {
-        log?.call('w', '上次被服务端拒绝（type=$_cooldownType），冷却到 '
-            '${until.toIso8601String()}，期间不自动登录');
+        log?.call(
+          'w',
+          '上次被服务端拒绝（type=$_cooldownType），冷却到 '
+              '${until.toIso8601String()}，期间不自动登录',
+        );
       }
     } on Object catch (e) {
       log?.call('w', '读取登录冷却记录失败（忽略）', e);
@@ -814,11 +833,13 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     _cooldownType = type;
     try {
       await _cooldownFile.parent.create(recursive: true);
-      await _cooldownFile.writeAsString(jsonEncode(<String, Object?>{
-        'uin': uin,
-        'type': type,
-        'until': until.toIso8601String(),
-      }));
+      await _cooldownFile.writeAsString(
+        jsonEncode(<String, Object?>{
+          'uin': uin,
+          'type': type,
+          'until': until.toIso8601String(),
+        }),
+      );
     } on Object catch (e) {
       log?.call('w', '写入登录冷却记录失败（忽略）', e);
     }
@@ -901,7 +922,8 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
         stage: Qq8LoginStage.rejected,
         uin: uin,
         resultType: _cooldownType,
-        error: '服务端上次拒绝了这个账号（type=$_cooldownType）。'
+        error:
+            '服务端上次拒绝了这个账号（type=$_cooldownType）。'
             '短时间内重复尝试会让风控升级，请等约 $mins 分钟后再试一次。',
       );
       _emit();
@@ -1032,8 +1054,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     // 同号重连时服务会新建一个 Qq8Session（旧会话的票据/心跳都作废），
     // 所以每次跃迁都要推进世代——否则上一轮还在 bootstrap 的 attach
     // 会拿旧会话的结论发布，等于把一个已经死掉的会话挂到 UI 上。
-    if (s.stage == Qq8LoginStage.online &&
-        prevStage != Qq8LoginStage.online) {
+    if (s.stage == Qq8LoginStage.online && prevStage != Qq8LoginStage.online) {
       _onlineEpoch++;
     }
 
@@ -1074,15 +1095,19 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
     final retired = update.retired;
     if (retired != null) {
-      unawaited(_retire(retired).catchError((Object e) {
-        log?.call('warn', '释放旧后端失败（uin=${retired.uin}）', e);
-      }));
+      unawaited(
+        _retire(retired).catchError((Object e) {
+          log?.call('warn', '释放旧后端失败（uin=${retired.uin}）', e);
+        }),
+      );
     }
     final plan = update.plan;
     if (plan != null) {
-      unawaited(_attach(plan).catchError((Object e) {
-        log?.call('warn', '建立后端失败（uin=${plan.uin}）', e);
-      }));
+      unawaited(
+        _attach(plan).catchError((Object e) {
+          log?.call('warn', '建立后端失败（uin=${plan.uin}）', e);
+        }),
+      );
     }
   }
 
@@ -1152,8 +1177,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     // ---- 发布前的检查：这一轮还算不算数（世代未变且未关闭）----
     final pair = _Qq8BackendPair(uin: uin, adapter: adapter, store: store);
     if (_closed || !_coordinator.complete(plan, pair)) {
-      log?.call('info', '过时的后端结果丢弃（uin=$uin gen=${plan.gen} '
-          'epoch=${plan.epoch}）');
+      log?.call(
+        'info',
+        '过时的后端结果丢弃（uin=$uin gen=${plan.gen} '
+            'epoch=${plan.epoch}）',
+      );
       await pair.release();
       return;
     }
@@ -1166,8 +1194,11 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       return;
     }
     onBackendChanged?.call(adapter, store);
-    log?.call('info', '协议线已上线 uin=$uin 数据根=${scope.root.path} '
-        '会话数=${store.chats.length}');
+    log?.call(
+      'info',
+      '协议线已上线 uin=$uin 数据根=${scope.root.path} '
+          '会话数=${store.chats.length}',
+    );
     _emit();
   }
 
@@ -1208,19 +1239,21 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 /// 协议线的连接控制器（生命周期随 provider）。
 final qq8ConnectControllerProvider =
     StateNotifierProvider<Qq8ConnectController, Qq8ConnectStatus>((ref) {
-  final controller = Qq8ConnectController(
-    service: ref.watch(qq8LoginServiceProvider),
-    dataDir: ref.watch(dataDirProvider),
-    mediaFetcher: ref.read(mediaFetcherProvider),
-    log: (level, message, [detail]) => Log.get('Qq8Connect')
-        .i('[$level] $message${detail == null ? '' : ' · $detail'}'),
-    onBackendChanged: (session, store) {
-      ref.read(activeQq8BackendProvider.notifier).state =
-          session == null || store == null
+      final controller = Qq8ConnectController(
+        service: ref.watch(qq8LoginServiceProvider),
+        dataDir: ref.watch(dataDirProvider),
+        mediaFetcher: ref.read(mediaFetcherProvider),
+        log: (level, message, [detail]) =>
+            Log.get('Qq8Connect')
+                .i('[$level] $message${detail == null ? '' : ' · $detail'}'),
+        onBackendChanged: (session, store) {
+          ref
+              .read(activeQq8BackendProvider.notifier)
+              .state = session == null || store == null
               ? null
               : (session: session, store: store);
-    },
-  );
-  ref.onDispose(controller.shutdown);
-  return controller;
-});
+        },
+      );
+      ref.onDispose(controller.shutdown);
+      return controller;
+    });

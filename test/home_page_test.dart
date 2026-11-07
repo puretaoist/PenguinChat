@@ -1217,7 +1217,7 @@ void main() {
     await tester.pumpAndSettle();
     await _teardownStore(tester);
   });
-// 私聊气泡上不该再出现绿色发送者名：手机上私聊只有两个人，
+  // 私聊气泡上不该再出现绿色发送者名：手机上私聊只有两个人，
   // 标题栏已经写明对方是谁，再标一遍纯属噪音（TG 的 needDrawName 也只在群里为真）。
   testWidgets('私聊气泡不显示发送者名，群聊气泡显示', (tester) async {
     _wideScreen(tester);
@@ -1278,4 +1278,3 @@ void main() {
     await _teardownStore(tester);
   });
 }
-

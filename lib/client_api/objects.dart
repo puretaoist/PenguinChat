@@ -25,7 +25,8 @@ enum ChatType {
   /// 群聊。
   group;
 
-  static ChatType parse(String? raw) => raw == 'group' ? ChatType.group : ChatType.private;
+  static ChatType parse(String? raw) =>
+      raw == 'group' ? ChatType.group : ChatType.private;
 
   String get wireName => name;
 }
@@ -189,50 +190,49 @@ class Chat {
     String? lastReadId,
     int? priority,
     String? avatarUrl,
-  }) =>
-      Chat(
-        id: id ?? this.id,
-        title: title ?? this.title,
-        lastMessage: lastMessage ?? this.lastMessage,
-        lastSender: lastSender ?? this.lastSender,
-        lastTime: lastTime ?? this.lastTime,
-        unreadCount: unreadCount ?? this.unreadCount,
-        online: online ?? this.online,
-        type: type ?? this.type,
-        rawId: rawId ?? this.rawId,
-        memberCount: memberCount ?? this.memberCount,
-        pinned: pinned ?? this.pinned,
-        muted: muted ?? this.muted,
-        archived: archived ?? this.archived,
-        draft: draft ?? this.draft,
-        manualUnread: manualUnread ?? this.manualUnread,
-        lastReadId: lastReadId ?? this.lastReadId,
-        priority: priority ?? this.priority,
-        avatarUrl: avatarUrl ?? this.avatarUrl,
-      );
+  }) => Chat(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    lastMessage: lastMessage ?? this.lastMessage,
+    lastSender: lastSender ?? this.lastSender,
+    lastTime: lastTime ?? this.lastTime,
+    unreadCount: unreadCount ?? this.unreadCount,
+    online: online ?? this.online,
+    type: type ?? this.type,
+    rawId: rawId ?? this.rawId,
+    memberCount: memberCount ?? this.memberCount,
+    pinned: pinned ?? this.pinned,
+    muted: muted ?? this.muted,
+    archived: archived ?? this.archived,
+    draft: draft ?? this.draft,
+    manualUnread: manualUnread ?? this.manualUnread,
+    lastReadId: lastReadId ?? this.lastReadId,
+    priority: priority ?? this.priority,
+    avatarUrl: avatarUrl ?? this.avatarUrl,
+  );
 
   /// 清掉列表摘要（消息被删光时用）。
   ///
   /// 单独一个方法而不是 `copyWith(lastTime: null)`：`copyWith` 的 `??` 语义
   /// 没法把字段置回 null，这里显式重建一次，字段一个不漏。
   Chat clearedPreview() => Chat(
-        id: id,
-        title: title,
-        type: type,
-        rawId: rawId,
-        memberCount: memberCount,
-        ownerUin: ownerUin,
-        pinned: pinned,
-        muted: muted,
-        archived: archived,
-        draft: draft,
-        manualUnread: manualUnread,
-        lastReadId: lastReadId,
-        priority: priority,
-        unreadCount: unreadCount,
-        online: online,
-        avatarUrl: avatarUrl,
-      );
+    id: id,
+    title: title,
+    type: type,
+    rawId: rawId,
+    memberCount: memberCount,
+    ownerUin: ownerUin,
+    pinned: pinned,
+    muted: muted,
+    archived: archived,
+    draft: draft,
+    manualUnread: manualUnread,
+    lastReadId: lastReadId,
+    priority: priority,
+    unreadCount: unreadCount,
+    online: online,
+    avatarUrl: avatarUrl,
+  );
 
   @override
   String toString() => 'Chat($id, "$title", unread=$unreadCount)';
@@ -393,17 +393,16 @@ class ChatMessage {
 
   /// 标记为已撤回。
   ChatMessage recalled({String? recallInfo}) => copyWith(
-        deleted: true,
-        revealed: false,
-        recallInfo: recallInfo ?? this.recallInfo,
-      );
+    deleted: true,
+    revealed: false,
+    recallInfo: recallInfo ?? this.recallInfo,
+  );
 
   /// 揭示已撤回消息的内容。
   ChatMessage reveal() => copyWith(revealed: true);
 
   /// 更新纯文本摘要（后端补发或本地重算时用）。
-  ChatMessage withDerivedText() =>
-      copyWith(text: Segment.plainText(segments));
+  ChatMessage withDerivedText() => copyWith(text: Segment.plainText(segments));
 
   ChatMessage copyWith({
     String? id,
@@ -423,26 +422,25 @@ class ChatMessage {
     bool? system,
     String? senderTitle,
     MessageSendState? sendState,
-  }) =>
-      ChatMessage(
-        id: id ?? this.id,
-        text: text ?? this.text,
-        segments: segments ?? this.segments,
-        time: time ?? this.time,
-        outgoing: outgoing ?? this.outgoing,
-        senderName: senderName ?? this.senderName,
-        senderId: senderId ?? this.senderId,
-        chatId: chatId ?? this.chatId,
-        replyToId: replyToId ?? this.replyToId,
-        replyPreview: replyPreview ?? this.replyPreview,
-        deleted: deleted ?? this.deleted,
-        recallInfo: recallInfo ?? this.recallInfo,
-        revealed: revealed ?? this.revealed,
-        atMe: atMe ?? this.atMe,
-        system: system ?? this.system,
-        senderTitle: senderTitle ?? this.senderTitle,
-        sendState: sendState ?? this.sendState,
-      );
+  }) => ChatMessage(
+    id: id ?? this.id,
+    text: text ?? this.text,
+    segments: segments ?? this.segments,
+    time: time ?? this.time,
+    outgoing: outgoing ?? this.outgoing,
+    senderName: senderName ?? this.senderName,
+    senderId: senderId ?? this.senderId,
+    chatId: chatId ?? this.chatId,
+    replyToId: replyToId ?? this.replyToId,
+    replyPreview: replyPreview ?? this.replyPreview,
+    deleted: deleted ?? this.deleted,
+    recallInfo: recallInfo ?? this.recallInfo,
+    revealed: revealed ?? this.revealed,
+    atMe: atMe ?? this.atMe,
+    system: system ?? this.system,
+    senderTitle: senderTitle ?? this.senderTitle,
+    sendState: sendState ?? this.sendState,
+  );
 
   @override
   String toString() =>
@@ -470,7 +468,8 @@ class ChatMember {
     this.joinTime,
   });
 
-  String get displayName => (card != null && card!.isNotEmpty) ? card! : nickname;
+  String get displayName =>
+      (card != null && card!.isNotEmpty) ? card! : nickname;
 
   bool get isAdmin => role == 'admin' || role == 'owner';
 

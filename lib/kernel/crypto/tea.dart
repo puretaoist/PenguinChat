@@ -56,11 +56,13 @@ List<int> bytesToU32BE(List<int> data) {
   }
   final out = <int>[];
   for (var i = 0; i < data.length; i += 4) {
-    out.add(((data[i] << 24) |
-            (data[i + 1] << 16) |
-            (data[i + 2] << 8) |
-            data[i + 3]) &
-        _mask);
+    out.add(
+      ((data[i] << 24) |
+              (data[i + 1] << 16) |
+              (data[i + 2] << 8) |
+              data[i + 3]) &
+          _mask,
+    );
   }
   return out;
 }
@@ -96,8 +98,14 @@ int _lsr32(int v, int n) => (v & _mask) >> n;
   var b = v1 & _mask;
   for (var i = 0; i < teaRounds; i++) {
     sum = (sum + teaDelta) & _mask;
-    a = (a + ((((b << 4) & _mask) + k[0]) ^ (b + sum) ^ (_lsr32(b, 5) + k[1]))) & _mask;
-    b = (b + ((((a << 4) & _mask) + k[2]) ^ (a + sum) ^ (_lsr32(a, 5) + k[3]))) & _mask;
+    a =
+        (a +
+            ((((b << 4) & _mask) + k[0]) ^ (b + sum) ^ (_lsr32(b, 5) + k[1]))) &
+        _mask;
+    b =
+        (b +
+            ((((a << 4) & _mask) + k[2]) ^ (a + sum) ^ (_lsr32(a, 5) + k[3]))) &
+        _mask;
   }
   return (v0: a, v1: b);
 }
@@ -108,8 +116,14 @@ int _lsr32(int v, int n) => (v & _mask) >> n;
   var a = v0 & _mask;
   var b = v1 & _mask;
   for (var i = 0; i < teaRounds; i++) {
-    b = (b - ((((a << 4) & _mask) + k[2]) ^ (a + sum) ^ (_lsr32(a, 5) + k[3]))) & _mask;
-    a = (a - ((((b << 4) & _mask) + k[0]) ^ (b + sum) ^ (_lsr32(b, 5) + k[1]))) & _mask;
+    b =
+        (b -
+            ((((a << 4) & _mask) + k[2]) ^ (a + sum) ^ (_lsr32(a, 5) + k[3]))) &
+        _mask;
+    a =
+        (a -
+            ((((b << 4) & _mask) + k[0]) ^ (b + sum) ^ (_lsr32(b, 5) + k[1]))) &
+        _mask;
     sum = (sum - teaDelta) & _mask;
   }
   return (v0: a, v1: b);
@@ -122,7 +136,9 @@ Uint8List teaEncrypt(List<int> data, List<int> key) {
   final out = <int>[];
   for (var i = 0; i < vals.length; i += 2) {
     final r = teaEncryptBlock(vals[i], vals[i + 1], k);
-    out..add(r.v0)..add(r.v1);
+    out
+      ..add(r.v0)
+      ..add(r.v1);
   }
   return u32ToBytesBE(out);
 }
@@ -134,14 +150,15 @@ Uint8List teaDecrypt(List<int> data, List<int> key) {
   final out = <int>[];
   for (var i = 0; i < vals.length; i += 2) {
     final r = teaDecryptBlock(vals[i], vals[i + 1], k);
-    out..add(r.v0)..add(r.v1);
+    out
+      ..add(r.v0)
+      ..add(r.v1);
   }
   return u32ToBytesBE(out);
 }
 
 int _mx(int z, int y, int s, int p, int e, List<int> k) {
-  return ((((z >> 5) ^ ((y << 2) & _mask)) +
-              ((y >> 3) ^ ((z << 4) & _mask))) ^
+  return ((((z >> 5) ^ ((y << 2) & _mask)) + ((y >> 3) ^ ((z << 4) & _mask))) ^
           ((s ^ y) + (k[(p & 3) ^ e] ^ z))) &
       _mask;
 }

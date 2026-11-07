@@ -113,7 +113,8 @@ abstract final class Qq8Pb {
           final end = i + l.$1;
           if (end > data.length) {
             throw Qq8PbException(
-                '长度越界：tag=$tag 声明 ${l.$1} 字节，剩余 ${data.length - i}');
+              '长度越界：tag=$tag 声明 ${l.$1} 字节，剩余 ${data.length - i}',
+            );
           }
           out.putIfAbsent(tag, () => <Object>[]).add(data.sublist(i, end));
           i = end;
@@ -124,10 +125,12 @@ abstract final class Qq8Pb {
           }
           out
               .putIfAbsent(tag, () => <Object>[])
-              .add(data[i] |
-                  (data[i + 1] << 8) |
-                  (data[i + 2] << 16) |
-                  (data[i + 3] << 24));
+              .add(
+                data[i] |
+                    (data[i + 1] << 8) |
+                    (data[i + 2] << 16) |
+                    (data[i + 3] << 24),
+              );
           i += 4;
         case 1:
           // fixed64：小端 8 字节，按无符号累加（Dart int 在 VM 上是 64 位）。

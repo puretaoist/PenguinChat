@@ -18,7 +18,11 @@ void main() {
   setUp(() {
     tmp = Directory.systemTemp.createTempSync('msgcontent_test');
     pngPath = '${tmp.path}/pic.png';
-    File(pngPath).writeAsBytesSync(base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='));
+    File(pngPath).writeAsBytesSync(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      ),
+    );
   });
 
   tearDown(() {
@@ -28,35 +32,37 @@ void main() {
   });
 
   ChatMessage imageMessage() => ChatMessage(
-        id: 'm1',
-        chatId: 'group:1',
-        text: '[图片]',
-        segments: <Segment>[
-          ImageSegment('aabbccdd1080-1080-2337.jpg', width: 1080, height: 2337),
-        ],
-        time: DateTime(2026, 10, 31, 8),
-        senderName: '小明',
-        senderId: '10001',
-      );
+    id: 'm1',
+    chatId: 'group:1',
+    text: '[图片]',
+    segments: <Segment>[
+      ImageSegment('aabbccdd1080-1080-2337.jpg', width: 1080, height: 2337),
+    ],
+    time: DateTime(2026, 10, 31, 8),
+    senderName: '小明',
+    senderId: '10001',
+  );
 
   testWidgets('首帧没本地文件时补一次下载，成功后显示真图（缺陷3）', (tester) async {
     var downloaded = false;
     var calls = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MessageContent(
-          message: imageMessage(),
-          isOut: false,
-          localMedia: (s) => downloaded ? pngPath : null,
-          ensureMedia: (s) async {
-            calls++;
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-            downloaded = true;
-            return pngPath;
-          },
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageContent(
+            message: imageMessage(),
+            isOut: false,
+            localMedia: (s) => downloaded ? pngPath : null,
+            ensureMedia: (s) async {
+              calls++;
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+              downloaded = true;
+              return pngPath;
+            },
+          ),
         ),
       ),
-    ));
+    );
 
     // 首帧：占位（带文件名与尺寸，便于排查）
     expect(find.textContaining('aabbccdd1080-1080-2337.jpg'), findsOneWidget);
@@ -72,15 +78,17 @@ void main() {
   });
 
   testWidgets('没有 ensureMedia 钩子时不补下载、不崩（旧行为）', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MessageContent(
-          message: imageMessage(),
-          isOut: false,
-          localMedia: (s) => null,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageContent(
+            message: imageMessage(),
+            isOut: false,
+            localMedia: (s) => null,
+          ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     expect(find.textContaining('aabbccdd1080-1080-2337.jpg'), findsOneWidget);
     expect(find.byType(Image), findsNothing);
@@ -88,19 +96,21 @@ void main() {
 
   testWidgets('本地文件已存在时不起请求，直接显示', (tester) async {
     var calls = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MessageContent(
-          message: imageMessage(),
-          isOut: false,
-          localMedia: (s) => pngPath,
-          ensureMedia: (s) async {
-            calls++;
-            return pngPath;
-          },
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageContent(
+            message: imageMessage(),
+            isOut: false,
+            localMedia: (s) => pngPath,
+            ensureMedia: (s) async {
+              calls++;
+              return pngPath;
+            },
+          ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     expect(calls, 0);
     expect(find.byType(Image), findsOneWidget);
@@ -109,21 +119,23 @@ void main() {
   // 失败分类的界面：直链过期时不能再假装「加载中」，要说清原因并给重试入口。
   testWidgets('已知链接过期：直接显示过期占位，不自动发请求', (tester) async {
     var ensures = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MessageContent(
-          message: imageMessage(),
-          isOut: false,
-          localMedia: (s) => null,
-          ensureMedia: (s) async {
-            ensures++;
-            return null;
-          },
-          mediaFailure: (s) => MediaFetchFailureKind.expired,
-          retryMedia: (s) async => null,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageContent(
+            message: imageMessage(),
+            isOut: false,
+            localMedia: (s) => null,
+            ensureMedia: (s) async {
+              ensures++;
+              return null;
+            },
+            mediaFailure: (s) => MediaFetchFailureKind.expired,
+            retryMedia: (s) async => null,
+          ),
         ),
       ),
-    ));
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(find.textContaining('图片链接已过期'), findsOneWidget);
@@ -133,20 +145,22 @@ void main() {
 
   testWidgets('点按失败占位会走 retryMedia（而不是打开大图）', (tester) async {
     var retries = 0;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MessageContent(
-          message: imageMessage(),
-          isOut: false,
-          localMedia: (s) => null,
-          mediaFailure: (s) => MediaFetchFailureKind.expired,
-          retryMedia: (s) async {
-            retries++;
-            return null;
-          },
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageContent(
+            message: imageMessage(),
+            isOut: false,
+            localMedia: (s) => null,
+            mediaFailure: (s) => MediaFetchFailureKind.expired,
+            retryMedia: (s) async {
+              retries++;
+              return null;
+            },
+          ),
         ),
       ),
-    ));
+    );
     await tester.pump();
     await tester.tap(find.textContaining('点按重试'));
     await tester.pump();
@@ -156,16 +170,18 @@ void main() {
   });
 
   testWidgets('本地已有文件时失败分类不影响显示', (tester) async {
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: MessageContent(
-          message: imageMessage(),
-          isOut: false,
-          localMedia: (s) => pngPath,
-          mediaFailure: (s) => MediaFetchFailureKind.expired,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageContent(
+            message: imageMessage(),
+            isOut: false,
+            localMedia: (s) => pngPath,
+            mediaFailure: (s) => MediaFetchFailureKind.expired,
+          ),
         ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
     expect(find.byType(Image), findsOneWidget);
     expect(find.textContaining('图片链接已过期'), findsNothing);

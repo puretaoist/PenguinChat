@@ -70,6 +70,7 @@ abstract final class Qq8SubCmd {
   static const int slider = 2;
   static const int submitSms = 7;
   static const int sendSms = 8;
+
   /// token 登录 / 票据续期（`wtlogin.exchange_emp`）。
   ///
   /// **body 头的子命令号是 11，不是构造器的 `this.u`（10）**（2026-10-27 复核）：
@@ -248,6 +249,7 @@ class Qq8LoginConditions {
 
   /// 静态 `k.L`；`0x201` 仅非空时发。
   final Uint8List? staticL;
+
   /// `t.L`（MD5(IMSI)）的等价物；`0x194` 仅非空时发（官方 k.java case 404
   /// guard）。identity 无 imsi 键时留空 → 与官方无 SIM 设备一致不发。
   final Uint8List? imsiMd5;
@@ -428,16 +430,24 @@ abstract final class Qq8SmsLoginTlvOrder {
   /// 调用处 `WtloginHelper.java:2700`（`CheckSMSVerifyLoginAccount`）里
   /// `bArr2 = str == null && i4 == 1 ? t.al : null`，而 `str` 就是手机号 → 第三套。
   static const List<int> check = <int>[
-    0x100, 0x108, 0x109, 0x52D, 0x8, 0x142, 0x145, 0x154, 0x112, 0x116, 0x521,
+    0x100,
+    0x108,
+    0x109,
+    0x52D,
+    0x8,
+    0x142,
+    0x145,
+    0x154,
+    0x112,
+    0x116,
+    0x521,
   ];
 
   /// 19 下发 / 刷新验证码。
   static const List<int> refresh = <int>[0x104, 0x8, 0x116, 0x521];
 
   /// 18 提交验证码。
-  static const List<int> verify = <int>[
-    0x104, 0x8, 0x127, 0x184, 0x116, 0x521,
-  ];
+  static const List<int> verify = <int>[0x104, 0x8, 0x127, 0x184, 0x116, 0x521];
 }
 
 abstract final class Qq8LoginBody {
@@ -451,27 +461,26 @@ abstract final class Qq8LoginBody {
   static Uint8List buildSmsLoginCheck(
     Qq8TlvContext ctx, {
     required String phone,
-  }) =>
-      build(
-        ctx,
-        17,
-        Qq8SmsLoginTlvOrder.check,
-        // 条件必须把 ctx 里的值带上（尤其 t104）：`applies()` 是按 cond 判的，
-        // 只写 accountIsUin 会把"有盐"判成"没盐"，0x104 就被跳过了。
-        cond: Qq8LoginConditions(accountIsUin: false, t104: ctx.t104),
-        args: <int, List<Object?>>{
-          0x112: <Object?>[phone],
-        },
-      );
+  }) => build(
+    ctx,
+    17,
+    Qq8SmsLoginTlvOrder.check,
+    // 条件必须把 ctx 里的值带上（尤其 t104）：`applies()` 是按 cond 判的，
+    // 只写 accountIsUin 会把"有盐"判成"没盐"，0x104 就被跳过了。
+    cond: Qq8LoginConditions(accountIsUin: false, t104: ctx.t104),
+    args: <int, List<Object?>>{
+      0x112: <Object?>[phone],
+    },
+  );
 
   /// 子命令 19：下发 / 刷新验证码（官方 `x.java`）。盐从 `ctx.t104` 来——
   /// 条件里必须带上它，否则 0x104 会被 guard 跳过。
   static Uint8List buildSmsLoginRefresh(Qq8TlvContext ctx) => build(
-        ctx,
-        19,
-        Qq8SmsLoginTlvOrder.refresh,
-        cond: Qq8LoginConditions(t104: ctx.t104),
-      );
+    ctx,
+    19,
+    Qq8SmsLoginTlvOrder.refresh,
+    cond: Qq8LoginConditions(t104: ctx.t104),
+  );
 
   /// 子命令 18：提交验证码（官方 `y.java`）。
   ///
@@ -485,19 +494,18 @@ abstract final class Qq8LoginBody {
     required Uint8List random,
     required String mpasswd,
     required int msalt,
-  }) =>
-      build(
-        ctx,
-        18,
-        Qq8SmsLoginTlvOrder.verify,
-        // 条件必须把 ctx 里的值带上（尤其 t104）：`applies()` 是按 cond 判的，
-        // 只写 accountIsUin 会把"有盐"判成"没盐"，0x104 就被跳过了。
-        cond: Qq8LoginConditions(accountIsUin: false, t104: ctx.t104),
-        args: <int, List<Object?>>{
-          0x127: <Object?>[utf8.encode(code), random],
-          0x184: <Object?>[mpasswd, msalt],
-        },
-      );
+  }) => build(
+    ctx,
+    18,
+    Qq8SmsLoginTlvOrder.verify,
+    // 条件必须把 ctx 里的值带上（尤其 t104）：`applies()` 是按 cond 判的，
+    // 只写 accountIsUin 会把"有盐"判成"没盐"，0x104 就被跳过了。
+    cond: Qq8LoginConditions(accountIsUin: false, t104: ctx.t104),
+    args: <int, List<Object?>>{
+      0x127: <Object?>[utf8.encode(code), random],
+      0x184: <Object?>[mpasswd, msalt],
+    },
+  );
 
   /// 组装 `u16 子命令 ‖ u16 TLV 个数 ‖ TLV…`。
   ///
@@ -537,8 +545,7 @@ abstract final class Qq8LoginBody {
     List<int> tags, {
     Qq8LoginConditions cond = Qq8LoginConditions.firstPasswordLogin,
     Qq8TlvContext? ctx,
-  }) =>
-      tags.where((t) => cond.applies(t, ctx: ctx)).toList();
+  }) => tags.where((t) => cond.applies(t, ctx: ctx)).toList();
 
   /// 从**已组好的** body 里读出子命令与实际发出的 TLV 编号（排障用）。
   ///
@@ -577,18 +584,17 @@ abstract final class Qq8LoginBody {
   /// * 3 元组 A2/A2KEY：`tVarA.b = bArr2[2]`（A2KEY 原样、不做 MD5），d2 参数
   ///   **传 null** ⇒ 请求体不带 `0x143`。即 [d2] == null 的情形，tgtgt 由调用方
   ///   直接用 A2KEY 装上，本函数不派生。
-  static Uint8List buildToken(Qq8TlvContext ctx, {Uint8List? d2}) =>
-      build(
-        ctx,
-        Qq8SubCmd.token,
-        qq8ExchangeEmpTlvOrder,
-        cond: Qq8LoginConditions(d2: d2),
-        args: <int, List<Object?>>{
-          // 4 元组形态（A2+D2+KEY）才写 0x143；3 元组形态（A2+A2KEY）官方
-          // d2 参数传 null ⇒ 请求体整条不带 0x143（WtloginHelper.java:607-690）。
-          if (d2 != null) 0x143: <Object?>[d2],
-        },
-      );
+  static Uint8List buildToken(Qq8TlvContext ctx, {Uint8List? d2}) => build(
+    ctx,
+    Qq8SubCmd.token,
+    qq8ExchangeEmpTlvOrder,
+    cond: Qq8LoginConditions(d2: d2),
+    args: <int, List<Object?>>{
+      // 4 元组形态（A2+D2+KEY）才写 0x143；3 元组形态（A2+A2KEY）官方
+      // d2 参数传 null ⇒ 请求体整条不带 0x143（WtloginHelper.java:607-690）。
+      if (d2 != null) 0x143: <Object?>[d2],
+    },
+  );
 
   /// 子命令 15：A1 + noPicSig 免密快速登录（命令字 wtlogin.exchange_emp）。
   ///
@@ -607,7 +613,8 @@ abstract final class Qq8LoginBody {
   }) {
     if (a1.isEmpty || noPicSig.isEmpty) {
       throw Qq8LoginException(
-          '子命令 15 缺少 A1/noPicSig（a1=${a1.length}B / noPicSig=${noPicSig.length}B）');
+        '子命令 15 缺少 A1/noPicSig（a1=${a1.length}B / noPicSig=${noPicSig.length}B）',
+      );
     }
     return build(
       ctx,
@@ -638,9 +645,7 @@ abstract final class Qq8LoginBody {
     Uint8List? pictureSign,
   }) {
     if (ctx.t104.isEmpty) {
-      throw Qq8LoginException(
-        '滑动验证提交缺少盐（ctx.t104 为空）：盐来自上一条响应（type=2）的 0x104',
-      );
+      throw Qq8LoginException('滑动验证提交缺少盐（ctx.t104 为空）：盐来自上一条响应（type=2）的 0x104');
     }
     if (ticket.trim().isEmpty) {
       throw Qq8LoginException('滑动验证提交的 ticket 为空');
@@ -675,16 +680,14 @@ abstract final class Qq8LoginBody {
   /// ⚠️ 盐（`ctx.t104`）来自那条 204 响应；没有它这条请求无意义，故显式校验。
   static Uint8List buildDeviceUnlock(Qq8TlvContext ctx) {
     if (ctx.t104.isEmpty) {
-      throw Qq8LoginException(
-        '设备锁解锁缺少盐（ctx.t104 为空）：盐来自 type=204 响应的 0x104',
-      );
+      throw Qq8LoginException('设备锁解锁缺少盐（ctx.t104 为空）：盐来自 type=204 响应的 0x104');
     }
-    return build(
-      ctx,
-      Qq8SubCmd.device,
-      const <int>[0x08, 0x104, 0x116, 0x401],
-      cond: Qq8LoginConditions(t104: ctx.t104),
-    );
+    return build(ctx, Qq8SubCmd.device, const <int>[
+      0x08,
+      0x104,
+      0x116,
+      0x401,
+    ], cond: Qq8LoginConditions(t104: ctx.t104));
   }
 
   /// 请求下发短信验证码（子命令 8，命令字 `wtlogin.login`）。
@@ -699,12 +702,14 @@ abstract final class Qq8LoginBody {
         '两者都来自上一条 type=160/162/239 响应',
       );
     }
-    return build(
-      ctx,
-      Qq8SubCmd.sendSms,
-      const <int>[0x08, 0x104, 0x116, 0x174, 0x17A, 0x197],
-      cond: Qq8LoginConditions(t104: ctx.t104, t174: ctx.t174),
-    );
+    return build(ctx, Qq8SubCmd.sendSms, const <int>[
+      0x08,
+      0x104,
+      0x116,
+      0x174,
+      0x17A,
+      0x197,
+    ], cond: Qq8LoginConditions(t104: ctx.t104, t174: ctx.t174));
   }
 
   /// 提交短信验证码（子命令 7，命令字 `wtlogin.login`）。
@@ -716,9 +721,7 @@ abstract final class Qq8LoginBody {
   /// 调试路径）；这里不跟随——码不合法直接抛错，避免把无意义的请求发出去。
   static Uint8List buildSubmitSms(Qq8TlvContext ctx, {required String code}) {
     if (ctx.t104.isEmpty || ctx.t174.isEmpty) {
-      throw Qq8LoginException(
-        '提交短信码缺少盐或令牌（ctx.t104 / ctx.t174 为空）',
-      );
+      throw Qq8LoginException('提交短信码缺少盐或令牌（ctx.t104 / ctx.t174 为空）');
     }
     final trimmed = code.trim();
     if (trimmed.length != 6 || int.tryParse(trimmed) == null) {
@@ -737,6 +740,7 @@ abstract final class Qq8LoginBody {
       },
     );
   }
+
   /// 二维码扫码登录（子命令 9，命令字 `wtlogin.login`）。
   ///
   /// ## `0x106` 的官方语义（2026-09-21 真机 type=155 后从 TIM 反编译定案）
@@ -788,8 +792,9 @@ abstract final class Qq8LoginBody {
   }) {
     if (t106Data.isEmpty || tgtgt.isEmpty || t16a.isEmpty || tgtQR.isEmpty) {
       throw Qq8LoginException(
-          '二维码登录缺少扫码材料（t106料=${t106Data.length}B / tgtgt=${tgtgt.length}B / '
-          't16a=${t16a.length}B / tgtQR=${tgtQR.length}B）');
+        '二维码登录缺少扫码材料（t106料=${t106Data.length}B / tgtgt=${tgtgt.length}B / '
+        't16a=${t16a.length}B / tgtQR=${tgtQR.length}B）',
+      );
     }
     // 官方 `_tmp_pwd`：t106料 ‖ tgtgt（纯拼接，oicq_request.a(byte[],byte[])）
     final tmpPwdLen = t106Data.length + tgtgt.length;
@@ -842,11 +847,37 @@ abstract final class Qq8LoginBody {
 /// 0x525(可选) 0x544(设备) 0x545(可选,QIMEI)
 // ignore: constant_identifier_names
 const List<int> Qq8A1ExchangeTlvOrder = <int>[
-  0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x108,
-  0x144, 0x142, 0x112, 0x145, 0x166, 0x16A, 0x154,
-  0x141, 0x08, 0x511, 0x147, 0x172, 0x177, 0x400,
-  0x187, 0x188, 0x194, 0x201, 0x202, 0x516, 0x521,
-  0x525, 0x544, 0x545,
+  0x18,
+  0x01,
+  0x106,
+  0x116,
+  0x100,
+  0x107,
+  0x108,
+  0x144,
+  0x142,
+  0x112,
+  0x145,
+  0x166,
+  0x16A,
+  0x154,
+  0x141,
+  0x08,
+  0x511,
+  0x147,
+  0x172,
+  0x177,
+  0x400,
+  0x187,
+  0x188,
+  0x194,
+  0x201,
+  0x202,
+  0x516,
+  0x521,
+  0x525,
+  0x544,
+  0x545,
 ];
 
 /// 二维码扫码登录的 TLV 清单（子命令 9）。
@@ -882,9 +913,30 @@ List<int> qq8QrLoginTlvOrderFor(Qq8ApkInfo apk) => qq8PasswordTlvOrderFor(apk);
 /// [qq8QrLoginTlvOrderFor]。保留它是为了能回答「补表到底有没有用」——
 /// 若某天真机证明补表无效，回滚只需把 [Qq8LoginBody.buildQrLogin] 换回这张。
 const List<int> qq8QrLoginTlvOrderOicq = <int>[
-  0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x142, 0x144, 0x145, 0x147,
-  0x16A, 0x154, 0x141, 0x08, 0x511, 0x187, 0x188, 0x194, 0x191, 0x202,
-  0x177, 0x516, 0x521, 0x318,
+  0x18,
+  0x01,
+  0x106,
+  0x116,
+  0x100,
+  0x107,
+  0x142,
+  0x144,
+  0x145,
+  0x147,
+  0x16A,
+  0x154,
+  0x141,
+  0x08,
+  0x511,
+  0x187,
+  0x188,
+  0x194,
+  0x191,
+  0x202,
+  0x177,
+  0x516,
+  0x521,
+  0x318,
 ];
 
 /// 解开登录层负载：`[16 字节头][TEA(shareKey)][0x03 尾]` → 明文。
@@ -1004,10 +1056,7 @@ class Qq8LoginResponse {
   ({int msgCnt, int timeLimit})? get smsLoginLimits {
     final b = tlvs[0x182];
     if (b == null || b.length < 5) return null;
-    return (
-      msgCnt: (b[1] << 8) | b[2],
-      timeLimit: (b[3] << 8) | b[4],
-    );
+    return (msgCnt: (b[1] << 8) | b[2], timeLimit: (b[3] << 8) | b[4]);
   }
 
   /// `0x183`：msalt（u64，提交验证码时进 `0x184`）。
@@ -1242,7 +1291,8 @@ class Qq8LoginResponse {
     if (b == null || b.length < 7) return null;
     final flag = b[0];
     var p = 1;
-    final timeout = (b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3];
+    final timeout =
+        (b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3];
     p += 4;
     final len = (b[p] << 8) | b[p + 1];
     p += 2;

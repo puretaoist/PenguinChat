@@ -169,16 +169,15 @@ abstract final class Qq8Gfs {
     String pid = rootPid,
     int start = 0,
     int limit = 100,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        2: <int, Object?>{
-          1: gid,
-          2: 1,
-          3: pid,
-          5: limit <= 0 ? 100 : limit,
-          13: start,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    2: <int, Object?>{
+      1: gid,
+      2: 1,
+      3: pid,
+      5: limit <= 0 ? 100 : limit,
+      13: start,
+    },
+  });
 
   /// 解列目录应答：`[4][2]`，其中 `5` 是 repeated（每个元素里 `2`=目录、`3`=文件）。
   static ({int code, String? message, List<Qq8GfsEntry> entries}) parseDir(
@@ -186,7 +185,8 @@ abstract final class Qq8Gfs {
   ) {
     final top = Qq8Pb.decode(payload);
     final rsp = _msg(_msg(top, 4), 2);
-    if (rsp == null) return (code: -1, message: '应答缺少 [4][2]', entries: const []);
+    if (rsp == null)
+      return (code: -1, message: '应答缺少 [4][2]', entries: const []);
     final code = Qq8Pb.intAt(rsp, 1) ?? 0;
     final message = Qq8Pb.textAt(rsp, 2);
     final entries = <Qq8GfsEntry>[];
@@ -209,11 +209,7 @@ abstract final class Qq8Gfs {
   /// 取文件/目录属性请求体（`OidbSvc.0x6d8_0`）。
   static Uint8List buildStatBody({required int gid, required String fid}) =>
       Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: gid,
-          2: 0,
-          4: fid,
-        },
+        1: <int, Object?>{1: gid, 2: 0, 4: fid},
       });
 
   /// 解属性应答：`[4][1]`，条目在 `4`。
@@ -244,22 +240,21 @@ abstract final class Qq8Gfs {
     required Uint8List sha1,
     String pid = rootPid,
     String? localPath,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: gid,
-          2: 0,
-          3: 102,
-          4: 5,
-          5: pid,
-          6: name,
-          7: localPath ?? '$defaultUploadPathPrefix$name',
-          8: size,
-          9: sha1,
-          11: md5,
-          15: 1,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{
+      1: gid,
+      2: 0,
+      3: 102,
+      4: 5,
+      5: pid,
+      6: name,
+      7: localPath ?? '$defaultUploadPathPrefix$name',
+      8: size,
+      9: sha1,
+      11: md5,
+      15: 1,
+    },
+  });
 
   /// 解申请上传应答：`[4][1]`。
   ///
@@ -275,7 +270,8 @@ abstract final class Qq8Gfs {
     String uploadTicket,
     Uint8List? ext500a,
     int? ext500b,
-  }) parseApplyUpload(Uint8List payload) {
+  })
+  parseApplyUpload(Uint8List payload) {
     final top = Qq8Pb.decode(payload);
     final rsp = _msg(_msg(top, 4), 1);
     if (rsp == null) {
@@ -319,38 +315,37 @@ abstract final class Qq8Gfs {
     required int subid,
     Uint8List? ext500a,
     int? ext500b,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 100,
-        2: 1,
-        3: 0,
-        100: <int, Object?>{
-          100: <int, Object?>{1: busid, 100: uin, 200: gid, 400: gid},
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 100,
+    2: 1,
+    3: 0,
+    100: <int, Object?>{
+      100: <int, Object?>{1: busid, 100: uin, 200: gid, 400: gid},
+      200: <int, Object?>{
+        100: size,
+        200: md5,
+        300: sha1,
+        600: fid,
+        700: uploadTicket,
+      },
+      300: <int, Object?>{
+        100: 2,
+        200: '$subid',
+        300: 2,
+        400: clientKey,
+        600: 4,
+      },
+      400: <int, Object?>{100: name},
+      if (ext500a != null || ext500b != null)
+        500: <int, Object?>{
           200: <int, Object?>{
-            100: size,
-            200: md5,
-            300: sha1,
-            600: fid,
-            700: uploadTicket,
+            1: ext500a == null ? null : <int, Object?>{1: 1, 2: ext500a},
+            2: ?ext500b,
           },
-          300: <int, Object?>{
-            100: 2,
-            200: '$subid',
-            300: 2,
-            400: clientKey,
-            600: 4,
-          },
-          400: <int, Object?>{100: name},
-          if (ext500a != null || ext500b != null)
-            500: <int, Object?>{
-              200: <int, Object?>{
-                1: ext500a == null ? null : <int, Object?>{1: 1, 2: ext500a},
-                2: ?ext500b,
-              },
-            },
         },
-        200: 1,
-      });
+    },
+    200: 1,
+  });
 
   // ------------------------------------------------------------ 取下载地址
 
@@ -359,19 +354,13 @@ abstract final class Qq8Gfs {
     required int gid,
     required int busid,
     required String fid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        3: <int, Object?>{
-          1: gid,
-          2: 2,
-          3: busid,
-          4: fid,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    3: <int, Object?>{1: gid, 2: 2, 3: busid, 4: fid},
+  });
 
   /// 解下载地址应答：`[4][3]`，`4` = 主机（host 或 host:port）、`6` = 路径 token。
   static ({int code, String? message, String host, String tokenHex})
-      parseDownload(Uint8List payload) {
+  parseDownload(Uint8List payload) {
     final top = Qq8Pb.decode(payload);
     final rsp = _msg(_msg(top, 4), 3);
     if (rsp == null) {
@@ -402,16 +391,9 @@ abstract final class Qq8Gfs {
     required int busid,
     required String pid,
     required String fid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        4: <int, Object?>{
-          1: gid,
-          2: 3,
-          3: busid,
-          4: pid,
-          5: fid,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    4: <int, Object?>{1: gid, 2: 3, 3: busid, 4: pid, 5: fid},
+  });
 
   /// 解删除应答：`[4][4]`。
   static ({int code, String? message}) parseDelete(Uint8List payload) {
@@ -430,22 +412,18 @@ abstract final class Qq8Gfs {
     required int busid,
     required String fid,
     int? rand,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        5: <int, Object?>{
-          1: gid,
-          2: 4,
-          3: <int, Object?>{
-            1: busid,
-            2: fid,
-            3: ?rand,
-            5: 1,
-          },
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    5: <int, Object?>{
+      1: gid,
+      2: 4,
+      3: <int, Object?>{1: busid, 2: fid, 3: ?rand, 5: 1},
+    },
+  });
 
   /// 解回执应答：`[4][5]` → 里面再一层 `4` → `3` 是最终 fid。
-  static ({int code, String? message, String fid}) parseFeed(Uint8List payload) {
+  static ({int code, String? message, String fid}) parseFeed(
+    Uint8List payload,
+  ) {
     final outer = _msg(_msg(Qq8Pb.decode(payload), 4), 5);
     if (outer == null) return (code: -1, message: '应答缺少 [4][5]', fid: '');
     final code1 = Qq8Pb.intAt(outer, 1) ?? 0;
@@ -465,17 +443,9 @@ abstract final class Qq8Gfs {
 
   /// 建目录请求体（`OidbSvc.0x6d7_0`）。官方只允许在**根目录**下建，
   /// 所以字段 3 恒为 `/`（参考实现 `gfs.ts:166-179`）。
-  static Uint8List buildMkdirBody({
-    required int gid,
-    required String name,
-  }) =>
+  static Uint8List buildMkdirBody({required int gid, required String name}) =>
       Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          1: gid,
-          2: 0,
-          3: rootPid,
-          4: name,
-        },
+        1: <int, Object?>{1: gid, 2: 0, 3: rootPid, 4: name},
       });
 
   /// 解建目录应答：`[4][1]` 判码，目录属性在 `[4][1][4]`（与文件属性的布局不同）。
@@ -499,14 +469,9 @@ abstract final class Qq8Gfs {
   static Uint8List buildDeleteDirBody({
     required int gid,
     required String fid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        2: <int, Object?>{
-          1: gid,
-          2: 1,
-          3: fid,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    2: <int, Object?>{1: gid, 2: 1, 3: fid},
+  });
 
   /// 解删目录应答：`[4][2]`。
   static ({int code, String? message}) parseDeleteDir(Uint8List payload) =>
@@ -519,17 +484,9 @@ abstract final class Qq8Gfs {
     required String fid,
     required String pid,
     required String name,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        5: <int, Object?>{
-          1: gid,
-          2: 4,
-          3: busid,
-          4: fid,
-          5: pid,
-          6: name,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    5: <int, Object?>{1: gid, 2: 4, 3: busid, 4: fid, 5: pid, 6: name},
+  });
 
   /// 解改文件名应答：`[4][5]`。
   static ({int code, String? message}) parseRenameFile(Uint8List payload) =>
@@ -540,15 +497,9 @@ abstract final class Qq8Gfs {
     required int gid,
     required String fid,
     required String name,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        3: <int, Object?>{
-          1: gid,
-          2: 2,
-          3: fid,
-          4: name,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    3: <int, Object?>{1: gid, 2: 2, 3: fid, 4: name},
+  });
 
   /// 解改目录名应答：`[4][3]`。
   static ({int code, String? message}) parseRenameDir(Uint8List payload) =>
@@ -561,17 +512,9 @@ abstract final class Qq8Gfs {
     required String fid,
     required String pid,
     required String toPid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        6: <int, Object?>{
-          1: gid,
-          2: 5,
-          3: busid,
-          4: fid,
-          5: pid,
-          6: toPid,
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    6: <int, Object?>{1: gid, 2: 5, 3: busid, 4: fid, 5: pid, 6: toPid},
+  });
 
   /// 解移动文件应答：`[4][6]`。
   static ({int code, String? message}) parseMoveFile(Uint8List payload) =>
@@ -616,14 +559,14 @@ abstract final class Qq8Gfs {
   }
 
   static Qq8GfsEntry _dirStat(Map<int, List<Object>> d) => Qq8GfsEntry(
-        fid: Qq8Pb.textAt(d, 1) ?? '',
-        pid: Qq8Pb.textAt(d, 2) ?? '',
-        name: Qq8Pb.textAt(d, 3) ?? '',
-        isDir: true,
-        createTime: Qq8Pb.intAt(d, 4) ?? 0,
-        uploaderUin: Qq8Pb.intAt(d, 6) ?? 0,
-        fileCount: Qq8Pb.intAt(d, 8) ?? 0,
-      );
+    fid: Qq8Pb.textAt(d, 1) ?? '',
+    pid: Qq8Pb.textAt(d, 2) ?? '',
+    name: Qq8Pb.textAt(d, 3) ?? '',
+    isDir: true,
+    createTime: Qq8Pb.intAt(d, 4) ?? 0,
+    uploaderUin: Qq8Pb.intAt(d, 6) ?? 0,
+    fileCount: Qq8Pb.intAt(d, 8) ?? 0,
+  );
 }
 
 String _hex(Uint8List? b) {
@@ -634,4 +577,3 @@ String _hex(Uint8List? b) {
   }
   return sb.toString();
 }
-

@@ -47,7 +47,8 @@ class Qq8ConfigPushReq {
   });
 
   @override
-  String toString() => 'Qq8ConfigPushReq(type=$type, seq=$seq, data=${data.length}B)';
+  String toString() =>
+      'Qq8ConfigPushReq(type=$type, seq=$seq, data=${data.length}B)';
 }
 
 /// 解析 `ConfigPushSvc.PushReq` 的 SSO payload。

@@ -90,8 +90,7 @@ class KeepAlivePolicy {
   bool shouldRun({
     required bool appInBackground,
     required bool sessionActive,
-  }) =>
-      appInBackground && sessionActive;
+  }) => appInBackground && sessionActive;
 }
 
 /// 把「生命周期变化」翻译成「start/stop」，并做去重。
@@ -109,12 +108,12 @@ class KeepAliveController {
     KeepAlivePolicy policy = const KeepAlivePolicy(),
     void Function(String message, {Object? error})? log,
   })
-      // 下面是误报：Dart 不允许私有名字作**命名**参数（`{this._policy}` 编译不过），
-      // 所以只能用初始化列表转一手。lint 只看到"参数直接赋给同义字段"就报了。
-      // ignore: prefer_initializing_formals
-      : _policy = policy,
-        // ignore: prefer_initializing_formals
-        _log = log;
+    // 下面是误报：Dart 不允许私有名字作**命名**参数（`{this._policy}` 编译不过），
+    // 所以只能用初始化列表转一手。lint 只看到"参数直接赋给同义字段"就报了。
+    // ignore: prefer_initializing_formals
+    : _policy = policy,
+       // ignore: prefer_initializing_formals
+       _log = log;
 
   final KeepAlive _keepAlive;
   final KeepAlivePolicy _policy;

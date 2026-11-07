@@ -47,17 +47,17 @@ abstract final class Qq8ImageType {
 
 /// 类型码 → 扩展名（oicq `image.ts` 的 `EXT` 表）。
 String qq8ImageExt(int? type) => switch (type) {
-      3 => 'png',
-      4 => 'face',
-      1000 => 'jpg',
-      1001 => 'png',
-      1002 => 'webp',
-      1003 => 'jpg',
-      1005 => 'bmp',
-      2000 => 'gif',
-      2001 => 'png',
-      _ => 'jpg',
-    };
+  3 => 'png',
+  4 => 'face',
+  1000 => 'jpg',
+  1001 => 'png',
+  1002 => 'webp',
+  1003 => 'jpg',
+  1005 => 'bmp',
+  2000 => 'gif',
+  2001 => 'png',
+  _ => 'jpg',
+};
 
 /// `{md5}{size}-{宽}-{高}.{扩展名}`（oicq `buildImageFileParam`）。
 String qq8BuildImageFileParam({
@@ -66,8 +66,7 @@ String qq8BuildImageFileParam({
   int width = 0,
   int height = 0,
   int? type,
-}) =>
-    '$md5$size-$width-$height.${qq8ImageExt(type)}';
+}) => '$md5$size-$width-$height.${qq8ImageExt(type)}';
 
 /// 图片探测/上传的错误（消息直接给人看）。
 class Qq8ImageException implements Exception {
@@ -108,12 +107,12 @@ class Qq8ImageInfo {
 
   /// `{md5}{size}-{宽}-{高}.{ext}` —— 会话层拿这个当"图片定位串"。
   String get fileParam => qq8BuildImageFileParam(
-        md5: md5Hex,
-        size: size,
-        width: width,
-        height: height,
-        type: type,
-      );
+    md5: md5Hex,
+    size: size,
+    width: width,
+    height: height,
+    type: type,
+  );
 
   @override
   String toString() =>
@@ -133,13 +132,15 @@ abstract final class Qq8ImageProbe {
     if (bytes.isEmpty) throw Qq8ImageException('空文件，不是图片');
     if (bytes.length > maxUploadSize) {
       throw Qq8ImageException(
-          '图片 ${bytes.length} 字节，超过上限 $maxUploadSize（30 MiB）');
+        '图片 ${bytes.length} 字节，超过上限 $maxUploadSize（30 MiB）',
+      );
     }
     final dim = _dimensions(bytes);
     if (dim == null) {
       throw Qq8ImageException(
-          '认不出图片格式（只看头部 ${bytes.length < 32 ? bytes.length : 32} 字节）：'
-          '支持 PNG / JPEG / GIF / BMP / WebP');
+        '认不出图片格式（只看头部 ${bytes.length < 32 ? bytes.length : 32} 字节）：'
+        '支持 PNG / JPEG / GIF / BMP / WebP',
+      );
     }
     final md5 = md5Bytes(bytes);
     return Qq8ImageInfo(
@@ -203,7 +204,8 @@ abstract final class Qq8ImageProbe {
         }
         final len = u16be(i + 2);
         if (len < 2) return null;
-        final isSof = marker >= 0xC0 &&
+        final isSof =
+            marker >= 0xC0 &&
             marker <= 0xCF &&
             marker != 0xC4 &&
             marker != 0xC8 &&
@@ -218,10 +220,7 @@ abstract final class Qq8ImageProbe {
     }
 
     // GIF：GIF87a / GIF89a，宽高是小端 u16
-    if (b.length >= 10 &&
-        b[0] == 0x47 &&
-        b[1] == 0x49 &&
-        b[2] == 0x46) {
+    if (b.length >= 10 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46) {
       return (u16le(6), u16le(8), Qq8ImageType.gif);
     }
 
@@ -246,7 +245,10 @@ abstract final class Qq8ImageProbe {
       switch (fourcc) {
         case 'VP8 ':
           // 帧头：3 字节 tag + 同步码 9D 01 2A，宽高各 u16le（低 14 位）
-          if (b.length < 30 || b[23] != 0x9D || b[24] != 0x01 || b[25] != 0x2A) {
+          if (b.length < 30 ||
+              b[23] != 0x9D ||
+              b[24] != 0x01 ||
+              b[25] != 0x2A) {
             return null;
           }
           return (u16le(26) & 0x3FFF, u16le(28) & 0x3FFF, Qq8ImageType.webp);
@@ -308,7 +310,8 @@ class Qq8PicUpReply {
   bool get ok => code == 0 && fid.isNotEmpty;
 
   @override
-  String toString() => 'Qq8PicUpReply(code=$code, fid=$fid, '
+  String toString() =>
+      'Qq8PicUpReply(code=$code, fid=$fid, '
       'exists=$alreadyExists, $host:$port, ticket=${ticket.length}B)';
 }
 
@@ -329,26 +332,28 @@ abstract final class Qq8ImageUp {
   }) {
     final req = <Uint8List>[];
     for (final img in images) {
-      req.add(Qq8Pb.encode(<int, Object?>{
-        1: uin,
-        2: uid,
-        3: 0,
-        4: img.md5,
-        5: img.size,
-        6: img.md5Hex,
-        7: 5,
-        8: 9,
-        9: 0,
-        10: 0,
-        11: 0, // retry
-        12: 1, // bu
-        13: img.origin,
-        14: img.width,
-        15: img.height,
-        16: img.type,
-        17: apkVersion,
-        22: 0,
-      }));
+      req.add(
+        Qq8Pb.encode(<int, Object?>{
+          1: uin,
+          2: uid,
+          3: 0,
+          4: img.md5,
+          5: img.size,
+          6: img.md5Hex,
+          7: 5,
+          8: 9,
+          9: 0,
+          10: 0,
+          11: 0, // retry
+          12: 1, // bu
+          13: img.origin,
+          14: img.width,
+          15: img.height,
+          16: img.type,
+          17: apkVersion,
+          22: 0,
+        }),
+      );
     }
     return Qq8Pb.encode(<int, Object?>{1: 1, 2: req});
   }
@@ -362,26 +367,28 @@ abstract final class Qq8ImageUp {
   }) {
     final req = <Uint8List>[];
     for (final img in images) {
-      req.add(Qq8Pb.encode(<int, Object?>{
-        1: gid,
-        2: uin,
-        3: 0,
-        4: img.md5,
-        5: img.size,
-        6: img.md5Hex,
-        7: 5,
-        8: 9,
-        9: 1, // bu
-        10: img.width,
-        11: img.height,
-        12: img.type,
-        13: apkVersion,
-        14: 0,
-        15: 1052,
-        16: img.origin,
-        18: 0,
-        19: 0,
-      }));
+      req.add(
+        Qq8Pb.encode(<int, Object?>{
+          1: gid,
+          2: uin,
+          3: 0,
+          4: img.md5,
+          5: img.size,
+          6: img.md5Hex,
+          7: 5,
+          8: 9,
+          9: 1, // bu
+          10: img.width,
+          11: img.height,
+          12: img.type,
+          13: apkVersion,
+          14: 0,
+          15: 1052,
+          16: img.origin,
+          18: 0,
+          19: 0,
+        }),
+      );
     }
     return Qq8Pb.encode(<int, Object?>{1: 3, 2: 1, 3: req});
   }
@@ -416,15 +423,17 @@ abstract final class Qq8ImageUp {
       final ip = ipRaw == null || ipRaw.isEmpty ? null : ipRaw.first;
       final port = Qq8Pb.intAt(m, 7 + offset);
       final ticket = Qq8Pb.bytesAt(m, 8 + offset) ?? Uint8List(0);
-      out.add(Qq8PicUpReply(
-        code: code,
-        message: message,
-        fid: fid,
-        alreadyExists: exists,
-        host: ip is int ? qq8Int32IpToStr(ip) : (ip is String ? ip : null),
-        port: port,
-        ticket: ticket,
-      ));
+      out.add(
+        Qq8PicUpReply(
+          code: code,
+          message: message,
+          fid: fid,
+          alreadyExists: exists,
+          host: ip is int ? qq8Int32IpToStr(ip) : (ip is String ? ip : null),
+          port: port,
+          ticket: ticket,
+        ),
+      );
     }
     return out;
   }
@@ -485,7 +494,8 @@ class Qq8PicDownReply {
       (originalPara != null || bigPara != null || thumbPara != null);
 
   @override
-  String toString() => 'Qq8PicDownReply(result=$result, md5=$md5Hex, '
+  String toString() =>
+      'Qq8PicDownReply(result=$result, md5=$md5Hex, '
       'paras=[thumb=${thumbPara?.length}, orig=${originalPara?.length}, '
       'big=${bigPara?.length}], domains=$domains, ips=$ips, '
       'ports=$ports, https=$httpsFlag)';
@@ -542,11 +552,11 @@ abstract final class Qq8ImageDown {
 
   /// 图片规格 → `(uint32_url_flag, uint32_url_type)`，出处见类文档。
   static (int, int) urlFlagTypeOf(int picType) => switch (picType) {
-        picTypeThumb => (1, 2),
-        picTypeBig => (8, 3),
-        picTypeOriginal => (2, 4),
-        _ => (2, 4),
-      };
+    picTypeThumb => (1, 2),
+    picTypeBig => (8, 3),
+    picTypeOriginal => (2, 4),
+    _ => (2, 4),
+  };
 
   /// 组一份群图取 URL 请求体（`cmd0x388.ReqBody`）。
   ///
@@ -567,24 +577,26 @@ abstract final class Qq8ImageDown {
     final (flag, type) = urlFlagTypeOf(picType);
     final reqs = <Uint8List>[];
     for (var i = 0; i < md5HexList.length; i++) {
-      reqs.add(Qq8Pb.encode(<int, Object?>{
-        1: gid,
-        2: uin,
-        3: (fileIds != null && i < fileIds.length) ? fileIds[i] : 0,
-        4: _hexToBytes(md5HexList[i]),
-        5: flag,
-        6: type,
-        7: 5, // uint32_req_term
-        8: 9, // uint32_req_platform_type（Android）
-        9: 0, // uint32_inner_ip
-        10: buType,
-        11: buildVer, // bytes_build_ver
-        12: i, // uint64_file_id（批量内下标）
-        19: (picUpTimestamps != null && i < picUpTimestamps.length)
-            ? picUpTimestamps[i]
-            : 0, // uint32_pic_up_timestamp
-        20: transferType,
-      }));
+      reqs.add(
+        Qq8Pb.encode(<int, Object?>{
+          1: gid,
+          2: uin,
+          3: (fileIds != null && i < fileIds.length) ? fileIds[i] : 0,
+          4: _hexToBytes(md5HexList[i]),
+          5: flag,
+          6: type,
+          7: 5, // uint32_req_term
+          8: 9, // uint32_req_platform_type（Android）
+          9: 0, // uint32_inner_ip
+          10: buType,
+          11: buildVer, // bytes_build_ver
+          12: i, // uint64_file_id（批量内下标）
+          19: (picUpTimestamps != null && i < picUpTimestamps.length)
+              ? picUpTimestamps[i]
+              : 0, // uint32_pic_up_timestamp
+          20: transferType,
+        }),
+      );
     }
     return Qq8Pb.encode(<int, Object?>{
       1: netType, // uint32_net_type
@@ -616,19 +628,21 @@ abstract final class Qq8ImageDown {
           domains.add(utf8.decode(v, allowMalformed: true));
         }
       }
-      out.add(Qq8PicDownReply(
-        result: Qq8Pb.intAt(m, 3) ?? -1,
-        failMsg: Qq8Pb.textAt(m, 4) ?? '',
-        md5Hex: _bytesToHex(Qq8Pb.bytesAt(m, 2) ?? Uint8List(0)),
-        thumbPara: Qq8Pb.bytesAt(m, 12),
-        originalPara: Qq8Pb.bytesAt(m, 13),
-        bigPara: Qq8Pb.bytesAt(m, 14),
-        bigThumbPara: Qq8Pb.bytesAt(m, 18),
-        domains: domains,
-        ips: ips,
-        ports: ports,
-        httpsFlag: Qq8Pb.intAt(m, 19) ?? 0,
-      ));
+      out.add(
+        Qq8PicDownReply(
+          result: Qq8Pb.intAt(m, 3) ?? -1,
+          failMsg: Qq8Pb.textAt(m, 4) ?? '',
+          md5Hex: _bytesToHex(Qq8Pb.bytesAt(m, 2) ?? Uint8List(0)),
+          thumbPara: Qq8Pb.bytesAt(m, 12),
+          originalPara: Qq8Pb.bytesAt(m, 13),
+          bigPara: Qq8Pb.bytesAt(m, 14),
+          bigThumbPara: Qq8Pb.bytesAt(m, 18),
+          domains: domains,
+          ips: ips,
+          ports: ports,
+          httpsFlag: Qq8Pb.intAt(m, 19) ?? 0,
+        ),
+      );
     }
     return out;
   }
@@ -681,7 +695,8 @@ class Qq8HighwayAck {
   });
 
   @override
-  String toString() => 'Qq8HighwayAck(code=$errorCode, '
+  String toString() =>
+      'Qq8HighwayAck(code=$errorCode, '
       'offset=$offset, len=$dataLength)';
 }
 
@@ -764,9 +779,12 @@ abstract final class Qq8Highway {
   /// 3 error_code / 7 扩展信息）。
   static Qq8HighwayAck parseAck(Uint8List frame) {
     if (frame.isEmpty || frame[0] != stx) {
-      throw Qq8ImageException('highway 回帧没有 STX（${frame.isEmpty ? 0 : frame[0]}）');
+      throw Qq8ImageException(
+        'highway 回帧没有 STX（${frame.isEmpty ? 0 : frame[0]}）',
+      );
     }
-    if (frame.length < 10) throw Qq8ImageException('highway 回帧过短（${frame.length}）');
+    if (frame.length < 10)
+      throw Qq8ImageException('highway 回帧过短（${frame.length}）');
     final headLen = _readU32be(frame, 1);
     if (9 + headLen > frame.length) {
       throw Qq8ImageException('highway 回帧头长 $headLen 超出帧长 ${frame.length}');
@@ -818,8 +836,9 @@ abstract final class Qq8Highway {
     void handleAck(Qq8HighwayAck ack) {
       if (ack.errorCode != 0) {
         if (!done.isCompleted) {
-          done.completeError(Qq8ImageException(
-              '图床拒绝（highway code=${ack.errorCode}）'));
+          done.completeError(
+            Qq8ImageException('图床拒绝（highway code=${ack.errorCode}）'),
+          );
         }
         return;
       }
@@ -872,21 +891,25 @@ abstract final class Qq8Highway {
     var offset = 0;
     try {
       while (offset < fileSize) {
-        final end = (offset + maxChunk < fileSize) ? offset + maxChunk : fileSize;
+        final end = (offset + maxChunk < fileSize)
+            ? offset + maxChunk
+            : fileSize;
         final chunk = Uint8List.sublistView(data, offset, end);
-        socket.add(buildFrame(
-          seq: seq++,
-          uin: uin,
-          appid: appid,
-          buCmdId: buCmdId,
-          ticket: ticket,
-          fileMd5: fileMd5,
-          fileSize: fileSize,
-          offset: offset,
-          chunk: chunk,
-          ext: ext,
-          netFlag: netFlag,
-        ));
+        socket.add(
+          buildFrame(
+            seq: seq++,
+            uin: uin,
+            appid: appid,
+            buCmdId: buCmdId,
+            ticket: ticket,
+            fileMd5: fileMd5,
+            fileSize: fileSize,
+            offset: offset,
+            chunk: chunk,
+            ext: ext,
+            netFlag: netFlag,
+          ),
+        );
         offset = end;
       }
       await socket.flush();
@@ -928,51 +951,49 @@ abstract final class Qq8ImageElems {
     required Qq8ImageInfo info,
     required String fid,
     bool asFace = false,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        4: <int, Object?>{
-          1: info.md5Hex,
-          2: info.size,
-          3: fid,
-          5: info.type,
-          7: info.md5,
-          8: info.height,
-          9: info.width,
-          10: fid,
-          13: info.origin,
-          16: info.type == Qq8ImageType.face ? 5 : 0,
-          24: 0,
-          25: 0,
-          29: <int, Object?>{1: asFace ? 1 : 0},
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    4: <int, Object?>{
+      1: info.md5Hex,
+      2: info.size,
+      3: fid,
+      5: info.type,
+      7: info.md5,
+      8: info.height,
+      9: info.width,
+      10: fid,
+      13: info.origin,
+      16: info.type == Qq8ImageType.face ? 5 : 0,
+      24: 0,
+      25: 0,
+      29: <int, Object?>{1: asFace ? 1 : 0},
+    },
+  });
 
   /// 群图：`Elem 8` = `CustomFace`。
   static Uint8List group({
     required Qq8ImageInfo info,
     required String fid,
     bool asFace = false,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        8: <int, Object?>{
-          2: '${info.md5Hex}.gif',
-          7: fid,
-          8: 0,
-          9: 0,
-          10: 66,
-          12: 1,
-          13: info.md5,
-          20: info.type,
-          22: info.width,
-          23: info.height,
-          24: 200,
-          25: info.size,
-          26: info.origin,
-          29: 0,
-          30: 0,
-          34: <int, Object?>{1: asFace ? 1 : 0},
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    8: <int, Object?>{
+      2: '${info.md5Hex}.gif',
+      7: fid,
+      8: 0,
+      9: 0,
+      10: 66,
+      12: 1,
+      13: info.md5,
+      20: info.type,
+      22: info.width,
+      23: info.height,
+      24: 200,
+      25: info.size,
+      26: info.origin,
+      29: 0,
+      30: 0,
+      34: <int, Object?>{1: asFace ? 1 : 0},
+    },
+  });
 }
 
 /// `Map<int, List<Object>>` 里取嵌套消息（第一个是 Uint8List 的值）。

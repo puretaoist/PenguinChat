@@ -121,7 +121,8 @@ class DeviceSnapshot {
   bool get usable => androidId != null && androidId!.isNotEmpty;
 
   @override
-  String toString() => 'DeviceSnapshot(model=$model, brand=$brand, '
+  String toString() =>
+      'DeviceSnapshot(model=$model, brand=$brand, '
       'product=$product, device=$device, sdk=$sdk, '
       'androidId=${androidId == null ? 'null' : '有'})';
 }
@@ -184,12 +185,12 @@ class BuildInfo {
   /// 键名与原生侧 `buildInfo()` 返回的键名完全一致——两套命名迟早会漂移，
   /// 而漂移的表现是「某个字段悄悄丢了」。
   Map<String, Object?> toMetadata() => <String, Object?>{
-        'app_version': appVersion,
-        'git_commit': gitCommit,
-        'build_time': buildTime,
-        'api_host': apiHost,
-        'probe_version': probeVersion,
-      };
+    'app_version': appVersion,
+    'git_commit': gitCommit,
+    'build_time': buildTime,
+    'api_host': apiHost,
+    'probe_version': probeVersion,
+  };
 
   @override
   String toString() => 'BuildInfo($summary)';

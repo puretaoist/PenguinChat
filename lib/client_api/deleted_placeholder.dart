@@ -28,5 +28,4 @@ bool isServerDeletedPlaceholder({
   required int timeMs,
   required int senderUin,
   required String text,
-}) =>
-    timeMs <= 0 && senderUin == 0 && text == kDeletedPlaceholderText;
+}) => timeMs <= 0 && senderUin == 0 && text == kDeletedPlaceholderText;

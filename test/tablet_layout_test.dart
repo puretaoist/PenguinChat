@@ -93,9 +93,7 @@ void main() {
       expect(AppBreakpoints.sidebarWidthFor(2560), 896);
     });
 
-    testWidgets('contentHorizontalInset：窄屏 0，宽屏取超出 720 的一半', (
-      tester,
-    ) async {
+    testWidgets('contentHorizontalInset：窄屏 0，宽屏取超出 720 的一半', (tester) async {
       final List<double> got = <double>[];
       for (final double w in <double>[390, 720, 721, 1280]) {
         await tester.pumpWidget(

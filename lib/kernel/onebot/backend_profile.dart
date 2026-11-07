@@ -55,10 +55,10 @@ enum Pager {
   none;
 
   static Pager parse(String? raw) => switch (raw) {
-        'incremental' => Pager.incremental,
-        'none' => Pager.none,
-        _ => Pager.full,
-      };
+    'incremental' => Pager.incremental,
+    'none' => Pager.none,
+    _ => Pager.full,
+  };
 }
 
 /// 一个逻辑 API 在某个后端上的映射声明。
@@ -108,7 +108,9 @@ class ApiSpec {
       for (final e in rawMap.entries) {
         final v = e.value;
         if (v != null && v is! String) {
-          throw FormatException('后端适配表：API "$logicalName" 的字段 "${e.key}" 路径必须是字符串或 null');
+          throw FormatException(
+            '后端适配表：API "$logicalName" 的字段 "${e.key}" 路径必须是字符串或 null',
+          );
         }
         fields[e.key.toString()] = (v as String?)?.trim();
       }
@@ -147,7 +149,9 @@ class ApiSpec {
     final out = <String, dynamic>{};
     for (final e in map.entries) {
       final path = e.value;
-      out[e.key] = (path == null || path.isEmpty) ? null : selectOne(item, path);
+      out[e.key] = (path == null || path.isEmpty)
+          ? null
+          : selectOne(item, path);
     }
     return out;
   }
@@ -229,8 +233,9 @@ class BackendProfile {
       for (final e in rawSeg.entries) {
         final v = e.value;
         if (v is Map) {
-          segmentValues[e.key.toString()] =
-              v.map((k, val) => MapEntry(k.toString(), val.toString()));
+          segmentValues[e.key.toString()] = v.map(
+            (k, val) => MapEntry(k.toString(), val.toString()),
+          );
         }
       }
     }
@@ -238,7 +243,8 @@ class BackendProfile {
     return BackendProfile(
       name: name,
       redirect: json['redirect'] as String?,
-      knownAs: (json['known_as'] as List?)?.whereType<String>().toList() ?? const [],
+      knownAs:
+          (json['known_as'] as List?)?.whereType<String>().toList() ?? const [],
       apis: apis,
       segmentValues: segmentValues,
     );
@@ -246,7 +252,9 @@ class BackendProfile {
 
   /// 从 JSON 文本构造（供 asset 与测试共用）。
   static BackendProfile fromJsonString(String source) =>
-      BackendProfile.fromJson((jsonDecode(source) as Map).cast<String, dynamic>());
+      BackendProfile.fromJson(
+        (jsonDecode(source) as Map).cast<String, dynamic>(),
+      );
 
   /// 查一个逻辑 API 的映射；表里没有则返回 null。
   ApiSpec? spec(String logicalName) => apis[logicalName];
@@ -258,7 +266,8 @@ class BackendProfile {
   int get apiCount => apis.length;
 
   @override
-  String toString() => 'BackendProfile($name, apis=$apiCount, redirect=$redirect)';
+  String toString() =>
+      'BackendProfile($name, apis=$apiCount, redirect=$redirect)';
 }
 
 /// 所有已知后端适配表的集合，按上报的 `app_name` 查找。
@@ -268,7 +277,10 @@ class BackendProfileRegistry {
   /// 全部表里都没有匹配时使用的兜底表名。
   final String fallbackName;
 
-  BackendProfileRegistry(Iterable<BackendProfile> profiles, {this.fallbackName = 'NapCat.Onebot'}) {
+  BackendProfileRegistry(
+    Iterable<BackendProfile> profiles, {
+    this.fallbackName = 'NapCat.Onebot',
+  }) {
     for (final p in profiles) {
       _byName[p.name] = p;
       for (final alias in p.knownAs) {
@@ -281,11 +293,10 @@ class BackendProfileRegistry {
   factory BackendProfileRegistry.fromJsonStrings(
     Iterable<String> sources, {
     String fallbackName = 'NapCat.Onebot',
-  }) =>
-      BackendProfileRegistry(
-        sources.map(BackendProfile.fromJsonString),
-        fallbackName: fallbackName,
-      );
+  }) => BackendProfileRegistry(
+    sources.map(BackendProfile.fromJsonString),
+    fallbackName: fallbackName,
+  );
 
   /// 已注册的表名（不含别名）。
   List<String> get names =>

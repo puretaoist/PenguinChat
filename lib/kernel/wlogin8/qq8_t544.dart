@@ -171,8 +171,10 @@ class _Aes {
   final Uint8List _exp = Uint8List(256);
   final Uint8List _log = Uint8List(256);
   final Uint8List _sbox = Uint8List(256);
-  final List<List<int>> _mulTab =
-      List<List<int>>.generate(256, (_) => List<int>.filled(6, 0));
+  final List<List<int>> _mulTab = List<List<int>>.generate(
+    256,
+    (_) => List<int>.filled(6, 0),
+  );
 
   int _mul(int a, int b) =>
       (a == 0 || b == 0) ? 0 : _exp[(_log[a] + _log[b]) % 255];
@@ -598,7 +600,8 @@ int _subAb(int b, Uint8List sbox) {
 Uint32List _subF(List<int> a, List<int> b, Uint8List sbox) {
   final w = Uint32List(44);
   for (var k = 0; k < 4; k++) {
-    w[k] = ((a[4 * k] << 24) |
+    w[k] =
+        ((a[4 * k] << 24) |
             (a[4 * k + 1] << 16) |
             (a[4 * k + 2] << 8) |
             a[4 * k + 3]) &
@@ -742,8 +745,7 @@ Uint8List qq8T544Sign(int curr, Uint8List input, {Qq8T544Entropy? entropy}) {
     assert(tPicks[1] >= 0 && tPicks[1] < 50, 'table2Picks[1] 应在 0..49');
   }
   if (addPin != null) {
-    assert(addPin >= 1 && addPin <= 8 && addPin.isOdd,
-        'addition 必须是 1..8 的奇数');
+    assert(addPin >= 1 && addPin <= 8 && addPin.isOdd, 'addition 必须是 1..8 的奇数');
   }
 
   // JS: `curr = curr % 1000000`。JS 的 `%` 符号随被除数，
@@ -760,8 +762,12 @@ Uint8List qq8T544Sign(int curr, Uint8List input, {Qq8T544Entropy? entropy}) {
 
   final kt = Uint8List(40);
   // 参考实现：`kt[i] = keyTable[floor(random()*50)].charCodeAt(0) + 50`
-  kt[0] = qq8T544KeyTable.codeUnitAt(kPicks != null ? kPicks[0] : rnd.nextInt(50)) + 50;
-  kt[1] = qq8T544KeyTable.codeUnitAt(kPicks != null ? kPicks[1] : rnd.nextInt(50)) + 50;
+  kt[0] =
+      qq8T544KeyTable.codeUnitAt(kPicks != null ? kPicks[0] : rnd.nextInt(50)) +
+      50;
+  kt[1] =
+      qq8T544KeyTable.codeUnitAt(kPicks != null ? kPicks[1] : rnd.nextInt(50)) +
+      50;
   kt[2] = kt[1] + 20;
   kt[3] = kt[2] + 20;
   kt.setRange(6, 10, qq8T544Key1); // key1.copy(kt, 6, 0, 4)：只取前 4 字节
@@ -804,7 +810,10 @@ Uint8List qq8T544Sign(int curr, Uint8List input, {Qq8T544Entropy? entropy}) {
   kt.setRange(4, 8, kt.sublist(0, 4));
   kt.setRange(8, 16, kt.sublist(0, 8));
   _transformInner(crcData, qq8T544TsEncode);
-  final encrypted = _tencentEncryptB(Uint8List.fromList(kt.sublist(0, 16)), crcData);
+  final encrypted = _tencentEncryptB(
+    Uint8List.fromList(kt.sublist(0, 16)),
+    crcData,
+  );
   _transformInner(encrypted, qq8T544TsDecode);
 
   kt[0] = 0x0C;
@@ -812,8 +821,12 @@ Uint8List qq8T544Sign(int curr, Uint8List input, {Qq8T544Entropy? entropy}) {
   _writeU32BE(kt, 2, nonce);
   kt.setRange(6, 27, encrypted); // encrypted.copy(kt, 6)
   _writeU32LE(kt, 27, 0);
-  kt[31] = qq8T544Table2.codeUnitAt(tPicks != null ? tPicks[0] : rnd.nextInt(50));
-  kt[32] = qq8T544Table2.codeUnitAt(tPicks != null ? tPicks[1] : rnd.nextInt(50));
+  kt[31] = qq8T544Table2.codeUnitAt(
+    tPicks != null ? tPicks[0] : rnd.nextInt(50),
+  );
+  kt[32] = qq8T544Table2.codeUnitAt(
+    tPicks != null ? tPicks[1] : rnd.nextInt(50),
+  );
   // 参考实现抽 `floor(random()*9)` 后重抽到奇数，等价于在 {1,3,5,7} 上均匀取。
   final addition = addPin ?? (1 + 2 * rnd.nextInt(4));
   kt[33] = (kt[31] + addition) & 0xFF;

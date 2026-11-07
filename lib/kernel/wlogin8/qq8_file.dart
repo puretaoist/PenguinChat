@@ -128,7 +128,8 @@ class Qq8FileUploadTicket {
   bool get ok => code == 0 && fid.isNotEmpty;
 
   @override
-  String toString() => 'Qq8FileUploadTicket(code=$code, fid=$fid, '
+  String toString() =>
+      'Qq8FileUploadTicket(code=$code, fid=$fid, '
       'exists=$alreadyExists, ticket=${ticket.length}B)';
 }
 
@@ -164,7 +165,8 @@ abstract final class Qq8File {
       'OfflineFilleHandleSvr.pb_ftn_CMD_REQ_UPLOAD_SUCC-800';
   static const String cmdApplyDownload =
       'OfflineFilleHandleSvr.pb_ftn_CMD_REQ_APPLY_DOWNLOAD-1200';
-  static const String cmdRecall = 'OfflineFilleHandleSvr.pb_ftn_CMD_REQ_RECALL-400';
+  static const String cmdRecall =
+      'OfflineFilleHandleSvr.pb_ftn_CMD_REQ_RECALL-400';
   static const String cmdForward =
       'OfflineFilleHandleSvr.pb_ftn_CMD_REQ_APPLY_FORWARD_FILE-700';
 
@@ -198,22 +200,21 @@ abstract final class Qq8File {
   static Uint8List buildBigdataChannelBody({
     required int uin,
     Uint8List? loginSig,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1281: <int, Object?>{
-          1: uin,
-          2: 0,
-          3: 16,
-          4: 0,
-          if (loginSig != null && loginSig.isNotEmpty) 5: loginSig,
-          6: 3,
-          7: <int>[1, 5, 10, 21],
-          9: 2,
-          10: 9,
-          11: 8,
-          15: '1.0.1',
-        },
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1281: <int, Object?>{
+      1: uin,
+      2: 0,
+      3: 16,
+      4: 0,
+      if (loginSig != null && loginSig.isNotEmpty) 5: loginSig,
+      6: 3,
+      7: <int>[1, 5, 10, 21],
+      9: 2,
+      10: 9,
+      11: 8,
+      15: '1.0.1',
+    },
+  });
 
   /// 解析 bigdata 通道响应，返回 ticket 与**全部**候选节点。
   ///
@@ -222,7 +223,7 @@ abstract final class Qq8File {
   ///          5: [{1,2: ipv6(16B),3: port,4,5}], 4,5,6:...,7:...,8:...,9:...}}`
   /// 旧的 `{3: [{2: [{2: ip, 3: port}]}]}` 形态也保留兼容（参考实现推的）。
   static ({Uint8List ticket, List<({String host, int port})> candidates})?
-      parseBigdataChannelFull(Uint8List payload) {
+  parseBigdataChannelFull(Uint8List payload) {
     final Map<int, List<Object>> root;
     try {
       root = Qq8Pb.decode(payload);
@@ -286,19 +287,20 @@ abstract final class Qq8File {
         // 忽略
       }
     }
-    if (out.isEmpty) return (ticket: ticket, candidates: const <({String host, int port})>[]);
+    if (out.isEmpty)
+      return (ticket: ticket, candidates: const <({String host, int port})>[]);
     return (ticket: ticket, candidates: out);
   }
 
   /// 取第一个可用节点（老接口，保持兼容）。
   static ({Uint8List ticket, String host, int port})? parseBigdataChannel(
-      Uint8List payload) {
+    Uint8List payload,
+  ) {
     final full = parseBigdataChannelFull(payload);
     if (full == null || full.candidates.isEmpty) return null;
     final first = full.candidates.first;
     return (ticket: full.ticket, host: first.host, port: first.port);
   }
-
 
   /// protobuf fixed32 里的 IPv4 → 点分文本。
   ///
@@ -309,6 +311,7 @@ abstract final class Qq8File {
     final u = v & 0xFFFFFFFF;
     return '${u & 0xFF}.${(u >> 8) & 0xFF}.${(u >> 16) & 0xFF}.${(u >> 24) & 0xFF}';
   }
+
   /// 16 字节 IPv6 → 标准写法（小写、按 4 位一组、压缩最长零段）。
   static String _ipv6Of(Uint8List b) {
     final groups = <String>[];
@@ -358,27 +361,26 @@ abstract final class Qq8File {
     required int peerUin,
     required Qq8FileInfo file,
     String storageDir = defaultStorageDir,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 1700,
-        2: 6,
-        19: <int, Object?>{
-          10: uin,
-          20: peerUin,
-          30: file.size,
-          40: file.name,
-          50: file.md5,
-          60: file.sha1,
-          70: '$storageDir${file.name}',
-          80: 0,
-          90: 0,
-          100: 0,
-          110: file.md5,
-        },
-        101: 3,
-        102: 104,
-        200: 1,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 1700,
+    2: 6,
+    19: <int, Object?>{
+      10: uin,
+      20: peerUin,
+      30: file.size,
+      40: file.name,
+      50: file.md5,
+      60: file.sha1,
+      70: '$storageDir${file.name}',
+      80: 0,
+      90: 0,
+      100: 0,
+      110: file.md5,
+    },
+    101: 3,
+    102: 104,
+    200: 1,
+  });
 
   /// 解析 1700 回执：`{19: {10: 结果码, 20: 文案, 90: fid, 110: 已存在, 220: ticket}}`。
   static Qq8FileUploadTicket parseApplyUpload(Uint8List payload) {
@@ -416,39 +418,36 @@ abstract final class Qq8File {
     required String fid,
     required Uint8List ticket,
     required int subid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 100,
-        2: 2,
-        100: <int, Object?>{
-          100: <int, Object?>{
-            1: 3,
-            100: uin,
-            200: peerUin,
-            400: 0,
-            700: applyUploadResponse,
-          },
-          200: <int, Object?>{
-            100: file.size,
-            200: file.md5,
-            300: file.sha1,
-            400: file.md5,
-            600: fid,
-            700: ticket,
-          },
-          300: <int, Object?>{
-            100: 2,
-            200: '$subid',
-            300: 2,
-            400: 'd92615c5',
-            600: 4,
-          },
-          400: <int, Object?>{
-            100: file.name,
-          },
-        },
-        200: 1,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 100,
+    2: 2,
+    100: <int, Object?>{
+      100: <int, Object?>{
+        1: 3,
+        100: uin,
+        200: peerUin,
+        400: 0,
+        700: applyUploadResponse,
+      },
+      200: <int, Object?>{
+        100: file.size,
+        200: file.md5,
+        300: file.sha1,
+        400: file.md5,
+        600: fid,
+        700: ticket,
+      },
+      300: <int, Object?>{
+        100: 2,
+        200: '$subid',
+        300: 2,
+        400: 'd92615c5',
+        600: 4,
+      },
+      400: <int, Object?>{100: file.name},
+    },
+    200: 1,
+  });
 
   /// HTTP 分片上限（参考实现 `highwayHttpUpload` 的 `limit = 524288`）。
   static const int httpChunkLimit = 524288;
@@ -522,16 +521,21 @@ abstract final class Qq8File {
     void Function(double progress)? onProgress,
   }) async {
     if (data.isEmpty) throw Qq8FileException('要上传的文件是空的');
-    final uri = Uri.parse('http://$host:$port/cgi-bin/httpconn'
-        '?htcmd=0x6FF0087&uin=$uin');
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 10);
+    final uri = Uri.parse(
+      'http://$host:$port/cgi-bin/httpconn'
+      '?htcmd=0x6FF0087&uin=$uin',
+    );
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 10);
     final total = data.length;
     var offset = 0;
     var seq = 1;
     Uint8List lastExt = Uint8List(0);
     try {
       while (offset < total) {
-        final end = (offset + httpChunkLimit < total) ? offset + httpChunkLimit : total;
+        final end = (offset + httpChunkLimit < total)
+            ? offset + httpChunkLimit
+            : total;
         final chunk = Uint8List.sublistView(data, offset, end);
         final frame = buildHttpFrame(
           seq: seq++,
@@ -553,8 +557,10 @@ abstract final class Qq8File {
         final body = await _collect(resp).timeout(timeout);
         final ack = Qq8File._parseHttpAck(body);
         if (ack.code != 0) {
-          throw Qq8FileException('highway 拒绝（code=${ack.code}，'
-              'offset=$offset，${body.length} 字节回包）');
+          throw Qq8FileException(
+            'highway 拒绝（code=${ack.code}，'
+            'offset=$offset，${body.length} 字节回包）',
+          );
         }
         lastExt = ack.extendInfo ?? Uint8List(0);
         offset = end;
@@ -613,8 +619,8 @@ abstract final class Qq8File {
   }
 
   /// 解析 HTTP 回包：开头 STX、尾巴 ETX，中间 `[头长u32][块长u32][头pb][数据]`。
-  static ({int code, int offset, int length, Uint8List? extendInfo}) _parseHttpAck(
-      Uint8List body) {
+  static ({int code, int offset, int length, Uint8List? extendInfo})
+  _parseHttpAck(Uint8List body) {
     if (body.length < 10 || body[0] != 40) {
       throw Qq8FileException('highway 回包不是 STX 帧（${body.length} 字节）');
     }
@@ -641,14 +647,13 @@ abstract final class Qq8File {
     required int uin,
     required int peerUin,
     required String fid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 800,
-        2: 7,
-        10: <int, Object?>{10: uin, 20: peerUin, 30: fid},
-        101: 3,
-        102: 104,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 800,
+    2: 7,
+    10: <int, Object?>{10: uin, 20: peerUin, 30: fid},
+    101: 3,
+    102: 104,
+  });
 
   /// `{10: {1: 结果码}}`，0 = 成功。
   static bool parseUploadSucc(Uint8List payload) {
@@ -680,19 +685,18 @@ abstract final class Qq8File {
     required int uin,
     required int peerUin,
     required String fid,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 700,
-        2: 0,
-        9: <int, Object?>{10: uin, 20: peerUin, 30: fid},
-        101: 3,
-        102: 104,
-        200: 1,
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 700,
+    2: 0,
+    9: <int, Object?>{10: uin, 20: peerUin, 30: fid},
+    101: 3,
+    102: 104,
+    200: 1,
+  });
 
   /// 解析转发回执：`{9: {10: 结果码, 20: 文案, 50: 新 fid, 60: ticket}}`。
-  static ({bool ok, String newFid, Uint8List ticket, String message}) parseForward(
-      Uint8List payload) {
+  static ({bool ok, String newFid, Uint8List ticket, String message})
+  parseForward(Uint8List payload) {
     final root = Qq8Pb.decode(payload);
     final m = Qq8Pb.bytesAt(root, 9);
     if (m == null) {
@@ -711,14 +715,16 @@ abstract final class Qq8File {
   // ④ 取下载链接
   // ---------------------------------------------------------------------
 
-  static Uint8List buildApplyDownloadBody({required int uin, required String fid}) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 1200,
-        14: <int, Object?>{10: uin, 20: fid, 30: 2},
-        101: 3,
-        102: 104,
-        99999: <int, Object?>{1: 90200},
-      });
+  static Uint8List buildApplyDownloadBody({
+    required int uin,
+    required String fid,
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 1200,
+    14: <int, Object?>{10: uin, 20: fid, 30: 2},
+    101: 3,
+    102: 104,
+    99999: <int, Object?>{1: 90200},
+  });
 
   /// 解析 1200 回执：`{14: {10: 结果码, 20: 文案, 30: {30: host, 40: port,
   /// 50: url}, 40: {3: size, 6: fid, 7: name, 100: md5}}}`。
@@ -733,8 +739,10 @@ abstract final class Qq8File {
     final m = Qq8Pb.decode(rsp);
     final code = Qq8Pb.intAt(m, 10) ?? -1;
     if (code != 0) {
-      throw Qq8FileException('取文件链接被拒：code=$code '
-          '${_utf8Of(Qq8Pb.bytesAt(m, 20))}');
+      throw Qq8FileException(
+        '取文件链接被拒：code=$code '
+        '${_utf8Of(Qq8Pb.bytesAt(m, 20))}',
+      );
     }
     final urlObj = Qq8Pb.bytesAt(m, 30);
     final info = Qq8Pb.bytesAt(m, 40);
@@ -770,16 +778,15 @@ abstract final class Qq8FileMsg {
     required String name,
     required int size,
     Uint8List? ticket,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: 0, // file_type
-        3: fid, // file_uuid
-        4: md5, // file_md5
-        5: name,
-        6: size,
-        9: 1, // subcmd
-        57: ?ticket, // 只有转发时带（参考实现）
-      });
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: 0, // file_type
+    3: fid, // file_uuid
+    4: md5, // file_md5
+    5: name,
+    6: size,
+    9: 1, // subcmd
+    57: ?ticket, // 只有转发时带（参考实现）
+  });
 
   /// 私聊文件消息体（`MessageSvc.PbSendMsg`）。
   ///
@@ -800,27 +807,32 @@ abstract final class Qq8FileMsg {
     required int syncR5,
     required int syncR9,
     required int syncR11,
-  }) =>
-      Qq8Pb.encode(<int, Object?>{
-        1: <int, Object?>{
-          15: <int, Object?>{1: uid, 2: 4},
-        },
-        2: Qq8Msg.pbContent,
-        3: <int, Object?>{
-          2: <int, Object?>{
-            1: notOnlineFile(fid: fid, md5: md5, name: name, size: size, ticket: ticket),
-          },
-        },
-        4: seq,
-        5: rand,
-        6: Qq8Msg.buildSyncCookie(
-          seed: syncCookieSeed,
-          nowSeconds: nowSeconds,
-          r5: syncR5,
-          r9: syncR9,
-          r11: syncR11,
+  }) => Qq8Pb.encode(<int, Object?>{
+    1: <int, Object?>{
+      15: <int, Object?>{1: uid, 2: 4},
+    },
+    2: Qq8Msg.pbContent,
+    3: <int, Object?>{
+      2: <int, Object?>{
+        1: notOnlineFile(
+          fid: fid,
+          md5: md5,
+          name: name,
+          size: size,
+          ticket: ticket,
         ),
-      });
+      },
+    },
+    4: seq,
+    5: rand,
+    6: Qq8Msg.buildSyncCookie(
+      seed: syncCookieSeed,
+      nowSeconds: nowSeconds,
+      r5: syncR5,
+      r9: syncR9,
+      r11: syncR11,
+    ),
+  });
 }
 
 int _readU32be(Uint8List b, int o) =>

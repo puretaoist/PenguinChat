@@ -77,8 +77,11 @@ void main() {
       for (final len in [1, 5, 16, 40, 100]) {
         final plain = List<int>.filled(len, 0x41);
         final pad = qqTeaPadLength(len);
-        final enc = qqTeaEncrypt(plain, key,
-            paddingBytes: List.filled(pad + 3, 0));
+        final enc = qqTeaEncrypt(
+          plain,
+          key,
+          paddingBytes: List.filled(pad + 3, 0),
+        );
         expect(enc.length, pad + len + 10);
         expect(enc.length % 8, 0);
       }
@@ -88,26 +91,37 @@ void main() {
       const text = 'hello qq protocol';
       final plain = text.codeUnits;
       final pad = qqTeaPadLength(plain.length);
-      final enc = qqTeaEncrypt(plain, key,
-          paddingBytes: List.filled(pad + 3, 0x11));
+      final enc = qqTeaEncrypt(
+        plain,
+        key,
+        paddingBytes: List.filled(pad + 3, 0x11),
+      );
       expect(String.fromCharCodes(qqTeaDecrypt(enc, key)), text);
     });
 
     test('CBC 链式：相邻同内容块密文不同（排除 ECB）', () {
       final plain = List<int>.filled(40, 0x41);
       final pad = qqTeaPadLength(40);
-      final enc = qqTeaEncrypt(plain, key,
-          paddingBytes: List.filled(pad + 3, 0));
+      final enc = qqTeaEncrypt(
+        plain,
+        key,
+        paddingBytes: List.filled(pad + 3, 0),
+      );
       expect(enc.sublist(8, 16), isNot(equals(enc.sublist(16, 24))));
     });
 
     test('错误密钥解密失败', () {
       final plain = 'hello qq protocol'.codeUnits;
       final pad = qqTeaPadLength(plain.length);
-      final enc = qqTeaEncrypt(plain, key,
-          paddingBytes: List.filled(pad + 3, 0));
-      expect(() => qqTeaDecrypt(enc, 'fedcba9876543210'.codeUnits),
-          throwsFormatException);
+      final enc = qqTeaEncrypt(
+        plain,
+        key,
+        paddingBytes: List.filled(pad + 3, 0),
+      );
+      expect(
+        () => qqTeaDecrypt(enc, 'fedcba9876543210'.codeUnits),
+        throwsFormatException,
+      );
     });
 
     test('长度非法时报错', () {
@@ -117,8 +131,11 @@ void main() {
     test('尾部篡改被校验发现', () {
       final plain = 'hello qq protocol'.codeUnits;
       final pad = qqTeaPadLength(plain.length);
-      final enc = qqTeaEncrypt(plain, key,
-          paddingBytes: List.filled(pad + 3, 0));
+      final enc = qqTeaEncrypt(
+        plain,
+        key,
+        paddingBytes: List.filled(pad + 3, 0),
+      );
       final tampered = List<int>.from(enc);
       tampered[tampered.length - 1] ^= 0xFF;
       expect(() => qqTeaDecrypt(tampered, key), throwsFormatException);

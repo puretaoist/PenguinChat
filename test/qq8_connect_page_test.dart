@@ -28,13 +28,13 @@ Widget _wrapView(Qq8ConnectView view) =>
 
 /// 与 `main.dart` 同款的三处 override（见 `test/ui_test.dart` 的写法）。
 List<Override> _overrides() => <Override>[
-      dataDirProvider.overrideWithValue(Directory.systemTemp),
-      backendRegistryProvider.overrideWithValue(
-        BackendProfileRegistry.fromJsonStrings(const <String>[]),
-      ),
-      safetyGateProvider.overrideWithValue(SafetyGate()),
-      qq8TokenStoreProvider.overrideWithValue(_NullStore()),
-    ];
+  dataDirProvider.overrideWithValue(Directory.systemTemp),
+  backendRegistryProvider.overrideWithValue(
+    BackendProfileRegistry.fromJsonStrings(const <String>[]),
+  ),
+  safetyGateProvider.overrideWithValue(SafetyGate()),
+  qq8TokenStoreProvider.overrideWithValue(_NullStore()),
+];
 
 class _NullStore implements Qq8TokenStore {
   @override
@@ -60,9 +60,9 @@ Future<void> _switchMode(WidgetTester tester, String label) async {
 void main() {
   group('Qq8ConnectView：登录方式切换', () {
     testWidgets('默认口令表单：有 QQ 号/密码/登录主按钮，无其他方式表单', (tester) async {
-      await tester.pumpWidget(_wrapView(
-        const Qq8ConnectView(status: Qq8ConnectStatus.idle),
-      ));
+      await tester.pumpWidget(
+        _wrapView(const Qq8ConnectView(status: Qq8ConnectStatus.idle)),
+      );
       expect(find.byKey(const ValueKey('qq8-uin')), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-password')), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-login-password')), findsOneWidget);
@@ -77,18 +77,18 @@ void main() {
     });
 
     testWidgets('切换到二维码：出现获取二维码按钮，口令表单消失', (tester) async {
-      await tester.pumpWidget(_wrapView(
-        const Qq8ConnectView(status: Qq8ConnectStatus.idle),
-      ));
+      await tester.pumpWidget(
+        _wrapView(const Qq8ConnectView(status: Qq8ConnectStatus.idle)),
+      );
       await _switchMode(tester, '二维码');
       expect(find.byKey(const ValueKey('qq8-fetch-qrcode')), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-password')), findsNothing);
     });
 
     testWidgets('切换到短信：出现手机号与发送验证码按钮', (tester) async {
-      await tester.pumpWidget(_wrapView(
-        const Qq8ConnectView(status: Qq8ConnectStatus.idle),
-      ));
+      await tester.pumpWidget(
+        _wrapView(const Qq8ConnectView(status: Qq8ConnectStatus.idle)),
+      );
       await _switchMode(tester, '短信');
       expect(find.byKey(const ValueKey('qq8-phone')), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-login-phone')), findsOneWidget);
@@ -96,9 +96,9 @@ void main() {
     });
 
     testWidgets('切到免密：出现免密登录按钮', (tester) async {
-      await tester.pumpWidget(_wrapView(
-        const Qq8ConnectView(status: Qq8ConnectStatus.idle),
-      ));
+      await tester.pumpWidget(
+        _wrapView(const Qq8ConnectView(status: Qq8ConnectStatus.idle)),
+      );
       await _switchMode(tester, '免密');
       expect(find.byKey(const ValueKey('qq8-login-token')), findsOneWidget);
       expect(find.text('免密登录'), findsOneWidget);
@@ -108,12 +108,16 @@ void main() {
   group('Qq8ConnectView：客户端档案切换', () {
     testWidgets('显示当前档案；选另一个会回调（研究线按档对照用）', (tester) async {
       String? picked;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-        profileKey: '8.2.11',
-        profileKeys: const <String>['8.2.11', '8.9.50', '9.3.60'],
-        onProfileChanged: (k) => picked = k,
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+            profileKey: '8.2.11',
+            profileKeys: const <String>['8.2.11', '8.9.50', '9.3.60'],
+            onProfileChanged: (k) => picked = k,
+          ),
+        ),
+      );
       expect(find.byKey(const ValueKey('qq8-profile')), findsOneWidget);
       expect(find.text('8.2.11'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('qq8-profile')));
@@ -124,9 +128,13 @@ void main() {
     });
 
     testWidgets('没给档案列表时整行不出现（哑视图保持可选）', (tester) async {
-      await tester.pumpWidget(_wrapView(const Qq8ConnectView(
-        status: Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          const Qq8ConnectView(
+            status: Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+          ),
+        ),
+      );
       expect(find.byKey(const ValueKey('qq8-profile')), findsNothing);
     });
   });
@@ -135,15 +143,22 @@ void main() {
     testWidgets('口令登录：把 uin 与口令原文交给回调', (tester) async {
       int? gotUin;
       String? gotPassword;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-        onPasswordLogin: (uin, password) {
-          gotUin = uin;
-          gotPassword = password;
-        },
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+            onPasswordLogin: (uin, password) {
+              gotUin = uin;
+              gotPassword = password;
+            },
+          ),
+        ),
+      );
       await tester.enterText(find.byKey(const ValueKey('qq8-uin')), '10001');
-      await tester.enterText(find.byKey(const ValueKey('qq8-password')), 'hunter2');
+      await tester.enterText(
+        find.byKey(const ValueKey('qq8-password')),
+        'hunter2',
+      );
       await tester.tap(find.byKey(const ValueKey('qq8-login-password')));
       await tester.pump();
       expect(gotUin, 10001);
@@ -152,10 +167,14 @@ void main() {
 
     testWidgets('账号为空时点口令登录不触发（uin 解析失败）', (tester) async {
       var called = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-        onPasswordLogin: (uin, password) => called++,
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+            onPasswordLogin: (uin, password) => called++,
+          ),
+        ),
+      );
       await tester.tap(find.byKey(const ValueKey('qq8-login-password')));
       await tester.pump();
       expect(called, 0);
@@ -165,10 +184,14 @@ void main() {
   group('Qq8ConnectView：二维码', () {
     testWidgets('点击获取二维码触发回调；无二维码时不显示刷新状态按钮', (tester) async {
       var fetched = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-        onFetchQrcode: () => fetched++,
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+            onFetchQrcode: () => fetched++,
+          ),
+        ),
+      );
       await _switchMode(tester, '二维码');
       expect(find.byKey(const ValueKey('qq8-poll-qrcode')), findsNothing);
       await tester.tap(find.byKey(const ValueKey('qq8-fetch-qrcode')));
@@ -178,14 +201,18 @@ void main() {
 
     testWidgets('等待扫码：有二维码时显示图片与刷新状态；PNG 坏时降级文字', (tester) async {
       var polled = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: Qq8ConnectStatus(
-          stage: Qq8LoginStage.waitingQrScan,
-          qrMessage: '二维码尚未扫描',
-          qrToken: Uint8List.fromList(<int>[1, 2, 3, 4]), // 故意不是 PNG
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: Qq8ConnectStatus(
+              stage: Qq8LoginStage.waitingQrScan,
+              qrMessage: '二维码尚未扫描',
+              qrToken: Uint8List.fromList(<int>[1, 2, 3, 4]), // 故意不是 PNG
+            ),
+            onPollQrcode: () => polled++,
+          ),
         ),
-        onPollQrcode: () => polled++,
-      )));
+      );
       await tester.pump(); // Image.memory 的 errorBuilder 在下一帧生效
       expect(find.textContaining('二维码图片解析失败'), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-poll-qrcode')), findsOneWidget);
@@ -201,16 +228,22 @@ void main() {
   group('Qq8ConnectView：手机号短信', () {
     testWidgets('发送验证码：手机号原文交给回调；空号不触发', (tester) async {
       String? gotPhone;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-        onPhoneLogin: (p) => gotPhone = p,
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+            onPhoneLogin: (p) => gotPhone = p,
+          ),
+        ),
+      );
       await _switchMode(tester, '短信');
       await tester.tap(find.byKey(const ValueKey('qq8-login-phone')));
       await tester.pump();
       expect(gotPhone, isNull, reason: '手机号为空时不该发起');
       await tester.enterText(
-          find.byKey(const ValueKey('qq8-phone')), ' 13800138000 ');
+        find.byKey(const ValueKey('qq8-phone')),
+        ' 13800138000 ',
+      );
       await tester.tap(find.byKey(const ValueKey('qq8-login-phone')));
       await tester.pump();
       expect(gotPhone, '13800138000', reason: '要去掉两头的空白');
@@ -221,21 +254,32 @@ void main() {
     testWidgets('滑块阶段：显示地址 + 浏览器按钮 + ticket 提交', (tester) async {
       String? gotTicket;
       String? openedUrl;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(
-          stage: Qq8LoginStage.needsSlider,
-          sliderUrl: 'https://ti.qq.com/safe/tools/captcha/sms-verify-login?uin=0',
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(
+              stage: Qq8LoginStage.needsSlider,
+              sliderUrl:
+                  'https://ti.qq.com/safe/tools/captcha/sms-verify-login?uin=0',
+            ),
+            onSubmitTicket: (t) => gotTicket = t,
+            onOpenBrowser: (u) => openedUrl = u,
+          ),
         ),
-        onSubmitTicket: (t) => gotTicket = t,
-        onOpenBrowser: (u) => openedUrl = u,
-      )));
+      );
       expect(find.text('需要完成滑动验证'), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-slider-url')), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-open-browser')), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('qq8-open-browser')));
       await tester.pump();
-      expect(openedUrl, 'https://ti.qq.com/safe/tools/captcha/sms-verify-login?uin=0');
-      await tester.enterText(find.byKey(const ValueKey('qq8-ticket')), 't03ABC');
+      expect(
+        openedUrl,
+        'https://ti.qq.com/safe/tools/captcha/sms-verify-login?uin=0',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('qq8-ticket')),
+        't03ABC',
+      );
       await tester.tap(find.byKey(const ValueKey('qq8-submit-ticket')));
       await tester.pump();
       expect(gotTicket, 't03ABC');
@@ -245,21 +289,28 @@ void main() {
       var refreshes = 0;
       var legacyResends = 0;
       String? code;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(
-          stage: Qq8LoginStage.needsSmsCode,
-          phone: '138****0000',
-          smsAutoSent: true,
-          smsFlow: true,
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(
+              stage: Qq8LoginStage.needsSmsCode,
+              phone: '138****0000',
+              smsAutoSent: true,
+              smsFlow: true,
+            ),
+            onSubmitSmsLoginCode: (c) => code = c,
+            onRefreshSmsLoginCode: () => refreshes++,
+            onSubmitSms: (c) => code = 'WRONG:$c',
+            onRequestSms: () => legacyResends++,
+          ),
         ),
-        onSubmitSmsLoginCode: (c) => code = c,
-        onRefreshSmsLoginCode: () => refreshes++,
-        onSubmitSms: (c) => code = 'WRONG:$c',
-        onRequestSms: () => legacyResends++,
-      )));
+      );
       expect(find.textContaining('已向 138****0000 下发验证码'), findsOneWidget);
       expect(find.text('重发验证码'), findsOneWidget);
-      await tester.enterText(find.byKey(const ValueKey('qq8-sms-code')), '654321');
+      await tester.enterText(
+        find.byKey(const ValueKey('qq8-sms-code')),
+        '654321',
+      );
       await tester.tap(find.byKey(const ValueKey('qq8-submit-sms')));
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('qq8-request-sms')));
@@ -271,13 +322,17 @@ void main() {
 
     testWidgets('设备锁：显示提示语并解锁', (tester) async {
       var unlocked = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(
-          stage: Qq8LoginStage.needsDeviceLock,
-          deviceLockHint: '请验证密保手机',
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(
+              stage: Qq8LoginStage.needsDeviceLock,
+              deviceLockHint: '请验证密保手机',
+            ),
+            onUnlock: () => unlocked++,
+          ),
         ),
-        onUnlock: () => unlocked++,
-      )));
+      );
       expect(find.text('请验证密保手机'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('qq8-unlock')));
       await tester.pump();
@@ -286,34 +341,49 @@ void main() {
 
     testWidgets('已上线：出现"进入聊天"；失败：显示错误原文', (tester) async {
       var entered = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.online, uin: 10001),
-        onEnterApp: () => entered++,
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(
+              stage: Qq8LoginStage.online,
+              uin: 10001,
+            ),
+            onEnterApp: () => entered++,
+          ),
+        ),
+      );
       expect(find.text('已上线'), findsOneWidget);
       expect(find.text('账号=10001'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('qq8-enter')));
       await tester.pump();
       expect(entered, 1);
 
-      await tester.pumpWidget(_wrapView(const Qq8ConnectView(
-        status: Qq8ConnectStatus(
-          stage: Qq8LoginStage.failed,
-          error: '登录失败：口令或账号不正确',
+      await tester.pumpWidget(
+        _wrapView(
+          const Qq8ConnectView(
+            status: Qq8ConnectStatus(
+              stage: Qq8LoginStage.failed,
+              error: '登录失败：口令或账号不正确',
+            ),
+          ),
         ),
-      )));
+      );
       expect(find.text('登录失败'), findsOneWidget);
       expect(find.text('登录失败：口令或账号不正确'), findsOneWidget);
     });
 
     testWidgets('准入拒绝：文案要说清「重试没用」并给替代路径', (tester) async {
-      await tester.pumpWidget(_wrapView(const Qq8ConnectView(
-        status: Qq8ConnectStatus(
-          stage: Qq8LoginStage.rejected,
-          resultType: 45,
-          error: '登录失败：你当前使用的QQ版本过低，请更新到最新版本',
+      await tester.pumpWidget(
+        _wrapView(
+          const Qq8ConnectView(
+            status: Qq8ConnectStatus(
+              stage: Qq8LoginStage.rejected,
+              resultType: 45,
+              error: '登录失败：你当前使用的QQ版本过低，请更新到最新版本',
+            ),
+          ),
         ),
-      )));
+      );
       // 状态标签本身就要和 failed 分开，否则用户以为再点一次就好。
       expect(find.text('服务端拒绝登录'), findsOneWidget);
       expect(find.text('登录失败'), findsNothing);
@@ -328,14 +398,18 @@ void main() {
 
     testWidgets('凭证失效：说「登录已过期」并给「重新登录」，不得提风控/换号', (tester) async {
       var relogin = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(
-          stage: Qq8LoginStage.sessionExpired,
-          resultType: 16,
-          error: '登录凭证已失效，请重新登录',
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(
+              stage: Qq8LoginStage.sessionExpired,
+              resultType: 16,
+              error: '登录凭证已失效，请重新登录',
+            ),
+            onRelogin: () => relogin++,
+          ),
         ),
-        onRelogin: () => relogin++,
-      )));
+      );
       // 状态标签必须和 rejected 分开：这是票过期，不是账号被风控。
       expect(find.text('登录已过期'), findsOneWidget);
       expect(find.text('服务端拒绝登录'), findsNothing);
@@ -354,27 +428,36 @@ void main() {
     });
 
     testWidgets('busy 时按钮禁用并显示进度条', (tester) async {
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(
-          stage: Qq8LoginStage.connecting,
-          busy: true,
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(
+              stage: Qq8LoginStage.connecting,
+              busy: true,
+            ),
+            onPasswordLogin: (uin, password) {},
+            onFetchQrcode: () {},
+          ),
         ),
-        onPasswordLogin: (uin, password) {},
-        onFetchQrcode: () {},
-      )));
+      );
       expect(find.text('连接中…'), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       final btn = tester.widget<FilledButton>(
-          find.byKey(const ValueKey('qq8-login-password')));
+        find.byKey(const ValueKey('qq8-login-password')),
+      );
       expect(btn.onPressed, isNull);
     });
 
     testWidgets('导出日志按钮存在且触发回调', (tester) async {
       var exported = 0;
-      await tester.pumpWidget(_wrapView(Qq8ConnectView(
-        status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
-        onExportLog: () => exported++,
-      )));
+      await tester.pumpWidget(
+        _wrapView(
+          Qq8ConnectView(
+            status: const Qq8ConnectStatus(stage: Qq8LoginStage.idle),
+            onExportLog: () => exported++,
+          ),
+        ),
+      );
       await tester.tap(find.byKey(const ValueKey('qq8-export-log')));
       await tester.pump();
       expect(exported, 1);
@@ -383,10 +466,12 @@ void main() {
 
   group('Qq8ConnectPage：provider 接线', () {
     testWidgets('在 ProviderScope 下能起来（不抛异常）', (tester) async {
-      await tester.pumpWidget(ProviderScope(
-        overrides: _overrides(),
-        child: const MaterialApp(home: Qq8ConnectPage()),
-      ));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: _overrides(),
+          child: const MaterialApp(home: Qq8ConnectPage()),
+        ),
+      );
       await tester.pump();
       expect(find.text('QQ 账号登录'), findsOneWidget);
       expect(find.byKey(const ValueKey('qq8-uin')), findsOneWidget);
@@ -398,27 +483,32 @@ void main() {
 
   group('RealServerPanel：风险确认入口', () {
     Widget wrapPanel(Widget panel) => MaterialApp(
-          home: Scaffold(
-            body: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: panel,
-            ),
-          ),
-        );
+      home: Scaffold(
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: panel,
+        ),
+      ),
+    );
 
     Future<void> pumpPanel(WidgetTester tester) async {
-      await tester.pumpWidget(ProviderScope(
-        overrides: _overrides(),
-        child: wrapPanel(const RealServerPanel()),
-      ));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: _overrides(),
+          child: wrapPanel(const RealServerPanel()),
+        ),
+      );
       await tester.pump();
     }
 
     testWidgets('未开启：单行横幅；点击展开出现检测 / 逐条确认 / 开启', (tester) async {
       await pumpPanel(tester);
       expect(find.byKey(const ValueKey('real-server-banner')), findsOneWidget);
-      expect(find.byKey(const ValueKey('real-server-probe')), findsNothing,
-          reason: '折叠态不该显示完整流程');
+      expect(
+        find.byKey(const ValueKey('real-server-probe')),
+        findsNothing,
+        reason: '折叠态不该显示完整流程',
+      );
 
       await tester.tap(find.byKey(const ValueKey('real-server-banner')));
       await tester.pumpAndSettle();
@@ -426,7 +516,8 @@ void main() {
       expect(find.text('开启真实服务器模式'), findsOneWidget);
       // 未勾选任何项 → 开启按钮必须是禁用的
       final btn = tester.widget<FilledButton>(
-          find.byKey(const ValueKey('real-server-enable')));
+        find.byKey(const ValueKey('real-server-enable')),
+      );
       expect(btn.onPressed, isNull);
     });
 

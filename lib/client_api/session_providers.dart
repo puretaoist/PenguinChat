@@ -63,7 +63,8 @@ bool isLoopbackAddress(String address) {
 /// 应用私有数据目录。**必须**由 `main.dart` override。
 final dataDirProvider = Provider<Directory>(
   (ref) => throw UnimplementedError(
-      'dataDirProvider 未注入：请在 ProviderScope.overrides 里提供应用私有目录'),
+    'dataDirProvider 未注入：请在 ProviderScope.overrides 里提供应用私有目录',
+  ),
 );
 
 /// 媒体下载器（图片/语音/视频/文件落盘用）。
@@ -95,12 +96,15 @@ final keepAliveProvider = Provider<KeepAlive>((ref) => const NoopKeepAlive());
 /// 两个理由说明为什么它必须是一个可注入的 provider：①测试要能 override 成
 /// 固定快照，否则自测会依赖真机；②这条能力只在 Android 有意义，注入点
 /// 集中在一处比散落各处好审。
-final deviceInfoProvider = Provider<DeviceInfo>((ref) => const NoopDeviceInfo());
+final deviceInfoProvider = Provider<DeviceInfo>(
+  (ref) => const NoopDeviceInfo(),
+);
 
 /// 后端适配表。**必须**由 `main.dart` override（L4 从 asset bundle 读 JSON）。
 final backendRegistryProvider = Provider<BackendProfileRegistry>(
   (ref) => throw UnimplementedError(
-      'backendRegistryProvider 未注入：请在 main.dart 里从 assets/backends/ 加载'),
+    'backendRegistryProvider 未注入：请在 main.dart 里从 assets/backends/ 加载',
+  ),
 );
 
 /// 安全闸门。默认无持久化；`main.dart` 应注入带 persistFile 且已 load 的实例。
@@ -132,31 +136,30 @@ class ConnectionConfig {
     String? address,
     String? accessToken,
     bool? tokenInHeader,
-  }) =>
-      ConnectionConfig(
-        address: address ?? this.address,
-        accessToken: accessToken ?? this.accessToken,
-        tokenInHeader: tokenInHeader ?? this.tokenInHeader,
-      );
+  }) => ConnectionConfig(
+    address: address ?? this.address,
+    accessToken: accessToken ?? this.accessToken,
+    tokenInHeader: tokenInHeader ?? this.tokenInHeader,
+  );
 
   /// 转成内核要的配置。超时与重连策略用内核默认值，UI 不暴露。
   OneBotConfig toOneBotConfig() => OneBotConfig(
-        address: address,
-        accessToken: hasToken ? accessToken : null,
-        tokenInHeader: tokenInHeader,
-      );
+    address: address,
+    accessToken: hasToken ? accessToken : null,
+    tokenInHeader: tokenInHeader,
+  );
 
   Map<String, dynamic> toJson() => {
-        'address': address,
-        if (hasToken) 'token': accessToken,
-        if (tokenInHeader) 'tokenInHeader': true,
-      };
+    'address': address,
+    if (hasToken) 'token': accessToken,
+    if (tokenInHeader) 'tokenInHeader': true,
+  };
 
   static ConnectionConfig fromJson(Map<String, dynamic> j) => ConnectionConfig(
-        address: (j['address'] as String?) ?? kDefaultOneBotAddress,
-        accessToken: (j['token'] as String?) ?? '',
-        tokenInHeader: j['tokenInHeader'] == true,
-      );
+    address: (j['address'] as String?) ?? kDefaultOneBotAddress,
+    accessToken: (j['token'] as String?) ?? '',
+    tokenInHeader: j['tokenInHeader'] == true,
+  );
 }
 
 /// 连接配置的读写。落盘选 `<dataDir>/connection.json` 而不是
@@ -202,13 +205,15 @@ class ConnectionConfigNotifier extends StateNotifier<ConnectionConfig> {
 
 final connectionConfigProvider =
     StateNotifierProvider<ConnectionConfigNotifier, ConnectionConfig>((ref) {
-  final notifier = ConnectionConfigNotifier(
-    File('${ref.watch(dataDirProvider).path}${Platform.pathSeparator}connection.json'),
-  );
-  // load() 内部已吞掉所有异常，这里不 await 不会产生未处理的异步错误
-  unawaited(notifier.load());
-  return notifier;
-});
+      final notifier = ConnectionConfigNotifier(
+        File(
+          '${ref.watch(dataDirProvider).path}${Platform.pathSeparator}connection.json',
+        ),
+      );
+      // load() 内部已吞掉所有异常，这里不 await 不会产生未处理的异步错误
+      unawaited(notifier.load());
+      return notifier;
+    });
 
 // ---------------------------------------------------------------------------
 // 连接状态
@@ -236,15 +241,16 @@ class ConnectionStatus {
   bool get isConnected => sessionState == SessionState.ready;
 
   String get stateLabel => switch (sessionState) {
-        SessionState.disconnected => '未连接',
-        SessionState.connecting => '连接中…',
-        SessionState.ready => '已连接',
-        SessionState.reconnecting => '重连中…',
-        SessionState.closed => '已关闭',
-      };
+    SessionState.disconnected => '未连接',
+    SessionState.connecting => '连接中…',
+    SessionState.ready => '已连接',
+    SessionState.reconnecting => '重连中…',
+    SessionState.closed => '已关闭',
+  };
 
   @override
-  String toString() => 'ConnectionStatus(${sessionState.name}'
+  String toString() =>
+      'ConnectionStatus(${sessionState.name}'
       '${address == null ? '' : ', $address'}${error == null ? '' : ', error=$error'})';
 }
 
@@ -301,17 +307,20 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
       final session = OneBotSession(
         client: OneBotClient(
           config: config.toOneBotConfig(),
-          onLog: (level, message, [detail]) =>
-              _log.i('[onebot/$level] $message${detail == null ? '' : ' · $detail'}'),
+          onLog: (level, message, [detail]) => _log.i(
+            '[onebot/$level] $message${detail == null ? '' : ' · $detail'}',
+          ),
         ),
         profiles: profiles,
-        onLog: (level, message, [detail]) =>
-            _log.i('[session/$level] $message${detail == null ? '' : ' · $detail'}'),
+        onLog: (level, message, [detail]) => _log.i(
+          '[session/$level] $message${detail == null ? '' : ' · $detail'}',
+        ),
       );
       _session = session;
       _sub = session.events.listen(
         _onEvent,
-        onError: (Object e, StackTrace s) => _log.e('会话事件流错误', error: e, stack: s),
+        onError: (Object e, StackTrace s) =>
+            _log.e('会话事件流错误', error: e, stack: s),
         cancelOnError: false,
       );
 
@@ -345,7 +354,10 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
   Future<void> disconnect() async {
     final address = state.address;
     await _teardown();
-    state = ConnectionStatus(sessionState: SessionState.closed, address: address);
+    state = ConnectionStatus(
+      sessionState: SessionState.closed,
+      address: address,
+    );
   }
 
   /// 供 provider 释放时调用：异步清理，且**绝不抛异常**
@@ -366,7 +378,9 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
   ///     且有当前版本的知情同意
   Future<String?> _passGate(String address) async {
     final uri = Uri.tryParse(address.trim());
-    if (uri == null || !uri.hasAuthority || (uri.scheme != 'ws' && uri.scheme != 'wss')) {
+    if (uri == null ||
+        !uri.hasAuthority ||
+        (uri.scheme != 'ws' && uri.scheme != 'wss')) {
       return '地址格式不对：需要 ws:// 或 wss:// 开头，例如 $kDefaultOneBotAddress';
     }
     if (isLoopbackAddress(address)) {
@@ -395,7 +409,9 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
         account: session.account,
         backendName: session.backendName,
         address: state.address,
-        error: event.reason == null ? null : '${event.state.name}: ${event.reason}',
+        error: event.reason == null
+            ? null
+            : '${event.state.name}: ${event.reason}',
       );
     } else if (event is SessionFailure) {
       state = ConnectionStatus(
@@ -416,7 +432,6 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
     final session = _session;
     _store = null;
     _session = null;
-    
 
     if (store != null) await store.dispose();
     if (session != null) {
@@ -432,17 +447,17 @@ class ConnectionController extends StateNotifier<ConnectionStatus> {
 
 final connectionControllerProvider =
     StateNotifierProvider<ConnectionController, ConnectionStatus>((ref) {
-  final controller = ConnectionController(
-    dataDir: ref.watch(dataDirProvider),
-    profiles: ref.watch(backendRegistryProvider),
-    gate: ref.watch(safetyGateProvider),
-    mediaFetcher: ref.read(mediaFetcherProvider),
-  );
-  // 热重载 / 退出时必须把 WS 连接与 ChatStore 一起收掉，否则连接会漏。
-  // StateNotifier.dispose 是同步的，所以异步清理挂在这里（内部不抛异常）。
-  ref.onDispose(controller.shutdown);
-  return controller;
-});
+      final controller = ConnectionController(
+        dataDir: ref.watch(dataDirProvider),
+        profiles: ref.watch(backendRegistryProvider),
+        gate: ref.watch(safetyGateProvider),
+        mediaFetcher: ref.read(mediaFetcherProvider),
+      );
+      // 热重载 / 退出时必须把 WS 连接与 ChatStore 一起收掉，否则连接会漏。
+      // StateNotifier.dispose 是同步的，所以异步清理挂在这里（内部不抛异常）。
+      ref.onDispose(controller.shutdown);
+      return controller;
+    });
 
 // ---------------------------------------------------------------------------
 // UI 消费的数据
@@ -505,20 +520,22 @@ final chatsProvider = StreamProvider<List<Chat>>((ref) async* {
 /// `autoDispose`：[ChatStore.changes] 是广播流，每个 family 实例都会挂一个
 /// 订阅。不 autoDispose 的话，用户这辈子点开过的每个会话都会永久留着一条
 /// 订阅（每次事件还要跑一遍 where/map）。离开页面就该还回去。
-final messagesProvider =
-    StreamProvider.autoDispose.family<List<ChatMessage>, String>((ref, chatId) async* {
-  final store = ref.watch(chatStoreProvider);
-  if (store == null) {
-    yield const <ChatMessage>[];
-    return;
-  }
-  yield store.messagesOf(chatId);
-  yield* store.changes
-      .where((c) =>
-          (c.kind == ChatStoreChangeKind.messages ||
-              // 媒体落盘是后台渐进发生的，落下后图片要从占位换成真图，
-              // 所以也要重发一次列表。消息对象本身没变，但 UI 需要重建。
-              c.kind == ChatStoreChangeKind.media) &&
-          (c.chatId == null || c.chatId == chatId))
-      .map((_) => store.messagesOf(chatId));
-});
+final messagesProvider = StreamProvider.autoDispose
+    .family<List<ChatMessage>, String>((ref, chatId) async* {
+      final store = ref.watch(chatStoreProvider);
+      if (store == null) {
+        yield const <ChatMessage>[];
+        return;
+      }
+      yield store.messagesOf(chatId);
+      yield* store.changes
+          .where(
+            (c) =>
+                (c.kind == ChatStoreChangeKind.messages ||
+                    // 媒体落盘是后台渐进发生的，落下后图片要从占位换成真图，
+                    // 所以也要重发一次列表。消息对象本身没变，但 UI 需要重建。
+                    c.kind == ChatStoreChangeKind.media) &&
+                (c.chatId == null || c.chatId == chatId),
+          )
+          .map((_) => store.messagesOf(chatId));
+    });

@@ -58,7 +58,8 @@ class MediaRef {
       _dedupe(<String>[if (url.isNotEmpty) url, ...altUrls]);
 
   @override
-  String toString() => 'MediaRef($category, $key -> $url'
+  String toString() =>
+      'MediaRef($category, $key -> $url'
       '${altUrls.isEmpty ? '' : ' +${altUrls.length}'})';
 }
 
@@ -74,10 +75,9 @@ List<String> _dedupe(List<String> xs) {
 
 /// 该段是否带媒体（需要落盘）。
 bool segmentHasMedia(Segment seg) => switch (seg) {
-      ImageSegment() || RecordSegment() || VideoSegment() || FileSegment() =>
-        true,
-      _ => false,
-    };
+  ImageSegment() || RecordSegment() || VideoSegment() || FileSegment() => true,
+  _ => false,
+};
 
 /// 从 [Segment] 推导缓存引用；推不出来（没有可用地址/键）返回 null。
 ///
@@ -97,8 +97,7 @@ MediaRef? mediaRefOf(Segment seg) {
       : (file.isNotEmpty && _looksLikePath(file) ? file : '');
 
   // 键：优先稳定标识（file），但它得像文件名；否则用地址。
-  final keyPart =
-      (file.isNotEmpty && !_looksLikePath(file)) ? file : address;
+  final keyPart = (file.isNotEmpty && !_looksLikePath(file)) ? file : address;
   if (keyPart.isEmpty) return null;
 
   return MediaRef(
@@ -133,30 +132,30 @@ String? _md5OfFile(String file) {
 }
 
 String? _kindOf(Segment seg) => switch (seg) {
-      ImageSegment() => 'img',
-      RecordSegment() => 'voice',
-      VideoSegment() => 'video',
-      FileSegment() => 'file',
-      _ => null,
-    };
+  ImageSegment() => 'img',
+  RecordSegment() => 'voice',
+  VideoSegment() => 'video',
+  FileSegment() => 'file',
+  _ => null,
+};
 
 /// 分类。与 `ChatStore.mediaCategories`（photos/videos/files/voices/other）
 /// 一一对应——那个列表是存储用量页的展示顺序，别在这里发明新名字。
 String _categoryOf(Segment seg) => switch (seg) {
-      ImageSegment() => 'photos',
-      VideoSegment() => 'videos',
-      RecordSegment() => 'voices',
-      FileSegment() => 'files',
-      _ => 'other',
-    };
+  ImageSegment() => 'photos',
+  VideoSegment() => 'videos',
+  RecordSegment() => 'voices',
+  FileSegment() => 'files',
+  _ => 'other',
+};
 
 String _fileOf(Segment seg) => switch (seg) {
-      ImageSegment(:final file) => file,
-      RecordSegment(:final file) => file,
-      VideoSegment(:final file) => file,
-      FileSegment(:final file) => file,
-      _ => '',
-    };
+  ImageSegment(:final file) => file,
+  RecordSegment(:final file) => file,
+  VideoSegment(:final file) => file,
+  FileSegment(:final file) => file,
+  _ => '',
+};
 
 String _urlOf(Segment seg) {
   String? raw;

@@ -58,11 +58,7 @@ class OneBotSession implements Session {
   SessionState _state = SessionState.disconnected;
   bool _disposed = false;
 
-  OneBotSession({
-    required this.client,
-    required this.profiles,
-    this.onLog,
-  });
+  OneBotSession({required this.client, required this.profiles, this.onLog});
 
   // -- Session 契约 ---------------------------------------------------------
 
@@ -104,7 +100,8 @@ class OneBotSession implements Session {
       //    必须经 spec.oneFrom() 归一化：NapCat 返回的是 `user_id`，
       //    逻辑字段名是 `uin`，直接用原始响应会取到空值。
       final loginSpec = _profile?.spec('login_info');
-      final login = loginSpec?.oneFrom(await _callSpec('login_info')) ??
+      final login =
+          loginSpec?.oneFrom(await _callSpec('login_info')) ??
           const <String, dynamic>{};
       _account = AccountInfo(
         uin: _str(login['uin']),
@@ -114,8 +111,10 @@ class OneBotSession implements Session {
         protocolVersion: version['protocol_version']?.toString(),
       );
 
-      _log('info',
-          '握手完成：账号=${_account!.uin} 后端=${appName ?? '未知'} 适配表=${_profile?.name}');
+      _log(
+        'info',
+        '握手完成：账号=${_account!.uin} 后端=${appName ?? '未知'} 适配表=${_profile?.name}',
+      );
       _setState(SessionState.ready, reason: 'backend=${_profile?.name}');
     } on Object catch (e, st) {
       _setState(SessionState.disconnected, reason: 'handshake-failed');
@@ -145,12 +144,14 @@ class OneBotSession implements Session {
         final f = friendSpec.itemFrom(item);
         final id = _int(f['user_id']);
         if (id == null) continue;
-        chats.add(Chat(
-          id: Chat.keyOf(ChatType.private, id),
-          title: _pickName(f['remark'], f['nickname'], id),
-          type: ChatType.private,
-          rawId: id,
-        ));
+        chats.add(
+          Chat(
+            id: Chat.keyOf(ChatType.private, id),
+            title: _pickName(f['remark'], f['nickname'], id),
+            type: ChatType.private,
+            rawId: id,
+          ),
+        );
       }
     }
 
@@ -162,13 +163,15 @@ class OneBotSession implements Session {
         final g = groupSpec.itemFrom(item);
         final id = _int(g['group_id']);
         if (id == null) continue;
-        chats.add(Chat(
-          id: Chat.keyOf(ChatType.group, id),
-          title: _pickName(null, g['group_name'], id),
-          type: ChatType.group,
-          rawId: id,
-          memberCount: _int(g['member_count']) ?? 0,
-        ));
+        chats.add(
+          Chat(
+            id: Chat.keyOf(ChatType.group, id),
+            title: _pickName(null, g['group_name'], id),
+            type: ChatType.group,
+            rawId: id,
+            memberCount: _int(g['member_count']) ?? 0,
+          ),
+        );
       }
     }
 
@@ -200,7 +203,11 @@ class OneBotSession implements Session {
       params['message_id'] = _int(mid) ?? mid;
     }
 
-    final data = await _callSpec('message_history', params: params, isPrivate: !isGroup);
+    final data = await _callSpec(
+      'message_history',
+      params: params,
+      isPrivate: !isGroup,
+    );
 
     final messages = <ChatMessage>[];
     // 游标要用的群序号来自适配表归一化后的记录，ChatMessage 不承载它，
@@ -352,13 +359,17 @@ class OneBotSession implements Session {
         _handleNotice(n);
 
       case OneBotRequestEvent r:
-        _emit(SessionRequest(
-          r.requestType,
-          r.flag,
-          (r.userId ?? '').toString(),
-          chatId: r.groupId == null ? null : Chat.keyOf(ChatType.group, r.groupId!),
-          comment: (r.raw['comment'] as String?),
-        ));
+        _emit(
+          SessionRequest(
+            r.requestType,
+            r.flag,
+            (r.userId ?? '').toString(),
+            chatId: r.groupId == null
+                ? null
+                : Chat.keyOf(ChatType.group, r.groupId!),
+            comment: (r.raw['comment'] as String?),
+          ),
+        );
 
       case OneBotStateChanged s:
         _setState(_mapState(s.state), reason: s.reason);
@@ -385,14 +396,16 @@ class OneBotSession implements Session {
     switch (n.noticeType) {
       case 'group_recall':
       case 'friend_recall':
-        _emit(SessionMessageRecalled(
-          chatId,
-          (n.messageId ?? '').toString(),
-          operatorId: n.operatorId?.toString(),
-          time: n.time == null
-              ? null
-              : DateTime.fromMillisecondsSinceEpoch(n.time! * 1000),
-        ));
+        _emit(
+          SessionMessageRecalled(
+            chatId,
+            (n.messageId ?? '').toString(),
+            operatorId: n.operatorId?.toString(),
+            time: n.time == null
+                ? null
+                : DateTime.fromMillisecondsSinceEpoch(n.time! * 1000),
+          ),
+        );
         return;
 
       case 'group_increase':
@@ -451,7 +464,10 @@ class OneBotSession implements Session {
     final peerId = isGroup ? e.groupId : e.userId;
     if (peerId == null) return null;
 
-    final chatId = Chat.keyOf(isGroup ? ChatType.group : ChatType.private, peerId);
+    final chatId = Chat.keyOf(
+      isGroup ? ChatType.group : ChatType.private,
+      peerId,
+    );
 
     // 段数组优先；为空时回落到 CQ 码字符串（老实现或 text 模式）
     final segments = e.segments.isNotEmpty
@@ -503,13 +519,14 @@ class OneBotSession implements Session {
   // -- 内部：状态 -----------------------------------------------------------
 
   SessionState _mapState(OneBotState s) => switch (s) {
-        OneBotState.disconnected => SessionState.disconnected,
-        OneBotState.connecting => SessionState.connecting,
-        // 传输层联通 ≠ 会话可用：还要等握手拿到账号信息
-        OneBotState.connected => _account == null ? SessionState.connecting : SessionState.ready,
-        OneBotState.reconnecting => SessionState.reconnecting,
-        OneBotState.closed => SessionState.closed,
-      };
+    OneBotState.disconnected => SessionState.disconnected,
+    OneBotState.connecting => SessionState.connecting,
+    // 传输层联通 ≠ 会话可用：还要等握手拿到账号信息
+    OneBotState.connected =>
+      _account == null ? SessionState.connecting : SessionState.ready,
+    OneBotState.reconnecting => SessionState.reconnecting,
+    OneBotState.closed => SessionState.closed,
+  };
 
   void _setState(SessionState s, {String? reason}) {
     if (_state == s && reason == null) return;

@@ -32,7 +32,7 @@ class ByteReader {
   int _pos = 0;
 
   ByteReader(List<int> data)
-      : _buf = data is Uint8List ? data : Uint8List.fromList(data);
+    : _buf = data is Uint8List ? data : Uint8List.fromList(data);
 
   int get pos => _pos;
   int get remaining => _buf.length - _pos;
@@ -96,11 +96,8 @@ class ByteReader {
   /// 长度前缀字节串：uint32 长度 + 内容（大端长度）
   Uint8List readBytesWithLen32() => read(readUint32());
 
-  Uint8List peek(int n) => Uint8List.sublistView(
-        _buf,
-        _pos,
-        (_pos + n).clamp(0, _buf.length),
-      );
+  Uint8List peek(int n) =>
+      Uint8List.sublistView(_buf, _pos, (_pos + n).clamp(0, _buf.length));
 
   /// 剩余全部字节
   Uint8List readRest() => read(remaining);
@@ -129,23 +126,13 @@ class ByteWriter {
 
   /// 大端 uint32
   ByteWriter u32(int v) {
-    _bb.add([
-      (v >> 24) & 0xFF,
-      (v >> 16) & 0xFF,
-      (v >> 8) & 0xFF,
-      v & 0xFF,
-    ]);
+    _bb.add([(v >> 24) & 0xFF, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF]);
     return this;
   }
 
   /// 显式小端 uint32
   ByteWriter u32le(int v) {
-    _bb.add([
-      v & 0xFF,
-      (v >> 8) & 0xFF,
-      (v >> 16) & 0xFF,
-      (v >> 24) & 0xFF,
-    ]);
+    _bb.add([v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]);
     return this;
   }
 
@@ -189,7 +176,8 @@ String hexdump(List<int> data, {int width = 16, String prefix = ''}) {
         .map((b) => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.')
         .join();
     sb.writeln(
-        '$prefix${off.toRadixString(16).padLeft(8, '0')}  $hexpart  |$asc|');
+      '$prefix${off.toRadixString(16).padLeft(8, '0')}  $hexpart  |$asc|',
+    );
   }
   return sb.toString();
 }

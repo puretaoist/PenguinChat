@@ -55,16 +55,16 @@ class ConsentRecord {
   });
 
   Map<String, dynamic> toJson() => {
-        'at': at.toIso8601String(),
-        'v': statementVersion,
-        'ack': acknowledgedRisk,
-      };
+    'at': at.toIso8601String(),
+    'v': statementVersion,
+    'ack': acknowledgedRisk,
+  };
 
   static ConsentRecord fromJson(Map<String, dynamic> j) => ConsentRecord(
-        at: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
-        statementVersion: j['v'] as String? ?? '',
-        acknowledgedRisk: j['ack'] as String? ?? '',
-      );
+    at: DateTime.tryParse(j['at'] as String? ?? '') ?? DateTime.now(),
+    statementVersion: j['v'] as String? ?? '',
+    acknowledgedRisk: j['ack'] as String? ?? '',
+  );
 }
 
 /// 知情同意声明。版本变更时旧同意失效，需重新确认。
@@ -134,10 +134,7 @@ class SafetyGate {
     if (f == null) return;
     await f.parent.create(recursive: true);
     await f.writeAsString(
-      jsonEncode({
-        'mode': _mode.name,
-        'consent': _consent?.toJson(),
-      }),
+      jsonEncode({'mode': _mode.name, 'consent': _consent?.toJson()}),
       flush: true,
     );
   }

@@ -26,16 +26,16 @@ EnvironmentReport _cleanEnv() =>
     EnvironmentReport(findings: const [], probedAt: DateTime.now());
 
 EnvironmentReport _riskyEnv() => EnvironmentReport(
-      findings: const [
-        EnvFinding(
-          id: 'magisk',
-          label: 'Magisk 痕迹',
-          severity: EnvRiskLevel.high,
-          detail: '单元测试注入',
-        ),
-      ],
-      probedAt: DateTime.now(),
-    );
+  findings: const [
+    EnvFinding(
+      id: 'magisk',
+      label: 'Magisk 痕迹',
+      severity: EnvRiskLevel.high,
+      detail: '单元测试注入',
+    ),
+  ],
+  probedAt: DateTime.now(),
+);
 
 void main() {
   late Directory tmp;
@@ -155,7 +155,9 @@ void main() {
       final g = SafetyGate(persistFile: File('${tmp.path}/g2.json'));
       await g.load();
       expect(
-          await g.enableRealServer(_fullAck, environment: _cleanEnv()), isNull);
+        await g.enableRealServer(_fullAck, environment: _cleanEnv()),
+        isNull,
+      );
       expect(g.isRealServer, isTrue);
     });
 
@@ -163,8 +165,9 @@ void main() {
       final g = SafetyGate(persistFile: File('${tmp.path}/g3.json'));
       await g.load();
       expect(
-          await g.enableRealServer(['我同意'], environment: _cleanEnv()),
-          isNotNull);
+        await g.enableRealServer(['我同意'], environment: _cleanEnv()),
+        isNotNull,
+      );
     });
 
     test('敷衍确认（缺关键词）被拒绝', () async {
@@ -172,7 +175,9 @@ void main() {
       await g.load();
       final lazy = List.filled(kRiskPoints.length, '我知道');
       expect(
-          await g.enableRealServer(lazy, environment: _cleanEnv()), isNotNull);
+        await g.enableRealServer(lazy, environment: _cleanEnv()),
+        isNotNull,
+      );
     });
 
     test('开启后跨实例持久化', () async {
@@ -180,7 +185,9 @@ void main() {
       final g1 = SafetyGate(persistFile: f);
       await g1.load();
       expect(
-          await g1.enableRealServer(_fullAck, environment: _cleanEnv()), isNull);
+        await g1.enableRealServer(_fullAck, environment: _cleanEnv()),
+        isNull,
+      );
 
       final g2 = SafetyGate(persistFile: f);
       await g2.load();
@@ -212,8 +219,18 @@ void main() {
     test('两项 high -> critical', () {
       final r = EnvironmentReport(
         findings: const [
-          EnvFinding(id: 'a', label: 'A', severity: EnvRiskLevel.high, detail: 'x'),
-          EnvFinding(id: 'b', label: 'B', severity: EnvRiskLevel.high, detail: 'y'),
+          EnvFinding(
+            id: 'a',
+            label: 'A',
+            severity: EnvRiskLevel.high,
+            detail: 'x',
+          ),
+          EnvFinding(
+            id: 'b',
+            label: 'B',
+            severity: EnvRiskLevel.high,
+            detail: 'y',
+          ),
         ],
         probedAt: DateTime.now(),
       );
@@ -224,7 +241,11 @@ void main() {
       final r = EnvironmentReport(
         findings: const [
           EnvFinding(
-              id: 'd', label: '可调试', severity: EnvRiskLevel.medium, detail: 'x'),
+            id: 'd',
+            label: '可调试',
+            severity: EnvRiskLevel.medium,
+            detail: 'x',
+          ),
         ],
         probedAt: DateTime.now(),
       );
@@ -237,9 +258,9 @@ void main() {
     });
 
     test('真实探针可运行且如实列出局限', () async {
-      final rep =
-          await EnvironmentProbe(perCheckTimeout: const Duration(milliseconds: 500))
-              .probe();
+      final rep = await EnvironmentProbe(
+        perCheckTimeout: const Duration(milliseconds: 500),
+      ).probe();
       expect(rep.undetectable, isNotEmpty);
       expect(
         rep.undetectable.any((u) => u.contains('maps')),

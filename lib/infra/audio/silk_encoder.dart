@@ -49,7 +49,8 @@ class SilkVoiceEncoder {
     }
     if (frames.isEmpty) return null;
 
-    final target = outPath ??
+    final target =
+        outPath ??
         (pcmPath.endsWith('.pcm')
             ? '${pcmPath.substring(0, pcmPath.length - 4)}.slk'
             : '$pcmPath.slk');

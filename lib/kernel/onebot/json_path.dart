@@ -111,7 +111,10 @@ List<_Seg> _parse(String raw) {
         // 递归下降 `..name`
         i += 2;
         final start = i;
-        while (i < raw.length && raw[i] != '.' && raw[i] != '[' && raw[i] != '/') {
+        while (i < raw.length &&
+            raw[i] != '.' &&
+            raw[i] != '[' &&
+            raw[i] != '/') {
           i++;
         }
         final name = raw.substring(start, i);
@@ -128,7 +131,10 @@ List<_Seg> _parse(String raw) {
         continue;
       }
       final start = i;
-      while (i < raw.length && raw[i] != '.' && raw[i] != '[' && raw[i] != '/') {
+      while (i < raw.length &&
+          raw[i] != '.' &&
+          raw[i] != '[' &&
+          raw[i] != '/') {
         i++;
       }
       final name = raw.substring(start, i);

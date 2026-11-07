@@ -77,10 +77,43 @@ import 'qq8_t544.dart' show qq8T544Sign;
 /// 服务端**期望**的是这份全集，补齐可最大化兼容性。缺的 TLV 结构从官方
 /// `tlv_type/tlv_tXXX.java` 移植 —— 8.2.11 自己就有全部 8 个可移植类。
 const List<int> qq8OfficialLoginTlvOrder = <int>[
-  0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x108, 0x104, 0x142, 0x112,
-  0x144, 0x145, 0x147, 0x166, 0x16A, 0x154, 0x141, 0x08, 0x511, 0x172,
-  0x185, 0x400, 0x187, 0x188, 0x194, 0x191, 0x201, 0x202, 0x177, 0x516,
-  0x521, 0x525, 0x529, 0x318, 0x544, 0x545, 0x548,
+  0x18,
+  0x01,
+  0x106,
+  0x116,
+  0x100,
+  0x107,
+  0x108,
+  0x104,
+  0x142,
+  0x112,
+  0x144,
+  0x145,
+  0x147,
+  0x166,
+  0x16A,
+  0x154,
+  0x141,
+  0x08,
+  0x511,
+  0x172,
+  0x185,
+  0x400,
+  0x187,
+  0x188,
+  0x194,
+  0x191,
+  0x201,
+  0x202,
+  0x177,
+  0x516,
+  0x521,
+  0x525,
+  0x529,
+  0x318,
+  0x544,
+  0x545,
+  0x548,
 ];
 
 /// 8.2.11 密码登录实际需要、而本模块尚未实现的 TLV。
@@ -107,7 +140,12 @@ const List<int> qq8OfficialLoginTlvOrder = <int>[
 ///   `u16len + bytes`：`L, M, "qq", N`。首登多为空 → 不发。
 /// * `0x548`（1352，`k.java:394`）—— 仅当 `t.an` 非空，默认空 → 不发。
 const List<int> qq8LoginTlvMissing = <int>[
-  0x112, 0x166, 0x172, 0x185, 0x201, 0x548,
+  0x112,
+  0x166,
+  0x172,
+  0x185,
+  0x201,
+  0x548,
 ];
 
 /// `0x544`（1348）—— 走官方"安全 SDK 不可用"降级路径。
@@ -217,10 +255,44 @@ const List<int> qq8LoginTlvOutOfPasswordFlow = <int>[0x318, 0x529];
 /// 两者的 DEX `fill-array-data` payload 头读出的长度都是 **38**，
 /// 且前 37 项与 [qq8OfficialLoginTlvOrder] 逐项相同——唯一差异是多了 `0x553`。
 const List<int> qq8OfficialLoginTlvOrderWith553 = <int>[
-  0x18, 0x01, 0x106, 0x116, 0x100, 0x107, 0x108, 0x104, 0x142, 0x112,
-  0x144, 0x145, 0x147, 0x166, 0x16A, 0x154, 0x141, 0x08, 0x511, 0x172,
-  0x185, 0x400, 0x187, 0x188, 0x194, 0x191, 0x201, 0x202, 0x177, 0x516,
-  0x521, 0x525, 0x529, 0x318, 0x544, 0x545, 0x548, 0x553,
+  0x18,
+  0x01,
+  0x106,
+  0x116,
+  0x100,
+  0x107,
+  0x108,
+  0x104,
+  0x142,
+  0x112,
+  0x144,
+  0x145,
+  0x147,
+  0x166,
+  0x16A,
+  0x154,
+  0x141,
+  0x08,
+  0x511,
+  0x172,
+  0x185,
+  0x400,
+  0x187,
+  0x188,
+  0x194,
+  0x191,
+  0x201,
+  0x202,
+  0x177,
+  0x516,
+  0x521,
+  0x525,
+  0x529,
+  0x318,
+  0x544,
+  0x545,
+  0x548,
+  0x553,
 ];
 
 /// `wtlogin.exchange_emp`（子命令 11，token 登录 / 票据续期）的 TLV 顺序表。
@@ -260,9 +332,27 @@ const List<int> qq8OfficialLoginTlvOrderWith553 = <int>[
 /// `0x172` / `0x194` / `0x201` 保留位次，靠 `Qq8LoginConditions.applies` 的
 /// guard 过滤（对应官方 `if (t.r != null && t.r.length > 0)` 这类判断）。
 const List<int> qq8ExchangeEmpTlvOrder = <int>[
-  0x100, 0x10A, 0x116, 0x108, 0x144, 0x143, 0x142, 0x154, 0x18,
-  0x141, 0x08, 0x511, 0x147, 0x172, 0x177, 0x187, 0x188, 0x194,
-  0x201, 0x202, 0x544,
+  0x100,
+  0x10A,
+  0x116,
+  0x108,
+  0x144,
+  0x143,
+  0x142,
+  0x154,
+  0x18,
+  0x141,
+  0x08,
+  0x511,
+  0x147,
+  0x172,
+  0x177,
+  0x187,
+  0x188,
+  0x194,
+  0x201,
+  0x202,
+  0x544,
 ];
 
 /// `wtlogin.login` 子命令 2（滑动验证码提交）的 TLV 顺序表。
@@ -315,7 +405,10 @@ const List<int> qq8SliderTlvOrder = <int>[0x193, 0x08, 0x104, 0x116];
 ///   （请求下发短信，带 174/17a 令牌）的流程里（`WtloginHelper:8501`）。
 ///   维护版 oicq 把它错位带进了滑块提交——我们此前跟随它发了 542，
 ///   真机对应 type=1（2026-09-15 官方对照后修正）。
-List<int> qq8SliderTlvOrderFor(Qq8ApkInfo apk, {Qq8SliderTicketForm form = Qq8SliderTicketForm.websig}) {
+List<int> qq8SliderTlvOrderFor(
+  Qq8ApkInfo apk, {
+  Qq8SliderTicketForm form = Qq8SliderTicketForm.websig,
+}) {
   final order = <int>[
     // 官方 `request/n.java`：`K ? 0x193 : 0x2` —— 首项随 n.K 切换，其余全同。
     form == Qq8SliderTicketForm.picture ? 0x02 : 0x193,
@@ -576,27 +669,27 @@ class Qq8ApkInfo {
 
   /// 复制一份，只改 [uinDeviceToken]。
   Qq8ApkInfo withDeviceToken(bool on) => Qq8ApkInfo(
-        id: id,
-        ver: ver,
-        sdkver: sdkver,
-        appid: appid,
-        subid: subid,
-        miscBitmap: miscBitmap,
-        mainSigMap: mainSigMap,
-        buildtime: buildtime,
-        sign: sign,
-        name: name,
-        ksidName: ksidName,
-        useReserveFields: useReserveFields,
-        reserveIncludesQimei36: reserveIncludesQimei36,
-        subSigMap: subSigMap,
-        ssoVer: ssoVer,
-        loginTlvOrder: loginTlvOrder,
-        tlv544DegradedBody: tlv544DegradedBody,
-        tlv553DegradedBody: tlv553DegradedBody,
-        qimeiMode: qimeiMode,
-        uinDeviceToken: on,
-      );
+    id: id,
+    ver: ver,
+    sdkver: sdkver,
+    appid: appid,
+    subid: subid,
+    miscBitmap: miscBitmap,
+    mainSigMap: mainSigMap,
+    buildtime: buildtime,
+    sign: sign,
+    name: name,
+    ksidName: ksidName,
+    useReserveFields: useReserveFields,
+    reserveIncludesQimei36: reserveIncludesQimei36,
+    subSigMap: subSigMap,
+    ssoVer: ssoVer,
+    loginTlvOrder: loginTlvOrder,
+    tlv544DegradedBody: tlv544DegradedBody,
+    tlv553DegradedBody: tlv553DegradedBody,
+    qimeiMode: qimeiMode,
+    uinDeviceToken: on,
+  );
 
   /// 复制一份，只改 TLV `0x553`（FEKit attach）的 body。
   ///
@@ -604,27 +697,27 @@ class Qq8ApkInfo {
   /// （见 [qq8SliderTlvOrderFor] / [qq8PasswordTlvOrderFor]）。用于把
   /// 新版客户端真实 `getFeKitAttach` 的输出喂进 8.2.11 档案做 A/B。
   Qq8ApkInfo withT553(List<int>? body) => Qq8ApkInfo(
-        id: id,
-        ver: ver,
-        sdkver: sdkver,
-        appid: appid,
-        subid: subid,
-        miscBitmap: miscBitmap,
-        mainSigMap: mainSigMap,
-        buildtime: buildtime,
-        sign: sign,
-        name: name,
-        ksidName: ksidName,
-        useReserveFields: useReserveFields,
-        reserveIncludesQimei36: reserveIncludesQimei36,
-        subSigMap: subSigMap,
-        ssoVer: ssoVer,
-        loginTlvOrder: loginTlvOrder,
-        tlv544DegradedBody: tlv544DegradedBody,
-        tlv553DegradedBody: body,
-        qimeiMode: qimeiMode,
-        uinDeviceToken: uinDeviceToken,
-      );
+    id: id,
+    ver: ver,
+    sdkver: sdkver,
+    appid: appid,
+    subid: subid,
+    miscBitmap: miscBitmap,
+    mainSigMap: mainSigMap,
+    buildtime: buildtime,
+    sign: sign,
+    name: name,
+    ksidName: ksidName,
+    useReserveFields: useReserveFields,
+    reserveIncludesQimei36: reserveIncludesQimei36,
+    subSigMap: subSigMap,
+    ssoVer: ssoVer,
+    loginTlvOrder: loginTlvOrder,
+    tlv544DegradedBody: tlv544DegradedBody,
+    tlv553DegradedBody: body,
+    qimeiMode: qimeiMode,
+    uinDeviceToken: uinDeviceToken,
+  );
 }
 
 /// TLV `0x544`（设备码）发哪种形态。
@@ -887,8 +980,7 @@ Uint8List _t544SaltOfficial(Qq8TlvContext ctx, {required int t544SubCmd}) {
 Uint8List qq8T544SaltOfficialForTest(
   Qq8TlvContext ctx, {
   required int t544SubCmd,
-}) =>
-    _t544SaltOfficial(ctx, t544SubCmd: t544SubCmd);
+}) => _t544SaltOfficial(ctx, t544SubCmd: t544SubCmd);
 
 /// u16 长度前缀 + 内容（TLV 头同款；oicq `writeTlv` / 官方 `make_byte`）。
 void _writeU16Prefixed(ByteWriter w, List<int> body) {
@@ -1012,7 +1104,9 @@ abstract final class Qq8Tlv {
       case 0x100:
         final emp = args.isNotEmpty && (args[0] as num? ?? 0) != 0;
         w.u16(1); // db buf ver
-        w.u32(ctx.ssoVerOverride ?? ctx.apk.ssoVer); // _sso_ver：8.2.11=7 / 8.9.50=19 / 9.3.60=22
+        w.u32(
+          ctx.ssoVerOverride ?? ctx.apk.ssoVer,
+        ); // _sso_ver：8.2.11=7 / 8.9.50=19 / 9.3.60=22
         w.u32(ctx.apk.appid);
         w.u32(emp ? 2 : ctx.apk.subid);
         w.u32(0);
@@ -1032,7 +1126,9 @@ abstract final class Qq8Tlv {
         final inner = ByteWriter()
           ..u16(4) // tgtgt ver
           ..raw(rnd(4))
-          ..u32(ctx.ssoVerOverride ?? ctx.apk.ssoVer) // _SSoVer：8.2.11=7 / 8.9.50=19 / 9.3.60=22
+          ..u32(
+            ctx.ssoVerOverride ?? ctx.apk.ssoVer,
+          ) // _SSoVer：8.2.11=7 / 8.9.50=19 / 9.3.60=22
           ..u32(ctx.apk.appid)
           ..u32(0)
           ..u64(ctx.uin)
@@ -1046,9 +1142,10 @@ abstract final class Qq8Tlv {
           ..raw(d.guid)
           ..u32(ctx.apk.subid)
           ..u32(ctx.loginType) // 1 = 口令登录 / 3 = 短信验证登录后的那次
-          ..raw((ByteWriter()
-                  ..bytes16(utf8.encode(ctx.account ?? '${ctx.uin}')))
-              .build())
+          ..raw(
+            (ByteWriter()..bytes16(utf8.encode(ctx.account ?? '${ctx.uin}')))
+                .build(),
+          )
           ..u16(0);
         // TEA 密钥种子 = 口令MD5(16) ‖ u64(msalt 非 0 时用 msalt，否则用 uin)(8)
         //
@@ -1068,7 +1165,9 @@ abstract final class Qq8Tlv {
         // oicq（lib/core/tlv.ts:107）的公式 `MD5(md5pass ‖ 0x00000000 ‖ u32be(uin))`
         // 在 msalt=0 时与官方逐字节等价 —— oicq 一直是对的。
         final seed = Uint8List(24);
-        final pwdLen = ctx.passwordMd5.length < 16 ? ctx.passwordMd5.length : 16;
+        final pwdLen = ctx.passwordMd5.length < 16
+            ? ctx.passwordMd5.length
+            : 16;
         seed.setRange(0, pwdLen, ctx.passwordMd5);
         seed.setRange(
           16,
@@ -1077,11 +1176,13 @@ abstract final class Qq8Tlv {
         );
         final key = md5Bytes(seed);
         final innerBytes = inner.build();
-        w.raw(qqTeaEncrypt(
-          innerBytes,
-          key,
-          paddingBytes: ctx.teaPadding(qqTeaPadLength(innerBytes.length) + 3),
-        ));
+        w.raw(
+          qqTeaEncrypt(
+            innerBytes,
+            key,
+            paddingBytes: ctx.teaPadding(qqTeaPadLength(innerBytes.length) + 3),
+          ),
+        );
 
       case 0x107:
         w.u16(0); // pic type
@@ -1190,9 +1291,9 @@ abstract final class Qq8Tlv {
         // `WtloginHelper.java:1416-1417`：`i6 = mMiscBitmap; if (t.ab) i6 |= 33554432;`
         // MSF 密码登录入口（`msf/core/auth/l.java:247`）恒开 `t.ab`，故实发
         // `0x0AF7FF7C`（184024956）而不是构造器初值 `0x08F7FF7C`（150470524）。
-        w.u32(ctx.da2BitActive
-            ? ctx.apk.effectiveMiscBitmap
-            : ctx.apk.miscBitmap);
+        w.u32(
+          ctx.da2BitActive ? ctx.apk.effectiveMiscBitmap : ctx.apk.miscBitmap,
+        );
         w.u32(ctx.apk.subSigMap); // 0x10400，三代相同
         w.u8(1); // app id list 长度
         w.u32(1600000226); // app id list[0]
@@ -1226,11 +1327,13 @@ abstract final class Qq8Tlv {
           case Qq8T544Mode.officialDegraded:
             w.raw(Uint8List.fromList(ctx.apk.tlv544DegradedBody));
           case Qq8T544Mode.oicq:
-            final salt =
-                _t544SaltOicq(ctx, t544SubCmd: ctx.t544SubCmd ?? 0);
+            final salt = _t544SaltOicq(ctx, t544SubCmd: ctx.t544SubCmd ?? 0);
             w.raw(qq8T544Sign(ctx.t544Curr ?? ctx.nowMillis(), salt));
           case Qq8T544Mode.officialSalt:
-            final salt = _t544SaltOfficial(ctx, t544SubCmd: ctx.t544SubCmd ?? 0);
+            final salt = _t544SaltOfficial(
+              ctx,
+              t544SubCmd: ctx.t544SubCmd ?? 0,
+            );
             w.raw(qq8T544Sign(ctx.t544Curr ?? ctx.nowMillis(), salt));
           case Qq8T544Mode.native:
             w.raw(ctx.t544NativeBody ?? Uint8List(0));
@@ -1246,15 +1349,15 @@ abstract final class Qq8Tlv {
         // `Qq8LoginConditions.qimei` 的 guard 负责——这里不该产出空 body
         // （那是与官方不一致的偏差，2026-09-11 修正）。
         final qimeiArg = args.isNotEmpty ? args[0] : null;
-        final qimei = qimeiArg is String && qimeiArg.isNotEmpty ? qimeiArg : null;
+        final qimei = qimeiArg is String && qimeiArg.isNotEmpty
+            ? qimeiArg
+            : null;
         if (qimei != null) {
           final raw = Uint8List.fromList(utf8.encode(qimei));
-          w.raw(
-            switch (ctx.apk.qimeiMode) {
-              Qq8QimeiMode.md5OfSource => md5Bytes(raw),
-              Qq8QimeiMode.rawSource => raw,
-            },
-          );
+          w.raw(switch (ctx.apk.qimeiMode) {
+            Qq8QimeiMode.md5OfSource => md5Bytes(raw),
+            Qq8QimeiMode.rawSource => raw,
+          });
         }
 
       case 0x547:
@@ -1304,7 +1407,9 @@ abstract final class Qq8Tlv {
         w.u8(ctx.guidNew ? 1 : 0); // U: 现算=1 / 文件复用=0
         w.u8(1); // V: guid available
         w.u8(0); // W: guid changed（首登无旧值可比）
-        w.u32(ctx.guidNew ? 0x11000000 : 0x01000000); // Z = (X<<24)：X=17 现算 / X=1 文件
+        w.u32(
+          ctx.guidNew ? 0x11000000 : 0x01000000,
+        ); // Z = (X<<24)：X=17 现算 / X=1 文件
         _tlv(w, _cut(d.model, 32));
         _tlv(w, _cutBytes(d.guid, 16));
         _tlv(w, _cut(d.brand, 16));
@@ -1331,12 +1436,13 @@ abstract final class Qq8Tlv {
           ..raw(pack(ctx, 0x128))
           ..raw(pack(ctx, 0x16E));
         final innerBytes = inner.build();
-        w.raw(qqTeaEncrypt(
-          innerBytes,
-          d.tgtgt,
-          paddingBytes:
-              ctx.teaPadding(qqTeaPadLength(innerBytes.length) + 3),
-        ));
+        w.raw(
+          qqTeaEncrypt(
+            innerBytes,
+            d.tgtgt,
+            paddingBytes: ctx.teaPadding(qqTeaPadLength(innerBytes.length) + 3),
+          ),
+        );
 
       case 0x145:
         w.raw(d.guid);
@@ -1377,7 +1483,9 @@ abstract final class Qq8Tlv {
         // —— 官方代码里 fill_body 前又做了一次 MD5（tlv_t184.java:27-36），所以最终
         // 就是 16 字节；`mpasswd` 是**本地每次现生成的 16 位随机字母串**
         // （tools/util.java:200-212），不用跟服务端要。
-        final mpasswd184 = args.isNotEmpty && args[0] is String ? args[0] as String : '';
+        final mpasswd184 = args.isNotEmpty && args[0] is String
+            ? args[0] as String
+            : '';
         final msalt184 = args.length > 1 && args[1] is int ? args[1] as int : 0;
         final inner = <int>[
           ...md5Bytes(utf8.encode(mpasswd184)),
@@ -1396,7 +1504,8 @@ abstract final class Qq8Tlv {
         final b148 = args.length > 1 ? args[1] : null;
         final c148 = args.length > 2 ? args[2] : null;
         w.u16(a148 is List<int> ? (a148.length > 32 ? 32 : a148.length) : 0);
-        if (a148 is List<int>) w.raw(a148.sublist(0, a148.length > 32 ? 32 : a148.length));
+        if (a148 is List<int>)
+          w.raw(a148.sublist(0, a148.length > 32 ? 32 : a148.length));
         w.u32(args.length > 3 && args[3] is int ? args[3] as int : 0);
         w.u32(args.length > 4 && args[4] is int ? args[4] as int : 0);
         w.u32(args.length > 5 && args[5] is int ? args[5] as int : 0);
@@ -1491,7 +1600,10 @@ abstract final class Qq8Tlv {
         // 官方送的是 `MD5("02:00:00:00:00:00")` 的 16 字节 —— 这是逐字节差异。
         // bssid 空时官方走 `bArr = new byte[16]`（全零 16 字节），这里保持同样语义。
         final bssid202 = d.wifiBssid;
-        _tlv(w, bssid202.isEmpty ? Uint8List(16) : md5Bytes(utf8.encode(bssid202)));
+        _tlv(
+          w,
+          bssid202.isEmpty ? Uint8List(16) : md5Bytes(utf8.encode(bssid202)),
+        );
         _tlv(w, _cut(d.wifiSsid, 32));
 
       case 0x400:
@@ -1573,21 +1685,24 @@ abstract final class Qq8Tlv {
         // ⚠️ 字段 9 是 `util.getInnerVersion()`（DISPLAY 含 INCREMENTAL 则取
         //    DISPLAY，否则取 INCREMENTAL），**不是** incremental 的重复。
         //    此处曾误写成 `d.version.incremental`，使字段 4 与 9 恒等。
-        w.raw(protoEncode(<int, Object?>{
-          1: d.bootloader,
-          2: d.procVersion,
-          3: d.version.codename,
-          4: d.version.incremental,
-          5: d.fingerprint,
-          6: d.bootId,
-          7: d.androidId,
-          8: d.baseband,
-          9: d.version.innerVersion,
-        }));
+        w.raw(
+          protoEncode(<int, Object?>{
+            1: d.bootloader,
+            2: d.procVersion,
+            3: d.version.codename,
+            4: d.version.incremental,
+            5: d.fingerprint,
+            6: d.bootId,
+            7: d.androidId,
+            8: d.baseband,
+            9: d.version.innerVersion,
+          }),
+        );
 
       default:
         throw ArgumentError(
-            '未知 TLV 编号 0x${tag.toRadixString(16)}（8.2.11 表内无此项）');
+          '未知 TLV 编号 0x${tag.toRadixString(16)}（8.2.11 表内无此项）',
+        );
     }
     return w.build();
   }
@@ -1614,8 +1729,7 @@ abstract final class Qq8Tlv {
   ///
   /// 参考实现用的是 JS 字符串切片，对 ASCII 等价于按字节截断。
   /// 这里显式按码元截断再编码，避免非 ASCII 情况下与参考实现不一致。
-  static String _cut(String s, int n) =>
-      s.length <= n ? s : s.substring(0, n);
+  static String _cut(String s, int n) => s.length <= n ? s : s.substring(0, n);
 
   static Uint8List _cutBytes(Uint8List b, int n) =>
       b.length <= n ? b : Uint8List.sublistView(b, 0, n);

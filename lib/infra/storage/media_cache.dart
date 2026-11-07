@@ -132,8 +132,10 @@ class MediaCache {
   String? pathFor(String key) {
     final e = _entries[key];
     if (e == null) return null;
-    final f = File('${root.path}${Platform.pathSeparator}${e.category}'
-        '${Platform.pathSeparator}${e.file}');
+    final f = File(
+      '${root.path}${Platform.pathSeparator}${e.category}'
+      '${Platform.pathSeparator}${e.file}',
+    );
     if (!f.existsSync()) {
       // 自愈：文件被外部删了（清缓存/用户手删），条目立即作废。
       _entries.remove(key);
@@ -179,11 +181,16 @@ class MediaCache {
     if (running != null) return running;
 
     final task =
-        _download(key, category, url, altUrls,
-                foreground: foreground, refreshUrl: refreshUrl)
-            .whenComplete(() {
-      _inflight.remove(key);
-    });
+        _download(
+          key,
+          category,
+          url,
+          altUrls,
+          foreground: foreground,
+          refreshUrl: refreshUrl,
+        ).whenComplete(() {
+          _inflight.remove(key);
+        });
     _inflight[key] = task;
     return task;
   }
@@ -233,15 +240,17 @@ class MediaCache {
         candidateIndex++;
         if (candidate.isEmpty) continue;
         if (_disposed) return null;
-        for (var attempt = 0;; attempt++) {
+        for (var attempt = 0; ; attempt++) {
           final sw = Stopwatch()..start();
           final outcome = await f.fetchOutcome(candidate, maxBytes: maxBytes);
           sw.stop();
           if (outcome is MediaFetchOk && outcome.bytes.isNotEmpty) {
             _failures.remove(key);
-            _log.i('媒体下载成功 key=$key cat=$category '
-                'cand=$candidate bytes=${outcome.bytes.length} '
-                '${sw.elapsedMilliseconds}ms');
+            _log.i(
+              '媒体下载成功 key=$key cat=$category '
+              'cand=$candidate bytes=${outcome.bytes.length} '
+              '${sw.elapsedMilliseconds}ms',
+            );
             // 扩展名按**成功拿到字节的那个地址**推断（兜底地址没有后缀时
             // 会退到内容嗅探，见 _extOf）。
             return await _store(key, category, candidate, outcome.bytes);
@@ -251,10 +260,12 @@ class MediaCache {
           worst = _worse(worst, kind);
           if (candidateIndex == 1) primaryKind = kind;
           final backoff = plan[kind] ?? const <Duration>[];
-          _log.w('媒体下载失败 key=$key cat=$category cand=$candidate '
-              'try=${attempt + 1} kind=${kind.name} '
-              'status=${failed?.status} retcode=${failed?.retcode} '
-              'msg=${failed?.retmsg} ${sw.elapsedMilliseconds}ms');
+          _log.w(
+            '媒体下载失败 key=$key cat=$category cand=$candidate '
+            'try=${attempt + 1} kind=${kind.name} '
+            'status=${failed?.status} retcode=${failed?.retcode} '
+            'msg=${failed?.retmsg} ${sw.elapsedMilliseconds}ms',
+          );
           if (attempt >= backoff.length) break;
           await Future<void>.delayed(backoff[attempt]);
           if (_disposed) return null;
@@ -279,15 +290,19 @@ class MediaCache {
           sw.stop();
           if (outcome is MediaFetchOk && outcome.bytes.isNotEmpty) {
             _failures.remove(key);
-            _log.i('媒体换链成功 key=$key cat=$category bytes='
-                '${outcome.bytes.length} ${sw.elapsedMilliseconds}ms');
+            _log.i(
+              '媒体换链成功 key=$key cat=$category bytes='
+              '${outcome.bytes.length} ${sw.elapsedMilliseconds}ms',
+            );
             return await _store(key, category, fresh, outcome.bytes);
           }
           final kind = outcome is MediaFetchFailed
               ? outcome.kind
               : MediaFetchFailureKind.unknown;
-          _log.w('媒体换链失败 key=$key cat=$category kind=${kind.name} '
-              '${sw.elapsedMilliseconds}ms');
+          _log.w(
+            '媒体换链失败 key=$key cat=$category kind=${kind.name} '
+            '${sw.elapsedMilliseconds}ms',
+          );
           worst = _worse(worst, kind);
         }
       }
@@ -305,7 +320,11 @@ class MediaCache {
   }
 
   Future<String?> _store(
-      String key, String category, String url, Uint8List bytes) async {
+    String key,
+    String category,
+    String url,
+    Uint8List bytes,
+  ) async {
     // 内容寻址：同样的字节在同一分类里只会有一份。
     final hash = _sha256Hex(bytes);
     final ext = _extOf(url);
@@ -317,7 +336,9 @@ class MediaCache {
       try {
         dir.createSync(recursive: true);
         // 先写临时文件再 rename：中途被杀不会留下半个文件冒充完整缓存。
-        final tmp = File('${target.path}.${DateTime.now().microsecondsSinceEpoch}.part');
+        final tmp = File(
+          '${target.path}.${DateTime.now().microsecondsSinceEpoch}.part',
+        );
         await tmp.writeAsBytes(bytes, flush: true);
         await tmp.rename(target.path);
       } on FileSystemException {
@@ -356,7 +377,8 @@ class MediaCache {
       for (final key in _entries.keys.toList()) {
         final e = _entries[key]!;
         final age = now.difference(
-            DateTime.fromMillisecondsSinceEpoch(e.accessMs == 0 ? 0 : e.accessMs));
+          DateTime.fromMillisecondsSinceEpoch(e.accessMs == 0 ? 0 : e.accessMs),
+        );
         if (e.accessMs != 0 && age > keep) {
           freed += _deleteFile(e);
           _entries.remove(key);
@@ -366,7 +388,8 @@ class MediaCache {
 
     // 2) 孤儿（磁盘上有、索引里没有）
     final known = <String>{
-      for (final e in _entries.values) '${e.category}${Platform.pathSeparator}${e.file}',
+      for (final e in _entries.values)
+        '${e.category}${Platform.pathSeparator}${e.file}',
     };
     for (final f in root.listSync(recursive: true)) {
       if (f is! File) continue;
@@ -388,7 +411,9 @@ class MediaCache {
         if (total <= maxCacheBytes) break;
         freed += _deleteFile(e);
         total -= e.bytes;
-        _entries.removeWhere((_, v) => v.file == e.file && v.category == e.category);
+        _entries.removeWhere(
+          (_, v) => v.file == e.file && v.category == e.category,
+        );
       }
     }
 
@@ -407,8 +432,10 @@ class MediaCache {
     final keys = _entries.keys.toList();
     for (final k in keys) {
       final e = _entries[k]!;
-      final f = File('${root.path}${Platform.pathSeparator}${e.category}'
-          '${Platform.pathSeparator}${e.file}');
+      final f = File(
+        '${root.path}${Platform.pathSeparator}${e.category}'
+        '${Platform.pathSeparator}${e.file}',
+      );
       if (!f.existsSync()) {
         _entries.remove(k);
         dropped++;
@@ -474,8 +501,10 @@ class MediaCache {
   // -------------------------------------------------------------------------
 
   int _deleteFile(_Entry e) {
-    final f = File('${root.path}${Platform.pathSeparator}${e.category}'
-        '${Platform.pathSeparator}${e.file}');
+    final f = File(
+      '${root.path}${Platform.pathSeparator}${e.category}'
+      '${Platform.pathSeparator}${e.file}',
+    );
     return _deleteQuietly(f);
   }
 
@@ -575,27 +604,29 @@ class MediaCache {
 /// 其余（过期/404/参数错/超大）重试同一个地址没有意义，重试只是烧流量。
 const Map<MediaFetchFailureKind, List<Duration>> kDefaultMediaRetryPlan =
     <MediaFetchFailureKind, List<Duration>>{
-  MediaFetchFailureKind.network: <Duration>[
-    Duration(milliseconds: 500),
-    Duration(seconds: 2),
-  ],
-  MediaFetchFailureKind.rateLimited: <Duration>[Duration(milliseconds: 1500)],
-};
+      MediaFetchFailureKind.network: <Duration>[
+        Duration(milliseconds: 500),
+        Duration(seconds: 2),
+      ],
+      MediaFetchFailureKind.rateLimited: <Duration>[
+        Duration(milliseconds: 1500),
+      ],
+    };
 
 /// 负缓存的有效期（按失败分类）。取"多久之后值得再问一次服务端"：
 /// 过期直链换个地址可能活 → 30 分钟；404 可能是 CDN 还没就绪 → 7 天；
 /// 网络错误转眼就好 → 30 秒。
 const Map<MediaFetchFailureKind, Duration> _failureTtl =
     <MediaFetchFailureKind, Duration>{
-  MediaFetchFailureKind.expired: Duration(minutes: 30),
-  MediaFetchFailureKind.missing: Duration(days: 7),
-  MediaFetchFailureKind.rejected: Duration(minutes: 30),
-  MediaFetchFailureKind.tooLarge: Duration(hours: 24),
-  MediaFetchFailureKind.badUrl: Duration(days: 3650),
-  MediaFetchFailureKind.rateLimited: Duration(seconds: 60),
-  MediaFetchFailureKind.network: Duration(seconds: 30),
-  MediaFetchFailureKind.unknown: Duration(minutes: 5),
-};
+      MediaFetchFailureKind.expired: Duration(minutes: 30),
+      MediaFetchFailureKind.missing: Duration(days: 7),
+      MediaFetchFailureKind.rejected: Duration(minutes: 30),
+      MediaFetchFailureKind.tooLarge: Duration(hours: 24),
+      MediaFetchFailureKind.badUrl: Duration(days: 3650),
+      MediaFetchFailureKind.rateLimited: Duration(seconds: 60),
+      MediaFetchFailureKind.network: Duration(seconds: 30),
+      MediaFetchFailureKind.unknown: Duration(minutes: 5),
+    };
 
 /// 多个候选/多次尝试都失败时，报**最可处置**的那一个（严重度从高到低）。
 const List<MediaFetchFailureKind> _frailtyOrder = <MediaFetchFailureKind>[

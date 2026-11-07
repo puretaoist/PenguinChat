@@ -79,8 +79,7 @@ class BlobStore {
   }
 
   /// 某内容的落盘路径。
-  File fileOf(BlobId id) =>
-      File('${_blobDir.path}/${id.bucket}/${id.value}');
+  File fileOf(BlobId id) => File('${_blobDir.path}/${id.bucket}/${id.value}');
 
   /// 是否已存在。
   Future<bool> contains(BlobId id) => fileOf(id).exists();
@@ -99,7 +98,8 @@ class BlobStore {
 
     await target.parent.create(recursive: true);
     final tmp = File(
-        '${_tmpDir.path}/${id.value}.${DateTime.now().microsecondsSinceEpoch}.part');
+      '${_tmpDir.path}/${id.value}.${DateTime.now().microsecondsSinceEpoch}.part',
+    );
     await tmp.writeAsBytes(data, flush: true);
     try {
       await tmp.rename(target.path);
@@ -152,11 +152,13 @@ class BlobStore {
       await for (final f in bucket.list()) {
         if (f is! File) continue;
         final st = await f.stat();
-        out.add(BlobStat(
-          id: BlobId(f.uri.pathSegments.last),
-          bytes: st.size,
-          lastAccess: st.accessed,
-        ));
+        out.add(
+          BlobStat(
+            id: BlobId(f.uri.pathSegments.last),
+            bytes: st.size,
+            lastAccess: st.accessed,
+          ),
+        );
       }
     }
     return out;

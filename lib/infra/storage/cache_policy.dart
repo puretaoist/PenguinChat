@@ -72,7 +72,8 @@ class EvictionResult {
   });
 
   @override
-  String toString() => '淘汰 $evictedCount 项，释放 ${_mb(freedBytes)}，'
+  String toString() =>
+      '淘汰 $evictedCount 项，释放 ${_mb(freedBytes)}，'
       '剩余 ${_mb(remainingBytes)}';
 
   static String _mb(int b) => '${(b / 1024 / 1024).toStringAsFixed(1)}MB';

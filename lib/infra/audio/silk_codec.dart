@@ -79,25 +79,46 @@ class SilkCodecException implements Exception {
 typedef _GetSizeNative = Int32 Function(Pointer<Int32>);
 typedef _GetSizeDart = int Function(Pointer<Int32>);
 typedef _InitEncoderNative = Int32 Function(
-    Pointer<Void>, Pointer<SilkEncControl>);
-typedef _InitEncoderDart = int Function(
-    Pointer<Void>, Pointer<SilkEncControl>);
-typedef _EncodeNative = Int32 Function(Pointer<Void>, Pointer<SilkEncControl>,
-    Pointer<Int16>, Int32, Pointer<Uint8>, Pointer<Int16>);
-typedef _EncodeDart = int Function(Pointer<Void>, Pointer<SilkEncControl>,
-    Pointer<Int16>, int, Pointer<Uint8>, Pointer<Int16>);
+  Pointer<Void>,
+  Pointer<SilkEncControl>,
+);
+typedef _InitEncoderDart = int Function(Pointer<Void>, Pointer<SilkEncControl>);
+typedef _EncodeNative = Int32 Function(
+  Pointer<Void>,
+  Pointer<SilkEncControl>,
+  Pointer<Int16>,
+  Int32,
+  Pointer<Uint8>,
+  Pointer<Int16>,
+);
+typedef _EncodeDart = int Function(
+  Pointer<Void>,
+  Pointer<SilkEncControl>,
+  Pointer<Int16>,
+  int,
+  Pointer<Uint8>,
+  Pointer<Int16>,
+);
 typedef _InitDecoderNative = Int32 Function(Pointer<Void>);
 typedef _InitDecoderDart = int Function(Pointer<Void>);
 typedef _DecodeNative = Int32 Function(
-    Pointer<Void>,
-    Pointer<SilkDecControl>,
-    Int32,
-    Pointer<Uint8>,
-    Int32,
-    Pointer<Int16>,
-    Pointer<Int16>);
-typedef _DecodeDart = int Function(Pointer<Void>, Pointer<SilkDecControl>, int,
-    Pointer<Uint8>, int, Pointer<Int16>, Pointer<Int16>);
+  Pointer<Void>,
+  Pointer<SilkDecControl>,
+  Int32,
+  Pointer<Uint8>,
+  Int32,
+  Pointer<Int16>,
+  Pointer<Int16>,
+);
+typedef _DecodeDart = int Function(
+  Pointer<Void>,
+  Pointer<SilkDecControl>,
+  int,
+  Pointer<Uint8>,
+  int,
+  Pointer<Int16>,
+  Pointer<Int16>,
+);
 typedef _VersionNative = Pointer<Uint8> Function();
 typedef _VersionDart = Pointer<Uint8> Function();
 typedef _MallocNative = Pointer<Void> Function(IntPtr);
@@ -147,30 +168,50 @@ class SilkCodec {
 
   void _bind() {
     _getEncoderSize = _lib.lookupFunction<_GetSizeNative, _GetSizeDart>(
-        'SKP_Silk_SDK_Get_Encoder_Size');
+      'SKP_Silk_SDK_Get_Encoder_Size',
+    );
     _getDecoderSize = _lib.lookupFunction<_GetSizeNative, _GetSizeDart>(
-        'SKP_Silk_SDK_Get_Decoder_Size');
+      'SKP_Silk_SDK_Get_Decoder_Size',
+    );
     _initEncoder = _lib.lookupFunction<_InitEncoderNative, _InitEncoderDart>(
-        'SKP_Silk_SDK_InitEncoder');
-    _encode =
-        _lib.lookupFunction<_EncodeNative, _EncodeDart>('SKP_Silk_SDK_Encode');
+      'SKP_Silk_SDK_InitEncoder',
+    );
+    _encode = _lib.lookupFunction<_EncodeNative, _EncodeDart>(
+      'SKP_Silk_SDK_Encode',
+    );
     _initDecoder = _lib.lookupFunction<_InitDecoderNative, _InitDecoderDart>(
-        'SKP_Silk_SDK_InitDecoder');
-    _decode =
-        _lib.lookupFunction<_DecodeNative, _DecodeDart>('SKP_Silk_SDK_Decode');
-    _getVersion = _lib
-        .lookupFunction<_VersionNative, _VersionDart>('SKP_Silk_SDK_get_version');
+      'SKP_Silk_SDK_InitDecoder',
+    );
+    _decode = _lib.lookupFunction<_DecodeNative, _DecodeDart>(
+      'SKP_Silk_SDK_Decode',
+    );
+    _getVersion = _lib.lookupFunction<_VersionNative, _VersionDart>(
+      'SKP_Silk_SDK_get_version',
+    );
     _malloc = _lib.lookupFunction<_MallocNative, _MallocDart>('silk_malloc');
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('silk_free');
 
-    _assertLayout('SKP_Silk_SDK_EncControlStruct', sizeOf<SilkEncControl>(), 32);
-    _assertLayout('SKP_Silk_SDK_DecControlStruct', sizeOf<SilkDecControl>(), 20);
+    _assertLayout(
+      'SKP_Silk_SDK_EncControlStruct',
+      sizeOf<SilkEncControl>(),
+      32,
+    );
+    _assertLayout(
+      'SKP_Silk_SDK_DecControlStruct',
+      sizeOf<SilkDecControl>(),
+      20,
+    );
   }
 
   static void _assertLayout(String name, int actual, int expected) {
     if (actual != expected) {
       throw SilkCodecException(
-          name + ' 布局异常：期望 ' + expected.toString() + ' 字节，实际 ' + actual.toString());
+        name +
+            ' 布局异常：期望 ' +
+            expected.toString() +
+            ' 字节，实际 ' +
+            actual.toString(),
+      );
     }
   }
 
@@ -186,10 +227,7 @@ class SilkCodec {
       return DynamicLibrary.open('libsilkcodec.so');
     }
     if (Platform.isWindows) {
-      final candidates = <String>[
-        'build/host/silkcodec.dll',
-        'silkcodec.dll',
-      ];
+      final candidates = <String>['build/host/silkcodec.dll', 'silkcodec.dll'];
       Object? lastError;
       for (final p in candidates) {
         try {
@@ -198,16 +236,17 @@ class SilkCodec {
           lastError = e;
         }
       }
-      throw SilkCodecException('无法加载 silkcodec.dll（尝试过 ' +
-          candidates.join(', ') +
-          '）。请先执行 tool/build_silk_host.sh，或设置环境变量 SILK_LIB_PATH。底层错误: ' +
-          lastError.toString());
+      throw SilkCodecException(
+        '无法加载 silkcodec.dll（尝试过 ' +
+            candidates.join(', ') +
+            '）。请先执行 tool/build_silk_host.sh，或设置环境变量 SILK_LIB_PATH。底层错误: ' +
+            lastError.toString(),
+      );
     }
     if (Platform.isLinux) {
       return DynamicLibrary.open('libsilkcodec.so');
     }
-    throw SilkCodecException(
-        '当前平台不支持 SILK 动态库: ' + Platform.operatingSystem);
+    throw SilkCodecException('当前平台不支持 SILK 动态库: ' + Platform.operatingSystem);
   }
 
   /// SDK 版本字符串（SKP_Silk_SDK_get_version），例如 1.0.9.6。
@@ -238,7 +277,8 @@ class SilkCodec {
   }) {
     if (pcm.length.isOdd) {
       throw SilkCodecException(
-          'PCM 字节数必须为偶数（s16le），实际 ' + pcm.length.toString());
+        'PCM 字节数必须为偶数（s16le），实际 ' + pcm.length.toString(),
+      );
     }
     final samplesPerFrame = (sampleRate / 50).round(); // 20ms
     if (samplesPerFrame <= 0) {
@@ -266,7 +306,13 @@ class SilkCodec {
         }
         outLenPtr.value = 1024;
         final ret = _encode(
-            _encState!, _encControl!, inBuf, samplesPerFrame, outBuf, outLenPtr);
+          _encState!,
+          _encControl!,
+          inBuf,
+          samplesPerFrame,
+          outBuf,
+          outLenPtr,
+        );
         if (ret != 0) {
           throw SilkCodecException('SKP_Silk_SDK_Encode 失败', ret);
         }
@@ -305,7 +351,14 @@ class SilkCodec {
       do {
         outLenPtr.value = 2048;
         final ret = _decode(
-            _decState!, ctrl, 0, inBuf, frame.length, outBuf, outLenPtr);
+          _decState!,
+          ctrl,
+          0,
+          inBuf,
+          frame.length,
+          outBuf,
+          outLenPtr,
+        );
         if (ret != 0) {
           throw SilkCodecException('SKP_Silk_SDK_Decode 失败', ret);
         }

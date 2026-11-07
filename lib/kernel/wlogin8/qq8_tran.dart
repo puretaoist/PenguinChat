@@ -123,8 +123,11 @@ class Qq8Endpoint {
 }
 
 /// 主端点（域名）。
-const Qq8Endpoint qq8PrimaryEndpoint =
-    Qq8Endpoint(qq8DefaultHost, qq8DefaultPort, isPrimary: true);
+const Qq8Endpoint qq8PrimaryEndpoint = Qq8Endpoint(
+  qq8DefaultHost,
+  qq8DefaultPort,
+  isPrimary: true,
+);
 
 /// 兜底端点（真实 IP，来自官方 serverlist）。
 ///
@@ -206,7 +209,8 @@ class Qq8FrameDecoder {
           '对端返回 HTTP 文本而非二进制帧（疑似校园网/运营商门户劫持）：$prefix',
         );
       }
-      final total = (_buf[cursor] << 24) |
+      final total =
+          (_buf[cursor] << 24) |
           (_buf[cursor + 1] << 16) |
           (_buf[cursor + 2] << 8) |
           _buf[cursor + 3];
@@ -222,9 +226,9 @@ class Qq8FrameDecoder {
 
       if (_buf.length - cursor < total) break; // 半包，等下一批
 
-      out.add(Uint8List.fromList(
-        _buf.sublist(cursor + headerLength, cursor + total),
-      ));
+      out.add(
+        Uint8List.fromList(_buf.sublist(cursor + headerLength, cursor + total)),
+      );
       cursor += total;
     }
 
@@ -407,11 +411,11 @@ class Qq8TcpTransport implements Qq8Transport {
       // 等了 10 秒。再让每个备胎各等 10 秒，四个备胎就是 50 秒白屏。
       final timeoutFor = ep.isPrimary
           ? connectTimeout
-          : Duration(
-              milliseconds: (connectTimeout.inMilliseconds / 3).round(),
-            );
-      onConnectAttempt?.call('尝试连接 ${ep.key}（超时 ${timeoutFor.inSeconds}s）'
-          '${i == 0 ? '' : '，第 $i 个兜底'}');
+          : Duration(milliseconds: (connectTimeout.inMilliseconds / 3).round());
+      onConnectAttempt?.call(
+        '尝试连接 ${ep.key}（超时 ${timeoutFor.inSeconds}s）'
+        '${i == 0 ? '' : '，第 $i 个兜底'}',
+      );
       try {
         _socket = await Socket.connect(ep.host, ep.port, timeout: timeoutFor);
         connectedEndpoint = ep;
@@ -677,10 +681,7 @@ class Qq8ScriptedTransport implements Qq8Transport {
   int _cursor = 0;
   void Function(Uint8List frame)? _onFrame;
 
-  Qq8ScriptedTransport(
-    this.scriptedResponses, {
-    this.splitResponses = false,
-  });
+  Qq8ScriptedTransport(this.scriptedResponses, {this.splitResponses = false});
 
   @override
   bool get isConnected => _connected;

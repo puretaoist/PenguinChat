@@ -17,30 +17,35 @@ import 'package:penguinchat/ui/widgets/chat_actions.dart';
 import 'package:penguinchat/ui/widgets/message_actions.dart';
 
 ChatMessage _msg() => ChatMessage(
-      id: 'm1',
-      text: '这条消息用来试试长按菜单的版面',
-      segments: const <Segment>[TextSegment('这条消息用来试试长按菜单的版面')],
-      time: DateTime(2026, 10, 30, 9, 30),
-      chatId: 'group_1',
-      senderId: '20002',
-      senderName: '张三',
-    );
+  id: 'm1',
+  text: '这条消息用来试试长按菜单的版面',
+  segments: const <Segment>[TextSegment('这条消息用来试试长按菜单的版面')],
+  time: DateTime(2026, 10, 30, 9, 30),
+  chatId: 'group_1',
+  senderId: '20002',
+  senderName: '张三',
+);
 
-Future<void> _pumpSheet(WidgetTester tester, Widget sheet,
-    {Size size = const Size(360, 620)}) async {
+Future<void> _pumpSheet(
+  WidgetTester tester,
+  Widget sheet, {
+  Size size = const Size(360, 620),
+}) async {
   TelegramColors.use(TelegramPalette.dark);
   addTearDown(() => TelegramColors.use(TelegramPalette.dark));
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: buildTelegramTheme(),
-    home: Scaffold(
-      backgroundColor: Colors.black,
-      body: Align(alignment: Alignment.bottomCenter, child: sheet),
+  await tester.pumpWidget(
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: buildTelegramTheme(),
+      home: Scaffold(
+        backgroundColor: Colors.black,
+        body: Align(alignment: Alignment.bottomCenter, child: sheet),
+      ),
     ),
-  ));
+  );
   await tester.pumpAndSettle();
 }
 
@@ -73,7 +78,9 @@ void main() {
 
   testWidgets('顶部预览带强调色竖线，内容和消息正文一致', (tester) async {
     await _pumpSheet(tester, MessageActionsSheet(message: _msg()));
-    final preview = tester.widget<Text>(find.byKey(const ValueKey('actions-preview')));
+    final preview = tester.widget<Text>(
+      find.byKey(const ValueKey('actions-preview')),
+    );
     expect(preview.data, '这条消息用来试试长按菜单的版面');
     expect(preview.style?.fontSize, 15);
   });
@@ -94,7 +101,9 @@ void main() {
     if (!Platform.isWindows) return;
     await _pumpSheet(
       tester,
-      const ChatActionsSheet(chat: Chat(id: 'group_1', title: '产品讨论组')),
+      const ChatActionsSheet(
+        chat: Chat(id: 'group_1', title: '产品讨论组'),
+      ),
     );
     await expectLater(
       find.byType(ActionSheet),
