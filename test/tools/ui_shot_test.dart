@@ -7,7 +7,6 @@
 library;
 
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -127,7 +126,8 @@ Future<void> _loadFonts() async {
   cjk.addFont(Future<ByteData>.value(ByteData.view(db.buffer)));
   await cjk.load();
   final FontLoader icons = FontLoader('MaterialIcons');
-  final Uint8List ib = File('$_fonts/materialicons-regular.otf').readAsBytesSync();
+  final Uint8List ib = File('$_fonts/materialicons-regular.otf')
+      .readAsBytesSync();
   icons.addFont(Future<ByteData>.value(ByteData.view(ib.buffer)));
   await icons.load();
 }
@@ -142,46 +142,48 @@ void main() {
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
-    await tester.runAsync(() => _makeStore(<Chat>[
-      Chat(
-        id: 'private_20002',
-        title: '小明',
-        type: ChatType.private,
-        rawId: 20002,
-        lastMessage: '在吗，晚上一起吃饭？',
-        lastTime: DateTime(2026, 11, 6, 14, 3),
-        unreadCount: 2,
-        online: true,
-      ),
-      Chat(
-        id: 'group_12345',
-        title: '测试群',
-        type: ChatType.group,
-        rawId: 12345,
-        memberCount: 128,
-        lastMessage: '张三: 文档我发群里了',
-        lastTime: DateTime(2026, 11, 6, 13, 40),
-        unreadCount: 12,
-      ),
-      Chat(
-        id: 'private_30003',
-        title: '李四',
-        type: ChatType.private,
-        rawId: 30003,
-        lastMessage: '收到',
-        lastTime: DateTime(2026, 11, 5, 22, 10),
-      ),
-      Chat(
-        id: 'group_40004',
-        title: '产品需求对接群（临时）',
-        type: ChatType.group,
-        rawId: 40004,
-        memberCount: 6,
-        lastMessage: '[图片]',
-        lastTime: DateTime(2026, 11, 4, 9, 5),
-        muted: true,
-      ),
-    ]));
+    await tester.runAsync(
+      () => _makeStore(<Chat>[
+        Chat(
+          id: 'private_20002',
+          title: '小明',
+          type: ChatType.private,
+          rawId: 20002,
+          lastMessage: '在吗，晚上一起吃饭？',
+          lastTime: DateTime(2026, 11, 6, 14, 3),
+          unreadCount: 2,
+          online: true,
+        ),
+        Chat(
+          id: 'group_12345',
+          title: '测试群',
+          type: ChatType.group,
+          rawId: 12345,
+          memberCount: 128,
+          lastMessage: '张三: 文档我发群里了',
+          lastTime: DateTime(2026, 11, 6, 13, 40),
+          unreadCount: 12,
+        ),
+        Chat(
+          id: 'private_30003',
+          title: '李四',
+          type: ChatType.private,
+          rawId: 30003,
+          lastMessage: '收到',
+          lastTime: DateTime(2026, 11, 5, 22, 10),
+        ),
+        Chat(
+          id: 'group_40004',
+          title: '产品需求对接群（临时）',
+          type: ChatType.group,
+          rawId: 40004,
+          memberCount: 6,
+          lastMessage: '[图片]',
+          lastTime: DateTime(2026, 11, 4, 9, 5),
+          muted: true,
+        ),
+      ]),
+    );
     await tester.pumpWidget(_app(const HomePage()));
     await _settle(tester);
     await _shot(tester, 'list_dark');
@@ -192,17 +194,19 @@ void main() {
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
-    await tester.runAsync(() => _makeStore(<Chat>[
-      Chat(
-        id: 'private_20002',
-        title: '小明',
-        type: ChatType.private,
-        rawId: 20002,
-        lastMessage: '好',
-        lastTime: DateTime(2026, 11, 6, 14, 8),
-        online: true,
-      ),
-    ]));
+    await tester.runAsync(
+      () => _makeStore(<Chat>[
+        Chat(
+          id: 'private_20002',
+          title: '小明',
+          type: ChatType.private,
+          rawId: 20002,
+          lastMessage: '好',
+          lastTime: DateTime(2026, 11, 6, 14, 8),
+          online: true,
+        ),
+      ]),
+    );
     session.historyPages.add(
       HistoryPage(<ChatMessage>[
         _msg('m1', '下午有空吗？', name: '小明', sid: '20002', minute: 1),
@@ -231,29 +235,54 @@ void main() {
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
-    await tester.runAsync(() => _makeStore(<Chat>[
-      Chat(
-        id: 'group_12345',
-        title: '测试群',
-        type: ChatType.group,
-        rawId: 12345,
-        memberCount: 128,
-        lastMessage: '谢谢！',
-        lastTime: DateTime(2026, 11, 6, 14, 8),
-      ),
-    ]));
+    await tester.runAsync(
+      () => _makeStore(<Chat>[
+        Chat(
+          id: 'group_12345',
+          title: '测试群',
+          type: ChatType.group,
+          rawId: 12345,
+          memberCount: 128,
+          lastMessage: '谢谢！',
+          lastTime: DateTime(2026, 11, 6, 14, 8),
+        ),
+      ]),
+    );
     session.historyPages.add(
       HistoryPage(<ChatMessage>[
-        _msg('g1', '大家好，我是新来的', name: '张三', sid: '30001',
-            minute: 1, chatId: 'group_12345'),
-        _msg('g2', '欢迎欢迎', name: '李四', sid: '30002',
-            minute: 2, chatId: 'group_12345'),
-        _msg('g3', '同上', name: '李四', sid: '30002',
-            minute: 2, chatId: 'group_12345'),
-        _msg('g4', '这条没有昵称的成员', sid: '39999',
-            minute: 3, chatId: 'group_12345'),
-        _msg('g5', '谢谢！', name: '张三', sid: '30001',
-            minute: 4, chatId: 'group_12345'),
+        _msg(
+          'g1',
+          '大家好，我是新来的',
+          name: '张三',
+          sid: '30001',
+          minute: 1,
+          chatId: 'group_12345',
+        ),
+        _msg(
+          'g2',
+          '欢迎欢迎',
+          name: '李四',
+          sid: '30002',
+          minute: 2,
+          chatId: 'group_12345',
+        ),
+        _msg(
+          'g3',
+          '同上',
+          name: '李四',
+          sid: '30002',
+          minute: 2,
+          chatId: 'group_12345',
+        ),
+        _msg('g4', '这条没有昵称的成员', sid: '39999', minute: 3, chatId: 'group_12345'),
+        _msg(
+          'g5',
+          '谢谢！',
+          name: '张三',
+          sid: '30001',
+          minute: 4,
+          chatId: 'group_12345',
+        ),
       ]),
     );
     await tester.pumpWidget(_app(const HomePage()));
@@ -270,26 +299,28 @@ void main() {
     tester.view.physicalSize = const Size(1904, 3040);
     tester.view.devicePixelRatio = 2.75;
     addTearDown(tester.view.reset);
-    await tester.runAsync(() => _makeStore(<Chat>[
-      Chat(
-        id: 'private_20002',
-        title: '小明',
-        type: ChatType.private,
-        rawId: 20002,
-        lastMessage: '好',
-        lastTime: DateTime(2026, 11, 6, 14, 8),
-        online: true,
-      ),
-      Chat(
-        id: 'group_12345',
-        title: '测试群',
-        type: ChatType.group,
-        rawId: 12345,
-        memberCount: 128,
-        lastMessage: '谢谢！',
-        lastTime: DateTime(2026, 11, 6, 14, 8),
-      ),
-    ]));
+    await tester.runAsync(
+      () => _makeStore(<Chat>[
+        Chat(
+          id: 'private_20002',
+          title: '小明',
+          type: ChatType.private,
+          rawId: 20002,
+          lastMessage: '好',
+          lastTime: DateTime(2026, 11, 6, 14, 8),
+          online: true,
+        ),
+        Chat(
+          id: 'group_12345',
+          title: '测试群',
+          type: ChatType.group,
+          rawId: 12345,
+          memberCount: 128,
+          lastMessage: '谢谢！',
+          lastTime: DateTime(2026, 11, 6, 14, 8),
+        ),
+      ]),
+    );
     await tester.pumpWidget(_app(const HomePage()));
     await _settle(tester);
     await _shot(tester, 'tablet_empty_dark');
@@ -300,24 +331,31 @@ void main() {
     tester.view.physicalSize = const Size(1904, 3040);
     tester.view.devicePixelRatio = 2.75;
     addTearDown(tester.view.reset);
-    await tester.runAsync(() => _makeStore(<Chat>[
-      Chat(
-        id: 'private_20002',
-        title: '小明',
-        type: ChatType.private,
-        rawId: 20002,
-        lastMessage: '好',
-        lastTime: DateTime(2026, 11, 6, 14, 8),
-        online: true,
-      ),
-    ]));
+    await tester.runAsync(
+      () => _makeStore(<Chat>[
+        Chat(
+          id: 'private_20002',
+          title: '小明',
+          type: ChatType.private,
+          rawId: 20002,
+          lastMessage: '好',
+          lastTime: DateTime(2026, 11, 6, 14, 8),
+          online: true,
+        ),
+      ]),
+    );
     session.historyPages.add(
       HistoryPage(<ChatMessage>[
         _msg('m1', '下午有空吗？', name: '小明', sid: '20002', minute: 1),
         _msg('m2', '想约你去看那个新开的展', name: '小明', sid: '20002', minute: 1),
         _msg('m3', '在哪', out: true, minute: 2),
-        _msg('m4', '就在中山路那边，周末人应该挺多的，得早点去排队',
-            name: '小明', sid: '20002', minute: 3),
+        _msg(
+          'm4',
+          '就在中山路那边，周末人应该挺多的，得早点去排队',
+          name: '小明',
+          sid: '20002',
+          minute: 3,
+        ),
         _msg('m5', '行，那周六上午？', out: true, minute: 4),
         _msg('m6', '好', name: '小明', sid: '20002', minute: 8),
       ]),
