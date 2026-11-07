@@ -194,29 +194,36 @@ class _SearchViewState extends State<SearchView> {
     final messages = _messageHits;
     if (_query.trim().isEmpty) return _hint(_emptyHint);
     if (chatting.isEmpty && messages.isEmpty) return _hint(_noResultHint);
-    return ListView(
-      key: const ValueKey('search-results'),
-      // 胶囊占位只加在列表末端，视口仍然铺到底（同四个 Tab 的做法）。
-      padding: EdgeInsets.only(top: 4, bottom: 4 + widget.bottomContentInset),
-      children: [
-        if (chatting.isNotEmpty) ...[
-          _sectionTitle('会话'),
-          for (var i = 0; i < chatting.length; i++)
-            _withDivider(
-              _chatTile(chatting[i]),
-              last: i == chatting.length - 1 && messages.isEmpty,
-            ),
+    return NotificationListener<ScrollStartNotification>(
+      // dragDetails 非空 = 手指在拖，不是惯性也不是程序滚动。
+      onNotification: (ScrollStartNotification n) {
+        if (n.dragDetails != null) _focus.unfocus();
+        return false;
+      },
+      child: ListView(
+        key: const ValueKey('search-results'),
+        // 胶囊占位只加在列表末端，视口仍然铺到底（同四个 Tab 的做法）。
+        padding: EdgeInsets.only(top: 4, bottom: 4 + widget.bottomContentInset),
+        children: [
+          if (chatting.isNotEmpty) ...[
+            _sectionTitle('会话'),
+            for (var i = 0; i < chatting.length; i++)
+              _withDivider(
+                _chatTile(chatting[i]),
+                last: i == chatting.length - 1 && messages.isEmpty,
+              ),
+          ],
+          if (messages.isNotEmpty) ...[
+            // 会话内搜索只有一种结果，不需要分组标题。
+            if (!_scoped) _sectionTitle('消息'),
+            for (var i = 0; i < messages.length; i++)
+              _withDivider(
+                _messageTile(messages[i]),
+                last: i == messages.length - 1,
+              ),
+          ],
         ],
-        if (messages.isNotEmpty) ...[
-          // 会话内搜索只有一种结果，不需要分组标题。
-          if (!_scoped) _sectionTitle('消息'),
-          for (var i = 0; i < messages.length; i++)
-            _withDivider(
-              _messageTile(messages[i]),
-              last: i == messages.length - 1,
-            ),
-        ],
-      ],
+      ),
     );
   }
 

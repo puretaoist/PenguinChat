@@ -28,6 +28,7 @@ import '../../client_api/chat_store.dart';
 import '../../client_api/session.dart';
 import '../../client_api/session_providers.dart';
 import '../theme/telegram_theme.dart';
+import '../widgets/search_field_box.dart';
 import '../theme/theme_mode.dart';
 import '../widgets/capped_content.dart';
 import '../widgets/storage_dialog.dart';
@@ -63,6 +64,94 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
     with SingleTickerProviderStateMixin {
   late final AnimationController _entrance;
 
+  /// 设置页搜索态。官方是 ActionBar 原地变形（`SettingsActivity.java:327`
+  /// `searchItem.setIsSearchField(true, false)`），所以这里不用路由，
+  /// 只换顶栏与列表内容。
+  bool _searching = false;
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  String _query = '';
+
+  /// 设置项索引：官方 `SettingsSearchCell` 搜的是全部设置项的标题与副标题，
+  /// 点一行直接进对应页面。我方二级页的项没有集中登记，这里先覆盖一级页
+  /// 能直达的条目。
+  List<
+    ({
+      String title,
+      String subtitle,
+      IconData icon,
+      List<Color> gradient,
+      VoidCallback open,
+    })
+  >
+  get _searchIndex =>
+      <
+        ({
+          String title,
+          String subtitle,
+          IconData icon,
+          List<Color> gradient,
+          VoidCallback open,
+        })
+      >[
+        (
+          title: '通用',
+          subtitle: '数字与时间格式',
+          icon: Icons.tune,
+          gradient: TgIconGradients.blue,
+          open: () => _open(const GeneralSettingsPage()),
+        ),
+        (
+          title: '外观',
+          subtitle: '主题、气泡、聊天列表、顶栏',
+          icon: Icons.palette_outlined,
+          gradient: TgIconGradients.purple,
+          open: () => _open(const AppearanceSettingsPage()),
+        ),
+        (
+          title: '聊天',
+          subtitle: '通知、键盘、长按菜单',
+          icon: Icons.chat_bubble_outline,
+          gradient: TgIconGradients.orange,
+          open: () => _open(const ChatsSettingsPage()),
+        ),
+        (
+          title: '其他',
+          subtitle: '关于与重置',
+          icon: Icons.more_horiz,
+          gradient: TgIconGradients.blueAlt,
+          open: () => _open(const OtherSettingsPage()),
+        ),
+        (
+          title: '存储与缓存',
+          subtitle: '清缓存、查看占用',
+          icon: Icons.storage_outlined,
+          gradient: TgIconGradients.blueDeep,
+          open: () {},
+        ),
+        (
+          title: '连接设置',
+          subtitle: 'OneBot 后端地址与令牌',
+          icon: Icons.dns_outlined,
+          gradient: TgIconGradients.cyan,
+          open: () => _open(const ConnectPage()),
+        ),
+        (
+          title: 'QQ 账号登录',
+          subtitle: '口令 / 短信 / 扫码 / 票据，四选一',
+          icon: Icons.key_rounded,
+          gradient: TgIconGradients.blue,
+          open: () => _open(const Qq8ConnectPage()),
+        ),
+        (
+          title: '关于 PenguinChat',
+          subtitle: '版本、两条线路与合规声明',
+          icon: Icons.info_outline,
+          gradient: TgIconGradients.blueLight,
+          open: () => _open(const OtherSettingsPage()),
+        ),
+      ];
+
   @override
   void initState() {
     super.initState();
@@ -75,7 +164,29 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
   @override
   void dispose() {
     _entrance.dispose();
+    _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  void _openSearch() {
+    setState(() {
+      _searching = true;
+      _query = '';
+      _searchController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
+  }
+
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    _searchController.clear();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
   }
 
   /// 第 [index] 组的入场包装（淡入 + 12dp 上浮）。
@@ -136,42 +247,151 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
             // 官方 ActionBar 透明、占状态栏（:321-324）；主 Tab 上没有返回箭头，
             // 压栈进入的二级页才有（:297）。退出登录不在列表里，在更多菜单里
             // （:334-353）。
-            TgActionBar(
-              title: '设置',
-              topInset: topInset,
-              onBack: widget.embedded
-                  ? null
-                  : () => Navigator.of(context).pop(),
-              actions: <Widget>[if (canDisconnect) _overflowMenu()],
-            ),
-            Expanded(
-              // 点当前 tab 回顶（MainTabsActivity.java:334-349 对四个 tab 都生效）。
-              child: ScrollToTopScope(
-                tab: 2,
-                builder: (BuildContext context, ScrollController c) => ListView(
-                  controller: c,
-                  padding: EdgeInsets.only(
-                    // 官方列表 padding top = 状态栏 + 12dp（:367）；状态栏已被
-                    // ActionBar 吃掉，这里只留 12。
-                    top: 12,
-                    bottom: 24 + widget.bottomContentInset,
-                    left: sideInset,
-                    right: sideInset,
+            if (_searching)
+              _searchBar(topInset)
+            else
+              TgActionBar(
+                title: '设置',
+                topInset: topInset,
+                onBack: widget.embedded
+                    ? null
+                    : () => Navigator.of(context).pop(),
+                actions: <Widget>[
+                  IconButton(
+                    key: const ValueKey<String>('settings-search'),
+                    onPressed: _openSearch,
+                    tooltip: '搜索设置',
+                    icon: Icon(
+                      Icons.search,
+                      color: TelegramColors.textSecondary,
+                      size: 24,
+                    ),
                   ),
-                  children: <Widget>[
-                    _enter(0, _profileBlock(account, status, qq8Online)),
-                    _enter(1, _mainGroup()),
-                    _enter(2, _titledGroup('数据', _dataRows(store))),
-                    _enter(3, _titledGroup('连接', _connectionRows(status))),
-                    _enter(4, _titledGroup('关于', _aboutRows())),
-                    _enter(5, _footer()),
-                  ],
+                  if (canDisconnect) _overflowMenu(),
+                ],
+              ),
+            if (_searching)
+              Expanded(child: _searchResults())
+            else
+              Expanded(
+                // 点当前 tab 回顶（MainTabsActivity.java:334-349 对四个 tab 都生效）。
+                child: ScrollToTopScope(
+                  tab: 2,
+                  builder: (BuildContext context, ScrollController c) =>
+                      ListView(
+                        controller: c,
+                        padding: EdgeInsets.only(
+                          // 官方列表 padding top = 状态栏 + 12dp（:367）；状态栏已被
+                          // ActionBar 吃掉，这里只留 12。
+                          top: 12,
+                          bottom: 24 + widget.bottomContentInset,
+                          left: sideInset,
+                          right: sideInset,
+                        ),
+                        children: <Widget>[
+                          _enter(0, _profileBlock(account, status, qq8Online)),
+                          _enter(1, _mainGroup()),
+                          _enter(2, _titledGroup('数据', _dataRows(store))),
+                          _enter(
+                            3,
+                            _titledGroup('连接', _connectionRows(status)),
+                          ),
+                          _enter(4, _titledGroup('关于', _aboutRows())),
+                          _enter(5, _footer()),
+                        ],
+                      ),
                 ),
               ),
-            ),
           ],
         ),
       ),
+    );
+  }
+
+  /// 搜索态顶栏：返回 + 搜索框。官方 `SettingsActivity.java:327` 的
+  /// `setIsSearchField` 就是 ActionBar 原地换成这个样子，高度不变。
+  Widget _searchBar(double topInset) {
+    return Container(
+      color: TelegramColors.bgHeader,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          SizedBox(height: topInset),
+          SizedBox(
+            height: TelegramMetrics.headerHeight,
+            child: Row(
+              children: <Widget>[
+                const SizedBox(width: 6),
+                IconButton(
+                  key: const ValueKey<String>('settings-search-back'),
+                  onPressed: _closeSearch,
+                  tooltip: '退出搜索',
+                  icon: Icon(
+                    Icons.arrow_back,
+                    color: TelegramColors.textSecondary,
+                    size: 24,
+                  ),
+                ),
+                Expanded(
+                  child: SearchFieldBox(
+                    controller: _searchController,
+                    focusNode: _searchFocus,
+                    height: 36,
+                    radius: 18,
+                    hintText: '搜索设置',
+                    onChanged: (String value) => setState(() => _query = value),
+                    onCleared: () => setState(() => _query = ''),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _searchResults() {
+    final String query = _query.trim().toLowerCase();
+    if (query.isEmpty) {
+      return Center(
+        child: Text(
+          '搜索设置项',
+          style: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
+        ),
+      );
+    }
+    final hits = _searchIndex
+        .where(
+          (e) =>
+              e.title.toLowerCase().contains(query) ||
+              e.subtitle.toLowerCase().contains(query),
+        )
+        .toList();
+    if (hits.isEmpty) {
+      return Center(
+        child: Text(
+          '没有匹配的设置项',
+          style: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
+        ),
+      );
+    }
+    return ListView(
+      key: const ValueKey<String>('settings-search-results'),
+      padding: EdgeInsets.only(top: 12, bottom: 24 + widget.bottomContentInset),
+      children: <Widget>[
+        _section(<Widget>[
+          for (final e in hits)
+            TgSettingRow(
+              icon: e.icon,
+              iconGradient: e.gradient,
+              title: e.title,
+              subtitle: e.subtitle,
+              onTap: e.open,
+            ),
+        ]),
+      ],
     );
   }
 

@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import '../../kernel/wlogin8/qq8_list.dart';
 import '../theme/telegram_theme.dart';
 import 'glass_sheet.dart';
+import 'search_field_box.dart';
 import 'telegram_avatar.dart';
 import 'telegram_list_item.dart';
 
@@ -69,10 +70,56 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
   String? _error;
   bool _loading = false;
 
+  /// 成员搜索。官方群成员页同样是 ActionBar 原地变形
+  /// （`ChatUsersActivity.java:677` 的 `searchItem.setIsSearchField`），
+  /// 搜的是显示名与 uin。
+  bool _searching = false;
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _openSearch() {
+    setState(() {
+      _searching = true;
+      _query = '';
+      _searchController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
+  }
+
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    _searchController.clear();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+  }
+
+  List<Qq8GroupMember> _filter(List<Qq8GroupMember> members) {
+    final String q = _query.trim().toLowerCase();
+    if (q.isEmpty) return members;
+    return members
+        .where(
+          (Qq8GroupMember m) =>
+              m.displayName.toLowerCase().contains(q) || '${m.uin}'.contains(q),
+        )
+        .toList();
   }
 
   Future<void> _load() async {
@@ -107,17 +154,55 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
             padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
             child: Row(
               children: <Widget>[
-                Expanded(child: _header(members)),
-                IconButton(
-                  key: const ValueKey('members-refresh'),
-                  onPressed: _loading ? null : _load,
-                  icon: Icon(
-                    Icons.refresh,
-                    size: 20,
-                    color: TelegramColors.textSecondary,
+                // 搜索态左侧是返回箭头（ActionBar 的位子），不是右侧。
+                if (_searching)
+                  IconButton(
+                    key: const ValueKey('members-search-back'),
+                    onPressed: _closeSearch,
+                    tooltip: '退出搜索',
+                    icon: Icon(
+                      Icons.arrow_back,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
                   ),
-                  tooltip: '刷新',
-                ),
+                if (_searching)
+                  Expanded(
+                    child: SearchFieldBox(
+                      controller: _searchController,
+                      focusNode: _searchFocus,
+                      height: 36,
+                      radius: 18,
+                      hintText: '搜索成员',
+                      onChanged: (String value) =>
+                          setState(() => _query = value),
+                      onCleared: () => setState(() => _query = ''),
+                    ),
+                  )
+                else
+                  Expanded(child: _header(members)),
+                if (!_searching) ...<Widget>[
+                  IconButton(
+                    key: const ValueKey('members-search'),
+                    onPressed: _openSearch,
+                    icon: Icon(
+                      Icons.search,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
+                    tooltip: '搜索成员',
+                  ),
+                  IconButton(
+                    key: const ValueKey('members-refresh'),
+                    onPressed: _loading ? null : _load,
+                    icon: Icon(
+                      Icons.refresh,
+                      size: 20,
+                      color: TelegramColors.textSecondary,
+                    ),
+                    tooltip: '刷新',
+                  ),
+                ],
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
                   icon: Icon(
@@ -190,13 +275,23 @@ class _GroupMembersPanelState extends State<GroupMembersPanel> {
         ),
       );
     }
+    final List<Qq8GroupMember> shown = _filter(members);
+    if (shown.isEmpty) {
+      return Center(
+        child: Text(
+          '没有匹配的成员',
+          key: const ValueKey('members-no-match'),
+          style: TextStyle(color: TelegramColors.textMuted, fontSize: 13),
+        ),
+      );
+    }
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      itemCount: members.length,
+      itemCount: shown.length,
       itemBuilder: (_, i) => Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          _row(members[i]),
+          _row(shown[i]),
           // UserCell 的 needDivider：从文字起点（64）画到右缘，最后一行不画
           if (i != members.length - 1)
             Container(

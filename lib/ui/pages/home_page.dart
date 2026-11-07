@@ -152,6 +152,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 与 [_searchOpen] 互斥：搜索只可能发生在“列表或某个会话”其中一侧。
   bool _chatSearchOpen = false;
 
+  /// 聊天态停在第几条命中（从 0 起）。上下跳按钮与「2 of 20」都用它。
+  int _chatSearchIndex = 0;
+
   /// 会话内搜索词（官方边输入边 `searchMessagesInChat`，`:35364`）。
   String _chatSearchQuery = '';
 
@@ -2347,6 +2350,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     setState(() {
       _chatSearchOpen = true;
       _chatSearchQuery = '';
+      _chatSearchIndex = 0;
       _chatSearchController.clear();
     });
     // 官方 `openSearch(openSearchKeyboard)` 会立刻把焦点交给搜索框并弹键盘
@@ -2553,6 +2557,25 @@ class _HomePageState extends ConsumerState<HomePage> {
       atBottom: _atBottom,
       onScrollNotification: _onScrollNotification,
       onJumpToLatest: () => _jumpToLatest(chat.id),
+      // 会话内搜索的上下跳按钮：官方是 ChatActivity 自己的
+      // sideControlsButtonsLayout 里的 BUTTON_SEARCH_UP / _DOWN，落在聊天区
+      // 右下（ChatActivity.java:7209 Gravity.RIGHT | Gravity.BOTTOM），
+      // 这里贴在计数面板上方、靠右 4dp。
+      overlay: _chatSearchOpen && !_chatSearchListMode
+          ? Positioned(
+              right: 4,
+              bottom:
+                  ChatSearchPanel.height +
+                  MediaQuery.paddingOf(context).bottom +
+                  12,
+              child: ChatSearchNavButtons(
+                index: _chatSearchIndex,
+                total: _chatSearchHits(store, chat).length,
+                onPrevious: () => _stepChatSearchHit(chat, -1),
+                onNext: () => _stepChatSearchHit(chat, 1),
+              ),
+            )
+          : null,
       messagesEmpty: _buildMessagesEmpty(store),
       header: AnimatedSwitcher(
         duration: const Duration(milliseconds: 150),
@@ -2572,9 +2595,9 @@ class _HomePageState extends ConsumerState<HomePage> {
               top: false,
               child: ChatSearchPanel(
                 count: _chatSearchHits(store, chat).length,
+                index: _chatSearchIndex,
                 listMode: _chatSearchListMode,
-                onToggleMode: () =>
-                    setState(() => _chatSearchListMode = !_chatSearchListMode),
+                onToggleMode: () => _toggleChatSearchMode(chat, store),
               ),
             )
           : ChatInputBar(
@@ -2775,8 +2798,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       searchController: _chatSearchOpen ? _chatSearchController : null,
       searchFocus: _chatSearchOpen ? _chatSearchFocus : null,
       onExitSearch: _closeChatSearch,
-      onSearchChanged: (String value) =>
-          setState(() => _chatSearchQuery = value),
+      onSearchChanged: (String value) => setState(() {
+        _chatSearchQuery = value;
+        _chatSearchIndex = 0;
+      }),
     );
   }
 
@@ -2789,6 +2814,100 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (query.isEmpty) return const <({String chatId, ChatMessage message})>[];
     return store?.searchMessages(query, chatId: chat.id) ??
         const <({String chatId, ChatMessage message})>[];
+  }
+
+  /// 把聊天流定位到某条消息（官方 `scrollToPositionWithOffset`，`:18594`）。
+  ///
+  /// 复用「锚点 + 每帧步进」那套：Flutter 没有按 index 定位的 API，只能先按
+  /// index 估算 pixels、再按 RenderBox 精确校正（见 [_anchorStep] 的注释）。
+  void _jumpToMessage(String chatId, String messageId) {
+    if (_viewport.ownerChatId != chatId) return;
+    // 160 是「命中消息离视口底部多远」，约等于屏幕中间偏下 —— 官方给的是顶部
+    // 偏移，两边取值不同但意图一样：让命中的那条落在舒服的位置。
+    _viewport.pendingRestore = ChatScrollAnchor(messageId, 160);
+    _restoreScroll(_viewport.generation);
+  }
+
+  /// 点一条结果：退回聊天流并定位过去。
+  ///
+  /// 官方点结果走 `showMessagesSearchListView(false)`（`:12972-13040`），
+  /// 列表态退出、聊天流滚到那条消息，搜索态本身还在。
+  void _focusChatSearchHit(
+    Chat chat,
+    int index,
+    List<({String chatId, ChatMessage message})> hits,
+  ) {
+    if (index < 0 || index >= hits.length) return;
+    final ChatMessage message = hits[index].message;
+    setState(() {
+      _chatSearchIndex = index;
+      _chatSearchListMode = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _jumpToMessage(chat.id, message.id);
+    });
+  }
+
+  /// 列表态 ↔ 聊天态。
+  ///
+  /// 官方 `showMessagesSearchListView(boolean)`（`ChatActivity.java:12972-13040`）
+  /// 在退出列表态时会按当前可见的第一/最后一条把聊天流滚过去，所以切回聊天
+  /// 也要落位，不能只换个渲染方式。
+  void _toggleChatSearchMode(Chat chat, ChatStore? store) {
+    final bool toChat = _chatSearchListMode;
+    final List<({String chatId, ChatMessage message})> hits = _chatSearchHits(
+      store,
+      chat,
+    );
+    setState(() => _chatSearchListMode = !_chatSearchListMode);
+    if (!toChat || hits.isEmpty) return;
+    _focusChatSearchHit(chat, _chatSearchIndex.clamp(0, hits.length - 1), hits);
+  }
+
+  /// 上一条 / 下一条（官方 `BUTTON_SEARCH_UP` / `BUTTON_SEARCH_DOWN`）。
+  void _stepChatSearchHit(Chat chat, int delta) {
+    final List<({String chatId, ChatMessage message})> hits = _chatSearchHits(
+      ref.read(chatStoreProvider),
+      chat,
+    );
+    if (hits.isEmpty) return;
+    final int next = (_chatSearchIndex + delta).clamp(0, hits.length - 1);
+    if (next == _chatSearchIndex) {
+      // 到头了就只滚到那条，不重复 setState。
+      _jumpToMessage(chat.id, hits[next].message.id);
+      return;
+    }
+    _focusChatSearchHit(chat, next, hits);
+  }
+
+  /// 结果列表上下各 48dp 的渐隐（bgChat → 透明），盖住列表边缘。
+  ///
+  /// 官方 `ChatActivitySearchContainer.setup()` 里 `setFadeHeightTop(dp(48))`
+  /// / `setFadeHeightBottom(dp(48))`
+  /// （`Components/chat/ChatActivitySearchContainer.java:28-30`）。
+  Widget _searchEdgeFade({required bool top}) {
+    return Positioned(
+      top: top ? 0 : null,
+      bottom: top ? null : 0,
+      left: 0,
+      right: 0,
+      height: 48,
+      child: IgnorePointer(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: top ? Alignment.topCenter : Alignment.bottomCenter,
+              end: top ? Alignment.bottomCenter : Alignment.topCenter,
+              colors: <Color>[
+                TelegramColors.bgChat,
+                TelegramColors.bgChat.withValues(alpha: 0),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// 会话内搜索的结果视图。
@@ -2817,50 +2936,95 @@ class _HomePageState extends ConsumerState<HomePage> {
             padding: EdgeInsets.only(top: topInset, left: 12, right: 12),
             child: _buildHeader(chat, onBack),
           ),
+          SizedBox(
+            height: 22,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: Text(
+                  '搜索来自 ${chat.title}',
+                  key: const ValueKey<String>('chat-search-caption'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: TelegramColors.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          ),
           Expanded(
-            child: hits.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Text(
-                        query.isEmpty
-                            ? '搜索本会话的消息'
-                            : '没有找到。\n只会搜已经加载到本地的消息，更早的还没拉下来。',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: TelegramColors.textMuted,
-                          fontSize: 13,
+            child: Stack(
+              children: <Widget>[
+                if (hits.isEmpty)
+                  Positioned.fill(
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Text(
+                          query.isEmpty
+                              ? '搜索本会话的消息'
+                              : '没有找到。\n只会搜已经加载到本地的消息，更早的还没拉下来。',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: TelegramColors.textMuted,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                     ),
                   )
-                : ListView.builder(
-                    key: const ValueKey<String>('chat-search-results'),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: hits.length,
-                    itemBuilder: (BuildContext context, int index) {
-                      final ChatMessage m = hits[index].message;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: MessageBubble(
-                          key: ValueKey<String>('chat-search-msg-${m.id}'),
-                          message: m,
-                          showSenderName: chat.type == ChatType.group,
-                          senderLabel: _senderLabelOf(m, chat),
-                          showAvatarColumn: false,
-                          avatarVisible: false,
-                        ),
-                      );
-                    },
+                else
+                  Positioned.fill(
+                    // 一拖就收键盘：官方结果列表的滚动监听里
+                    // `SCROLL_STATE_DRAGGING` 时 `hideKeyboard(contentView)`
+                    // （`ChatActivity.java:7697-7703`），免得键盘吃掉半屏结果。
+                    child: NotificationListener<ScrollStartNotification>(
+                      // dragDetails 非空 = 手指在拖，不是惯性也不是程序滚动。
+                      onNotification: (ScrollStartNotification n) {
+                        if (n.dragDetails != null) _chatSearchFocus.unfocus();
+                        return false;
+                      },
+                      child: ListView.builder(
+                        key: const ValueKey<String>('chat-search-results'),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: hits.length,
+                        itemBuilder: (BuildContext context, int index) {
+                          final ChatMessage m = hits[index].message;
+                          return GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => _focusChatSearchHit(chat, index, hits),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: MessageBubble(
+                                key: ValueKey<String>(
+                                  'chat-search-msg-${m.id}',
+                                ),
+                                message: m,
+                                showSenderName: chat.type == ChatType.group,
+                                senderLabel: _senderLabelOf(m, chat),
+                                showAvatarColumn: false,
+                                avatarVisible: false,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
                   ),
+                _searchEdgeFade(top: true),
+                _searchEdgeFade(top: false),
+              ],
+            ),
           ),
           SafeArea(
             top: false,
             child: ChatSearchPanel(
               count: hits.length,
               listMode: _chatSearchListMode,
-              onToggleMode: () =>
-                  setState(() => _chatSearchListMode = !_chatSearchListMode),
+              onToggleMode: () => _toggleChatSearchMode(chat, store),
             ),
           ),
           // 键盘占位：官方把这一条挂在输入栏的位子上

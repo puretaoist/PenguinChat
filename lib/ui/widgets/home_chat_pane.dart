@@ -29,6 +29,7 @@ class HomeChatPane extends StatelessWidget {
     required this.onScrollNotification,
     required this.onJumpToLatest,
     required this.itemBuilder,
+    this.overlay,
   });
 
   final Chat chat;
@@ -46,6 +47,13 @@ class HomeChatPane extends StatelessWidget {
   final VoidCallback onJumpToLatest;
   final Widget Function(BuildContext context, int index, MessageListItem item)
   itemBuilder;
+
+  /// 叠在整页最上层的浮层（会话内搜索的上下跳按钮就挂这里）。
+  ///
+  /// 官方这些按钮属于 ChatActivity 自己的 sideControlsButtonsLayout
+  /// （`ChatActivity.java:7209`，`Gravity.RIGHT | Gravity.BOTTOM`），
+  /// 不归聊天流组件管；这里给个口子，免得在外面再套一层 Stack。
+  final Widget? overlay;
 
   @override
   Widget build(BuildContext context) {
@@ -144,6 +152,7 @@ class HomeChatPane extends StatelessWidget {
         // 页头胶囊让出状态栏：背景仍铺到屏幕顶端（壁纸/模糊在下面），
         // 胶囊本身从状态栏下沿开始，和官方 ChatActivity 的 actionBar 一致。
         Positioned(top: topInset, left: 0, right: 0, child: header),
+        ?overlay,
       ],
     );
   }

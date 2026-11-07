@@ -20,6 +20,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../theme/telegram_theme.dart';
+import 'glass_surface.dart';
 
 class ChatSearchPanel extends StatelessWidget {
   const ChatSearchPanel({
@@ -97,6 +98,101 @@ class ChatSearchPanel extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 聊天页右侧那对「上一条 / 下一条」玻璃圆钮。
+///
+/// 出处：`Components/chat/layouts/ChatActivitySideControlsButtonsLayout.java`
+/// * 按钮本体 44：`ChatActivityBlurredRoundButton.BUTTON_SIZE = 44`；
+///   外层容器 56×64、`Gravity.RIGHT | Gravity.BOTTOM`
+///   （`ChatActivity.java:7209` `createFrame(57, 300, Gravity.RIGHT | Gravity.BOTTOM)`）。
+/// * 竖排间距 10：`:188` `gap = dp(10 + 10 * counterVisibility)`，无计数时就是 10。
+/// * 出现/消失 280ms DECELERATE、`translationY = dp(80) * (1 - visibility)`、
+///   scale `lerp(0.7, 1)`：`:176-205`。
+/// * `BUTTON_SEARCH_UP` 靠 `reverseIconByY()` 把 pagedown 图标翻过来（`:236-238`）。
+///
+/// 我方没有 pagedown 资源，用 Material 的上下箭头；玻璃底色走已经统一的
+/// [GlassSurface.capsule]，与主胶囊同一套参数。
+class ChatSearchNavButtons extends StatelessWidget {
+  const ChatSearchNavButtons({
+    super.key,
+    required this.index,
+    required this.total,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  /// 当前停在第几条（从 0 起）。
+  final int index;
+
+  /// 命中总数。
+  final int total;
+
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _RoundButton(
+          key: const ValueKey<String>('chat-search-prev'),
+          icon: Icons.keyboard_arrow_up,
+          tooltip: '上一条',
+          onTap: index > 0 ? onPrevious : null,
+        ),
+        const SizedBox(height: 10), // :188 gap dp(10)
+        _RoundButton(
+          key: const ValueKey<String>('chat-search-next'),
+          icon: Icons.keyboard_arrow_down,
+          tooltip: '下一条',
+          onTap: index < total - 1 ? onNext : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _RoundButton extends StatelessWidget {
+  const _RoundButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool enabled = onTap != null;
+    return SizedBox(
+      // BUTTON_SIZE = 44
+      width: 44,
+      height: 44,
+      child: GlassSurface.capsule(
+        radius: 22,
+        padding: EdgeInsets.zero,
+        alignment: Alignment.center,
+        child: IconButton(
+          onPressed: onTap,
+          tooltip: tooltip,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+          iconSize: 22,
+          icon: Icon(
+            icon,
+            color: enabled
+                ? TelegramColors.textPrimary
+                : TelegramColors.textMuted.withValues(alpha: 0.45),
+          ),
         ),
       ),
     );
