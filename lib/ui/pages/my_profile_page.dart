@@ -45,7 +45,14 @@ import 'qq8_connect_page.dart';
 import 'settings_page.dart';
 
 class MyProfilePage extends ConsumerStatefulWidget {
-  const MyProfilePage({super.key, this.onOpenSettings});
+  const MyProfilePage({
+    super.key,
+    this.onOpenSettings,
+    this.bottomContentInset = 0,
+  });
+
+  /// 胶囊占位放进列表末端（DialogsActivity.java:2982），保留全高视口。
+  final double bottomContentInset;
 
   /// 底栏设置 tab 的入口（由 HomeShell 传入）。为 null 时退化成压栈打开。
   final VoidCallback? onOpenSettings;
@@ -101,7 +108,7 @@ class _MyProfilePageState extends ConsumerState<MyProfilePage> {
                 controller: c,
                 padding: EdgeInsets.only(
                   top: topInset + 226,
-                  bottom: 32,
+                  bottom: 32 + widget.bottomContentInset,
                   left: 12,
                   right: 12,
                 ),

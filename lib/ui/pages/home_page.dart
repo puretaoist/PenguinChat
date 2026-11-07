@@ -82,6 +82,7 @@ class HomePage extends ConsumerStatefulWidget {
     this.previewChats = const <Chat>[],
     this.onChatPaneVisibilityChanged,
     this.reverseMessageList = true,
+    this.bottomContentInset = 0,
   });
 
   /// 冷启动时从磁盘索引读出的会话快照（见 `chat_index_preview.dart`）。
@@ -97,6 +98,9 @@ class HomePage extends ConsumerStatefulWidget {
   /// 传入并随登录状态更新（它 watch 了 qq8LoginStateProvider，本页不 watch，
   /// 因为 widget 测试的 provider override 里没有协议线的依赖）。
   final bool connecting;
+
+  /// 主壳胶囊占位只加到列表内部（DialogsActivity.java:2982），不缩短视口。
+  final double bottomContentInset;
 
   /// 窄屏下"是否正在看对话"（true=对话页，false=列表页）。
   ///
@@ -1361,6 +1365,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       store: store,
       connecting: widget.connecting,
       topInset: topInset,
+      bottomContentInset: widget.bottomContentInset,
       selectedChatId: wide ? _resolvedChatId : null,
       onOpenChat: _openChat,
       onLongPressChat: _showChatActions,
@@ -1405,16 +1410,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                 width: AppBreakpoints.sidebarWidthFor(
                   MediaQuery.sizeOf(context).width,
                 ),
-                // 宽屏的胶囊 tab 只占左侧栏，左栏内容要让出 72dp（+手势条），
-                // 否则最后一条会话会被胶囊压住。
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    bottom:
-                        AppBreakpoints.sidebarTabBarReserve +
-                        MediaQuery.paddingOf(context).bottom,
-                  ),
-                  child: _wideLeftPane(wideTab, sidebar),
-                ),
+                // 视口铺到底，末项避让由各列表的内部 padding 负责。
+                child: _wideLeftPane(wideTab, sidebar),
               ),
               Container(width: 1, color: TelegramColors.divider),
               Expanded(child: _chatPaneView(chats, store, topInset: topInset)),
@@ -2360,14 +2357,17 @@ class _HomePageState extends ConsumerState<HomePage> {
         ContactsPage(
           key: const ValueKey<String>('wide-left-contacts'),
           onOpenChats: () => ref.read(wideTabProvider.notifier).state = 0,
+          bottomContentInset: widget.bottomContentInset,
         ),
-        const SettingsPage(
-          key: ValueKey<String>('wide-left-pane-2'),
+        SettingsPage(
+          key: const ValueKey<String>('wide-left-pane-2'),
           embedded: true,
+          bottomContentInset: widget.bottomContentInset,
         ),
         MyProfilePage(
           key: const ValueKey<String>('wide-left-profile'),
           onOpenSettings: () => ref.read(wideTabProvider.notifier).state = 2,
+          bottomContentInset: widget.bottomContentInset,
         ),
       ],
     );

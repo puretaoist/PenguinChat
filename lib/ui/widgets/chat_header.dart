@@ -114,7 +114,7 @@ class ChatHeader extends StatelessWidget {
                   top: 0,
                   width: capsuleH, // 官方 s+p*2 = 58，正方形
                   height: capsuleH,
-                  child: GlassSurface(
+                  child: GlassSurface.capsule(
                     radius: 23,
                     alignment: Alignment.center,
                     padding: EdgeInsets.zero,
@@ -134,7 +134,7 @@ class ChatHeader extends StatelessWidget {
                 top: 0,
                 width: middleW,
                 height: capsuleH,
-                child: GlassSurface(
+                child: GlassSurface.capsule(
                   radius: 23,
                   alignment: Alignment.centerLeft,
                   padding: const EdgeInsets.only(left: 8, right: 18),
@@ -186,7 +186,7 @@ class ChatHeader extends StatelessWidget {
                 top: 0,
                 width: menuCapsuleW,
                 height: capsuleH,
-                child: GlassSurface(
+                child: GlassSurface.capsule(
                   radius: 23,
                   alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(horizontal: p),

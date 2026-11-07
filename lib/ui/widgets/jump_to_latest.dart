@@ -5,11 +5,10 @@
 /// `_onScroll` / `_jumpToLatest`）：这里只是个哑组件，方便单独测。
 library;
 
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 import '../theme/telegram_theme.dart';
+import 'glass_surface.dart';
 
 class JumpToLatestButton extends StatefulWidget {
   /// 未读条数（0 = 不显示徽章）。
@@ -61,71 +60,55 @@ class _JumpToLatestButtonState extends State<JumpToLatestButton>
 
   Widget _buildButton(int unread) {
     // 玻璃圆钮：官方 ChatActivityBlurredRoundPageDownButton 是毛玻璃圆，
-    // 底下消息透上来。Flutter 侧 ClipOval + BackdropFilter 近似，阴影放在
-    // 被裁剪的外层 Container 上（ClipOval 内部画不出外阴影）。
-    final bool dark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.28 : 0.12),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Stack(
-        clipBehavior: Clip.none,
-        alignment: Alignment.center,
-        children: [
-          ClipOval(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              child: Material(
-                color: TelegramColors.bgHeader.withValues(
-                  alpha: dark ? 0.72 : 0.88,
-                ),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: widget.onTap,
-                  child: SizedBox(
-                    // TG 的 chat_go_down 按钮直径 dp(46)
-                    width: 46,
-                    height: 46,
-                    child: Icon(
-                      Icons.keyboard_arrow_down,
-                      size: 26,
-                      color: TelegramColors.textSecondary,
-                    ),
-                  ),
+    // 底下消息透上来。参数统一走 GlassSurface.capsule；直径 46、radius 23
+    // 正好是正圆。
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        GlassSurface.capsule(
+          radius: 23,
+          padding: EdgeInsets.zero,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: widget.onTap,
+              child: SizedBox(
+                // TG 的 chat_go_down 按钮直径 dp(46)
+                width: 46,
+                height: 46,
+                child: Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 26,
+                  color: TelegramColors.textSecondary,
                 ),
               ),
             ),
           ),
-          if (unread > 0)
-            Positioned(
-              right: -6,
-              top: -4,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: TelegramColors.badge,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: TelegramColors.bgChat, width: 2),
-                ),
-                child: Text(
-                  '$unread',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
+        ),
+        if (unread > 0)
+          Positioned(
+            right: -6,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: TelegramColors.badge,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: TelegramColors.bgChat, width: 2),
+              ),
+              child: Text(
+                '$unread',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 }

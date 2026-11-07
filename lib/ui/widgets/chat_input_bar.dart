@@ -18,14 +18,13 @@
 /// 整条仍用 Positioned 浮在列表上（列表底部按 [reserve] 留白），是"浮层"。
 library;
 
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 
 import '../../client_api/objects.dart';
 import '../theme/motion.dart';
 import '../theme/telegram_theme.dart';
 import 'glass_sheet.dart';
+import 'glass_surface.dart';
 import 'voice_record_button.dart';
 
 /// 聊天输入栏。[replyTarget] 非空时在输入行上方显示"正在回复"条。
@@ -129,114 +128,73 @@ class ChatInputBar extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: <Widget>[
                         Expanded(
-                          // 悬浮胶囊 + 真毛玻璃：AyuGram 那颗胶囊的玻璃感来自
-                          // 背后一层 blur，而不是单纯换个填充色。阴影必须留在
-                          // 最外层 Container——画在被 ClipRRect 裁的内部会被裁掉。
-                          child: Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(24),
-                              boxShadow: <BoxShadow>[
-                                BoxShadow(
-                                  color: Colors.black.withValues(
-                                    alpha: dark ? 0.22 : 0.06,
+                          // 悬浮胶囊 + 真毛玻璃：参数统一走 GlassSurface.capsule
+                          // （官方 mainTabs()/topPanel() 同源），圆角仍取官方 24。
+                          child: GlassSurface.capsule(
+                            radius: 24,
+                            padding: EdgeInsets.zero,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(minHeight: 48),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: <Widget>[
+                                  // 表情键在**胶囊内左侧** 44×44：TG
+                                  // `ChatActivityEnterView.java:2755`
+                                  // createFrame(DEFAULT_HEIGHT, DEFAULT_HEIGHT,
+                                  //   BOTTOM|LEFT, 2, 0, 0, 0)，padding 7.5。
+                                  _ghostIcon(
+                                    key: const ValueKey('open-faces'),
+                                    icon: Icons.emoji_emotions_outlined,
+                                    tooltip: 'QQ 表情',
+                                    onTap: onOpenFaces,
+                                    size: 26,
+                                    box: 48,
                                   ),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(24),
-                              child: BackdropFilter(
-                                filter: ui.ImageFilter.blur(
-                                  sigmaX: 20,
-                                  sigmaY: 20,
-                                ),
-                                child: Container(
-                                  constraints: const BoxConstraints(
-                                    minHeight: 48,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    // 半透明填充：让下面 blur 上来的壁纸透一点，
-                                    // 这才是玻璃；完全不透明会把 blur 盖死。
-                                    color: fieldColor.withValues(
-                                      alpha: dark ? 0.72 : 0.86,
-                                    ),
-                                    borderRadius: BorderRadius.circular(24),
-                                  ),
-                                  // 描边放 foregroundDecoration：写进 decoration
-                                  // 会和圆角裁剪打架、还可能吃内边距。
-                                  foregroundDecoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(24),
-                                    border: Border.all(
-                                      color: TelegramColors.divider.withValues(
-                                        alpha: dark ? 0.6 : 0.9,
-                                      ),
-                                      width: 0.5,
+                                  Expanded(
+                                    child: _GrowingField(
+                                      controller: controller,
+                                      enabled: enabled,
+                                      onSubmitted: onSend,
+                                      fieldColor: fieldColor,
                                     ),
                                   ),
-                                  child: Row(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: <Widget>[
-                                      // 表情键在**胶囊内左侧** 44×44：TG
-                                      // `ChatActivityEnterView.java:2755`
-                                      // createFrame(DEFAULT_HEIGHT, DEFAULT_HEIGHT,
-                                      //   BOTTOM|LEFT, 2, 0, 0, 0)，padding 7.5。
-                                      _ghostIcon(
-                                        key: const ValueKey('open-faces'),
-                                        icon: Icons.emoji_emotions_outlined,
-                                        tooltip: 'QQ 表情',
-                                        onTap: onOpenFaces,
-                                        size: 26,
-                                        box: 48,
-                                      ),
-                                      Expanded(
-                                        child: _GrowingField(
-                                          controller: controller,
-                                          enabled: enabled,
-                                          onSubmitted: onSend,
-                                          fieldColor: fieldColor,
+                                  // 📎 回形针在**胶囊内右侧** 44×44（:2840）。
+                                  // 有字时官方把它 alpha→0 / scale 0.5 收起来
+                                  // （checkSendButton :7945-7979），空输入才显示。
+                                  ValueListenableBuilder<TextEditingValue>(
+                                    valueListenable: controller,
+                                    builder: (context, value, child) {
+                                      final bool show = value.text
+                                          .trim()
+                                          .isEmpty;
+                                      return AnimatedOpacity(
+                                        opacity: show ? 1 : 0,
+                                        duration: const Duration(
+                                          milliseconds: 100,
                                         ),
-                                      ),
-                                      // 📎 回形针在**胶囊内右侧** 44×44（:2840）。
-                                      // 有字时官方把它 alpha→0 / scale 0.5 收起来
-                                      // （checkSendButton :7945-7979），空输入才显示。
-                                      ValueListenableBuilder<TextEditingValue>(
-                                        valueListenable: controller,
-                                        builder: (context, value, child) {
-                                          final bool show = value.text
-                                              .trim()
-                                              .isEmpty;
-                                          return AnimatedOpacity(
-                                            opacity: show ? 1 : 0,
-                                            duration: const Duration(
-                                              milliseconds: 100,
-                                            ),
-                                            child: AnimatedScale(
-                                              scale: show ? 1 : 0.5,
-                                              duration: const Duration(
-                                                milliseconds: 100,
-                                              ),
-                                              curve: Curves.easeOut,
-                                              child: IgnorePointer(
-                                                ignoring: !show,
-                                                child: child,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                        child: _ghostIcon(
-                                          key: const ValueKey('attach'),
-                                          icon: Icons.attach_file_rounded,
-                                          tooltip: '附件',
-                                          size: 24,
-                                          box: 48,
-                                          onTap: () => _pickAttachment(context),
+                                        child: AnimatedScale(
+                                          scale: show ? 1 : 0.5,
+                                          duration: const Duration(
+                                            milliseconds: 100,
+                                          ),
+                                          curve: Curves.easeOut,
+                                          child: IgnorePointer(
+                                            ignoring: !show,
+                                            child: child,
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      );
+                                    },
+                                    child: _ghostIcon(
+                                      key: const ValueKey('attach'),
+                                      icon: Icons.attach_file_rounded,
+                                      tooltip: '附件',
+                                      size: 24,
+                                      box: 48,
+                                      onTap: () => _pickAttachment(context),
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
                             ),
                           ),

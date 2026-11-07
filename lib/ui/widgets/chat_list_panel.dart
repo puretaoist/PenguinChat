@@ -46,6 +46,7 @@ class ChatListPanel extends StatelessWidget {
     this.prefs = const UiPrefs(),
     this.controller,
     this.topInset = 0,
+    this.bottomContentInset = 0,
   });
 
   /// 状态栏高度。
@@ -55,6 +56,9 @@ class ChatListPanel extends StatelessWidget {
   /// ActionBar 就是这么算高度的（ActionBar.java:1400 setMeasuredDimension(
   /// width, actionBarHeight + (occupyStatusBar ? statusBarHeight : 0))）。
   final double topInset;
+
+  /// 胶囊下方仍绘制列表，仅末项留出可滚动余量（DialogsActivity.java:2982）。
+  final double bottomContentInset;
 
   /// 会话列表的滚动控制器（可选）。宽屏"点当前 tab 回顶"需要外部拿到它
   /// （MainTabsActivity.java:334-349 的 onParentScrollToTop 语义）。
@@ -169,7 +173,10 @@ class ChatListPanel extends StatelessWidget {
                         controller: controller,
                         addAutomaticKeepAlives: false,
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        padding: EdgeInsets.only(
+                          top: 4,
+                          bottom: 4 + bottomContentInset,
+                        ),
                         // 第一行是"已归档"入口（没有归档会话时不占位置）
                         itemCount: dialogs.length,
                         // Key 必须在 sliver 的直接子节点上，只有内层 tile 的 key

@@ -27,6 +27,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../theme/telegram_theme.dart';
+
 /// 官方 `solveSrcColor`：给定背景色 [bg] 与叠完要等于的目标色 [target]，
 /// 反解出"源色 + alpha"，使 alpha 混合后正好落在 [target] 上。
 ///
@@ -41,6 +43,72 @@ Color solveSrcColor(Color bg, Color target, double alpha) {
     channel(target.g * 255, bg.g * 255),
     channel(target.b * 255, bg.b * 255),
   );
+}
+
+/// 官方 `mainTabs()` 与 `topPanel()` 共用的一套玻璃胶囊基准参数。
+///
+/// `T/ui/Components/blur3/drawable/color/impl/BlurredBackgroundProviderImpl.java:20-52`
+/// 里两个 provider 的 alpha、描边上下色、阴影色、阴影层、线宽逐项相同，只有
+/// target 色不同（`key_glass_targetMainTabs` vs `key_glass_targetMainTopPanel`），
+/// 而这两个 key 的 `fallbackKeys` 都指向 `key_dialogBackground`
+/// （`T/ui/ActionBar/Theme.java:3707-3708`），默认主题下同色。
+/// 也就是官方口径里"主 tab 胶囊"和"聊天页顶栏胶囊"本来就是同一套玻璃，
+/// 所以这里收成一处常量：主 tab、三个顶栏胶囊、输入栏、下滚圆钮共用。
+class GlassCapsule {
+  GlassCapsule._();
+
+  /// 官方 `alpha = LiteMode.FLAG_LIQUID_GLASS ? 0.85f : 0.76f`，我方无液态玻璃取 0.76。
+  static const double alpha = 0.76;
+
+  /// 官方 `setStrokeWidth(dpf2(0.4f), dpf2(0.4f))`（`:33`）。
+  static const double strokeWidth = 0.4;
+
+  /// 模糊半径官方查不到（`BlurredBackgroundSourceRenderNode.setBlur` 只收外部传参，
+  /// `MainTabsActivity` 与 `BlurredBackgroundDrawableViewFactory` 都没写死），
+  /// 20 是自定值，登记在 `docs/blur-parity.md` §四。
+  static const double blurSigma = 20;
+
+  /// 官方 `setShadowLayer(dpf2(2.667f), 0, dpf2(0.85f))`（`:32`）。Flutter 的
+  /// `blurRadius` 是半径，换算 sigma = radius * 0.57735 + 0.5，故
+  /// 2.667 → (2.667 - 0.5) / 0.57735 ≈ 3.75。
+  static const double shadowBlurRadius = 3.75;
+
+  /// 官方阴影 dy `dpf2(0.85f)`，无 dx。
+  static const Offset shadowOffset = Offset(0, 0.85);
+
+  /// 胶囊底色：反解源色，使叠在 [TelegramColors.bgApp] 上正好等于
+  /// [TelegramColors.bgGlassPanel]（官方 target 同义，见文件头文档）。
+  static Color fill() {
+    return solveSrcColor(
+      TelegramColors.bgApp,
+      TelegramColors.bgGlassPanel,
+      alpha,
+    );
+  }
+
+  /// 上半段描边：官方亮色 `0x11000000`、暗色 `0x06FFFFFF`。用户明确不要暗色的
+  /// 白色描边（m00304），暗色返回透明等于不画这一段。
+  static Color strokeTop() {
+    return TelegramColors.isDark ? Colors.transparent : const Color(0x11000000);
+  }
+
+  /// 下半段描边：官方亮色 `0x20000000`、暗色 `0x11FFFFFF`（同上）。
+  static Color strokeBottom() {
+    return TelegramColors.isDark ? Colors.transparent : const Color(0x20000000);
+  }
+
+  /// 贴地薄影：官方亮色 `0x20000000`、暗色 `0x04FFFFFF`（`:31`）。
+  static List<BoxShadow> shadows() {
+    return <BoxShadow>[
+      BoxShadow(
+        color: TelegramColors.isDark
+            ? const Color(0x04FFFFFF)
+            : const Color(0x20000000),
+        blurRadius: shadowBlurRadius,
+        offset: shadowOffset,
+      ),
+    ];
+  }
 }
 
 /// 给 [child] 套一圈官方样式的胶囊描边（上下两段异色、0.4dp）。

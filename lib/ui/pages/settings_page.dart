@@ -43,7 +43,14 @@ import 'settings/general_settings_page.dart';
 import 'settings/other_settings_page.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
-  const SettingsPage({super.key, this.embedded = false});
+  const SettingsPage({
+    super.key,
+    this.embedded = false,
+    this.bottomContentInset = 0,
+  });
+
+  /// 胶囊占位是内部滚动留白，不裁短页面（DialogsActivity.java:2982）。
+  final double bottomContentInset;
 
   /// 作为 HomeShell 的底栏 tab 使用时为 true：页头不画返回箭头。
   final bool embedded;
@@ -115,8 +122,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
     // 宽屏左栏里（embedded）不能用"按整屏宽算的居中留白"：那会把 320dp 的
     // 左栏内容压成 108dp 宽（实测溢出）。手机上 contentHorizontalInset 本来是
     // 0，两者等价。
-    final double sideInset =
-        widget.embedded ? 0 : contentHorizontalInset(context);
+    final double sideInset = widget.embedded
+        ? 0
+        : contentHorizontalInset(context);
 
     return Scaffold(
       backgroundColor: TelegramColors.bgApp,
@@ -146,7 +154,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage>
                     // 官方列表 padding top = 状态栏 + 12dp（:367）；状态栏已被
                     // ActionBar 吃掉，这里只留 12。
                     top: 12,
-                    bottom: widget.embedded ? 96 : 24,
+                    bottom: 24 + widget.bottomContentInset,
                     left: sideInset,
                     right: sideInset,
                   ),

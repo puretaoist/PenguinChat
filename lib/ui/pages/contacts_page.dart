@@ -38,7 +38,14 @@ String qqAvatarUrl(int uin, {int size = 100}) =>
     'https://q1.qlogo.cn/g?b=qq&nk=$uin&s=$size';
 
 class ContactsPage extends ConsumerWidget {
-  const ContactsPage({super.key, this.onOpenChats});
+  const ContactsPage({
+    super.key,
+    this.onOpenChats,
+    this.bottomContentInset = 0,
+  });
+
+  /// 胶囊占位加在列表末端，视口仍铺到底（DialogsActivity.java:2982）。
+  final double bottomContentInset;
 
   /// 「资料页 → 发消息」成功后要切回聊天 tab。由 [HomeShell] 传入。
   final VoidCallback? onOpenChats;
@@ -83,7 +90,10 @@ class ContactsPage extends ConsumerWidget {
                             controller: c,
                             // ActionBar 已经在 Column 里占好位，列表只留一点呼吸
                             // 与底部余量（官方是靠 padding 让出 actionBar 高度）。
-                            padding: const EdgeInsets.only(top: 4, bottom: 24),
+                            padding: EdgeInsets.only(
+                              top: 4,
+                              bottom: 24 + bottomContentInset,
+                            ),
                             itemCount: groups.length,
                             itemBuilder: (context, index) {
                               final name = groups.keys.elementAt(index);

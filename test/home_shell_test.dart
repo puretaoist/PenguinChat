@@ -234,22 +234,26 @@ void main() {
     );
   });
 
-  // 打开会话时底栏要让位、内容区要长高；这两件事必须和 HomePage 的 150ms 转场
-  // 同一节拍渐进而非瞬跳（否则整块布局先闪一下，转场动画看起来就像没有）。
-  testWidgets('底栏让位与内容区让位同节拍：150ms 且初始可见', (tester) async {
+  testWidgets('窄屏只有胶囊内模糊，列表视口不被外层让位裁短', (tester) async {
     await _setView(tester);
     await tester.pumpWidget(_wrap(const HomeShell()));
     await tester.pumpAndSettle();
 
-    final AnimatedPadding pad = tester.widget<AnimatedPadding>(
-      find
-          .ancestor(
-            of: find.byKey(const ValueKey<String>('tab-content-pager')),
-            matching: find.byType(AnimatedPadding),
-          )
-          .first,
+    expect(
+      tester
+          .getRect(find.byKey(const ValueKey<String>('tab-content-pager')))
+          .bottom,
+      844,
     );
-    expect(pad.duration, const Duration(milliseconds: 150));
+    expect(find.byType(AnimatedPadding), findsNothing);
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey<String>('main-tab-bar')),
+        matching: find.byType(BackdropFilter),
+      ),
+      findsOneWidget,
+    );
 
     final AnimatedOpacity bar = tester.widget<AnimatedOpacity>(
       find
@@ -262,4 +266,42 @@ void main() {
     expect(bar.duration, const Duration(milliseconds: 150));
     expect(bar.opacity, 1.0, reason: '列表态底栏必须可见');
   });
+
+  for (final double width in <double>[390, 900]) {
+    testWidgets('四个 tab 列表铺到底且末项内部避让：宽 $width', (tester) async {
+      await _setView(tester);
+      tester.view.physicalSize = Size(width, 844);
+      tester.view.viewPadding = const FakeViewPadding(bottom: 20);
+      await tester.pumpWidget(_wrap(const HomeShell()));
+      await tester.pumpAndSettle();
+      for (final int tab in <int>[1, 2, 3]) {
+        await tester.tap(find.byKey(ValueKey<String>('main-tab-$tab')));
+        await tester.pumpAndSettle();
+        final list = find.byType(ListView).first;
+        expect(tester.getRect(list).bottom, 844, reason: 'tab $tab 不应提前截断');
+        final padding = tester.widget<ListView>(list).padding! as EdgeInsets;
+        expect(
+          padding.bottom,
+          greaterThanOrEqualTo(92),
+          reason: '72dp 胶囊槽 + 20dp 系统 inset',
+        );
+        final leftFilters = find.byType(BackdropFilter).evaluate().where((
+          element,
+        ) {
+          final box = element.findRenderObject()! as RenderBox;
+          return box.localToGlobal(Offset.zero).dx <
+              (width >= 600 ? 320 : width);
+        });
+        expect(leftFilters.length, 1, reason: '左栏只允许胶囊内模糊，右侧会话页头不计');
+        final scrollable = find
+            .descendant(of: list, matching: find.byType(Scrollable))
+            .first;
+        final state = tester.state<ScrollableState>(scrollable);
+        state.position.jumpTo(state.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        expect(state.position.extentAfter, 0);
+        expect(tester.takeException(), isNull);
+      }
+    });
+  }
 }

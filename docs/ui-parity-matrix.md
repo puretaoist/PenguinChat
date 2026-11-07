@@ -36,7 +36,14 @@
 > 批次①②③④⑤ 落地后当前状态：✅ 已对齐 **50** ｜ ⚠️ 仍偏差 **13** ｜ ❌ 仍缺失 **4** ｜ — 不适用/平台差异 **3**。
 > 官方参数唯一出处：`T/MainTabsActivity.java`、`T/MainTabsLayout.java`、`T/Components/glass/GlassTabView.java`、
 > `T/Components/blur3/drawable/color/impl/BlurredBackgroundProviderImpl.java`、`T/Components/blur3/drawable/BlurredBackgroundDrawable.java`。
-> 我方行号对应 2026-11-07 版 `home_shell.dart`（**1283 行**，批次①②③④⑤ 已落地；原 745 行的行号已失效）。
+> 下表行号与统计为本轮修复前快照；以下用户决策覆盖 A18/A62/A66 的旧现状，不能继续按旧行号判断实现。
+>
+> **2026-11-07 悬浮胶囊修复（用户确认）**：宽屏移除整个左栏的外部 72dp Padding；窄屏移除 pager 外部 AnimatedPadding。四个 Tab 视口均铺到底，只在列表内部追加 `72dp + viewPadding.bottom` 滚动留白（数值依据 `T/DialogsActivity.java:293,2982`），末项可滚出胶囊覆盖区。胶囊仍以 ClipRRect + BackdropFilter σ20 实时采样；σ20 继续是自定值。
+> **A18/A62 有意偏差**：按用户“胶囊外不能有矩形底栏”的要求删除整宽 fadeView，不再绘制 60dp 渐变或进“我的”下移 48dp；这不是声称官方没有 fadeView。A66 的底部避让现为内部滚动 padding，不再缩短内容视口。保持无白色描边、无新增依赖。
+>
+> **2026-11-07 胶囊参数统一（用户 m02326）**：官方 `BlurredBackgroundProviderImpl.java:20-52` 里 `mainTabs()` 与 `topPanel()` 的 alpha、描边上下色、阴影色、阴影层、线宽逐项相同，只有 target 色不同（`key_glass_targetMainTabs` / `key_glass_targetMainTopPanel`），而两个 target key 的 `fallbackKeys` 都指向 `key_dialogBackground`（`T/ui/ActionBar/Theme.java:3707-3708`），默认主题下同色 —— 即官方口径里主 tab 胶囊与聊天页顶栏胶囊本来就是同一套玻璃。据此把四个悬浮胶囊（主 tab、聊天顶栏三颗、输入栏、下滚圆钮）的参数收进 `lib/ui/widgets/glass_capsule_border.dart` 的 `GlassCapsule`：底色 `solveSrcColor(bgApp → bgGlassPanel, 0.76)`、0.4dp 上下异色描边（暗色透明）、`GlassCapsule.shadows()`（亮 `0x20000000` / 暗 `0x04FFFFFF`，blur 3.75、dy 0.85）、σ20。`GlassSurface.capsule` 为统一入口，不再允许逐个覆盖。三个底部弹层（action_sheet / glass_sheet / message_action_popup）保持实底 0.92~0.94 + σ18，因官方同类走 `tabsPanelNoShadow()`（×0.88、无描边无阴影，`BlurredBackgroundProviderImpl.java:54-63`）。
+>
+> 下表 A11-A14 的“我方现状”行号为本轮统一前快照，当前实现见 `GlassCapsule`。
 
 ### A-1 布局与几何
 
@@ -57,9 +64,9 @@
 
 | # | 差异项 | TG 依据 | 我方现状 | 结论 | 优先级 |
 |---|---|---|---|---|---|
-| A11 | 叠色算法：官方 `solveSrcColor` 按 alpha **反解源色**，不是直接叠 alpha | `T/Components/blur3/drawable/color/impl/BlurredBackgroundProviderImpl.java:24-27`；`:304-332` `src = clamp(round((out - bg*(1-a))/a),0,255)` | `lib/ui/widgets/glass_capsule_border.dart` `solveSrcColor()` 逐通道复刻；`home_shell.dart:722-729` `_capsuleFill()` 调用它 | ✅ 已对齐 | — |
-| A12 | alpha：0.76（普通）/ 0.85（`FLAG_LIQUID_GLASS`） | `T/BlurredBackgroundProviderImpl.java:24` `LiteMode.isEnabled(FLAG_LIQUID_GLASS) ? 0.85f : 0.76f` | `home_shell.dart:722-729` 已用官方普通档 **0.76**（原 0.80 硬叠）；0.85 液态玻璃档未做（见 A17） | ⚠️ 普通档已对齐，液态玻璃档缺失 | P4 |
-| A13 | 源色 | 亮 `key_windowBackgroundWhite` 与 target `key_glass_targetMainTabs` 同为白；暗 `DarkThemeResourceProvider.java:94-95` 两者均 `0xFF181819`（**同色**） | `home_shell.dart:722-729` 喂 `bgApp` / `bgGlassPanel`，算法照官方、输入用我方主题色（见下方决策注记） | ⚠️ 有意偏差（已决策，非疏漏） | — |
+| A11 | 叠色算法：官方 `solveSrcColor` 按 alpha **反解源色**，不是直接叠 alpha | `T/Components/blur3/drawable/color/impl/BlurredBackgroundProviderImpl.java:24-27`；`:304-332` `src = clamp(round((out - bg*(1-a))/a),0,255)` | `lib/ui/widgets/glass_capsule_border.dart` `solveSrcColor()` 逐通道复刻；`GlassCapsule.fill()` 调用它（主 tab / 顶栏 / 输入栏 / 圆钮共用） | ✅ 已对齐 | — |
+| A12 | alpha：0.76（普通）/ 0.85（`FLAG_LIQUID_GLASS`） | `T/BlurredBackgroundProviderImpl.java:24` `LiteMode.isEnabled(FLAG_LIQUID_GLASS) ? 0.85f : 0.76f` | `GlassCapsule.alpha = 0.76`（`glass_capsule_border.dart`），原 0.80 硬叠已废；0.85 液态玻璃档未做（见 A17） | ⚠️ 普通档已对齐，液态玻璃档缺失 | P4 |
+| A13 | 源色 | 亮 `key_windowBackgroundWhite` 与 target `key_glass_targetMainTabs` 同为白；暗 `DarkThemeResourceProvider.java:94-95` 两者均 `0xFF181819`（**同色**） | `GlassCapsule.fill()` 喂 `bgApp` / `bgGlassPanel`，算法照官方、输入用我方主题色（见下方决策注记） | ⚠️ 有意偏差（已决策，非疏漏） | — |
 
 > **决策（2026-11-07，用户 m00304）**：算法严格对齐官方 `solveSrcColor`，但**输入取我方主题色**
 > （`bg = bgApp`、`target = bgGlassPanel`），因为官方暗色 bg 与 target 同值（0xFF181819）而
@@ -70,7 +77,7 @@
 
 | # | 差异项 | TG 依据 | 我方现状 | 结论 | 优先级 |
 |---|---|---|---|---|---|
-| A14 | 描边：官方 **0.4dp**、上下**双色不对称**（亮 top `0x11000000` / bottom `0x20000000`；暗 top `0x06FFFFFF` / bottom `0x11FFFFFF`） | `T/BlurredBackgroundProviderImpl.java:29-30` `setStrokeColorTop/Bottom`；`:33` `setStrokeWidth(dpf2(0.4), dpf2(0.4))` | `glass_capsule_border.dart` `GlassCapsuleBorder`（`CustomPaint` 上下两段各 0.4dp）；`home_shell.dart:731-741` 亮色 top `0x11000000` / bottom `0x20000000`，暗色按用户 m00304 决定不做白描边 | ✅ 已对齐（暗色按决策省略） | — |
+| A14 | 描边：官方 **0.4dp**、上下**双色不对称**（亮 top `0x11000000` / bottom `0x20000000`；暗 top `0x06FFFFFF` / bottom `0x11FFFFFF`） | `T/BlurredBackgroundProviderImpl.java:29-30` `setStrokeColorTop/Bottom`；`:33` `setStrokeWidth(dpf2(0.4), dpf2(0.4))` | `glass_capsule_border.dart` `GlassCapsuleBorder`（`CustomPaint` 上下两段各 0.4dp），色取 `GlassCapsule.strokeTop/Bottom()`：亮色 top `0x11000000` / bottom `0x20000000`，暗色按用户 m00304 决定不做白描边；主 tab、顶栏三颗、输入栏、下滚圆钮四处共用 | ✅ 已对齐（暗色按决策省略） | — |
 
 > **决策（2026-11-07，用户 m00304「我们不加上类似玻璃的白色描边」）**：
 > 暗色**不做**官方 `0x06FFFFFF/0x11FFFFFF` 白色描边；亮色做 0.4dp 黑色系上下双色。
