@@ -3,6 +3,9 @@
 /// 之前每个页面各写一遍 `Container(height: 56, color: bgHeader)`，字体/左右
 /// 内边距/副标题位置都各写各的，切 Tab 时标题会轻微跳动。这里收成一处，
 /// 依据 Telegram Android `ActionBar` 的默认高度（56dp）+ 标题 20sp w600。
+/// **已停用**：四个 Tab 与四个二级设置页都改用 [TgActionBar]（复刻官方
+/// ActionBar 的高度/字号/状态栏规则）。本文件暂无使用点，保留只为避免
+/// 一次性删除引发无关 diff，确认后删除。
 library;
 
 import 'package:flutter/material.dart';

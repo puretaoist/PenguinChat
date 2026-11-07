@@ -15,7 +15,7 @@ import '../../theme/telegram_theme.dart';
 import '../../theme/theme_mode.dart';
 import '../../widgets/telegram_list_item.dart';
 import '../../widgets/capped_content.dart';
-import '../../widgets/tg_page_header.dart';
+import '../../widgets/tg_action_bar.dart';
 
 class ChatsSettingsPage extends ConsumerWidget {
   const ChatsSettingsPage({super.key});
@@ -28,10 +28,17 @@ class ChatsSettingsPage extends ConsumerWidget {
     return Scaffold(
       backgroundColor: TelegramColors.bgApp,
       body: SafeArea(
+        top: false,
         bottom: false,
         child: Column(
           children: <Widget>[
-            const TgPageHeader(title: '聊天', showBack: true),
+            // 二级页的 ActionBar：占状态栏、左侧返回（ActionBar.java:1400
+            // 把 statusBar 高度算进条高），主 Tab 根视图没有这个箭头。
+            TgActionBar(
+              title: '聊天',
+              topInset: MediaQuery.paddingOf(context).top,
+              onBack: () => Navigator.of(context).pop(),
+            ),
             Expanded(
               child: ListView(
                 padding: EdgeInsets.only(
