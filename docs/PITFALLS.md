@@ -4808,3 +4808,57 @@ tab 附近有实色板感、行高显得挤、状态栏图标在浅色主题下�
    都是魔改分支，参数被改过，拿来当依据会把偏差固化。
 4. 反过来也有价值：`docs/ui-parity-matrix.md` 里标 ⚠️ 的**刻意偏差**是允许的，
    但必须写清"为什么故意不一样"；标 ❓ 的就是"还没逐行核实"，**不许当成已对齐**。
+
+---
+
+## C124 UI 动画连错 5 版：只读入口方法、没读绘制层（2026-11-07）
+
+**现象**：会话内搜索顶栏的展开动画，连续做错 **5 版**才落地：
+v1 做成 150ms 纯 alpha 淡入 → v2 自己发明「从右往左挤压、群名被压掉」→
+v3 修 alpha 但仍以为消失的是「标题」→ v4 改成宽度挤压、方向仍错 →
+v5 照 `ActionBar.dispatchDraw` 重写才一次通过。用户原话：
+「我一直强调读透官方调用链，老是效果不好」。
+
+**根因（四条，都不是框架问题）**：
+
+1. **只读入口方法，没读绘制层**。`ActionBarMenuItem.toggleSearch`
+   （`T/ui/ActionBar/ActionBarMenuItem.java:935-1042`）里确实只有 150ms alpha，
+   但那只是**内容**淡入；玻璃**背景**的宽度形变在**另一个文件**的
+   `ActionBar.dispatchDraw`（`T/ui/ActionBar/ActionBar.java:2232-2279`），
+   是 320ms `EASE_OUT_QUINT` 的 `width = lerp(min(widthDefault, avatarW + p*2),
+   widthDefault, max(searchFactor, actionModeFactor))`。搜方法名永远搜不到它。
+2. **没取证就发明**。v2 的「从右往左挤压」官方根本没有这个动作，
+   是照着用户的口头描述自己设计的。
+3. **名词指代搞错**。以为搜索时消失的是 `headerItem`，
+   实际 `headerItem` 是**右上角 ⋮ 菜单**（`ChatActivity.java:4337-4348`
+   `headerItem = menu.addItem(chat_menu_options, otherIcon)`），
+   消失的是 `avatarContainer`（头像+标题，`ChatActivity.java:46995-47004`
+   `factor = (1-actionMode) * (1-searchFactor)`）。
+4. **没验证中间帧**。v4 用 `AnimatedOpacity` 做 150ms 淡入，但那个 widget 是
+   「进搜索那一刻才第一次挂载」的，首帧目标值已是 1，**根本没有 0→1 过程**。
+   只有 `pump(75ms)` 断言中间值才能发现。
+
+**处理**（已固化为铁律，见 `AGENTS.md` §1.9 + [`docs/UI-取证流程.md`](UI-取证流程.md)）：
+
+1. 动 UI 前**先交取证报告，用户确认后才写代码**；
+2. 必须画出完整调用链 `触发点 → 状态字段 → 动画器 → 绘制方法 → 参数`，
+   每段带 `文件:行号`；**画不出这条链就是没读完**；
+3. 必须读到 `onDraw` / `dispatchDraw` / `onMeasure` / `onLayout` / `onSizeChanged`；
+4. 先做**名词对齐表**（`headerItem` / `avatarContainer` / `searchItem` /
+   `searchIconItem` / `otherIcon` / `glassDrawable*`）；
+5. 参数逐项带出处，查不到的写「未取证 / 自定值」；
+6. **中间帧测试**（`pump(时长/2)` 断言介于两端）+ 真机三张截图（开始/中间/结束）。
+
+**教训**：
+
+1. **「读了一个文件」≠「读了一条链」**。官方一个动画通常横跨
+   入口方法（改标志位）→ 动画器（定时长曲线）→ 绘制方法（算几何）三处，
+   少读一处就会做出「方向对但时机错」或「时机对但方向错」的版本。
+2. **读不懂要立刻说「这块我没读懂」**，不要硬写一版出来。
+   v1 当时若说「我不确定玻璃宽度动画在哪做的」，后面四轮全部可省。
+3. **`AnimatedOpacity` / `AnimatedContainer` 这类隐式动画，
+   在 widget 首次挂载时不做过渡**。需要「从 0 开始」就必须
+   `TweenAnimationBuilder(begin: 0, end: x)`。
+4. **框架不是瓶颈**。同样的活换 Compose 一样要手写还原那 3000 行
+   `dispatchDraw`；真正的框架边界只有液态玻璃折射（`LiteMode.FLAG_LIQUID_GLASS`
+   的 RenderNode + RenderScript），Flutter 的 `BackdropFilter` 做不到。

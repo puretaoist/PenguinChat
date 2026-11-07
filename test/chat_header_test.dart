@@ -263,6 +263,54 @@ void main() {
     expect(mid, lessThan(full), reason: '320ms 才走完，半程不该一步到位');
   });
 
+  testWidgets('输入内容是 150ms 淡入，首帧必须接近全透明', (tester) async {
+    final controller = TextEditingController();
+    final focus = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focus.dispose);
+
+    // 这个 widget 是「进搜索那一刻」才第一次挂载的，用 AnimatedOpacity 会因为
+    // 首帧目标值已是 1 而直接跳到位、根本没有过渡；官方那是独立的 150ms
+    // `searchFieldVisibleAlpha`（ActionBar.java:1207-1220），必须真的从 0 起。
+    tester.view.physicalSize = const Size(360, 120);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTelegramTheme(dark: true),
+        home: Scaffold(
+          body: ChatHeader(
+            chat: _group(),
+            onBack: () {},
+            onExitSearch: () {},
+            searching: true,
+            searchController: controller,
+            searchFocus: focus,
+          ),
+        ),
+      ),
+    );
+
+    double alphaOf() => tester
+        .widget<Opacity>(
+          find
+              .ancestor(
+                of: find.byKey(const ValueKey('chat-search-input')),
+                matching: find.byType(Opacity),
+              )
+              .first,
+        )
+        .opacity;
+
+    expect(alphaOf(), lessThan(0.2), reason: '首帧应该几乎全透明');
+
+    await tester.pump(const Duration(milliseconds: 75));
+    final double mid = alphaOf();
+    expect(mid, greaterThan(0.2), reason: '半程应该已经明显可见');
+    expect(mid, lessThan(0.98), reason: '150ms 才走完，半程不该到满');
+
+    await tester.pumpAndSettle();
+    expect(alphaOf(), 1.0);
+  });
+
   testWidgets('⋮ 菜单里有搜索，点了走 onSearch', (tester) async {
     var searched = 0;
     await _pump(tester, ChatHeader(chat: _group(), onSearch: () => searched++));

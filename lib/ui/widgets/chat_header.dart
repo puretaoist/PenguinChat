@@ -245,16 +245,32 @@ class ChatHeader extends StatelessWidget {
                               ),
                             // 非搜索态不渲染输入框：官方 `searchContainer` 平时是
                             // GONE 的（`ActionBarMenuItem.java:1472`），只在形变期间存在。
-                            if (t > 0.001 &&
+                            // `searching || t > 0.001` 是为了让退出搜索时也留住它——
+                            // 官方那段淡出要有内容可淡，t 还在往回走就说明动画没结束。
+                            if ((searching || t > 0.001) &&
                                 searchController != null &&
                                 searchFocus != null)
                               Positioned.fill(
                                 child: IgnorePointer(
                                   ignoring: !searching,
-                                  child: AnimatedOpacity(
+                                  // 用 TweenAnimationBuilder 而不是 AnimatedOpacity：
+                                  // 这个 widget 是「进搜索那一刻」才第一次挂载的，
+                                  // AnimatedOpacity 首次布局就直接取 opacity 1，
+                                  // 没有任何 0→1 的过程——官方那是独立的 150ms
+                                  // `searchFieldVisibleAlpha`（ActionBar.java:1207-1220），
+                                  // 必须显式从 0 起。
+                                  child: TweenAnimationBuilder<double>(
+                                    tween: Tween<double>(
+                                      begin: 0,
+                                      end: searching ? 1 : 0,
+                                    ),
                                     duration: _contentDuration,
                                     curve: Curves.easeOut,
-                                    opacity: searching ? 1 : 0,
+                                    builder: (
+                                      BuildContext context,
+                                      double alpha,
+                                      Widget? child,
+                                    ) => Opacity(opacity: alpha, child: child),
                                     child: _SearchInput(
                                       controller: searchController!,
                                       focusNode: searchFocus!,

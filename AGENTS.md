@@ -155,6 +155,35 @@ log.d('tgtgt ${Redact.fingerprint('tgtgt', b)}'); // 敏感值只输出长度+�
 **L3/L4 仍然与 QQ 协议无关**（§1.7 的例外继续有效）：本条款管的是 **UI 参数**，
 不是让你去读 QQ 的反编译。
 
+### 1.9 UI 取证流程：读到绘制层，先报告后动手
+
+§1.8 规定了「参数必须有出处」，但没规定「怎么读才叫读透」。2026-11-07 的会话内搜索
+顶栏动画连续做错 **5 版**（150ms 纯 alpha → 自定义挤压 → 纯 alpha 修正 → 宽度挤压 →
+照 `dispatchDraw` 重写），复盘确认根因不是框架、不是运气，而是取证方法有结构性缺陷：
+**每次都只读了一个文件，从没读过一条链**。
+
+**完整流程见 [`docs/UI-取证流程.md`](docs/UI-取证流程.md)**，六条硬要求摘要：
+
+1. **先交取证报告，用户确认后才准动代码**。本仓库两次成功的 UI 重做都是先有报告，
+   四次失败全是直接动手。
+2. **必须画出完整调用链**：`触发点 → 状态字段 → 动画器 → 绘制方法 → 参数`，
+   每段带 `文件:行号`。**画不出这条链就说明没读完，不许动代码**，
+   直接告诉用户「这块链我还没画出来」。
+3. **必须读到绘制层**（`onDraw` / `dispatchDraw` / `onMeasure` / `onLayout` /
+   `onSizeChanged`），不能停在入口方法。入口方法通常只 `setValue(true)` 改标志位，
+   真正的插值在绘制层——`ActionBarMenuItem.toggleSearch` 只有 150ms alpha，
+   玻璃宽度却在 `ActionBar.dispatchDraw` 里，**在另一个文件**。
+4. **先做名词对齐表**：`headerItem` / `avatarContainer` / `searchItem` /
+   `searchIconItem` / `otherIcon` / `glassDrawable*` 逐个对应到我方 widget。
+   把 `headerItem`（右上角 ⋮ 菜单）当成「头像+标题」就是这么死的。
+5. **参数表逐项带出处，缺项写「未取证 / 自定值」**，并登记 `docs/ui-parity-matrix.md`。
+6. **中间帧测试 + 三张截图**（开始 / 中间 / 结束），不能只看终态。
+   `pump(时长/2)` 断言中间值；`AnimatedOpacity` 首次挂载时目标值已是终值，
+   没有 0→1 过程，必须用 `TweenAnimationBuilder(begin: 0, ...)`。
+
+**允许跳过的情况只有两种**：改的是纯颜色/文案/数据且常量已有出处；
+或已取证表里已有现成值（这时**不许重复翻源码**，直接引用表里的行号）。
+
 ---
 
 ## 2. 目录地图
@@ -352,6 +381,7 @@ QQ8 协议线的验证强度是分级的，**别高估**：
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | **开工必读**：现状 / 环境 / 命令 / 未提交改动 / 遗留 / TG 参数 |
 | [`docs/ui-parity-matrix.md`](docs/ui-parity-matrix.md) | 与 Telegram/AyuGram 的 UI 差异表 + **登记规则**（新增 UI 先登记再写码，见 §1.8） |
 | [`docs/blur-parity.md`](docs/blur-parity.md) | 模糊覆盖对照 |
+| [`docs/UI-取证流程.md`](docs/UI-取证流程.md) | **动 UI 前必读**：六条取证硬要求、调用链模板、名词对齐表、中间帧测试写法（§1.9） |
 | [`docs/PITFALLS.md`](docs/PITFALLS.md) | 已踩过的坑与规避方式 |
 | [`../analysis/README.md`](../analysis/README.md) | **协议参数的出处**：反编译对照、提取脚本、如何重建产物（在仓库外，同级目录） |
 | [`STRUCTURE.md`](STRUCTURE.md) | 分层架构与依赖规则 |
