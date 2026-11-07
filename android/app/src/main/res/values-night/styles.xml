@@ -7,6 +7,17 @@
         <item name="android:windowBackground">@drawable/launch_background</item>
         <item name="android:windowSplashScreenBackground">@color/launch_background</item>
         <item name="android:windowSplashScreenAnimatedIcon">@android:color/transparent</item>
+        <!-- edge-to-edge：状态栏 / 导航栏一律不上色，颜色交给 Flutter 画
+             （官方 messenger/AndroidUtilities.java:6807-6831 enableEdgeToEdge）。
+             这是"系统栏实色块"的根源：不写这几项时取 Theme 默认的
+             colorPrimaryDark，页面顶到屏幕顶端后就会露出那条实色。
+             图标固定白色 —— 启动底色 launch_background=#0F0F0F 是深色，
+             Flutter 起来后由 HomeShell 的 AnnotatedRegion 按主题接管。 -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
     <!-- Theme applied to the Android Window as soon as the process has started.
          This theme determines the color of the Android Window while your
@@ -16,5 +27,16 @@
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- edge-to-edge：状态栏 / 导航栏一律不上色，颜色交给 Flutter 画
+             （官方 messenger/AndroidUtilities.java:6807-6831 enableEdgeToEdge）。
+             这是"系统栏实色块"的根源：不写这几项时取 Theme 默认的
+             colorPrimaryDark，页面顶到屏幕顶端后就会露出那条实色。
+             图标固定白色 —— 启动底色 launch_background=#0F0F0F 是深色，
+             Flutter 起来后由 HomeShell 的 AnnotatedRegion 按主题接管。 -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

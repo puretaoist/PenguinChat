@@ -21,7 +21,8 @@ library;
 
 import 'dart:io';
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart'
+    show SystemChrome, SystemUiMode, rootBundle;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
@@ -57,6 +58,19 @@ const List<String> _backendAssetPaths = [
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 状态栏 / 导航栏全部透明，内容铺到系统栏后面（"沉浸式"）。
+  //
+  // 为什么必须在 runApp 之前：首帧就该是全屏的，等 UI 起来再切会让状态栏
+  // 先实色、再变成透明，肉眼能看见闪一下。
+  //
+  // 官方出处：telegram-src/TelegramAndroid/TMessagesProj/src/main/java/
+  // org/telegram/messenger/AndroidUtilities.java:6807-6831 enableEdgeToEdge()
+  // —— setDecorFitsSystemWindows(false) + setStatusBarColor(TRANSPARENT)
+  // + setNavigationBarColor(TRANSPARENT)。TG 从不给状态栏上色，颜色一律由
+  // 页面自己画到状态栏区域（LaunchActivity.java:1184 每次检查都重置成 0）。
+  // 图标亮暗随主题切换，见 HomeShell 里的 AnnotatedRegion。
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   final dataDir = await _resolveDataDir();
   final gate = SafetyGate(
