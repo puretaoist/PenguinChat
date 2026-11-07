@@ -1451,32 +1451,43 @@ class _HomePageState extends ConsumerState<HomePage> {
       // 平板（官方 MainTabsActivity 只占左栏，LaunchActivity.java:949-953）：
       // 左栏 = 当前 tab 的列表页，右栏 = 对话面板且**不随 tab 切换**（换 tab
       // 只换左栏，右栏仍是当前会话 —— 这是官方平板与手机最大的结构差异）。
-      return Scaffold(
-        backgroundColor: TelegramColors.bgApp,
-        body: SafeArea(
-          top: false,
-          bottom: false,
-          child: Row(
-            children: [
-              SizedBox(
-                width: AppBreakpoints.sidebarWidthFor(
-                  MediaQuery.sizeOf(context).width,
+      // 宽屏也要拦返回：搜索态下返回先关搜索（官方 `onBackPressed` 里
+      // 搜索态优先于退出），否则一按就退到桌面。
+      return PopScope(
+        canPop: !_searchOpen && !_chatSearchOpen,
+        onPopInvokedWithResult: (bool didPop, Object? _) {
+          if (didPop) return;
+          if (_searchOpen || _chatSearchOpen) _closeSearch();
+        },
+        child: Scaffold(
+          backgroundColor: TelegramColors.bgApp,
+          body: SafeArea(
+            top: false,
+            bottom: false,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: AppBreakpoints.sidebarWidthFor(
+                    MediaQuery.sizeOf(context).width,
+                  ),
+                  // 视口铺到底，末项避让由各列表的内部 padding 负责。
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _wideLeftPane(wideTab, sidebar),
+                      // 搜索只换本栏（ActionBar 原地变形），右栏不动。
+                      if (_searchOpen) _searchOverlay(),
+                    ],
+                  ),
                 ),
-                // 视口铺到底，末项避让由各列表的内部 padding 负责。
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _wideLeftPane(wideTab, sidebar),
-                    // 搜索只换本栏（ActionBar 原地变形），右栏不动。
-                    if (_searchOpen) _searchOverlay(),
-                  ],
+                Container(width: 1, color: TelegramColors.divider),
+                // 会话内搜索由 _buildChatSearchPane 原地替换右栏内容
+                // （顶栏变形 + 结果列表 + 底部计数面板），这里不再叠覆盖层。
+                Expanded(
+                  child: _chatPaneView(chats, store, topInset: topInset),
                 ),
-              ),
-              Container(width: 1, color: TelegramColors.divider),
-              // 会话内搜索由 _buildChatSearchPane 原地替换右栏内容
-              // （顶栏变形 + 结果列表 + 底部计数面板），这里不再叠覆盖层。
-              Expanded(child: _chatPaneView(chats, store, topInset: topInset)),
-            ],
+              ],
+            ),
           ),
         ),
       );
@@ -2373,6 +2384,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       _chatSearchOpen = true;
       _chatSearchQuery = '';
       _chatSearchIndex = 0;
+      // 官方 `openSearchWithText` 不调 `showMessagesSearchListView(true)`
+      // （`ChatActivity.java:35378-35418`）：进搜索后仍停在聊天流，
+      // 只有主动点「以列表方式查看」才切到结果列表（`:12962-13027`）。
+      _chatSearchListMode = false;
       _chatSearchController.clear();
     });
     // 官方 `openSearch(openSearchKeyboard)` 会立刻把焦点交给搜索框并弹键盘
@@ -2607,9 +2622,9 @@ class _HomePageState extends ConsumerState<HomePage> {
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
         child: KeyedSubtree(
-          // 搜索态进出也要交叉：官方 `ActionBarMenuItem.toggleSearch` 是
-          // 150ms 的 alpha 交叉（`:938-1051`），不是瞬切。
-          key: ValueKey<String>('${_selecting}_$_chatSearchOpen'),
+          // 搜索态进出**不换实例**：官方是同一个 ActionBar 原地形变，
+          // 换 key 会把 320ms 的玻璃动画整段丢掉（变成瞬切）。
+          key: ValueKey<String>('$_selecting'),
           child: _buildHeader(chat, onBack),
         ),
       ),
@@ -2820,8 +2835,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       onOpenSettings: _openSettings,
       onSearch: _openChatSearch,
       searching: _chatSearchOpen,
-      searchController: _chatSearchOpen ? _chatSearchController : null,
-      searchFocus: _chatSearchOpen ? _chatSearchFocus : null,
+      // 控制器/焦点**始终传**：退出搜索时那段 150ms 的 alpha 交叉需要有
+      // 内容可淡出，传 null 会让输入框在退出动画里瞬间消失。
+      searchController: _chatSearchController,
+      searchFocus: _chatSearchFocus,
       onExitSearch: _closeChatSearch,
       onSearchChanged: (String value) => setState(() {
         _chatSearchQuery = value;
@@ -2973,30 +2990,12 @@ class _HomePageState extends ConsumerState<HomePage> {
       color: TelegramColors.bgChat,
       child: Column(
         children: <Widget>[
+          // 顶栏定位与 HomeChatPane 里那条 Positioned(top: topInset, left: 0,
+          // right: 0, child: header) 完全一致——两边都只是「列表/聊天」两种看法的
+          // 同一层，横向不能错位，否则切模式时胶囊会横跳。
           Padding(
-            padding: EdgeInsets.only(top: topInset, left: 12, right: 12),
+            padding: EdgeInsets.only(top: topInset),
             child: _buildHeader(chat, onBack),
-          ),
-          SizedBox(
-            height: 24,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 16),
-                child: Text(
-                  '搜索来自 ${chat.title}',
-                  key: const ValueKey<String>('chat-search-caption'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  // 官方 `ActionBarMenuItem.java:1476-1482`：
-                  // 18dp、单行、`TruncateAt.END`。
-                  style: TextStyle(
-                    color: TelegramColors.textMuted,
-                    fontSize: 18,
-                  ),
-                ),
-              ),
-            ),
           ),
           Expanded(
             child: Stack(

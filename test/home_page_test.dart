@@ -1277,4 +1277,97 @@ void main() {
 
     await _teardownStore(tester);
   });
+
+  // 会话内搜索的形态是官方那套：⋮ 菜单进、顶栏原地变形、**不跳页**、
+  // 默认仍停在聊天流（ChatActivity.java:35378-35418 openSearchWithText 里
+  // 没有 showMessagesSearchListView(true)，只有主动点才切列表，见 :12962-13027）。
+  testWidgets('会话内搜索：从 ⋮ 菜单进，默认停在聊天流，列表要自己点', (tester) async {
+    _wideScreen(tester);
+
+    // 宽屏默认先打开第一个会话（私聊），历史页是按打开顺序弹的，
+    // 所以第一页给私聊占位，第二页才是群聊的。
+    session.historyPages.add(
+      HistoryPage(<ChatMessage>[
+        ChatMessage(
+          id: 'sq0',
+          text: '私聊一句',
+          segments: <Segment>[TextSegment('私聊一句')],
+          time: DateTime(2026, 9, 12, 8),
+          chatId: 'private_20002',
+          senderId: '20002',
+          senderName: '小明',
+        ),
+      ]),
+    );
+    session.historyPages.add(
+      HistoryPage(<ChatMessage>[
+        ChatMessage(
+          id: 'sq1',
+          text: '群里一句',
+          segments: <Segment>[TextSegment('群里一句')],
+          time: DateTime(2026, 9, 12, 9),
+          chatId: 'group_12345',
+          senderId: '30001',
+          senderName: '群友',
+        ),
+        ChatMessage(
+          id: 'sq2',
+          text: '另一句',
+          segments: <Segment>[TextSegment('另一句')],
+          time: DateTime(2026, 9, 12, 10),
+          chatId: 'group_12345',
+          senderId: '30001',
+          senderName: '群友',
+        ),
+      ]),
+    );
+
+    await tester.pumpWidget(_wrap());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('chat-row-group_12345')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MessageBubble), findsWidgets, reason: '历史要先铺出来');
+    final Finder list = find.byKey(const ValueKey('msglist-group_12345'));
+    expect(list, findsOneWidget);
+
+    // 官方搜索入口是 headerItem 的子项（ChatActivity.java:4466-4467），即 ⋮ 菜单。
+    await tester.tap(find.byKey(const ValueKey('group-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('group-menu-search')));
+    await tester.pumpAndSettle();
+
+    // 顶栏原地变形：还是同一个 ChatHeader，只是里面换成输入框。
+    expect(find.byType(ChatHeader), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-search-input')), findsOneWidget);
+    expect(find.byKey(const ValueKey('chat-header-title')), findsNothing);
+    // 聊天流不许被卸载：官方只是把结果层叠上去，聊天流到列表因子为 1 才藏。
+    expect(list, findsOneWidget, reason: '进搜索后聊天流要还在');
+    expect(find.byType(MessageBubble), findsWidgets);
+    expect(find.byKey(const ValueKey('chat-search-count')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('chat-search-input')),
+      '群里',
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('chat-search-count'))).data,
+      '1 of 1',
+      reason: '聊天态计数是「第几条 of 共几条」（ChatActivity.java:27299-27320）',
+    );
+    expect(list, findsOneWidget, reason: '输入时也不该把聊天流换掉');
+
+    // 主动点「以列表方式查看」才切结果列表。
+    await tester.tap(find.byKey(const ValueKey('chat-search-toggle-mode')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chat-search-results')), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('chat-search-count'))).data,
+      '1 条消息',
+    );
+
+    await _teardownStore(tester);
+  });
 }

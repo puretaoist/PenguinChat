@@ -76,8 +76,9 @@ void main() {
     expect(avatar.size, 40);
   });
 
-  testWidgets('三块胶囊几何照官方：左 58、右 max(46,2*48)+12=108、高 58', (tester) async {
-    // 给出 onBack + onSearch + 群菜单 → 三个胶囊齐全（360 宽）。
+  testWidgets('三块胶囊几何照官方：左 58、右 max(46,48)+12=60、高 58', (tester) async {
+    // 普通群聊右侧只有 ⋮ 一个 action item（官方 `searchIconItem` 非 self 会话
+    // 是 GONE 的，ChatActivity.java:18503-18538），所以菜单宽 48。
     await _pump(
       tester,
       ChatHeader(
@@ -95,13 +96,13 @@ void main() {
     // 左胶囊 = s + 2p = 58，正方形。
     expect(left.width, 58);
     expect(left.height, 58);
-    // 右胶囊 = max(46, menuWidth=2*48) + 2p = 96 + 12 = 108。
-    expect(right.width, 108);
+    // 右胶囊 = max(46, menuWidth=48) + 2p = 48 + 12 = 60。
+    expect(right.width, 60);
     expect(right.height, 58);
     // 中胶囊 = min(W-52-rightOffset, 文字宽+82)，必在两者之间。
     expect(middle.height, 58);
-    expect(middle.width, lessThanOrEqualTo(360 - 52 - 102 + 0.01));
-    // 三块互不重叠：左胶囊右缘 58、中胶囊左缘 ≥ 52、右胶囊左缘 = 360-108。
+    expect(middle.width, lessThanOrEqualTo(360 - 52 - 54 + 0.01));
+    // 三块互不重叠：左胶囊右缘 58、中胶囊左缘 ≥ 52、右胶囊左缘 = 360-60。
     final leftRect = tester.getRect(capsules.at(0));
     final midRect = tester.getRect(capsules.at(1));
     final rightRect = tester.getRect(capsules.at(2));
@@ -161,11 +162,17 @@ void main() {
     expect(back, 1);
   });
 
-  testWidgets('搜索态：群名胶囊消失，搜索框铺到右边距', (tester) async {
+  testWidgets('搜索态：同一块玻璃扩宽，头像标题淡出、输入框淡入', (tester) async {
     final controller = TextEditingController();
     final focus = FocusNode();
     addTearDown(controller.dispose);
     addTearDown(focus.dispose);
+
+    // 先进普通态量一下中间玻璃的宽，作为形变起点。
+    await _pump(tester, ChatHeader(chat: _group(), onBack: () {}));
+    final double collapsed = tester
+        .getSize(find.byType(GlassSurface).at(1))
+        .width;
 
     await _pump(
       tester,
@@ -181,22 +188,79 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 官方 ChatActivity.openSearchWithText 里 headerItem 直接 INVISIBLE。
-    expect(find.text('产品讨论组'), findsNothing);
+    // 官方 `ChatActivity.openSearchWithText` 把 headerItem 藏了，
+    // avatarContainer 的 factor 到 0（`:46995-47004`）。
+    expect(find.byKey(const ValueKey('chat-header-title')), findsNothing);
     expect(find.byKey(const ValueKey('chat-search-back')), findsOneWidget);
 
-    // 搜索框从左侧胶囊右边（58）铺到右边距 6：官方 toggleSearch 只做 alpha
-    // 交叉，没有任何宽度动画，所以位置上就该一步到位。
-    final double w = tester.getSize(find.byType(ChatHeader)).width;
-    final Rect field = tester.getRect(find.byType(SearchFieldBox));
-    expect(field.left, 58);
-    expect(field.right, w - 6);
+    // 同一块玻璃扩到中间可用宽：W - 左默认 52 - rightOffset(48+6=54) = 254。
+    final double expanded = tester
+        .getSize(find.byType(GlassSurface).at(1))
+        .width;
+    expect(expanded, greaterThan(collapsed));
+    expect(expanded, closeTo(360 - 52 - 54, 0.01));
+    // 居中：左界 = (rightDefault + leftDefault - width) / 2。
+    final Rect glass = tester.getRect(find.byType(GlassSurface).at(1));
+    expect(glass.left, closeTo((306 + 52 - expanded) / 2, 0.01));
 
-    // 收起搜索（searching 为假）时反过来：胶囊回来、搜索框消失。
-    await _pump(tester, ChatHeader(chat: _group(), onBack: () {}));
-    await tester.pumpAndSettle();
-    expect(find.text('产品讨论组'), findsOneWidget);
+    // 官方聊天页的搜索框是透明背景的内联 EditText（`ActionBarMenuItem.java:1527-1535`），
+    // 不是另摆一颗带底色的 SearchFieldBox。
     expect(find.byType(SearchFieldBox), findsNothing);
+    expect(find.byKey(const ValueKey('chat-search-input')), findsOneWidget);
+
+    // 收起搜索（searching 为假）时反过来：头像标题回来、输入框淡出。
+    await _pump(
+      tester,
+      ChatHeader(
+        chat: _group(),
+        onBack: () {},
+        searchController: controller,
+        searchFocus: focus,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('chat-header-title')), findsOneWidget);
+    expect(
+      tester.getSize(find.byType(GlassSurface).at(1)).width,
+      closeTo(collapsed, 0.01),
+    );
+  });
+
+  testWidgets('玻璃形变是 320ms 渐变，不是一步到位', (tester) async {
+    final controller = TextEditingController();
+    final focus = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focus.dispose);
+
+    await _pump(tester, ChatHeader(chat: _group(), onBack: () {}));
+    final double collapsed = tester
+        .getSize(find.byType(GlassSurface).at(1))
+        .width;
+
+    // 换 searching=true 后只走 160ms（半程），宽度应介于两端之间。
+    tester.view.physicalSize = const Size(360, 120);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTelegramTheme(dark: true),
+        home: Scaffold(
+          body: ChatHeader(
+            chat: _group(),
+            onBack: () {},
+            onExitSearch: () {},
+            searching: true,
+            searchController: controller,
+            searchFocus: focus,
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 160));
+    final double mid = tester.getSize(find.byType(GlassSurface).at(1)).width;
+    await tester.pumpAndSettle();
+    final double full = tester.getSize(find.byType(GlassSurface).at(1)).width;
+
+    expect(mid, greaterThan(collapsed), reason: '160ms 后应该已经开始变宽');
+    expect(mid, lessThan(full), reason: '320ms 才走完，半程不该一步到位');
   });
 
   testWidgets('⋮ 菜单里有搜索，点了走 onSearch', (tester) async {
