@@ -2597,11 +2597,24 @@ class _HomePageState extends ConsumerState<HomePage> {
       atBottom: _atBottom,
       onScrollNotification: _onScrollNotification,
       onJumpToLatest: () => _jumpToLatest(chat.id),
+      // 搜索态且已有结果时藏掉「回到底部」：官方
+      // `ChatActivity.java:17264` 的条件末尾是
+      // `(!searching || searchResultMessages.isEmpty())`，
+      // 而 `:17281` 显示搜索上下钮时会显式
+      // `showButton(BUTTON_PAGE_DOWN, false, animated)` —— 两者永不同时出现。
+      showJumpToLatest:
+          !_chatSearchOpen || _chatSearchHits(store, chat).isEmpty,
       // 会话内搜索的上下跳按钮：官方是 ChatActivity 自己的
       // sideControlsButtonsLayout 里的 BUTTON_SEARCH_UP / _DOWN，落在聊天区
       // 右下（ChatActivity.java:7209 Gravity.RIGHT | Gravity.BOTTOM），
       // 这里贴在计数面板上方、靠右 4dp。
-      overlay: _chatSearchOpen && !_chatSearchListMode
+      // 官方 `ChatActivity.java:17281`：没有命中时
+      // `searchResultMessages.isEmpty()` 让上下钮不显示，
+      // 同时把 `returnToMessageId` 清 0。
+      overlay:
+          _chatSearchOpen &&
+              !_chatSearchListMode &&
+              _chatSearchHits(store, chat).isNotEmpty
           ? Positioned(
               right: 4,
               bottom:

@@ -76,7 +76,7 @@ void main() {
     expect(avatar.size, 40);
   });
 
-  testWidgets('三块胶囊几何照官方：左 58、右 max(46,48)+12=60、高 58', (tester) async {
+  testWidgets('三块胶囊几何照官方：外框 58 内缩 6 后画 46 高', (tester) async {
     // 普通群聊右侧只有 ⋮ 一个 action item（官方 `searchIconItem` 非 self 会话
     // 是 GONE 的，ChatActivity.java:18503-18538），所以菜单宽 48。
     await _pump(
@@ -93,25 +93,29 @@ void main() {
     final left = tester.getSize(capsules.at(0));
     final middle = tester.getSize(capsules.at(1));
     final right = tester.getSize(capsules.at(2));
-    // 左胶囊 = s + 2p = 58，正方形。
-    expect(left.width, 58);
-    expect(left.height, 58);
-    // 右胶囊 = max(46, menuWidth=48) + 2p = 48 + 12 = 60。
-    expect(right.width, 60);
-    expect(right.height, 58);
-    // 中胶囊 = min(W-52-rightOffset, 文字宽+82)，必在两者之间。
-    expect(middle.height, 58);
-    expect(middle.width, lessThanOrEqualTo(360 - 52 - 54 + 0.01));
-    // 三块互不重叠：左胶囊右缘 58、中胶囊左缘 ≥ 52、右胶囊左缘 = 360-60。
+    // 官方外框高 s + 2p = 58，但三个 drawable 都 `.setPadding(dp(6))`，
+    // 而 BlurredBackgroundDrawable 的 padding 是**向内缩**
+    // （`BlurredBackgroundDrawable.java:243-247` `boundsWithPadding.inset(padding, padding)`），
+    // 所以真正画出来的高度是 46（= s），圆角 23 正好是它的一半。
+    expect(left.width, 46);
+    expect(left.height, 46);
+    // 右胶囊 = max(46, menuWidth=48) + 2p - 2*6 = 48。
+    expect(right.width, 48);
+    expect(right.height, 46);
+    // 中胶囊宽度同理要减掉两侧各 6dp。
+    expect(middle.height, 46);
+    expect(middle.width, lessThanOrEqualTo(360 - 52 - 54 - 12 + 0.01));
+    // 三块各让出 6dp：左胶囊 [6,52]、中胶囊左缘 ≥ 52+6、右胶囊 [306,354]。
     final leftRect = tester.getRect(capsules.at(0));
     final midRect = tester.getRect(capsules.at(1));
     final rightRect = tester.getRect(capsules.at(2));
-    expect(leftRect.left, 0);
-    expect(midRect.left, greaterThanOrEqualTo(52));
-    // 官方胶囊是「左右重叠 p=6」的关系：中胶囊右缘 rightDefault=W-(menuWidth+p)
-    // 可比右胶囊左缘（W-max(s,menuWidth)-2p）多出 p=6dp。
-    expect(midRect.right, lessThanOrEqualTo(rightRect.left + 6.01));
-    expect(rightRect.right, 360);
+    expect(leftRect.left, 6);
+    expect(leftRect.right, 52);
+    expect(midRect.left, greaterThanOrEqualTo(58));
+    // 官方这里正好相接不相交：返回玻璃画到 52，标题玻璃从 58 起。
+    expect(midRect.left, greaterThanOrEqualTo(leftRect.right + 5.99));
+    expect(rightRect.right, 354);
+    expect(midRect.right, lessThanOrEqualTo(rightRect.left - 5.99));
   });
 
   testWidgets('私聊显示在线/离线，没有群工具菜单', (tester) async {
@@ -198,10 +202,13 @@ void main() {
         .getSize(find.byType(GlassSurface).at(1))
         .width;
     expect(expanded, greaterThan(collapsed));
-    expect(expanded, closeTo(360 - 52 - 54, 0.01));
+    // 外框可用宽 254，内缩两侧各 6dp 后画出来是 242。
+    expect(expanded, closeTo(360 - 52 - 54 - 12, 0.01));
     // 居中：左界 = (rightDefault + leftDefault - width) / 2。
     final Rect glass = tester.getRect(find.byType(GlassSurface).at(1));
-    expect(glass.left, closeTo((306 + 52 - expanded) / 2, 0.01));
+    // 外框左界 = (rightDefault + leftDefault - 外框宽)/2 = (306 + 52 - 254)/2 = 52，
+    // 内层玻璃再 +6。
+    expect(glass.left, closeTo((306 + 52 - (expanded + 12)) / 2 + 6, 0.01));
 
     // 官方聊天页的搜索框是透明背景的内联 EditText（`ActionBarMenuItem.java:1527-1535`），
     // 不是另摆一颗带底色的 SearchFieldBox。
@@ -239,6 +246,10 @@ void main() {
 
     // 换 searching=true 后只走 160ms（半程），宽度应介于两端之间。
     tester.view.physicalSize = const Size(360, 120);
+    // 不设 dpr 的话物理 360 只剩 120 逻辑宽，顶栏根本排不下（会先报 overflow）。
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         theme: buildTelegramTheme(dark: true),
@@ -273,6 +284,9 @@ void main() {
     // 首帧目标值已是 1 而直接跳到位、根本没有过渡；官方那是独立的 150ms
     // `searchFieldVisibleAlpha`（ActionBar.java:1207-1220），必须真的从 0 起。
     tester.view.physicalSize = const Size(360, 120);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         theme: buildTelegramTheme(dark: true),
@@ -300,6 +314,11 @@ void main() {
         )
         .opacity;
 
+    expect(
+      find.byKey(const ValueKey('chat-search-input')),
+      findsOneWidget,
+      reason: '输入框应当已挂载（宽度足够时）',
+    );
     expect(alphaOf(), lessThan(0.2), reason: '首帧应该几乎全透明');
 
     await tester.pump(const Duration(milliseconds: 75));

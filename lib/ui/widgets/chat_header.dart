@@ -118,6 +118,15 @@ class ChatHeader extends StatelessWidget {
     const double iconSlot = 48.0; // 官方每个 action item 占 48dp（menuWidth）
     const double leftDefault = s + p; // 52，中胶囊左界（:2249）
 
+    // 官方三颗玻璃都用 `.setPadding(dp(6))`（`ActionBar.java:225-239`），
+    // 而 `BlurredBackgroundDrawable.Props.build()`（`:243-247`）里这个 padding 是
+    // **向内缩**：`boundsWithPadding.set(bounds); boundsWithPadding.inset(padding, padding);`
+    // 所以 `setBounds` 给的是外框（58 高），真正画出来的是内缩 6dp 后的 46×46 胶囊。
+    // 我方早期把外框当绘制矩形，于是三颗胶囊都大一圈、且相邻两颗会物理重叠 6dp
+    // （返回胶囊 [0,58]，中玻璃从 52 起）—— 用户看到的「搜索框和返回键重合」就是它。
+    const double glassInset = p; // 6
+    const double pillH = s; // 46：外框 58 内缩 6 后正好等于 s
+
     // 普通群聊/单聊右侧只有 ⋮ 一个 action item：官方 `searchIconItem` 在非 self
     // 会话里是 GONE 的（`ChatActivity.java:18503-18538`），搜索藏在 ⋮ 菜单里
     // （`:4466-4467`）。
@@ -182,10 +191,10 @@ class ChatHeader extends StatelessWidget {
                   // 改成「退出搜索」（官方那个按钮是同一个 view 在形变）。
                   if (onBack != null || onExitSearch != null)
                     Positioned(
-                      left: 0,
-                      top: 0,
-                      width: capsuleH,
-                      height: capsuleH,
+                      left: glassInset,
+                      top: glassInset,
+                      width: pillH,
+                      height: pillH,
                       child: GlassSurface.capsule(
                         radius: 23,
                         alignment: Alignment.center,
@@ -206,10 +215,10 @@ class ChatHeader extends StatelessWidget {
                     ),
                   // 中间那颗玻璃：同一个背景，宽度在动；里面头像标题与输入框交叉。
                   Positioned(
-                    left: left,
-                    top: 0,
-                    width: width,
-                    height: capsuleH,
+                    left: left + glassInset,
+                    top: glassInset,
+                    width: math.max(0.0, width - 2 * glassInset),
+                    height: pillH,
                     child: GlassSurface.capsule(
                       radius: 23,
                       padding: EdgeInsets.zero,
@@ -247,10 +256,28 @@ class ChatHeader extends StatelessWidget {
                             // GONE 的（`ActionBarMenuItem.java:1472`），只在形变期间存在。
                             // `searching || t > 0.001` 是为了让退出搜索时也留住它——
                             // 官方那段淡出要有内容可淡，t 还在往回走就说明动画没结束。
+                            // 宽度不够时不渲染：7dp 起始位 + 40dp 清除钮是硬需求，
+                            // 分屏/小窗下硬排会报 RenderFlex overflowed。
                             if ((searching || t > 0.001) &&
                                 searchController != null &&
-                                searchFocus != null)
-                              Positioned.fill(
+                                searchFocus != null &&
+                                widthDefault > 2 * glassInset + 60)
+                              // 按「展开完成」的宽度排好，再由外层 ClipRRect 裁切——
+                              // 和上面头像层同一个做法。用 Positioned.fill 的话，
+                              // t≈0 时可用宽只有几 dp，Row 里的 7dp 起始位 + Expanded
+                              // 会直接溢出报 RenderFlex overflowed。
+                              // 宽度**不跟动画缩**：官方 searchContainer 也是固定宽，
+                              // 由父容器的 clip 决定露出多少（ActionBarMenuItem.java:1470
+                              // 用的是 `createLinear(0, MATCH_PARENT, 1.0f, ...)`）。
+                              // 跟着缩的话 t≈0 时只有 2dp，Row 的 7dp 起始位直接溢出。
+                              Positioned(
+                                left: 0,
+                                top: 0,
+                                width: math.max(
+                                  0.0,
+                                  widthDefault - 2 * glassInset,
+                                ),
+                                height: pillH,
                                 child: IgnorePointer(
                                   ignoring: !searching,
                                   // 用 TweenAnimationBuilder 而不是 AnimatedOpacity：
@@ -271,10 +298,32 @@ class ChatHeader extends StatelessWidget {
                                       double alpha,
                                       Widget? child,
                                     ) => Opacity(opacity: alpha, child: child),
-                                    child: _SearchInput(
-                                      controller: searchController!,
-                                      focusNode: searchFocus!,
-                                      onChanged: onSearchChanged,
+                                    // 内容按「完全展开」的宽度排好，由外层
+                                    // Positioned 的宽度动画 + ClipRRect 裁切。
+                                    // 直接按当前宽度排版的话，t≈0 时可用宽只有
+                                    // 几 dp，Row 里的 7dp 起始位会溢出报错。
+                                    child: OverflowBox(
+                                      alignment: Alignment.centerLeft,
+                                      minWidth: math.max(
+                                        0.0,
+                                        widthDefault - 2 * glassInset,
+                                      ),
+                                      maxWidth: math.max(
+                                        0.0,
+                                        widthDefault - 2 * glassInset,
+                                      ),
+                                      child: SizedBox(
+                                        width: math.max(
+                                          0.0,
+                                          widthDefault - 2 * glassInset,
+                                        ),
+                                        height: pillH,
+                                        child: _SearchInput(
+                                          controller: searchController!,
+                                          focusNode: searchFocus!,
+                                          onChanged: onSearchChanged,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -287,10 +336,10 @@ class ChatHeader extends StatelessWidget {
                   // 右侧菜单胶囊：官方 `otherIcon.setIconVisible(false)`，
                   // 随搜索因子淡出（ActionBar.java:2171-2175 的菜单 320ms 动画）。
                   Positioned(
-                    right: 0,
-                    top: 0,
-                    width: menuCapsuleW,
-                    height: capsuleH,
+                    right: glassInset,
+                    top: glassInset,
+                    width: menuCapsuleW - 2 * glassInset,
+                    height: pillH,
                     child: IgnorePointer(
                       ignoring: searching,
                       child: Opacity(
@@ -298,7 +347,9 @@ class ChatHeader extends StatelessWidget {
                         child: GlassSurface.capsule(
                           radius: 23,
                           alignment: Alignment.center,
-                          padding: const EdgeInsets.symmetric(horizontal: p),
+                          // 6dp 的呼吸位已经由外层 `glassInset` 让出来了，
+                          // 内层再留就会把 48dp 的 action item 挤成 36dp。
+                          padding: EdgeInsets.zero,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: <Widget>[

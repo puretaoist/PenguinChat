@@ -30,6 +30,7 @@ class HomeChatPane extends StatelessWidget {
     required this.onJumpToLatest,
     required this.itemBuilder,
     this.overlay,
+    this.showJumpToLatest = true,
   });
 
   final Chat chat;
@@ -43,6 +44,15 @@ class HomeChatPane extends StatelessWidget {
   final Widget inputBar;
   final Widget messagesEmpty;
   final bool atBottom;
+
+  /// 「回到底部」圆钮是否允许出现。
+  ///
+  /// 官方 `ChatActivity.java:17264 updatePagedownButtonVisibility` 的条件是
+  /// `... && (!searching || getMediaDataController().searchResultMessages.isEmpty())`，
+  /// 而 `:17281 updateSearchUpDownButtonVisibility` 在显示搜索上下钮时会显式
+  /// `showButton(BUTTON_PAGE_DOWN, false, animated)` —— 两者永远不同时出现。
+  /// 这里由上层按「搜索态且已有结果」算出并传进来。
+  final bool showJumpToLatest;
   final bool Function(ScrollNotification) onScrollNotification;
   final VoidCallback onJumpToLatest;
   final Widget Function(BuildContext context, int index, MessageListItem item)
@@ -135,7 +145,7 @@ class HomeChatPane extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (!atBottom)
+              if (!atBottom && showJumpToLatest)
                 Positioned(
                   right: 14,
                   bottom: inputReserve + 8,

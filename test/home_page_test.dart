@@ -1359,6 +1359,18 @@ void main() {
     );
     expect(list, findsOneWidget, reason: '输入时也不该把聊天流换掉');
 
+    // 「回到底部」与搜索上下钮永不共存：官方
+    // `ChatActivity.java:17264` 的 pageDown 条件是
+    // `(!searching || searchResultMessages.isEmpty())`，
+    // 而 `:17281` 显示搜索上下钮时会显式
+    // `showButton(BUTTON_PAGE_DOWN, false, animated)`。
+    expect(
+      find.byKey(const ValueKey('jump-to-latest')),
+      findsNothing,
+      reason: '搜索态且已有结果时，回到底部按钮必须让位给搜索上下钮',
+    );
+    expect(find.byKey(const ValueKey('chat-search-next')), findsOneWidget);
+
     // 主动点「以列表方式查看」才切结果列表。
     await tester.tap(find.byKey(const ValueKey('chat-search-toggle-mode')));
     await tester.pumpAndSettle();
@@ -1367,6 +1379,11 @@ void main() {
       tester.widget<Text>(find.byKey(const ValueKey('chat-search-count'))).data,
       '1 条消息',
     );
+
+    // 列表态没有上下钮（官方只在聊天态显示，`ChatActivity.java:17281`），
+    // 但「回到底部」同样不该出现。
+    expect(find.byKey(const ValueKey('chat-search-next')), findsNothing);
+    expect(find.byKey(const ValueKey('jump-to-latest')), findsNothing);
 
     await _teardownStore(tester);
   });
