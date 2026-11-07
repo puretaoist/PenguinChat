@@ -84,7 +84,7 @@ void main() {
     }
   });
 
-  testWidgets('一级页：入口分组齐全，账号卡可点，入口行自带 chevron', (tester) async {
+  testWidgets('一级页：入口分组齐全，账号卡可点，入口行没有右箭头', (tester) async {
     await _pump(tester);
     // 页标题与分组名都叫「设置」，允许出现两次。
     expect(find.text('设置'), findsWidgets);
@@ -100,12 +100,14 @@ void main() {
       expect(find.byKey(ValueKey<String>(key)), findsOneWidget, reason: key);
     }
     expect(find.byKey(const ValueKey('account-card')), findsOneWidget);
+    // 官方的 SettingCell 本身不画 chevron（SettingsActivity.java 全文只有
+    // AccountCell 在 :1054-1074 画 msg_arrowright），靠水波纹表达可点。
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('settings-general')),
         matching: find.byIcon(Icons.chevron_right),
       ),
-      findsOneWidget,
+      findsNothing,
     );
   });
 

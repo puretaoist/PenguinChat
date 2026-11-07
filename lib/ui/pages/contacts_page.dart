@@ -1,13 +1,19 @@
-/// L4 联系人页：Telegram 联系人列表同构。
+/// L4 联系人页：按 Telegram Android `ui/ContactsActivity.java` 复刻。
 ///
-/// 几何依据（TDesktop/Android 源码，路径相对 org/telegram/ui）：
-/// - 行 [Cells/UserCell.java:475-497]：头像 44dp 圆角 22、姓名 15sp、
-///   状态 13sp、行高 56dp；这里沿用项目既有 [TgUserRow]（58 高 / 46 头像 /
-///   标题 16 w600 / 副 15），比官方大一号，和其它列表保持一致。
-/// - 分组头 [Cells/LetterSectionCell.java]：官方按首字母分组。中文名按字母
-///   分组没有意义，这里改按 **QQ 好友分组**（"我的好友"等）分段，
-///   信息量和官方一致（一眼能看出这个人在哪个分组）。
-/// - **官方 cell 没有右侧 ">" 箭头**（靠 ripple 表达可点），所以本页不画箭头。
+/// 几何依据（路径相对 org/telegram/ui）：
+/// * ActionBar：嵌入主 Tab 时**没有返回箭头**（ContactsActivity.java:295-298
+///   只在 !hasMainTabs 时 setBackButtonDrawable），标题下方挂人数副标题
+///   （:990-999 的 overlay title）。
+/// * 行：`new UserCell(mContext, 58, 1, false); cell.setCallCellStyle(58)`
+///   （Adapters/ContactsAdapter.java:450-451）—— 高 56、头像 44 圆角 22、
+///   姓名 15sp、状态 13sp、文字 x=66（UserCell.java:479-490）；
+///   分割线 `drawLine(dp(68), h-1, w, h-1)` 只缩进左侧 68（:771-774）。
+/// * 分组头 [Cells/LetterSectionCell.java]：76×64dp、22sp bold、左 12dp。
+///   官方按首字母分组，中文名按字母分组没有意义，这里改按 **QQ 好友分组**
+///   分段，信息量和官方一致（一眼能看出这个人在哪个分组）。
+/// * **官方 cell 没有右侧 ">" 箭头**（靠 ripple 表达可点），所以本页不画箭头。
+/// * 空态 [Components/ContactsEmptyView.java:50-81]：贴纸 110×110、
+///   标题 20sp bold、副标题 14sp。
 ///
 /// 数据来自 [qq8FriendsProvider]（服务层好友缓存，见 qq8_login_service.dart
 /// 的 fetchFriendList 回填）。未登录/未拉到时是空表，不报错。
@@ -21,8 +27,9 @@ import '../../client_api/session_providers.dart';
 import '../../kernel/wlogin8/qq8_list.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
+import '../widgets/scroll_to_top_scope.dart';
 import '../widgets/telegram_avatar.dart';
-import '../widgets/tg_page_header.dart';
+import '../widgets/tg_action_bar.dart';
 import '../widgets/telegram_list_item.dart';
 import 'friend_profile_page.dart';
 
@@ -43,6 +50,7 @@ class ContactsPage extends ConsumerWidget {
     final friends = <Qq8Friend>[...(async.valueOrNull ?? const <Qq8Friend>[])]
       ..sort((a, b) => a.displayName.compareTo(b.displayName));
     final service = ref.watch(qq8LoginServiceProvider);
+    final double topInset = MediaQuery.paddingOf(context).top;
 
     // 按好友分组切段；分组名来自服务层缓存的 FriendListResp 分组表。
     final groups = <String, List<Qq8Friend>>{};
@@ -54,66 +62,82 @@ class ContactsPage extends ConsumerWidget {
     return Scaffold(
       backgroundColor: TelegramColors.bgApp,
       body: SafeArea(
+        top: false,
         bottom: false,
         child: Column(
           children: <Widget>[
-            TgPageHeader(
+            TgActionBar(
               title: '联系人',
-              subtitle: friends.isEmpty ? null : '${friends.length}',
+              topInset: topInset,
+              // 官方在标题下方挂一行小字（overlay title 的第二行）。
+              subtitle: friends.isEmpty ? null : '${friends.length} 位联系人',
             ),
             Expanded(
               child: friends.isEmpty
                   ? _empty(async.isLoading)
-                  : ListView.builder(
-                      padding: const EdgeInsets.only(bottom: 24),
-                      itemCount: groups.length,
-                      itemBuilder: (context, index) {
-                        final name = groups.keys.elementAt(index);
-                        final members = groups[name]!;
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            TelegramSectionHeader(
-                              text: '$name（${members.length}）',
-                            ),
-                            for (var i = 0; i < members.length; i++)
-                              Column(
+                  // 点当前 tab 回顶（MainTabsActivity.java:334-349 对四个 tab 都生效）。
+                  : ScrollToTopScope(
+                      tab: 1,
+                      builder: (BuildContext context, ScrollController c) =>
+                          ListView.builder(
+                            controller: c,
+                            // ActionBar 已经在 Column 里占好位，列表只留一点呼吸
+                            // 与底部余量（官方是靠 padding 让出 actionBar 高度）。
+                            padding: const EdgeInsets.only(top: 4, bottom: 24),
+                            itemCount: groups.length,
+                            itemBuilder: (context, index) {
+                              final name = groups.keys.elementAt(index);
+                              final members = groups[name]!;
+                              return Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: <Widget>[
-                                  TgUserRow(
-                                    key: ValueKey<String>(
-                                      'contact-${members[i].uin}',
-                                    ),
-                                    leading: TelegramAvatar(
-                                      name: members[i].displayName,
-                                      size: 46,
-                                      url: qqAvatarUrl(members[i].uin),
-                                    ),
-                                    title: members[i].displayName,
-                                    // 备注与昵称相同时（服务端常这么返回）别再重复一遍名字。
-                                    subtitle:
-                                        members[i].remark.isNotEmpty &&
-                                            members[i].nick.isNotEmpty &&
-                                            members[i].remark != members[i].nick
-                                        ? members[i].nick
-                                        : 'QQ ${members[i].uin}',
-                                    onTap: () =>
-                                        _openProfile(context, ref, members[i]),
-                                  ),
-                                  if (i != members.length - 1)
-                                    Container(
-                                      height: 1,
-                                      margin: const EdgeInsets.only(
-                                        left: 64,
-                                        right: 12,
-                                      ),
-                                      color: TelegramColors.divider,
+                                  TgLetterHeader('$name（${members.length}）'),
+                                  for (var i = 0; i < members.length; i++)
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: <Widget>[
+                                        TgUserRow(
+                                          key: ValueKey<String>(
+                                            'contact-${members[i].uin}',
+                                          ),
+                                          // UserCell 的 callCellStyle 头像 44。
+                                          compact: true,
+                                          leading: TelegramAvatar(
+                                            name: members[i].displayName,
+                                            size: 44,
+                                            url: qqAvatarUrl(members[i].uin),
+                                          ),
+                                          title: members[i].displayName,
+                                          // 备注与昵称相同时（服务端常这么返回）别再重复一遍名字。
+                                          subtitle:
+                                              members[i].remark.isNotEmpty &&
+                                                  members[i].nick.isNotEmpty &&
+                                                  members[i].remark !=
+                                                      members[i].nick
+                                              ? members[i].nick
+                                              : 'QQ ${members[i].uin}',
+                                          onTap: () => _openProfile(
+                                            context,
+                                            ref,
+                                            members[i],
+                                          ),
+                                        ),
+                                        if (i != members.length - 1)
+                                          Container(
+                                            height: 1,
+                                            margin: const EdgeInsets.only(
+                                              left: 64,
+                                              right: 12,
+                                            ),
+                                            color: TelegramColors.divider,
+                                          ),
+                                      ],
                                     ),
                                 ],
-                              ),
-                          ],
-                        );
-                      },
+                              );
+                            },
+                          ),
                     ),
             ),
           ],

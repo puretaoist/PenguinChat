@@ -13,11 +13,16 @@ import 'package:flutter/material.dart';
 
 import '../../client_api/chat_store.dart';
 import '../../client_api/objects.dart';
+import '../chat/home_dialog_list.dart';
 import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
 import 'message_bubble.dart' show formatTime;
 import 'telegram_avatar.dart';
-import 'tg_page_header.dart';
+import 'tg_action_bar.dart';
+
+class _DialogRowKey extends ValueKey<String> {
+  const _DialogRowKey(super.value);
+}
 
 /// 会话侧栏：搜索条 + 归档入口 + 会话列表（下拉刷新、空态、未读徽章）。
 class ChatListPanel extends StatelessWidget {
@@ -40,7 +45,16 @@ class ChatListPanel extends StatelessWidget {
     this.onToggleMuteChat,
     this.prefs = const UiPrefs(),
     this.controller,
+    this.topInset = 0,
   });
+
+  /// 状态栏高度。
+  ///
+  /// 列表页不再由 SafeArea 让位（内容铺到状态栏后面，见 main.dart 的
+  /// edgeToEdge）：页头背景自己铺到屏幕顶端，标题下移这么多。官方
+  /// ActionBar 就是这么算高度的（ActionBar.java:1400 setMeasuredDimension(
+  /// width, actionBarHeight + (occupyStatusBar ? statusBarHeight : 0))）。
+  final double topInset;
 
   /// 会话列表的滚动控制器（可选）。宽屏"点当前 tab 回顶"需要外部拿到它
   /// （MainTabsActivity.java:334-349 的 onParentScrollToTop 语义）。
@@ -91,42 +105,46 @@ class ChatListPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 归档会话不进主列表（TG/Nagram 的 Archived chats：只从顶部入口进）
-    final visible = chats.where((c) => !c.archived).toList(growable: false);
-    final archived = chats.where((c) => c.archived).toList(growable: false);
+    final dialogs = HomeDialogList(chats);
     return Container(
       // 与其他三个 Tab（联系人/设置/我的，都是 bgApp）统一：以前这里是
       // bgSidebar #212121，切 Tab 时整块底色会跳一下（用户反馈第 5 条）。
       color: TelegramColors.bgApp,
       child: Column(
         children: [
-          // 聊天 Tab 以前没有标题页头（只有一条搜索框），四个 Tab 里唯一
-          // 一个"没有名字"的页面。现在补上，并把切换主题/设置两个入口从
-          // 搜索框右侧挪到页头右侧（TG 也是 ActionBar 右侧放设置）。
-          TgPageHeader(
+          // 会话列表页的 ActionBar（TG DialogsActivity 的那个 actionBar）：
+          // 标题 + 右侧图标按钮，**没有常驻搜索框**——官方把搜索做成 ActionBar
+          // 里一个图标（DialogsActivity.java:3222 setIsSearchField、:3252 默认
+          // GONE），点开才进搜索页；我们之前在头部下方常驻一条 36dp 搜索框，
+          // 结构上和官方不一致。
+          // 状态栏区域由这块背景接管：bgHeader 铺到屏幕顶端，标题整体下移
+          // 一个状态栏高度（ActionBar.java:1400 把 statusBarHeight 算进高度）。
+          TgActionBar(
             title: '聊天',
-            trailing: <Widget>[
-              IconButton(
+            topInset: topInset,
+            actions: <Widget>[
+              TgActionBar.iconButton(
+                key: const ValueKey('open-search'),
+                icon: Icons.search_rounded,
+                onPressed: onOpenSearch,
+                tooltip: '搜索',
+              ),
+              TgActionBar.iconButton(
                 key: const ValueKey('toggle-theme'),
+                icon: TelegramColors.isDark
+                    ? Icons.light_mode
+                    : Icons.dark_mode,
                 onPressed: onToggleTheme,
-                icon: Icon(
-                  TelegramColors.isDark ? Icons.light_mode : Icons.dark_mode,
-                  size: 20,
-                  color: TelegramColors.textSecondary,
-                ),
                 tooltip: '切换亮色 / 暗色',
               ),
-              IconButton(
+              TgActionBar.iconButton(
+                key: const ValueKey('open-settings'),
+                icon: Icons.settings_rounded,
                 onPressed: onOpenSettings,
-                icon: Icon(
-                  Icons.settings_rounded,
-                  size: 20,
-                  color: TelegramColors.textSecondary,
-                ),
                 tooltip: '设置',
               ),
             ],
           ),
-          _buildSearchBar(),
           // 有预览列表但还没连上时，列表顶部压一条 2px 的强调色细线：提醒
           // "这些是缓存，正在后台恢复连接"。
           //
@@ -140,95 +158,64 @@ class ChatListPanel extends StatelessWidget {
               color: TelegramColors.accent.withValues(alpha: 0.7),
             ),
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: onRefresh,
-              color: TelegramColors.accent,
-              backgroundColor: TelegramColors.bgHover,
-              child: visible.isEmpty && archived.isEmpty
-                  ? _buildSidebarEmpty()
-                  : ListView.builder(
-                      controller: controller,
-                      addAutomaticKeepAlives: false,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      // 第一行是"已归档"入口（没有归档会话时不占位置）
-                      itemCount: visible.length + (archived.isEmpty ? 0 : 1),
-                      itemBuilder: (_, i) {
-                        final total =
-                            visible.length + (archived.isEmpty ? 0 : 1);
-                        final Widget row;
-                        if (archived.isNotEmpty && i == 0) {
-                          row = _archivedRow(archived);
-                        } else {
-                          final chat = visible[i - (archived.isEmpty ? 0 : 1)];
-                          row = _swipeable(
-                            chat,
-                            _EnterFade(index: i, child: _chatTile(chat)),
+            child: _DialogScrollArea(
+              child: RefreshIndicator(
+                onRefresh: onRefresh,
+                color: TelegramColors.accent,
+                backgroundColor: TelegramColors.bgHover,
+                child: dialogs.length == 0
+                    ? _buildSidebarEmpty()
+                    : ListView.builder(
+                        controller: controller,
+                        addAutomaticKeepAlives: false,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        // 第一行是"已归档"入口（没有归档会话时不占位置）
+                        itemCount: dialogs.length,
+                        // Key 必须在 sliver 的直接子节点上，只有内层 tile 的 key
+                        // 无法在置顶/新消息重排时保留整行手势和动画状态。
+                        findChildIndexCallback: (key) {
+                          if (key == const ValueKey<String>('dialog-archive')) {
+                            return dialogs.hasArchive ? 0 : null;
+                          }
+                          return key is _DialogRowKey
+                              ? dialogs.indexOf(key.value)
+                              : null;
+                        },
+                        itemBuilder: (_, i) {
+                          final Widget row;
+                          final Key rowKey;
+                          if (dialogs.isArchive(i)) {
+                            rowKey = const ValueKey<String>('dialog-archive');
+                            row = _archivedRow(dialogs.archived);
+                          } else {
+                            final chat = dialogs.chatAt(i);
+                            rowKey = _DialogRowKey(chat.id);
+                            row = _swipeable(
+                              chat,
+                              _EnterFade(index: i, child: _chatTile(chat)),
+                            );
+                          }
+                          // 行间 1px 分隔线：TG `Cells/DialogCell.java` 的
+                          // needDivider 画法——从文字起点画到右缘，最后一行不画。
+                          // 文字起点 = avatarStart 11 + 头像 52 + 间距 13 = 76
+                          // （`DialogCell.java:171` messagePaddingStart+4）。
+                          return Column(
+                            key: rowKey,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              row,
+                              if (!prefs.disableDividers &&
+                                  i != dialogs.length - 1)
+                                Container(
+                                  height: 1,
+                                  margin: const EdgeInsets.only(left: 76),
+                                  color: TelegramColors.divider,
+                                ),
+                            ],
                           );
-                        }
-                        // 行间 1px 分隔线：TG `Cells/DialogCell.java` 的
-                        // needDivider 画法——从文字起点画到右缘，最后一行不画。
-                        // 文字起点 = avatarStart 11 + 头像 52 + 间距 13 = 76
-                        // （`DialogCell.java:171` messagePaddingStart+4）。
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            row,
-                            if (!prefs.disableDividers && i != total - 1)
-                              Container(
-                                height: 1,
-                                margin: const EdgeInsets.only(left: 76),
-                                color: TelegramColors.divider,
-                              ),
-                          ],
-                        );
-                      },
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchBar() {
-    return Padding(
-      // TG 的搜索条外边距 14、高 36、圆角 18、字号 16、图标 24
-      // （DialogsActivity 的 searchLayout / Theme.dialogs_searchField）。我们
-      // 原来 38/20/14/18，量出来比 TG 小半号，而且左右留白偏窄。
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
-      child: Row(
-        children: [
-          Expanded(
-            // 点一下进搜索页（之前这里只是个壳，点了没反应）
-            child: InkWell(
-              key: const ValueKey('open-search'),
-              borderRadius: BorderRadius.circular(TelegramMetrics.inputRadius),
-              onTap: onOpenSearch,
-              child: Container(
-                height: 36,
-                decoration: BoxDecoration(
-                  color: TelegramColors.bgHover,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  children: [
-                    const SizedBox(width: 12),
-                    Icon(
-                      Icons.search_rounded,
-                      size: 22,
-                      color: TelegramColors.textSecondary,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      '搜索会话与消息',
-                      style: TextStyle(
-                        color: TelegramColors.textSecondary,
-                        fontSize: 16,
+                        },
                       ),
-                    ),
-                  ],
-                ),
               ),
             ),
           ),
@@ -713,6 +700,72 @@ class _EnterFade extends StatelessWidget {
       curve: Interval(start, 1, curve: Curves.easeOut),
       builder: (_, double v, Widget? c) => Opacity(opacity: v, child: c),
       child: child,
+    );
+  }
+}
+
+/// 列表区 + 头部阴影。
+///
+/// 为什么单独抽一层 StatefulWidget：阴影显隐要跟着滚动走，而官方不是常驻
+/// 的——列表滚出 5dp 之后才画（DialogsActivity.java:4607-4608 判
+/// shadowVisible，:14368-14369 用 drawHeaderShadow 画 3dp 贴图）。之前用的是
+/// 列表顶端固定 12dp 渐隐，静止时也压着一条灰边。
+class _DialogScrollArea extends StatefulWidget {
+  const _DialogScrollArea({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_DialogScrollArea> createState() => _DialogScrollAreaState();
+}
+
+class _DialogScrollAreaState extends State<_DialogScrollArea> {
+  /// 列表是否已经离开顶部（5dp 内视为"还在顶"，与官方判定一致）。
+  bool _scrolled = false;
+
+  bool _onScroll(ScrollNotification notification) {
+    final bool scrolled = notification.metrics.pixels > 5;
+    if (scrolled != _scrolled) {
+      setState(() => _scrolled = scrolled);
+    }
+    // 不拦截：RefreshIndicator 还要靠这些通知。
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: Stack(
+        children: <Widget>[
+          Positioned.fill(child: widget.child),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 3,
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: _scrolled ? 1 : 0,
+                duration: const Duration(milliseconds: 120),
+                child: DecoratedBox(
+                  key: const ValueKey<String>('chat-list-header-shadow'),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: <Color>[
+                        Colors.black.withValues(alpha: 0.22),
+                        Colors.black.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

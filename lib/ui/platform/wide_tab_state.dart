@@ -13,8 +13,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// 宽屏当前 tab：0=聊天 1=联系人 2=设置 3=我的。
 final StateProvider<int> wideTabProvider = StateProvider<int>((Ref _) => 0);
 
-/// 请求把会话列表滚回顶部：自增一次 = 一次请求。
+/// 请求把某个 tab 的列表滚回顶部：自增一次 = 一次请求。
 ///
 /// 依据 MainTabsActivity.java:334-349 —— 点击**当前** tab 时调
 /// TabFragmentDelegate.onParentScrollToTop()（列表回顶），不重新选中。
-final StateProvider<int> chatListToTopProvider = StateProvider<int>((Ref _) => 0);
+/// 官方对**四个** tab 都这么做，所以这里按 tab 索引分片，而不是只服务聊天列表。
+final StateProviderFamily<int, int> tabScrollToTopProvider =
+    StateProvider.family<int, int>((Ref _, int tab) => 0);

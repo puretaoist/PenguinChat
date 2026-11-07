@@ -17,46 +17,47 @@ import 'package:penguinchat/ui/widgets/chat_list_panel.dart';
 import 'package:penguinchat/ui/widgets/message_bubble.dart' show formatTime;
 
 List<Chat> _chats() => <Chat>[
-      Chat(
-        id: 'group_1',
-        title: '产品讨论组',
-        lastMessage: '张三: 明天十点评审',
-        lastTime: DateTime(2026, 10, 30, 9, 12),
-        unreadCount: 12,
-        type: ChatType.group,
-        memberCount: 42,
-        pinned: true,
-      ),
-      Chat(
-        id: 'private_2',
-        title: '李四',
-        lastMessage: '好的，我看看',
-        lastTime: DateTime(2026, 10, 30, 8, 5),
-        online: true,
-        draft: '在吗',
-      ),
-      Chat(
-        id: 'private_3',
-        title: '王五',
-        lastMessage: '[图片]',
-        lastTime: DateTime(2026, 10, 29, 21, 40),
-        unreadCount: 1,
-        muted: true,
-      ),
-      // 归档会话不进主列表，只出现在顶部「已归档 (1)」入口里
-      Chat(
-        id: 'group_4',
-        title: '闲聊',
-        lastMessage: '赵六: 哈哈哈',
-        lastTime: DateTime(2026, 10, 29, 18, 0),
-        type: ChatType.group,
-        archived: true,
-      ),
-    ];
+  Chat(
+    id: 'group_1',
+    title: '产品讨论组',
+    lastMessage: '张三: 明天十点评审',
+    lastTime: DateTime(2026, 10, 30, 9, 12),
+    unreadCount: 12,
+    type: ChatType.group,
+    memberCount: 42,
+    pinned: true,
+  ),
+  Chat(
+    id: 'private_2',
+    title: '李四',
+    lastMessage: '好的，我看看',
+    lastTime: DateTime(2026, 10, 30, 8, 5),
+    online: true,
+    draft: '在吗',
+  ),
+  Chat(
+    id: 'private_3',
+    title: '王五',
+    lastMessage: '[图片]',
+    lastTime: DateTime(2026, 10, 29, 21, 40),
+    unreadCount: 1,
+    muted: true,
+  ),
+  // 归档会话不进主列表，只出现在顶部「已归档 (1)」入口里
+  Chat(
+    id: 'group_4',
+    title: '闲聊',
+    lastMessage: '赵六: 哈哈哈',
+    lastTime: DateTime(2026, 10, 29, 18, 0),
+    type: ChatType.group,
+    archived: true,
+  ),
+];
 
 Future<void> _pump(
   WidgetTester tester, {
   String? selected,
+  List<Chat>? chats,
   Size size = const Size(360, 560),
   UiPrefs prefs = const UiPrefs(),
   Future<void> Function(Chat chat)? onArchiveChat,
@@ -68,41 +69,103 @@ Future<void> _pump(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
-  await tester.pumpWidget(MaterialApp(
-    debugShowCheckedModeBanner: false,
-    theme: buildTelegramTheme(),
-    home: Scaffold(
-      body: ChatListPanel(
-        chats: _chats(),
-        store: null,
-        selectedChatId: selected,
-        onOpenChat: (_) {},
-        onLongPressChat: (_, _) {},
-        onRefresh: () async {},
-        onOpenSearch: () {},
-        onToggleTheme: () {},
-        onOpenSettings: () {},
-        onOpenArchive: (_, _) {},
-        onOpenConnect: () {},
-        onOpenQq8Login: () {},
-        onArchiveChat: onArchiveChat,
-        onToggleMuteChat: onToggleMuteChat,
-        prefs: prefs,
+  await tester.pumpWidget(
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: buildTelegramTheme(),
+      home: Scaffold(
+        body: ChatListPanel(
+          chats: chats ?? _chats(),
+          store: null,
+          selectedChatId: selected,
+          onOpenChat: (_) {},
+          onLongPressChat: (_, _) {},
+          onRefresh: () async {},
+          onOpenSearch: () {},
+          onToggleTheme: () {},
+          onOpenSettings: () {},
+          onOpenArchive: (_, _) {},
+          onOpenConnect: () {},
+          onOpenQq8Login: () {},
+          onArchiveChat: onArchiveChat,
+          onToggleMuteChat: onToggleMuteChat,
+          prefs: prefs,
+        ),
       ),
     ),
-  ));
+  );
   await tester.pumpAndSettle();
 }
 
 /// 行间分隔线（高 1、左边距 76）都有哪些——用来验证 `needDivider` 的规则。
 Finder _dividers() => find.byWidgetPredicate(
-      (w) =>
-          w is Container &&
-          w.margin == const EdgeInsets.only(left: 76) &&
-          w.child == null,
-    );
+  (w) =>
+      w is Container &&
+      w.margin == const EdgeInsets.only(left: 76) &&
+      w.child == null,
+);
 
 void main() {
+  testWidgets('头部阴影只在列表滚出 5dp 之后出现', (tester) async {
+    // 够多的行才能滚（每行 70dp，12 行远超 560 高）。
+    final List<Chat> many = List<Chat>.generate(
+      12,
+      (int i) => Chat(
+        id: 'row_$i',
+        title: '会话 $i',
+        lastMessage: '最后一条 $i',
+        lastTime: DateTime(2026, 10, 30, 9, i),
+      ),
+    );
+    await _pump(tester, chats: many);
+
+    AnimatedOpacity shadow() => tester.widget<AnimatedOpacity>(
+      find.ancestor(
+        of: find.byKey(const ValueKey<String>('chat-list-header-shadow')),
+        matching: find.byType(AnimatedOpacity),
+      ),
+    );
+
+    // 停在顶部时官方不画阴影（DialogsActivity.java:4607-4608 的 shadowVisible）。
+    expect(shadow().opacity, 0);
+
+    await tester.drag(find.byType(ListView), const Offset(0, -120));
+    await tester.pumpAndSettle();
+    expect(shadow().opacity, 1);
+  });
+
+  testWidgets('置顶或新消息重排时保留会话整行元素和滑动状态', (tester) async {
+    final chats = _chats();
+    Future<void> archive(Chat chat) async {}
+    await _pump(tester, chats: chats, onArchiveChat: archive);
+    final row = find.byKey(const ValueKey('chat-row-private_2'));
+    final element = tester.element(row);
+    final swipe = find.ancestor(of: row, matching: find.byType(Dismissible));
+    final state = tester.state(swipe);
+    await _pump(
+      tester,
+      chats: [chats[1], chats[2], chats[0], chats[3]],
+      onArchiveChat: archive,
+    );
+    expect(tester.element(row), same(element));
+    expect(tester.state(swipe), same(state));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('归档入口插入和移除不重建仍可见的会话行', (tester) async {
+    final chats = _chats();
+    await _pump(tester, chats: chats.take(3).toList());
+    final row = find.byKey(const ValueKey('chat-row-private_2'));
+    final element = tester.element(row);
+    await _pump(tester, chats: chats);
+    expect(find.byKey(const ValueKey('archived-row')), findsOneWidget);
+    expect(tester.element(row), same(element));
+    await _pump(tester, chats: chats.take(3).toList());
+    expect(find.byKey(const ValueKey('archived-row')), findsNothing);
+    expect(tester.element(row), same(element));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('会话名 17 / 摘要 16 / 时间 12：字号照 TG 的 DialogCell', (tester) async {
     await _pump(tester);
 
@@ -112,8 +175,9 @@ void main() {
     final sub = tester.widget<Text>(find.text('张三: 明天十点评审'));
     expect(sub.style?.fontSize, 16, reason: 'TG 摘要 dp(16)');
 
-    final time =
-        tester.widget<Text>(find.text(formatTime(DateTime(2026, 10, 30, 9, 12))));
+    final time = tester.widget<Text>(
+      find.text(formatTime(DateTime(2026, 10, 30, 9, 12))),
+    );
     expect(time.style?.fontSize, 12, reason: 'TG 会话时间 dp(12)');
   });
 
@@ -125,14 +189,17 @@ void main() {
     expect(badgeText.style?.fontWeight, FontWeight.w700);
 
     final box = tester.widget<Container>(
-      find.ancestor(of: find.text('12'), matching: find.byType(Container)).first,
+      find
+          .ancestor(of: find.text('12'), matching: find.byType(Container))
+          .first,
     );
     expect(box.constraints?.minWidth, 22);
     expect(box.constraints?.maxHeight, 22);
   });
 
-  testWidgets('会话名恒加粗：未读 w700、已读 w600（TG dialogs_namePaint 走 BOLD）',
-      (tester) async {
+  testWidgets('会话名恒加粗：未读 w700、已读 w600（TG dialogs_namePaint 走 BOLD）', (
+    tester,
+  ) async {
     await _pump(tester);
     final unread = tester.widget<Text>(find.text('产品讨论组'));
     final read = tester.widget<Text>(find.text('李四'));
@@ -186,8 +253,7 @@ void main() {
     expect(title.style?.color, Colors.white);
   });
 
-  testWidgets('左滑一行 = 归档、右滑一行 = 静音（TG 的 DialogCell 滑动动作）',
-      (tester) async {
+  testWidgets('左滑一行 = 归档、右滑一行 = 静音（TG 的 DialogCell 滑动动作）', (tester) async {
     Chat? archived;
     Chat? muted;
     await _pump(
