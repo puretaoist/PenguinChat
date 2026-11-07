@@ -24,6 +24,8 @@ import '../../infra/net/media_fetcher.dart';
 import '../platform/app_breakpoints.dart';
 import '../theme/telegram_theme.dart';
 import 'message_content.dart';
+import 'bubble_text_layout.dart';
+import 'tg_bubble_shape.dart';
 
 /// 时分（`12:05`）。[withSeconds] 打开后补上秒（抄 exteraGram 的
 /// `ExteraConfig.formatTimeWithSeconds`，列表与气泡共用同一格式化）。
@@ -48,10 +50,13 @@ class MessageBubble extends StatelessWidget {
 
   /// 是否为本组的第一条（同方向 + 同发送者 + 5 分钟内）。
   ///
-  /// TG 的连续消息堆只把**最上面**那条的顶角画满圆，中间几条的"外侧"顶角
-  /// 收成 6dp（ChatMessageCell 里 cornerRadius 按 isFirstInGroup 改），
-  /// 这样一叠消息看起来是连在一起的一坨，而不是一串独立胶囊。
+  /// 每条独立绘制，非首条仅靠发送者侧的顶角收为 6dp。
   final bool firstInGroup;
+
+  /// 是否为本组的最后一条。
+  ///
+  /// 非末条切到无尾背景，靠发送者侧底角收为 6dp；不是直角拼接。
+  final bool lastInGroup;
 
   /// 发言人显示名的覆盖值（可选）。
   ///
@@ -123,6 +128,7 @@ class MessageBubble extends StatelessWidget {
     this.bubbleRadius,
     this.showSenderName = true,
     this.firstInGroup = true,
+    this.lastInGroup = true,
     this.senderLabel,
     this.highlighted = false,
     this.showAvatarColumn = false,
@@ -178,26 +184,23 @@ class MessageBubble extends StatelessWidget {
         MessageContent.singleImageBlock(message) &&
         !message.isFailed &&
         !(message.isRecalled && !message.revealed);
-    final pureImage =
-        imageOnly &&
-        message.text.trim().isEmpty &&
-        message.replyPreview == null;
+    final timeOnImage = imageOnly && MessageContent.timeOnImage(message);
+    final pureImage = imageOnly && MessageContent.isPureImage(message);
     final double radius = bubbleRadius ?? TelegramMetrics.bubbleRadius;
-    // 外侧（靠头像/靠屏幕边的那一侧）顶角：组内非首条收成 6dp。
-    const double tight = 6.0;
-    final double outerTop = firstInGroup ? radius : tight;
-    final bubbleShape = BorderRadius.only(
-      topLeft: Radius.circular(isOut ? radius : outerTop),
-      topRight: Radius.circular(isOut ? outerTop : radius),
-      bottomLeft: Radius.circular(
-        isOut ? radius : TelegramMetrics.bubbleTailRadius,
-      ),
-      bottomRight: Radius.circular(
-        isOut ? TelegramMetrics.bubbleTailRadius : radius,
-      ),
+    // ChatMessageCell:20531-20617：非末条使用 TYPE_MEDIA 无尾背景，
+    // 相邻近角收为 6dp，另一侧仍为大圆角；普通消息始终逐条独立。
+    final bubbleShape = TgBubbleShape(
+      isOut: isOut,
+      isFirst: firstInGroup,
+      isLast: lastInGroup,
+      showTail: !timeOnImage,
+      radius: radius,
+      // 纯图要整张铺满气泡（官方 TYPE_MEDIA 走另一条路径），不留那 2dp 内缩。
+      inset: pureImage ? 0 : 2,
     );
     final inner = Container(
-      decoration: BoxDecoration(
+      decoration: ShapeDecoration(
+        shape: bubbleShape,
         // @我 的入站气泡：底色掺 12% 强调色（TG 用强调色表达"有人在叫我"，
         // 但**不画气泡外的东西**）。以前这里在气泡外面挂了一根 3x28 的紫色
         // 竖条，用户反馈"聊天气泡外部左侧的竖条是什么，怎么有的有有的没有"
@@ -210,13 +213,18 @@ class MessageBubble extends StatelessWidget {
                       TelegramColors.bubbleIn,
                     )
                   : TelegramColors.bubbleIn),
-        borderRadius: bubbleShape,
+        // 不画投影。官方那个 `setShadowLayer(2, 0, 1, 0x32000000)` 是画在气泡
+        // bitmap 自己的九宫格边缘上、alpha 只有 0x32，暗色主题下肉眼几乎看不见；
+        // 换成 Flutter 的 BoxShadow 后，模糊半径会溢出到气泡**外侧**，在深色
+        // 背景上表现为气泡底下一道 1-2dp 的黑边（用户当场指出"tg 气泡没有最底下
+        // 的黑线"）。宁可少一层深度，也不要这条假边框。
       ),
-      // 内边距不是四边等宽：TG layoutTextXY 16626-16651 自己 +11、对方 +17
-      // （给对方头像留空隙），上 8、右 12、下 6。
+      // 总高 = 正文 + 19.5 + 名字（7759），正文 y=8（16682）。
+      // Container decoration 不消耗布局空间，不能再扣路径内缩：下距为 11.5。
+      // 入站非末条背景左移入 6dp、正文相对背景 11dp，合计仍为 17dp。
       padding: pureImage
           ? EdgeInsets.zero
-          : EdgeInsets.fromLTRB(isOut ? 11 : 17, 8, 12, 6),
+          : EdgeInsets.fromLTRB(isOut ? 11 : 17, 8, 12, 11.5),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisSize: MainAxisSize.min,
@@ -243,9 +251,11 @@ class MessageBubble extends StatelessWidget {
                         // TG 按 user.id % 7 轮转七色（UserObject.java:212-216），
                         // 不是统一强调色。
                         color: TelegramColors.nameColorFor(message.senderId),
-                        // TG `Theme.java:8399` namePaint = dp((2*16+10)/3) = 14。
+                        // TG `Theme.java:8038-8039` namePaint = bold(dp(14))，
+                        // 行高按 getNameHeight() = dp(5) + 14 = 19 收。
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.w700,
+                        height: 1.2,
                       ),
                     ),
                   ),
@@ -290,17 +300,20 @@ class MessageBubble extends StatelessWidget {
                   // 正文交给 MessageContent：文本/表情/@ 行内排，图片单独成块。
                   // 揭示后的撤回消息也走这里——反撤回要能看到**原样**的内容，
                   // 包括图片；"已撤回 · 内容已保留"那行注释负责说明它是被撤回的。
-                  MessageContent(
-                    message: message,
-                    isOut: isOut,
-                    localMedia: localMedia,
-                    ensureMedia: ensureMedia,
-                    mediaFailure: mediaFailure,
-                    retryMedia: retryMedia,
-                    onOpenFile: onOpenFile,
-                    imageMeta: imageOnly ? _imageTimeBadge(isOut) : null,
-                    trailing: _inlineMeta ? _metaInline(isOut) : null,
-                  ),
+                  if (_plainText != null && _inlineMeta)
+                    _plainTextWithTime(context, isOut)
+                  else
+                    MessageContent(
+                      message: message,
+                      isOut: isOut,
+                      localMedia: localMedia,
+                      ensureMedia: ensureMedia,
+                      mediaFailure: mediaFailure,
+                      retryMedia: retryMedia,
+                      onOpenFile: onOpenFile,
+                      imageMeta: timeOnImage ? _imageTimeBadge(isOut) : null,
+                      trailing: _inlineMeta ? _metaInline(isOut) : null,
+                    ),
                   if (message.deleted)
                     Text(
                       '已撤回 · 内容已保留',
@@ -319,7 +332,7 @@ class MessageBubble extends StatelessWidget {
           // 时间/状态能贴正文就贴（TG 的排法，见 [_inlineMeta]），贴不了
           // 才单独占一行——否则每个气泡都白多出一行高度，短消息看着特别空。
           // 单图的时间已经画在图片右下角（imageOnly），不再占一行。
-          if (!_inlineMeta && !imageOnly) ...[
+          if (!_inlineMeta && !timeOnImage) ...[
             const SizedBox(height: 2),
             _metaRow(isOut),
           ],
@@ -330,7 +343,10 @@ class MessageBubble extends StatelessWidget {
       constraints: BoxConstraints(maxWidth: maxWidth),
       // 纯图要贴满四角：Container 的 decoration 不裁剪子级，必须自己 Clip。
       child: pureImage
-          ? ClipRRect(borderRadius: bubbleShape, child: inner)
+          ? ClipPath(
+              clipper: ShapeBorderClipper(shape: bubbleShape),
+              child: inner,
+            )
           : inner,
     );
 
@@ -347,15 +363,17 @@ class MessageBubble extends StatelessWidget {
     // 入站 / 20515 出站），原来左右一律 8dp，整列气泡比 TG 多缩进 5dp，看着更窄。
     // 垂直方向按"是否组首"分档：TG 组间空隙大、组内几乎贴紧（名字行本身也
     // 占高度），原来一律 1dp 让所有消息糊成一坨，且组与组之间分不开。
-    final double outEdge = imageOnly ? 9 : 3;
+    final double outEdge = timeOnImage ? 9 : 3;
     // 入站靠左的留白：有头像列（群聊）时照 TG 的 3dp，没头像列（私聊）留 8dp。
-    final double inEdge = imageOnly ? 9 : (showAvatarColumn ? 3 : 8);
+    final double inEdge = timeOnImage ? 9 : (showAvatarColumn ? 3 : 8);
     return Padding(
+      // 间距由 shape 内的 cell→drawable bounds 及 2dp 路径内缩负责，
+      // 不额外叠加猜测的组首 5dp。
       padding: EdgeInsets.only(
         left: isOut ? 0 : inEdge,
         right: isOut ? outEdge : 0,
-        top: firstInGroup ? 7 : 2,
-        bottom: 2,
+        top: 0,
+        bottom: 0,
       ),
       child: Row(
         mainAxisAlignment: isOut
@@ -371,6 +389,7 @@ class MessageBubble extends StatelessWidget {
   /// 图片四边贴气泡，时间只能叠在图上——否则会像以前那样在图片下面白多一行。
   Widget _imageTimeBadge(bool isOut) {
     return Container(
+      key: const ValueKey('image-time-badge'),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.52),
@@ -431,6 +450,49 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
+  String? get _plainText {
+    if (message.segments.isEmpty) return message.text;
+    if (message.segments.every((s) => s is TextSegment || s is ReplySegment)) {
+      return message.segments
+          .whereType<TextSegment>()
+          .map((s) => s.text)
+          .join();
+    }
+    return null;
+  }
+
+  Widget _plainTextWithTime(BuildContext context, bool isOut) {
+    final timeStyle = DefaultTextStyle.of(context).style.merge(
+      TextStyle(
+        fontSize: TelegramMetrics.fontTimestamp,
+        color: isOut
+            ? TelegramColors.bubbleOutTime
+            : TelegramColors.textSecondary,
+      ),
+    );
+    final measure = TextPainter(
+      text: TextSpan(text: formatTime(message.time), style: timeStyle),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final width = measure.width + (isOut ? 18 : 0);
+    measure.dispose();
+    final text = _plainText!;
+    return BubbleTextLayout(
+      text: text,
+      style: TextStyle(
+        fontSize: TelegramMetrics.fontBody,
+        height: 1.35,
+        color: isOut
+            ? TelegramColors.bubbleOutText
+            : TelegramColors.textPrimary,
+      ),
+      metadata: SizedBox(width: width, child: _metaRow(isOut)),
+      metadataWidth: width,
+      rtl: RegExp(r'[֐-ࣿ]').hasMatch(text),
+    );
+  }
+
   /// 时间/送达状态能不能排进最后一行正文。
   ///
   /// 三种例外要单独占一行：
@@ -453,7 +515,9 @@ class MessageBubble extends StatelessWidget {
     return WidgetSpan(
       alignment: PlaceholderAlignment.bottom,
       child: Padding(
-        padding: const EdgeInsets.only(left: 8, top: 2),
+        // 官方行尾给时间留 `timeWidth + dp(4 + (isOut ? 20 : 0))`
+        // （ChatMessageCell.java:16712），正文与时间之间就是 4dp。
+        padding: const EdgeInsets.only(left: 4, top: 2),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

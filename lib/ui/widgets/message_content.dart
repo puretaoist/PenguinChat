@@ -318,8 +318,7 @@ class MessageContent extends StatelessWidget {
 
   /// 这条消息是不是"一张图 + 若干行内元素"（没有别的块级段）。
   ///
-  /// 用来决定时间画在图片右下角还是另起一行——TG 的 media 分支就是按
-  /// "有 photo 且没有其它块"判的（ChatMessageCell.java:24015-24060）。
+  /// 仅识别内容类型，不能据此决定时间叠图；还要检查caption。
   static bool singleImageBlock(ChatMessage message) {
     var images = 0;
     for (final s in message.segments) {
@@ -334,11 +333,26 @@ class MessageContent extends StatelessWidget {
     return images == 1;
   }
 
-  /// 纯图（单图 + 无文字说明 + 无引用）：气泡内边距归零、图片贴满四角。
-  bool get _pureImage =>
-      singleImageBlock(message) &&
-      message.text.trim().isEmpty &&
-      message.replyPreview == null;
+  /// 摘要不一定包含全部元素，caption判定必须同时检查消息元素。
+  static bool hasImageCaption(ChatMessage message) =>
+      message.text.trim().isNotEmpty ||
+      message.segments.any(
+        (s) =>
+            s is TextSegment && s.text.trim().isNotEmpty ||
+            s is FaceSegment ||
+            s is AtSegment,
+      );
+
+  /// TG shouldDrawTimeOnMedia:23892-23896：默认下方caption不叠图时间。
+  static bool timeOnImage(ChatMessage message) =>
+      singleImageBlock(message) && !hasImageCaption(message);
+
+  static bool isPureImage(ChatMessage message) =>
+      timeOnImage(message) &&
+      message.replyPreview == null &&
+      !message.segments.any((s) => s is ReplySegment);
+
+  bool get _pureImage => isPureImage(message);
 
   /// 这条消息里有没有块级段（图片 / 语音 / 视频 / 文件 / 卡片）。
   ///

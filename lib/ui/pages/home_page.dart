@@ -37,6 +37,11 @@ import '../../kernel/wlogin8/qq8_file.dart';
 import '../../kernel/wlogin8/qq8_gfs.dart';
 import '../../kernel/wlogin8/qq8_list.dart';
 import '../../client_api/session_providers.dart';
+import '../chat/chat_draft_controller.dart';
+import '../chat/home_dialog_list.dart';
+import '../chat/chat_load_coordinator.dart';
+import '../chat/chat_viewport_state.dart';
+import '../chat/message_timeline_provider.dart';
 import '../platform/app_breakpoints.dart';
 import '../platform/wide_tab_state.dart';
 import '../widgets/glass_sheet.dart';
@@ -44,8 +49,6 @@ import '../widgets/horizontal_pager.dart';
 import '../prefs/ui_prefs.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
-import '../widgets/bubble_entrance.dart';
-import '../widgets/message_bubble.dart';
 import '../widgets/chat_actions.dart';
 import '../widgets/face_panel.dart';
 import '../widgets/forward_picker.dart';
@@ -57,13 +60,14 @@ import '../widgets/telegram_list_item.dart';
 import '../widgets/chat_header.dart';
 import '../widgets/message_action_popup.dart';
 import '../widgets/message_actions.dart';
-import '../widgets/jump_to_latest.dart';
 import '../widgets/chat_input_bar.dart';
-import '../widgets/chat_list_panel.dart';
-import '../widgets/chat_wallpaper.dart';
-import '../widgets/message_list_builder.dart';
+import '../widgets/home_chat_pane.dart';
+import '../widgets/home_selection_bar.dart';
+import '../widgets/bubble_entrance.dart';
+import '../widgets/message_bubble.dart';
 import '../widgets/telegram_avatar.dart';
 import '../widgets/pressable_scale.dart';
+import '../widgets/chat_list_panel.dart';
 import 'connect_page.dart';
 import 'contacts_page.dart';
 import 'my_profile_page.dart';
@@ -115,7 +119,8 @@ class HomePage extends ConsumerStatefulWidget {
 }
 
 class _HomePageState extends ConsumerState<HomePage> {
-  final _inputController = TextEditingController();
+  final _draft = ChatDraftController();
+  TextEditingController get _inputController => _draft.input;
   final _scrollController = ScrollController();
 
   /// 会话列表的滚动控制器（宽屏左栏用；"点当前 tab 回顶"要能命令它）。
@@ -138,12 +143,11 @@ class _HomePageState extends ConsumerState<HomePage> {
   String? _pendingOpenChatId;
 
   /// 已经触发过 openChat 的会话，避免每次 build 都排一次加载。
-  final Set<String> _opened = <String>{};
+  final _opened = ChatLoadCoordinator();
 
   /// 已经触发过"补群成员名字"的会话。ensureGroupNames 命中冷却时立即返回，
   /// 其回调又会 setState——不记一笔就会 build→触发→setState 无限转。
-  final Set<String> _groupNamesWarmed = <String>{};
-  ChatStore? _openedForStore;
+  final _groupNamesWarmed = ChatLoadCoordinator();
 
   /// 未读分隔线的锚点（= 打开会话那一刻的 `Chat.lastReadId`）。
   ///
@@ -167,20 +171,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// scrollToOffsetOnRecreate = height - itemView.getBottom() - paddingBottom）。
   ///
   /// 键不存在 = 上次离开时贴着底部（等价于 null 锚点 → 直接贴最新）。
-  final Map<String, _ScrollAnchor> _scrollAnchors = <String, _ScrollAnchor>{};
-
-  /// 当前 _scrollController 记录的是哪个会话的位置。
-  String? _scrollOwnerChatId;
-
-  /// 会话代次：owner 每变一次 +1（见 [_beginChatAttempt]）。
-  ///
-  /// 所有异步 open/恢复/钉底回调都把发起时的代次带回来，对不上就整段放弃。
-  /// 没有它，A 会话慢完成的 openChat 会把已切到 B 的视口按 A 的目标改写，
-  /// 还会顺手清掉 B 正在进行的恢复守卫（审计第 1、2 条）。
-  int _chatGeneration = 0;
-
-  /// 正在还原/贴底定位的会话：这期间滚动回调不许写缓存（否则把中间值记进去）。
-  String? _restoringChatId;
+  final _viewport = ChatViewportState();
 
   /// 正在把列表钉在底部（打开会话/发送后的一小段时间）。
   bool _pinningBottom = false;
@@ -203,22 +194,6 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 钉底的绝对时间上限（不是帧数：120Hz 下 90 帧只有 0.75s）。
   DateTime _pinDeadline = DateTime.fromMillisecondsSinceEpoch(0);
-
-  /// 切会话时要还原到的锚点（null = 没有记录 → 贴底）。
-  _ScrollAnchor? _pendingRestore;
-
-  /// 正在程序化还原位置：此时 _onScroll 的写回要跳过，否则会把中间值
-  /// 覆盖进记录，下次再回来就偏了。
-  bool _restoringScroll = false;
-
-  /// 当前输入框里装着哪个会话的草稿（换会话时要靠它判断"要不要先存上一份"）。
-  String? _draftChatId;
-  Timer? _draftTimer;
-
-  /// 缓存的 store 引用：`dispose()` 里 **不能再碰 `ref`**（Riverpod 会抛
-  /// "Cannot use ref after the widget was disposed"），而退出前还想把草稿写回去，
-  /// 所以每次 build 时把 store 记在这里，[flushDraft] 只用这个字段。
-  ChatStore? _draftStore;
 
   /// 多选模式里选中的消息 id（空 = 不在多选模式）。
   final Set<String> _selected = <String>{};
@@ -267,7 +242,6 @@ class _HomePageState extends ConsumerState<HomePage> {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _inputController.addListener(_onInputChanged);
     // 冷启动预热协议线：构造控制器即触发「票据自动登录」——
     // 有保存票据时装新包/重启都不用再走密码→滑块→短信那一套。
     // 只读一次（构造是幂等的，Riverpod 会复用同一个实例）。
@@ -286,57 +260,14 @@ class _HomePageState extends ConsumerState<HomePage> {
   void dispose() {
     // 退出前把没落盘的草稿写回去（防抖计时器可能还挂着）
     _saveScrollAnchor();
-    _flushDraft();
-    _draftTimer?.cancel();
+    _draft.dispose();
+    _opened.dispose();
+    _groupNamesWarmed.dispose();
     _stopBottomPin();
     _scrollController.removeListener(_onScroll);
-    _inputController.removeListener(_onInputChanged);
-    _inputController.dispose();
     _scrollController.dispose();
     _chatListController.dispose();
     super.dispose();
-  }
-
-  /// 打字 → 防抖 600ms 落草稿（每敲一个字都写盘太浪费）。
-  void _onInputChanged() {
-    _draftTimer?.cancel();
-    _draftTimer = Timer(const Duration(milliseconds: 600), _flushDraft);
-  }
-
-  /// 把当前输入框内容作为草稿存到 [_draftChatId] 那个会话上。
-  ///
-  /// 只用 [_draftStore]（build 里缓存的），不走 `ref`——这个方法会被 `dispose()`
-  /// 调用，那时 `ref` 已经不可用了。
-  void _flushDraft() {
-    _draftTimer?.cancel();
-    _draftTimer = null;
-    final store = _draftStore;
-    final chatId = _draftChatId;
-    if (store == null || chatId == null) return;
-    final text = _inputController.text;
-    final chat = store.chatOf(chatId);
-    if (chat == null || chat.draft == text) return;
-    unawaited(store.setDraft(chatId, text));
-  }
-
-  /// 换会话时把输入框换成那个会话的草稿。
-  ///
-  /// **必须在 post-frame 里改 controller**：build 期间动它会让 TextField
-  /// 在 build 中 markNeedsBuild（Flutter 直接报错）。所以这里只记 id，
-  /// 真正的赋值排到下一帧。
-  void _syncDraft(Chat? chat) {
-    final id = chat?.id;
-    if (id == _draftChatId) return;
-    _flushDraft(); // 先把上一个会话的草稿存好，再换
-    _draftChatId = id;
-    final text = chat?.draft ?? '';
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _inputController.value = TextEditingValue(
-        text: text,
-        selection: TextSelection.collapsed(offset: text.length),
-      );
-    });
   }
 
   // ---------------------------------------------------------------
@@ -396,8 +327,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (n is ScrollStartNotification && n.dragDetails != null) {
       _userDragging = true;
       _stopBottomPin();
-      _restoringChatId = null;
-      _restoringScroll = false;
+      _viewport.restoringChatId = null;
+      _viewport.restoringScroll = false;
       // 滚动时收起键盘（设置 → 聊天 → 滚动时收起键盘，抄
       // ExteraConfig.hideKeyboardOnScroll）。只认手指拖动，程序性贴底不收。
       if (ref.read(uiPrefsProvider).hideKeyboardOnScroll) {
@@ -438,7 +369,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final pos = _safePosition;
     final double? oldPixels = pos?.pixels;
     final double? oldMax = pos?.maxScrollExtent;
-    final int gen = _chatGeneration;
+    final int gen = _viewport.generation;
     _loadingMoreChats.add(chatId);
     try {
       await store.loadMore(chatId);
@@ -452,17 +383,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 对应的就是另一条消息了。按 max 的增量平移 pixels，让屏幕上的同一条
     // 消息保持同一偏移（审计第 5 条的核心）。
     if (oldPixels == null || oldMax == null) return;
-    if (gen != _chatGeneration || _resolvedChatId != chatId) return;
+    if (gen != _viewport.generation || _resolvedChatId != chatId) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || gen != _chatGeneration) return;
+      if (!mounted || gen != _viewport.generation) return;
       final p = _safePosition;
       if (p == null) return;
       final double delta = p.maxScrollExtent - oldMax;
       if (delta == 0) return;
       final double goal = (oldPixels + delta).clamp(0.0, p.maxScrollExtent);
-      _restoringScroll = true;
+      _viewport.restoringScroll = true;
       p.jumpTo(goal);
-      _restoringScroll = false;
+      _viewport.restoringScroll = false;
     });
   }
 
@@ -538,7 +469,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     widget.onChatPaneVisibilityChanged?.call(true);
     unawaited(_ensureOpened(chat.id));
     // 每次主动点开都允许重试一次（上次可能因为没上线 / 接口失败而没拉到）。
-    _groupNamesWarmed.remove(chat.id);
+    _groupNamesWarmed.retry(chat.id);
     _warmGroupNames(chat);
   }
 
@@ -553,12 +484,19 @@ class _HomePageState extends ConsumerState<HomePage> {
     final gid = chat.rawId;
     final names = _namesService();
     if (chat.type != ChatType.group || gid == null || names == null) return;
-    if (!_groupNamesWarmed.add(chat.id)) return;
+    if (_groupNamesWarmed.contains(chat.id)) return;
+    final revision = _groupNamesWarmed.revision;
     unawaited(
-      names.ensureGroupNames(gid).then((_) {
-        // 名字是异步补的，补到就重画一次，气泡上的发言人才能立刻变成网名。
-        if (mounted) setState(() {});
-      }),
+      _groupNamesWarmed
+          .run(chat.id, () => names.ensureGroupNames(gid))
+          .then((_) {
+            if (mounted && _groupNamesWarmed.isCurrent(revision)) {
+              setState(() {});
+            }
+          })
+          .catchError((Object error) {
+            // 下次主动进入可重试，不让后台名单失败变成未处理异常。
+          }),
     );
   }
 
@@ -567,14 +505,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 所有"这次打开会话"的入口都必须走这里：代次不翻，旧的异步回调还能
   /// 认领新会话的视口（审计第 1 条）。
   void _beginChatAttempt(String chatId) {
-    _chatGeneration++;
-    _scrollOwnerChatId = chatId;
-    _pendingRestore = _scrollAnchors[chatId];
+    _viewport.begin(chatId);
     // 旧链的钉底/恢复立即作废
     _pinningBottom = false;
     _pinGeneration = -1;
-    _restoringChatId = null;
-    _restoringScroll = false;
+    _viewport.restoringChatId = null;
+    _viewport.restoringScroll = false;
   }
 
   /// 打开会话：首次会拉历史并清未读。
@@ -584,21 +520,21 @@ class _HomePageState extends ConsumerState<HomePage> {
   Future<void> _ensureOpened(String chatId) async {
     final store = ref.read(chatStoreProvider);
     if (store == null) return;
-    final int gen = _chatGeneration;
+    final int gen = _viewport.generation;
     final chat = store.chats.where((c) => c.id == chatId).firstOrNull;
     _unreadAnchorId = (chat != null && chat.unreadCount > 0)
         ? chat.lastReadId
         : null;
-    if (!_opened.add(chatId)) {
-      // 会话早就打开过（数据在内存里）：直接还原上次的位置，不重拉历史。
-      if (gen == _chatGeneration && _scrollOwnerChatId == chatId) {
-        _restoreScroll(gen);
-      }
+    try {
+      await _opened.run(chatId, () => store.openChat(chatId));
+    } on Object {
+      // 加载失败不冒充已完成；下次进入允许重试。
       return;
     }
-    await store.openChat(chatId);
     // 慢完成：期间用户已经切走（或切回又切走）→ 这次的结果不再属于当前视口。
-    if (!mounted || gen != _chatGeneration || _scrollOwnerChatId != chatId) {
+    if (!mounted ||
+        gen != _viewport.generation ||
+        _viewport.ownerChatId != chatId) {
       return;
     }
     // 第一次打开：有记录就还原，没有就贴底。
@@ -987,7 +923,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 为什么取第一条而不是最后一条：最后一条常被视口底截断，底边跑到视口外，
   /// 存下来的偏移是负的、恢复时只能贴底；第一条几乎总是完整可见的，偏移稳定。
   /// Telegram 取 findFirstVisibleItemPosition 也是这个道理。
-  _ScrollAnchor? _captureAnchor() {
+  ChatScrollAnchor? _captureAnchor() {
     final pos = _safePosition;
     if (pos == null) return null;
     final vp = _viewportRectOf(pos);
@@ -1008,27 +944,31 @@ class _HomePageState extends ConsumerState<HomePage> {
       }
     }
     if (bestId == null) return null;
-    return _ScrollAnchor(bestId, vp.bottom - bestBottom);
+    return ChatScrollAnchor(bestId, vp.bottom - bestBottom);
   }
 
   /// 把当前会话的滚动锚点存进 map（切会话 / 返回列表 / dispose 前调用）。
   void _saveScrollAnchor() {
-    final owner = _scrollOwnerChatId;
-    if (owner == null || _restoringScroll || _restoringChatId != null) return;
+    final owner = _viewport.ownerChatId;
+    if (owner == null ||
+        _viewport.restoringScroll ||
+        _viewport.restoringChatId != null) {
+      return;
+    }
     final pos = _safePosition;
     if (pos == null) return;
     // 停在底部 = 不留锚点：还原时直接贴最新。存一条具体消息会在"离开后又有
     // 新消息"时停在旧消息上（明明该看最新），是另一类"记忆不对"。
     if (_isAtBottom(pos)) {
-      _scrollAnchors.remove(owner);
+      _viewport.anchors.remove(owner);
       return;
     }
     final anchor = _captureAnchor();
     if (anchor == null) {
-      _scrollAnchors.remove(owner);
+      _viewport.anchors.remove(owner);
       return;
     }
-    _scrollAnchors[owner] = anchor;
+    _viewport.anchors[owner] = anchor;
   }
 
   /// 切回会话时按锚点还原位置；没有记录就贴底。
@@ -1040,10 +980,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// （空列表画的是占位），也可能上树了但 maxScrollExtent 还是估算值；锚点
   /// 消息甚至可能还没被构建（离视口太远）。所以每帧看一次，先粗跳再精修。
   void _restoreScroll(int gen) {
-    if (gen != _chatGeneration) return;
-    final anchor = _pendingRestore;
-    _pendingRestore = null;
-    _restoringChatId = _scrollOwnerChatId;
+    if (gen != _viewport.generation) return;
+    final anchor = _viewport.pendingRestore;
+    _viewport.pendingRestore = null;
+    _viewport.restoringChatId = _viewport.ownerChatId;
     _anchorStep(anchor, gen, 0);
   }
 
@@ -1056,23 +996,23 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// index 定位的 API，只能先估 pixels 再按实际布局修正。
   /// 为什么不能只跳一次：maxScrollExtent 是 Flutter 按"已构建项平均高度"外推
   /// 的估算值，真机上图片多，误差能到 20%，所以要多迭代几帧直到差 < 0.5px。
-  void _anchorStep(_ScrollAnchor? anchor, int gen, int tries) {
+  void _anchorStep(ChatScrollAnchor? anchor, int gen, int tries) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || gen != _chatGeneration) return;
+      if (!mounted || gen != _viewport.generation) return;
       final pos = _safePosition;
       if (pos == null) {
         // 列表还没上树（消息为空时画的是占位）或正处于两页交叉淡入。
         if (tries < 20) {
           _anchorStep(anchor, gen, tries + 1);
         } else {
-          _restoringChatId = null;
+          _viewport.restoringChatId = null;
         }
         return;
       }
       if (anchor == null) {
         // 没有记录 → 贴最新。贴底不能只做一次 jumpTo（max 是估算值，
         // 图片/语音解码完还会长高），交给带代次与稳定判定的钉底。
-        _restoringChatId = null;
+        _viewport.restoringChatId = null;
         _startBottomPin(gen);
         return;
       }
@@ -1090,15 +1030,15 @@ class _HomePageState extends ConsumerState<HomePage> {
         // 反向列表里 pixels 增大 = 内容整体下移（非反向是上移），校正方向要翻。
         final double correction = _reverseList ? -delta : delta;
         if (correction.abs() > 0.5 && tries < 60) {
-          _restoringScroll = true;
+          _viewport.restoringScroll = true;
           pos.jumpTo(
             _clampPixels(pos.pixels + correction, pos.maxScrollExtent),
           );
-          _restoringScroll = false;
+          _viewport.restoringScroll = false;
           _anchorStep(anchor, gen, tries + 1);
           return;
         }
-        _restoringChatId = null;
+        _viewport.restoringChatId = null;
         final bool atBottom = _isAtBottom(pos);
         if (atBottom != _atBottom && mounted) {
           setState(() => _atBottom = atBottom);
@@ -1108,10 +1048,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (tries >= 60) {
         // 锚点消息一直没出现（被删了/被过滤了）→ 放弃精修，保持当前视口。
         // 宁可停在近似位置，也不硬拽到底部（那会把用户刚看的地方顶掉）。
-        _restoringChatId = null;
+        _viewport.restoringChatId = null;
         return;
       }
-      final chatId = _scrollOwnerChatId;
+      final chatId = _viewport.ownerChatId;
       final msgs = chatId == null
           ? const <ChatMessage>[]
           : (ref.read(messagesProvider(chatId)).valueOrNull ??
@@ -1119,7 +1059,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       final int anchorIdx = msgs.indexWhere((m) => m.id == anchor.messageId);
       if (anchorIdx < 0) {
         // 锚点消息已经不在会话里（被删/被过滤）→ 保持当前视口，不硬拽。
-        _restoringChatId = null;
+        _viewport.restoringChatId = null;
         return;
       }
       // 当前屏幕最上面那条消息的下标：没有它就没法判断该往哪个方向找锚点。
@@ -1150,7 +1090,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         final int gap = anchorIdx - curIdx; // 正 = 锚点更晚（更靠最新）
         if (gap == 0) {
           // 锚点理应就在屏上却没有它的 RenderBox：布局还没稳定，放弃精修。
-          _restoringChatId = null;
+          _viewport.restoringChatId = null;
           return;
         }
         final double avg = msgs.isEmpty
@@ -1165,13 +1105,13 @@ class _HomePageState extends ConsumerState<HomePage> {
         next = _clampPixels(pos.pixels + dir * step, pos.maxScrollExtent);
         if ((next - pos.pixels).abs() < 0.5) {
           // 已经顶到头，锚点仍没出现：放弃，保持当前视口。
-          _restoringChatId = null;
+          _viewport.restoringChatId = null;
           return;
         }
       }
-      _restoringScroll = true;
+      _viewport.restoringScroll = true;
       pos.jumpTo(next);
-      _restoringScroll = false;
+      _viewport.restoringScroll = false;
       _anchorStep(anchor, gen, tries + 1);
     });
     // postFrame 回调只在下一次出帧时才跑。没有别的 UI 事件时，它要一直等到
@@ -1191,7 +1131,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 连续 [_pinStableTarget] 帧 max 不变且已在底部 = 内容稳定，提前收工。
   void _startBottomPin(int gen) {
     _stopBottomPin();
-    if (gen != _chatGeneration) return;
+    if (gen != _viewport.generation) return;
     _pinningBottom = true;
     _pinGeneration = gen;
     _pinStable = 0;
@@ -1204,7 +1144,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   static const int _pinStableTarget = 8;
 
   void _pinTick() {
-    if (!mounted || !_pinningBottom || _pinGeneration != _chatGeneration) {
+    if (!mounted || !_pinningBottom || _pinGeneration != _viewport.generation) {
       _stopBottomPin();
       return;
     }
@@ -1263,7 +1203,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final pos = _safePosition;
       if (pos == null) return;
-      _startBottomPin(_chatGeneration);
+      _startBottomPin(_viewport.generation);
       final double goal = _bottomOffset(pos);
       final double dist = (goal - pos.pixels).abs();
       if (dist < 1) return;
@@ -1338,7 +1278,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final int wideTab = ref.watch(wideTabProvider);
     // 宽屏"点当前 tab 回顶"（MainTabsActivity.java:334-349）：外壳自增一次，
     // 这里把会话列表滚回顶部。
-    ref.listen<int>(chatListToTopProvider, (int? prev, int next) {
+    ref.listen<int>(tabScrollToTopProvider(0), (int? prev, int next) {
       if (_chatListController.hasClients) {
         _chatListController.animateTo(
           0,
@@ -1355,7 +1295,6 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 预览里的会话不可交互（没有 store 就没有 openChat/发送/长按菜单），
     // 所以预览期间不解析"选中会话"，右侧对话面板保持空。
     final bool previewOnly = store == null && widget.previewChats.isNotEmpty;
-    _draftStore = store; // 给 dispose() 里的草稿收尾用（那时不能再碰 ref）
 
     // 点系统通知 → 打开对应会话。通知由 [MessageNotifyScope] 发出，
     // 它拿不到选中态（选中态只在这里），所以只能走这个状态口。
@@ -1378,21 +1317,21 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
 
     // 换了 store（重连会新建）就忘掉"已打开"记录，否则新 store 的历史拉不下来。
-    if (!identical(_openedForStore, store)) {
-      _openedForStore = store;
-      _opened.clear();
-      // 换号/重连后名单缓存可能已换，允许重新补一次。
-      _groupNamesWarmed.clear();
+    if (_opened.bind(store)) {
+      _groupNamesWarmed.bind(store);
+      // 相同chatId换数据源也必须废弃旧视口回调和旧账号锚点。
+      _viewport.reset();
+      _stopBottomPin();
     }
 
     _resolvedChatId = previewOnly ? null : _resolveSelected(chats);
     if (_resolvedChatId != null && store != null) {
       // 宽屏自动选中的会话也要认领 owner：原实现只有 _openChat 设 owner，
       // 首次自动进入的会话永远不写位置，也就没有记忆（审计第 7 条）。
-      if (_scrollOwnerChatId != _resolvedChatId) {
+      if (_viewport.ownerChatId != _resolvedChatId) {
         _beginChatAttempt(_resolvedChatId!);
       }
-      if (!_opened.contains(_resolvedChatId)) {
+      if (!_opened.contains(_resolvedChatId!)) {
         // 首屏自动选中的会话也要拉历史，否则宽屏下右侧是一片空白。
         unawaited(_ensureOpened(_resolvedChatId!));
       }
@@ -1406,6 +1345,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     // 这就是「键盘呼出变卡」的来源。sizeOf 只在窗口尺寸真变时重建。
     final wide = AppBreakpoints.isTablet(MediaQuery.sizeOf(context).width);
 
+    // 状态栏高度。内容现在铺到状态栏后面（edge-to-edge，见 main.dart），
+    // 顶部安全区不再由 SafeArea 统一让位，而是各视图自己消费：
+    // 列表页把 bgHeader 铺到状态栏后面再让标题下移（ChatListPanel.topInset），
+    // 聊天页壁纸从屏幕顶端开始、页头胶囊整体下移（HomeChatPane.topInset）。
+    // 官方根据：ActionBar 的高度本身就含 statusBar（ActionBar.java:1400
+    // setMeasuredDimension(width, actionBarHeight + (occupyStatusBar ? statusBarHeight : 0))）。
+    final double topInset = MediaQuery.paddingOf(context).top;
+
     // 侧栏抽成哑视图（ChatListPanel）：build 里组装一次，宽窄两态共用。
     // 窄屏只有"列表/对话二选一"，列表页不存在"当前打开的会话"，所以不传
     // 选中项——否则第一个会话会常年挂着一层选中底色，看起来像误选中。
@@ -1413,6 +1360,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       chats: chats,
       store: store,
       connecting: widget.connecting,
+      topInset: topInset,
       selectedChatId: wide ? _resolvedChatId : null,
       onOpenChat: _openChat,
       onLongPressChat: _showChatActions,
@@ -1442,13 +1390,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       },
     );
 
-    // 顶部/左右安全区在**根布局**统一消费一次（缺陷5：竖屏时聊天标题
-    // 会和系统状态栏的时间/日期叠在一起）。底部不在这里管——输入栏自己
-    // 有 SafeArea(top:false)，两层都加会把底部留白算两遍。
-    // 状态栏高度：聊天页的顶栏玻璃要盖到状态栏后面（官方 contentView
-    // setOccupyStatusBar(true)，壁纸与模糊整段延伸到状态栏下），但本页在
-    // SafeArea 内部、padding 已被抹成 0，所以在外层先取一次真实值传下去。
-    final double topInset = MediaQuery.paddingOf(context).top;
     if (wide) {
       // 平板（官方 MainTabsActivity 只占左栏，LaunchActivity.java:949-953）：
       // 左栏 = 当前 tab 的列表页，右栏 = 对话面板且**不随 tab 切换**（换 tab
@@ -1456,6 +1397,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       return Scaffold(
         backgroundColor: TelegramColors.bgApp,
         body: SafeArea(
+          top: false,
           bottom: false,
           child: Row(
             children: [
@@ -1475,7 +1417,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                 ),
               ),
               Container(width: 1, color: TelegramColors.divider),
-              Expanded(child: _buildChatPane(chats, store, topInset: topInset)),
+              Expanded(child: _chatPaneView(chats, store, topInset: topInset)),
             ],
           ),
         ),
@@ -1491,6 +1433,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       child: Scaffold(
         backgroundColor: TelegramColors.bgApp,
         body: SafeArea(
+          top: false,
           bottom: false,
           child: AnimatedSwitcher(
             // Telegram 的开页转场：150ms + DecelerateInterpolator(1.5)。
@@ -1511,7 +1454,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   )
                 : KeyedSubtree(
                     key: const ValueKey<String>('chat-pane'),
-                    child: _buildChatPane(
+                    child: _chatPaneView(
                       chats,
                       store,
                       onBack: _backToChatList,
@@ -1568,13 +1511,8 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 选中哪个会话：优先用户点过的（归档里的也算，从归档入口点进去要能留住），
   /// 否则取主列表第一个。
-  String? _resolveSelected(List<Chat> chats) {
-    if (chats.isEmpty) return null;
-    final selected = _selectedChatId;
-    if (selected != null && chats.any((c) => c.id == selected)) return selected;
-    final visible = chats.where((c) => !c.archived);
-    return (visible.isEmpty ? chats : visible).first.id;
-  }
+  String? _resolveSelected(List<Chat> chats) =>
+      HomeDialogList.resolveSelected(chats, _selectedChatId);
 
   /// 归档列表：复用会话行，长按可以"取消归档"。
   void _openArchiveSheet(List<Chat> archived, ChatStore? store) {
@@ -2329,60 +2267,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (mounted) _toast('已上传：$name');
   }
 
-  /// 多选工具条：TG 顶部那条"已选 N 条"。
+  /// 多选工具条：Telegram DialogsActivity 的 action mode。
   Widget _buildSelectionBar(Chat chat) {
-    return Container(
-      height: TelegramMetrics.headerHeight,
-      color: TelegramColors.bgHeader,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        children: [
-          IconButton(
-            key: const ValueKey('ms-close'),
-            onPressed: () => setState(_selected.clear),
-            icon: Icon(Icons.close, color: TelegramColors.textSecondary),
-            tooltip: '退出多选',
-          ),
-          Expanded(
-            child: Text(
-              '已选 ${_selected.length} 条',
-              key: const ValueKey('ms-count'),
-              style: TextStyle(
-                color: TelegramColors.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          IconButton(
-            key: const ValueKey('ms-copy'),
-            onPressed: () => _copySelected(chat.id),
-            icon: Icon(
-              Icons.copy_outlined,
-              color: TelegramColors.textSecondary,
-            ),
-            tooltip: '复制',
-          ),
-          IconButton(
-            key: const ValueKey('ms-forward'),
-            onPressed: () => _forwardMessages(chat.id, _selected.toList()),
-            icon: Icon(Icons.forward, color: TelegramColors.textSecondary),
-            tooltip: '转发',
-          ),
-          IconButton(
-            key: const ValueKey('ms-merge-forward'),
-            onPressed: () => _forwardAsCard(chat.id, _selected.toList()),
-            icon: Icon(Icons.merge_type, color: TelegramColors.textSecondary),
-            tooltip: '合并转发',
-          ),
-          IconButton(
-            key: const ValueKey('ms-delete'),
-            onPressed: () => _deleteSelected(chat.id),
-            icon: Icon(Icons.delete_outline, color: TelegramColors.danger),
-            tooltip: '删除（仅本地）',
-          ),
-        ],
-      ),
+    return HomeSelectionBar(
+      count: _selected.length,
+      onClose: () => setState(_selected.clear),
+      onCopy: () => _copySelected(chat.id),
+      onForward: () => _forwardMessages(chat.id, _selected.toList()),
+      onMergeForward: () => _forwardAsCard(chat.id, _selected.toList()),
+      onDelete: () => _deleteSelected(chat.id),
     );
   }
 
@@ -2448,7 +2341,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     if (_resolvedChatId == chat.id) {
       setState(() => _selectedChatId = null);
     }
-    _opened.remove(chat.id);
+    _opened.retry(chat.id);
     await store.deleteChat(chat.id);
   }
 
@@ -2480,9 +2373,25 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  Widget _chatPaneView(
+    List<Chat> chats,
+    ChatStore? store, {
+    VoidCallback? onBack,
+    double topInset = 0,
+  }) => Consumer(
+    builder: (context, paneRef, _) => _buildChatPane(
+      chats,
+      store,
+      paneRef: paneRef,
+      onBack: onBack,
+      topInset: topInset,
+    ),
+  );
+
   Widget _buildChatPane(
     List<Chat> chats,
     ChatStore? store, {
+    required WidgetRef paneRef,
     VoidCallback? onBack,
     double topInset = 0,
   }) {
@@ -2490,311 +2399,176 @@ class _HomePageState extends ConsumerState<HomePage> {
     final chat = chats.where((c) => c.id == chatId).firstOrNull;
 
     if (chat == null) {
-      return _buildEmptyPane(store, onBack: onBack);
+      _draft.bind(owner: store, chatId: null, text: '', write: null);
+      return _buildEmptyPane(store, onBack: onBack, topInset: topInset);
     }
     _markReadWhenAtBottom(chat);
-    _syncDraft(chat);
-
-    final messages =
-        ref.watch(messagesProvider(chat.id)).valueOrNull ??
-        const <ChatMessage>[];
-    // 群聊里收到的消息才显示小头像（TG 不画自己的头像）
-    final items = buildMessageItems(
-      messages,
-      showAvatars: chat.type == ChatType.group,
-      // 未读分隔线的锚点：打开会话时快照下来的那条（store 一清未读就把它推到
-      // 末尾了，所以不能现读 chat.lastReadId），见 [_unreadAnchorId]。
-      unreadAnchorId: _unreadAnchorId,
+    _draft.bind(
+      owner: store,
+      chatId: chat.id,
+      text: chat.draft,
+      write: store?.setDraft,
     );
 
-    // 头部做成**浮层**：官方 ChatActivity 的 ActionBar 就是半透明压在消息
-    // 列表上，滚动的消息从它下面穿过并被玻璃模糊。列表用 padding.top 让出
-    // 头部高度——正是这个"让位"让顶栏后面有内容可模糊。
-    // 顶栏是浮层：官方 ActionBar 是三块悬浮胶囊压在消息列表上
-    // （ActionBar.java:2233-2280 dispatchDraw），消息从胶囊下穿过并被玻璃模糊；
-    // 列表用 padding.top 让出「胶囊高度 58 + 8dp 间隔」。
-    const double headerH = 58.0;
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: Stack(
-            children: [
-              // 壁纸向上溢出一个状态栏高度：官方壁纸是整屏的（状态栏透明
-              // 压在壁纸/模糊上），否则状态栏后面永远是 Scaffold 纯色，会和
-              // 下面的顶栏玻璃之间显出一条色差带。
-              Positioned(
-                top: -topInset,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: ChatWallpaperBackground(
-                  wallpaperId: ref.watch(
-                    uiPrefsProvider.select((UiPrefs p) => p.wallpaperId),
+    final messages =
+        paneRef.watch(messagesProvider(chat.id)).valueOrNull ??
+        const <ChatMessage>[];
+    final items = paneRef.watch(
+      messageTimelineProvider((
+        chatId: chat.id,
+        showAvatars: chat.type == ChatType.group,
+        unreadAnchorId: _unreadAnchorId,
+      )),
+    );
+    final uiPrefs = paneRef.watch(uiPrefsProvider);
+
+    return HomeChatPane(
+      chat: chat,
+      items: items,
+      hasMessages: messages.isNotEmpty,
+      wallpaperId: uiPrefs.wallpaperId,
+      controller: _scrollController,
+      reverse: _reverseList,
+      topInset: topInset,
+      atBottom: _atBottom,
+      onScrollNotification: _onScrollNotification,
+      onJumpToLatest: () => _jumpToLatest(chat.id),
+      messagesEmpty: _buildMessagesEmpty(store),
+      header: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 150),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: KeyedSubtree(
+          key: ValueKey<bool>(_selecting),
+          child: _buildHeader(chat, onBack),
+        ),
+      ),
+      inputBar: ChatInputBar(
+        enabled: store != null,
+        controller: _inputController,
+        replyTarget: _replyTarget,
+        onSend: _send,
+        onAttachImage: () => unawaited(_pickAndSendImages()),
+        onAttachImagePath: () => unawaited(_sendImageFromPath()),
+        onAttachFile: () => unawaited(_sendFileFromPath()),
+        onOpenFaces: _openFacePicker,
+        onCancelReply: _cancelReply,
+        onVoiceRecorded: _sendVoice,
+      ),
+      itemBuilder: (context, _, item) {
+        final day = item.day;
+        if (day != null) return DateChip(day: day);
+        if (item.isUnread) return const UnreadDivider();
+
+        final m = item.message!;
+        final checked = _selected.contains(m.id);
+        return BubbleEntrance(
+          key: ValueKey<String>('bubble-${m.id}'),
+          animate: _shouldAnimateBubble(m),
+          alignment: Alignment(m.outgoing ? 0.6 : -0.6, 0),
+          slideBegin: m.outgoing
+              ? const Offset(0, 0.32)
+              : const Offset(0, 0.06),
+          scaleBegin: m.outgoing ? 0.72 : 0.9,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: <Widget>[
+              if (_selecting)
+                Padding(
+                  padding: const EdgeInsets.only(left: 6, right: 2, bottom: 12),
+                  child: Icon(
+                    checked ? Icons.check_circle : Icons.radio_button_unchecked,
+                    key: ValueKey<String>('ms-check-${m.id}'),
+                    size: 20,
+                    color: checked
+                        ? TelegramColors.accent
+                        : TelegramColors.textMuted,
                   ),
-                  child: messages.isEmpty
-                      ? _buildMessagesEmpty(store)
-                      : NotificationListener<ScrollNotification>(
-                          onNotification: _onScrollNotification,
-                          child: ListView.builder(
-                            key: ValueKey<String>('msglist-${chat.id}'),
-                            controller: _scrollController,
-                            // 原型开关：反向列表把"最新"放在 offset 0 一端，
-                            // 新消息天然长在视野下方，不依赖贴底补偿（默认关）。
-                            reverse: _reverseList,
-                            padding: EdgeInsets.only(
-                              // 让出浮层头部：消息要能滚到玻璃底下去
-                              top: headerH + 8,
-                              bottom: ChatInputBar.reserve(context) + 8,
-                            ),
-                            // 行组件无状态：自动 keepalive 只在浪费（TG 的
-                            // RecyclerListView 也只对真正带状态的行保活）。
-                            addAutomaticKeepAlives: false,
-                            // 离屏 400px 预解码窗口：图片进屏前解码已在进行，
-                            // 等价于 RecyclerView 的 prefetch。
-                            // ignore: deprecated_member_use
-                            cacheExtent: 400,
-                            itemCount: items.length,
-                            itemBuilder: (_, i) {
-                              // 反向列表要从尾部取数：序号 0 必须是**最新**那条。
-                              final item = _reverseList
-                                  ? items[items.length - 1 - i]
-                                  : items[i];
-                              final day = item.day;
-                              if (day != null) {
-                                return DateChip(day: day);
-                              }
-                              if (item.isUnread) {
-                                return const UnreadDivider();
-                              }
-                              final m = item.message!;
-                              final checked = _selected.contains(m.id);
-                              // 新消息气泡淡入 + 上浮 + 0.9→1 缩放（TG 的 appear 动画）。
-                              // 缩放轴心按气泡水平中心，所以按发送方给 alignment：
-                              // 我方气泡靠右（轴心也靠右），对方靠左。
-                              return BubbleEntrance(
-                                key: ValueKey<String>('bubble-${m.id}'),
-                                animate: _shouldAnimateBubble(m),
-                                alignment: Alignment(
-                                  m.outgoing ? 0.6 : -0.6,
-                                  0,
-                                ),
-                                // 自己发的消息走「从输入栏飞上来」那一套
-                                // （TextMessageEnterTransition）：位移和缩放
-                                // 都比"收到的新消息"大一档。
-                                slideBegin: m.outgoing
-                                    ? const Offset(0, 0.32)
-                                    : const Offset(0, 0.06),
-                                scaleBegin: m.outgoing ? 0.72 : 0.9,
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    if (_selecting)
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          left: 6,
-                                          right: 2,
-                                          bottom: 12,
-                                        ),
-                                        child: Icon(
-                                          checked
-                                              ? Icons.check_circle
-                                              : Icons.radio_button_unchecked,
-                                          key: ValueKey('ms-check-${m.id}'),
-                                          size: 20,
-                                          color: checked
-                                              ? TelegramColors.accent
-                                              : TelegramColors.textMuted,
-                                        ),
-                                      ),
-                                    if (item.showAvatarSlot)
-                                      // 槽宽必须 >= 头像尺寸 + 左右内边距（8+6）。
-                                      // 早先是 +10：44 减掉 14 只剩 30，头像被压成
-                                      // 30x34 —— ClipOval/BoxShape.circle 在非正方盒里
-                                      // 画出来就是椭圆，群里看着"不是正圆"。
-                                      SizedBox(
-                                        width:
-                                            TelegramMetrics.bubbleAvatarSize +
-                                            14,
-                                        child: item.showAvatar
-                                            ? Padding(
-                                                padding: const EdgeInsets.only(
-                                                  left: 8,
-                                                  right: 6,
-                                                ),
-                                                child: TelegramAvatar(
-                                                  name: _senderLabelOf(m, chat),
-                                                  // 群聊里 senderId 就是说话人的
-                                                  // uin；非数字（OneBot 旧数据）
-                                                  // 时退回首字母。
-                                                  url:
-                                                      int.tryParse(
-                                                            m.senderId,
-                                                          ) ==
-                                                          null
-                                                      ? null
-                                                      : 'https://q1.qlogo.cn/g?b=qq&nk=${m.senderId}&s=100',
-                                                  size: TelegramMetrics
-                                                      .bubbleAvatarSize,
-                                                ),
-                                              )
-                                            : null,
-                                      ),
-                                    Expanded(
-                                      // Builder 只为拿到气泡自己的 RenderBox：单击
-                                      // 弹菜单要贴着气泡定位（TG 的 popup 锚在气泡
-                                      // 边上，不是屏幕正中）。
-                                      child: Builder(
-                                        builder: (bubbleCtx) => GestureDetector(
-                                          // 多选模式里单击 = 勾选/取消勾选；非多选时
-                                          // 单击弹气泡旁的操作菜单（TG 的 popup）。
-                                          onTap: _selecting
-                                              ? () => setState(
-                                                  () => _selected.contains(m.id)
-                                                      ? _selected.remove(m.id)
-                                                      : _selected.add(m.id),
-                                                )
-                                              : () => _showMessagePopup(
-                                                  bubbleCtx,
-                                                  m,
-                                                  chat.id,
-                                                ),
-                                          // 长按直接进多选（TG：长按 = 多选，不弹菜单）。
-                                          onLongPress: () =>
-                                              _enterMessageSelection(m),
-                                          // 按住气泡轻微缩小（0.97）：TG 的按下反馈
-                                          // 主要靠整行高亮，这里给暗色气泡一点手感。
-                                          // PressableScale 用 Listener，不抢上面的
-                                          // onTap/onLongPress。
-                                          child: PressableScale(
-                                            child: MessageBubble(
-                                              message: m,
-                                              bubbleRadius: ref.watch(
-                                                uiPrefsProvider.select(
-                                                  (UiPrefs p) => p.bubbleRadius,
-                                                ),
-                                              ),
-                                              localMedia: store?.mediaPathOf,
-                                              ensureMedia: store?.ensureMedia,
-                                              mediaFailure:
-                                                  store?.mediaFailureOf,
-                                              retryMedia: store?.retryMedia,
-                                              onOpenFile: (seg) => unawaited(
-                                                _downloadFileMessage(seg),
-                                              ),
-                                              onRetry: m.isFailed
-                                                  ? () => _retry(m.id)
-                                                  : null,
-                                              // 私聊不显示发送者名：TG 只有群聊
-                                              // 在气泡上方画名字（ChatMessageCell
-                                              // 的 namesOffset 由 isChat 决定）。
-                                              showSenderName:
-                                                  item.showSenderName &&
-                                                  chat.type == ChatType.group,
-                                              // 分组只管群聊的发送者名，圆角按同一套分组标记收。
-                                              firstInGroup: item.showSenderName,
-                                              senderLabel: _senderLabelOf(
-                                                m,
-                                                chat,
-                                              ),
-                                              onBubbleBox: (b) =>
-                                                  _bubbleBoxes[m.id] = b,
-                                              onBubbleBoxGone: (b) {
-                                                if (identical(
-                                                  _bubbleBoxes[m.id],
-                                                  b,
-                                                )) {
-                                                  _bubbleBoxes.remove(m.id);
-                                                }
-                                              },
-                                              showAvatarColumn:
-                                                  item.showAvatarSlot,
-                                              avatarVisible: item.showAvatar,
-                                              highlighted:
-                                                  m.atMe || m.replyToId != null,
-                                              onReveal: m.isRecalled
-                                                  ? () => store?.revealMessage(
-                                                      chat.id,
-                                                      m.id,
-                                                    )
-                                                  : null,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                ),
+              if (item.showAvatarSlot)
+                SizedBox(
+                  width: TelegramMetrics.bubbleAvatarSize + 14,
+                  child: item.showAvatar
+                      ? Padding(
+                          padding: const EdgeInsets.only(left: 8, right: 6),
+                          child: TelegramAvatar(
+                            name: _senderLabelOf(m, chat),
+                            url: int.tryParse(m.senderId) == null
+                                ? null
+                                : 'https://q1.qlogo.cn/g?b=qq&nk=${m.senderId}&s=100',
+                            size: TelegramMetrics.bubbleAvatarSize,
                           ),
-                        ),
+                        )
+                      : null,
                 ),
-              ),
-              // "跳到最新"：不在底部时浮在右下角（TG/Nagram 的下箭头按钮）
-              if (!_atBottom)
-                Positioned(
-                  right: 14,
-                  bottom: ChatInputBar.reserve(context) + 8,
-                  child: JumpToLatestButton(
-                    key: const ValueKey('jump-to-latest'),
-                    unread: chat.unreadCount,
-                    onTap: () => _jumpToLatest(chat.id),
+              Expanded(
+                child: Builder(
+                  builder: (bubbleCtx) => GestureDetector(
+                    onTap: _selecting
+                        ? () => setState(
+                            () => _selected.contains(m.id)
+                                ? _selected.remove(m.id)
+                                : _selected.add(m.id),
+                          )
+                        : () => _showMessagePopup(bubbleCtx, m, chat.id),
+                    onLongPress: () => _enterMessageSelection(m),
+                    child: PressableScale(
+                      child: MessageBubble(
+                        message: m,
+                        bubbleRadius: uiPrefs.bubbleRadius,
+                        localMedia: store?.mediaPathOf,
+                        ensureMedia: store?.ensureMedia,
+                        mediaFailure: store?.mediaFailureOf,
+                        retryMedia: store?.retryMedia,
+                        onOpenFile: (seg) =>
+                            unawaited(_downloadFileMessage(seg)),
+                        onRetry: m.isFailed ? () => _retry(m.id) : null,
+                        showSenderName:
+                            item.showSenderName && chat.type == ChatType.group,
+                        firstInGroup: item.showSenderName,
+                        lastInGroup: item.lastInGroup,
+                        senderLabel: _senderLabelOf(m, chat),
+                        onBubbleBox: (b) => _bubbleBoxes[m.id] = b,
+                        onBubbleBoxGone: (b) {
+                          if (identical(_bubbleBoxes[m.id], b)) {
+                            _bubbleBoxes.remove(m.id);
+                          }
+                        },
+                        showAvatarColumn: item.showAvatarSlot,
+                        avatarVisible: item.showAvatar,
+                        highlighted: m.atMe || m.replyToId != null,
+                        onReveal: m.isRecalled
+                            ? () => store?.revealMessage(chat.id, m.id)
+                            : null,
+                      ),
+                    ),
                   ),
-                ),
-              // 输入栏是**浮层**（不占独立横带）：TG 的输入胶囊就是这样压在
-              // 消息列表之上、底部渐隐，看起来像飘在聊天背景上。列表底部已按
-              // ChatInputBar.overlayHeight 留白，最后一条不会被压住。
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: ChatInputBar(
-                  enabled: store != null,
-                  controller: _inputController,
-                  replyTarget: _replyTarget,
-                  onSend: _send,
-                  onAttachImage: () => unawaited(_pickAndSendImages()),
-                  onAttachImagePath: () => unawaited(_sendImageFromPath()),
-                  onAttachFile: () => unawaited(_sendFileFromPath()),
-                  onOpenFaces: _openFacePicker,
-                  onCancelReply: _cancelReply,
-                  onVoiceRecorded: _sendVoice,
                 ),
               ),
             ],
           ),
-        ),
-        // 头部内容（文字/图标）浮在玻璃之上
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: AnimatedSwitcher(
-            // 普通头 ↔ 多选工具条交叉淡化 150ms：两者同高（56），直接替换
-            // 会像屏幕闪了一下；TG 的 ActionMode 出现时也是淡入。
-            duration: const Duration(milliseconds: 150),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: KeyedSubtree(
-              key: ValueKey<bool>(_selecting),
-              child: _buildHeader(chat, onBack),
-            ),
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
-  Widget _buildEmptyPane(ChatStore? store, {VoidCallback? onBack}) {
+  Widget _buildEmptyPane(
+    ChatStore? store, {
+    VoidCallback? onBack,
+    double topInset = 0,
+  }) {
+    final uiPrefs = ref.watch(uiPrefsProvider);
     return Column(
-      children: [
+      children: <Widget>[
+        // 空态页头也是 actionBar：高度含状态栏，背景铺到屏幕顶端
+        // （ActionBar.java:1400 的 occupyStatusBar 语义）。
         Container(
-          height: TelegramMetrics.headerHeight,
+          height: topInset + TelegramMetrics.headerHeight,
           color: TelegramColors.bgHeader,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: EdgeInsets.only(top: topInset, left: 12, right: 12),
           alignment: Alignment.centerLeft,
           child: Row(
-            children: [
+            children: <Widget>[
               if (onBack != null)
                 IconButton(
                   onPressed: onBack,
@@ -2815,65 +2589,20 @@ class _HomePageState extends ConsumerState<HomePage> {
           ),
         ),
         Expanded(
-          // 未选会话时也要和聊天页一样把输入栏**浮**在壁纸上：之前这里把
-          // ChatInputBar 当成 Column 的最后一项（会占掉自己的一段高度、把
-          // 壁纸截断），宽屏分栏一进来默认就是"未选会话"，于是平板上看到的是
-          // 一条贴在底部、与手机端悬浮输入栏长得不一样的横条——这就是用户
-          // m05841 说的"平板没有悬浮底栏"。
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: ChatWallpaperBackground(
-                  wallpaperId: ref.watch(
-                    uiPrefsProvider.select((UiPrefs p) => p.wallpaperId),
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.only(
-                      bottom: ChatInputBar.reserve(context) + 8,
-                    ),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '选择一个会话开始聊天',
-                            style: TextStyle(
-                              color: TelegramColors.textSecondary,
-                              fontSize: 14,
-                            ),
-                          ),
-                          if (store == null) ...[
-                            const SizedBox(height: 12),
-                            TextButton(
-                              onPressed: _openConnectPage,
-                              child: Text(
-                                '去连接设置',
-                                style: TextStyle(color: TelegramColors.accent),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: ChatInputBar(
-                  enabled: false,
-                  controller: _inputController,
-                  onSend: _send,
-                  onAttachImage: () => unawaited(_pickAndSendImages()),
-                  onAttachImagePath: () => unawaited(_sendImageFromPath()),
-                  onAttachFile: () => unawaited(_sendFileFromPath()),
-                  onOpenFaces: _openFacePicker,
-                  onCancelReply: _cancelReply,
-                ),
-              ),
-            ],
+          child: HomeEmptyPane(
+            connected: store != null,
+            wallpaperId: uiPrefs.wallpaperId,
+            inputBar: ChatInputBar(
+              enabled: false,
+              controller: _inputController,
+              onSend: _send,
+              onAttachImage: () => unawaited(_pickAndSendImages()),
+              onAttachImagePath: () => unawaited(_sendImageFromPath()),
+              onAttachFile: () => unawaited(_sendFileFromPath()),
+              onOpenFaces: _openFacePicker,
+              onCancelReply: _cancelReply,
+            ),
+            onConnect: _openConnectPage,
           ),
         ),
       ],
@@ -2910,21 +2639,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       onSearch: _openSearch,
     );
   }
-}
-
-/// 会话滚动锚点：一条消息 + 它底边距视口底的距离（像素，可为负 = 被底部截断）。
-///
-/// 纯视图状态，不值得单开文件；放在页面旁边，测试只通过行为观察它。
-@immutable
-class _ScrollAnchor {
-  const _ScrollAnchor(this.messageId, this.offsetFromBottom);
-
-  /// 锚定的消息 id。消息被删/被过滤时只能放弃精修
-  /// （见 _HomePageState._anchorStep 的 tries >= 24 分支）。
-  final String messageId;
-
-  /// 这条消息底边到视口底边的像素距离；0 = 正贴着视口底。
-  final double offsetFromBottom;
 }
 
 /// 列表 ↔ 对话页转场的时长：Telegram 150ms

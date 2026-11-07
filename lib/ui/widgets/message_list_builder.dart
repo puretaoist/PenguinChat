@@ -3,7 +3,7 @@
 /// 现行 Telegram 的消息列表有两层整理，都不属于单个气泡：
 ///
 /// 1. **日期分隔**：跨天处插一个"今天/昨天/日期"胶囊；
-/// 2. **分组**：同方向 + 同发送者 + 间隔 < 5 分钟 + 同一天 → 同一组；
+/// 2. **分组**：同方向 + 同发送者 + 间隔 ≤ 5 分钟 + 同一天 → 同一组；
 ///    发送者名在**组的第一条**上（贴着气泡左上），头像在**组的最后一条**上
 ///    （TG 的排法：名字在顶、头像在底，两者都只出现一次）。
 ///
@@ -30,6 +30,9 @@ class MessageListItem {
   /// 是否真的画头像（收到的、且是本组最后一条）。
   final bool showAvatar;
 
+  /// 是否为本组最后一条（文本仅它带尾巴，其余使用 6dp 近角无尾背景）。
+  final bool lastInGroup;
+
   /// 是否为头像留位置（收到的消息都留，保证气泡左边缘对齐）。
   final bool showAvatarSlot;
 
@@ -39,6 +42,7 @@ class MessageListItem {
     this.unread = false,
     this.showSenderName = false,
     this.showAvatar = false,
+    this.lastInGroup = true,
     this.showAvatarSlot = false,
   });
 
@@ -61,7 +65,7 @@ bool sameGroup(ChatMessage a, ChatMessage b) =>
     !b.system &&
     a.outgoing == b.outgoing &&
     a.senderId == b.senderId &&
-    b.time.difference(a.time).inMinutes.abs() < 5 &&
+    b.time.difference(a.time).abs() <= const Duration(minutes: 5) &&
     a.time.year == b.time.year &&
     a.time.month == b.time.month &&
     a.time.day == b.time.day;
@@ -106,6 +110,7 @@ List<MessageListItem> buildMessageItems(
       MessageListItem._(
         message: m,
         showSenderName: !sameAsPrev,
+        lastInGroup: !sameAsNext,
         showAvatar: showAvatars && !m.outgoing && !sameAsNext,
         showAvatarSlot: showAvatars && !m.outgoing,
       ),
