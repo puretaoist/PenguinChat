@@ -182,7 +182,10 @@ class _SearchViewState extends State<SearchView> {
   /// 顶部胶囊搜索框。几何与行为集中在 [SearchFieldBox]（官方
   /// `Components/SearchField.java` 的逐项对应），这里只负责把它接上本页的
   /// 控制器、焦点与查询状态。
-  Widget _searchField() => SearchFieldBox(
+  // 会话列表走官方另一套：FragmentSearchField（DialogsActivity:3281）——
+  // 圆角 20、字号 15、放大镜 24 贴左 12、文字左右各 48、关闭钮 24 贴右 12、
+  // 亮色底是 5% 黑。聊天页顶栏那套（SearchField）参数不同，别混用。
+  Widget _searchField() => SearchFieldBox.fragment(
     controller: _controller,
     focusNode: _focus,
     onChanged: (String value) => setState(() => _query = value),

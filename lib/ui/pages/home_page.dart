@@ -59,6 +59,7 @@ import '../widgets/action_sheet.dart';
 import '../widgets/telegram_list_item.dart';
 import '../widgets/chat_header.dart';
 import '../widgets/chat_search_panel.dart';
+import '../widgets/chat_search_result_row.dart';
 import '../widgets/message_action_popup.dart';
 import '../widgets/message_actions.dart';
 import '../widgets/chat_input_bar.dart';
@@ -168,6 +169,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 列表态看结果列表，聊天态回到聊天流里逐条跳；面板文案随之切换
   /// （`:27299-27320`：列表态「N 条消息」、聊天态「2 of 20」）。
   bool _chatSearchListMode = true;
+
+  /// 会话内结果列表的滚动控制器。
+  ///
+  /// 官方结果行会被视口裁切时把文字往左滑 62dp 并淡出
+  /// （`MessagesSearchAdapter.java:424-460`），要拿到滚动偏移才能算这个比例。
+  final ScrollController _chatSearchScroll = ScrollController();
 
   /// 本次 build 解析出的会话 id，供滚动/发送回调使用。
   String? _resolvedChatId;
@@ -303,6 +310,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     _chatListController.dispose();
     _chatSearchController.dispose();
     _chatSearchFocus.dispose();
+    _chatSearchScroll.dispose();
     super.dispose();
   }
 
@@ -2916,6 +2924,22 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// `ChatActivity.java:7605-7615`）+ 上下 48dp fade（`ChatActivitySearchContainer.java:28-30`）。
   /// 这里用不透明底色 + 真气泡：全屏 BackdropFilter 在真机上掉帧，而那一层玻璃
   /// 在官方是给 ActionBar 当模糊源的，肉眼差别主要在“结果出现时聊天内容变了”。
+  /// 第 [index] 条结果被视口裁掉的比例（0 = 完整可见，1 = 完全裁掉）。
+  ///
+  /// 官方是 `transitValue`，行内文字按它往左滑 62dp 并淡出
+  /// （`MessagesSearchAdapter.java:424-460`）。列表 padding 上下各 8，
+  /// 行高固定 48，所以直接按偏移算就行。
+  double _searchRowCut(int index, double viewport) {
+    if (!_chatSearchScroll.hasClients) return 0;
+    const double pad = 8;
+    const double h = ChatSearchResultRow.height;
+    final double top = pad + index * h - _chatSearchScroll.offset;
+    if (top < 0) return (-top / h).clamp(0.0, 1.0);
+    final double bottom = top + h;
+    if (bottom > viewport) return ((bottom - viewport) / h).clamp(0.0, 1.0);
+    return 0;
+  }
+
   Widget _buildChatSearchPane(
     Chat chat,
     ChatStore? store, {
@@ -2937,7 +2961,7 @@ class _HomePageState extends ConsumerState<HomePage> {
             child: _buildHeader(chat, onBack),
           ),
           SizedBox(
-            height: 22,
+            height: 24,
             child: Align(
               alignment: Alignment.centerLeft,
               child: Padding(
@@ -2947,9 +2971,11 @@ class _HomePageState extends ConsumerState<HomePage> {
                   key: const ValueKey<String>('chat-search-caption'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  // 官方 `ActionBarMenuItem.java:1476-1482`：
+                  // 18dp、单行、`TruncateAt.END`。
                   style: TextStyle(
                     color: TelegramColors.textMuted,
-                    fontSize: 12,
+                    fontSize: 18,
                   ),
                 ),
               ),
@@ -2987,28 +3013,40 @@ class _HomePageState extends ConsumerState<HomePage> {
                         if (n.dragDetails != null) _chatSearchFocus.unfocus();
                         return false;
                       },
-                      child: ListView.builder(
-                        key: const ValueKey<String>('chat-search-results'),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: hits.length,
-                        itemBuilder: (BuildContext context, int index) {
-                          final ChatMessage m = hits[index].message;
-                          return GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => _focusChatSearchHit(chat, index, hits),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: MessageBubble(
-                                key: ValueKey<String>(
-                                  'chat-search-msg-${m.id}',
+                      // 结果不是气泡，是官方那套 48dp 紧凑行
+                      // （`MessagesSearchAdapter.java:364`）；行内文字在被视口
+                      // 裁到时会往左滑 62dp 并淡出（`:424-460`）。
+                      child: LayoutBuilder(
+                        builder: (BuildContext context, BoxConstraints c) {
+                          final double viewport = c.maxHeight;
+                          return AnimatedBuilder(
+                            animation: _chatSearchScroll,
+                            builder: (BuildContext context, _) {
+                              return ListView.builder(
+                                key: const ValueKey<String>(
+                                  'chat-search-results',
                                 ),
-                                message: m,
-                                showSenderName: chat.type == ChatType.group,
-                                senderLabel: _senderLabelOf(m, chat),
-                                showAvatarColumn: false,
-                                avatarVisible: false,
-                              ),
-                            ),
+                                controller: _chatSearchScroll,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                itemCount: hits.length,
+                                itemBuilder: (BuildContext context, int index) {
+                                  final ChatMessage m = hits[index].message;
+                                  return ChatSearchResultRow(
+                                    key: ValueKey<String>(
+                                      'chat-search-msg-${m.id}',
+                                    ),
+                                    senderName: _senderLabelOf(m, chat),
+                                    text: m.text.isEmpty ? '[消息]' : m.text,
+                                    showAvatar: chat.type == ChatType.group,
+                                    cut: _searchRowCut(index, viewport),
+                                    onTap: () =>
+                                        _focusChatSearchHit(chat, index, hits),
+                                  );
+                                },
+                              );
+                            },
                           );
                         },
                       ),
