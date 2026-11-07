@@ -22,8 +22,11 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart'
+    show SpringDescription, SpringSimulation;
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 import '../../client_api/objects.dart';
 import '../../client_api/qq8_providers.dart';
@@ -32,6 +35,7 @@ import '../platform/app_breakpoints.dart';
 import '../platform/wide_tab_state.dart';
 import '../theme/telegram_theme.dart';
 import '../theme/theme_mode.dart';
+import '../widgets/glass_capsule_border.dart';
 import '../widgets/horizontal_pager.dart';
 import '../widgets/telegram_avatar.dart';
 import 'contacts_page.dart';
@@ -54,11 +58,38 @@ class HomeShell extends ConsumerStatefulWidget {
 }
 
 class _HomeShellState extends ConsumerState<HomeShell> {
-  /// 窄屏当前 tab：0=聊天 1=联系人 2=设置 3=我的（宽屏看 wideTabProvider）。
+  /// 状态栏透明 + 内容延伸到状态栏下（AndroidUtilities.java:6807-6831
+  /// enableEdgeToEdge：setDecorFitsSystemWindows(false) + 两条系统栏都设透明）。
+  /// 图标亮度跟主题走（AndroidUtilities.java:5343-5355 setLightStatusBar）。
+  static SystemUiOverlayStyle _overlayStyle() {
+    final Brightness icons = TelegramColors.isDark
+        ? Brightness.light
+        : Brightness.dark;
+    return SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: icons,
+      statusBarBrightness: icons,
+      systemStatusBarContrastEnforced: false,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarDividerColor: Colors.transparent,
+      systemNavigationBarIconBrightness: icons,
+      systemNavigationBarContrastEnforced: false,
+    );
+  }
+
+  /// 用 AnnotatedRegion 而不是 SystemChrome：切页/切主题时样式跟着重建，
+  /// 不会和别的页面抢全局状态。
+  Widget _withSystemBars(Widget child) => AnnotatedRegion<SystemUiOverlayStyle>(
+    value: _overlayStyle(),
+    child: child,
+  );
+
   int _tab = 0;
 
-  /// 宽屏胶囊是否因列表滚动而收起。
-  bool _barHidden = false;
+  /// 切页动画进行中。官方在 `viewPager.isManualScrolling() || isTouch()` 期间
+  /// 直接丢弃 tab 点击（MainTabsActivity.java:334-349），避免连点把翻页队列
+  /// 打乱。由 [HorizontalPager.onAnimatingChanged] 驱动。
+  bool _pagerAnimating = false;
 
   /// 与 lib/ui/pages/home_page.dart 的 _kChatSwitchDuration 保持一致（150ms）：
   /// 转场和底栏/内容区让位必须同一个节拍，这是 Telegram ActionBarLayout 的做法。
@@ -73,32 +104,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   }
 
   void _selectTab(int index) {
+    // 切页动画没结束就丢点击：官方 `viewPager.isManualScrolling() ||
+    // isTouch()` 直接 return（MainTabsActivity.java:334-349）。
+    if (_pagerAnimating) return;
     final bool wide = AppBreakpoints.isTablet(MediaQuery.sizeOf(context).width);
     final int cur = wide ? ref.read(wideTabProvider) : _tab;
     if (cur == index) {
       // 已经是当前 tab：官方语义是"列表回到顶部"，而不是重新选中
       // （MainTabsActivity.java:334-349 → TabFragmentDelegate.onParentScrollToTop）。
-      if (index == 0) ref.read(chatListToTopProvider.notifier).state++;
+      // 官方四个 tab 都回顶，所以按索引分片请求。
+      ref.read(tabScrollToTopProvider(index).notifier).state++;
       return;
     }
     if (wide) {
       ref.read(wideTabProvider.notifier).state = index;
     } else {
       setState(() => _tab = index);
-    }
-  }
-
-  /// 宽屏列表滚动时收起/展开胶囊。官方用 380ms 的 BoolAnimator 驱动
-  /// animatorTabsVisible（MainTabsActivity.java:109-111），并把 40dp 位移、
-  /// scale 0.85、alpha、clickable 一起插值（checkUi_tabsPosition :1073-1087）。
-  /// 只在方向变化时 setState，避免逐帧重建。
-  void _onBarScroll(ScrollNotification n) {
-    if (n.depth != 0 || n is! ScrollUpdateNotification) return;
-    final double delta = n.scrollDelta ?? 0;
-    if (delta > 3 && n.metrics.pixels > 32) {
-      if (!_barHidden) setState(() => _barHidden = true);
-    } else if (delta < -3 || n.metrics.pixels <= 0) {
-      if (_barHidden) setState(() => _barHidden = false);
     }
   }
 
@@ -132,53 +153,36 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       // 胶囊只落在左栏内，宽度夹在 min(344, 侧栏宽-16) 并居中
       // （MainTabsLayout.java:64-69 与 DialogsActivity.java:291）。
       final double sidebarWidth = AppBreakpoints.sidebarWidthFor(size.width);
-      return PopScope(
-        canPop: curTab == 0,
-        onPopInvokedWithResult: (bool didPop, Object? _) {
-          if (!didPop) _selectTab(0);
-        },
-        child: Scaffold(
-          backgroundColor: TelegramColors.bgApp,
-          body: SafeArea(
-            bottom: false,
-            child: Stack(
-              children: <Widget>[
-                Positioned.fill(
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (ScrollNotification n) {
-                      // 右栏对话的消息列表也会把滚动通知冒到这里；它不该控制
-                      // 左栏胶囊的显隐，否则一进会话、消息列表首帧滚动就把胶囊
-                      // 藏起来——这正是平板「没有底栏」的成因。用 Scrollable 的
-                      // 横向位置区分左右栏：x >= 侧栏宽即右栏。
-                      final BuildContext? ctx = n.context;
-                      if (ctx != null) {
-                        final RenderObject? ro = ctx.findRenderObject();
-                        if (ro is RenderBox &&
-                            ro.hasSize &&
-                            ro.localToGlobal(Offset.zero).dx >=
-                                sidebarWidth - 1.0) {
-                          return false;
-                        }
-                      }
-                      _onBarScroll(n);
-                      return false;
-                    },
+      return _withSystemBars(
+        PopScope(
+          canPop: curTab == 0,
+          onPopInvokedWithResult: (bool didPop, Object? _) {
+            if (!didPop) _selectTab(0);
+          },
+          child: Scaffold(
+            backgroundColor: TelegramColors.bgApp,
+            body: SafeArea(
+              top: false,
+              bottom: false,
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
                     child: HomePage(
                       key: const ValueKey<String>('tab-chats'),
                       connecting: widget.connecting,
                       previewChats: widget.previewChats,
                     ),
                   ),
-                ),
-                _collapsibleBar(sidebarWidth, bar, bottomInset),
-              ],
+                  _sidebarBar(sidebarWidth, bar, bottomInset),
+                ],
+              ),
             ),
           ),
         ),
       );
     }
 
-    final double barHeight = _MainTabBar.height;
+    final double barHeight = _MainTabBar.wrapperHeight;
     final bool showBar = !(_tab == 0 && _chatPaneOpen);
     // 底栏的出现/让位不能是瞬跳：打开会话时 HomePage 会播 150ms 的进/退转场
     // （home_page.dart 的 _kChatSwitchDuration，DecelerateInterpolator(1.5)），
@@ -186,15 +190,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     // 转场动画再顺也白搭（用户实际就是这么看到"退出没有动效"的）。
     // 让位高度取 MAIN_TABS_HEIGHT_WITH_MARGINS = 56 + 8*2 = 72
     // （DialogsActivity.java:293，官方内容区底部留白见 :2982）。
-    final double contentBottom = showBar
-        ? barHeight + 8 + 8 + bottomInset
-        : 0.0;
+    // 外层槽本身就是 72 高（含上下各 8 margin），所以内容区只需再让出
+    // bottomInset（导航栏高度，官方靠 tabsViewWrapper 的 paddingBottom 撑）。
+    final double contentBottom = showBar ? barHeight + bottomInset : 0.0;
 
     // 四页常驻（HorizontalPager 用 Offstage 隐藏非当前页），切走再回来时页面
     // 状态不丢——滚动记忆、设置页勾选状态等都依赖这一点。
     final Widget pager = HorizontalPager(
       key: const ValueKey<String>('tab-content-pager'),
       index: _tab,
+      // 切页动画期间忽略 tab 点击：官方 `viewPager.isManualScrolling() ||
+      // isTouch()` 直接 return（MainTabsActivity.java:334-349）。
+      onAnimatingChanged: (bool v) {
+        if (mounted && _pagerAnimating != v) {
+          setState(() => _pagerAnimating = v);
+        }
+      },
       children: <Widget>[
         HomePage(
           key: const ValueKey<String>('tab-chats'),
@@ -217,121 +228,130 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ],
     );
 
-    return PopScope(
-      canPop: _tab == 0,
-      onPopInvokedWithResult: (bool didPop, Object? _) {
-        if (!didPop) _selectTab(0);
-      },
-      child: Scaffold(
-        backgroundColor: TelegramColors.bgApp,
-        body: Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: AnimatedPadding(
-                duration: _kPaneShift,
-                curve: Curves.easeOutCubic,
-                padding: EdgeInsets.only(bottom: contentBottom),
-                child: pager,
+    return _withSystemBars(
+      PopScope(
+        canPop: _tab == 0,
+        onPopInvokedWithResult: (bool didPop, Object? _) {
+          if (!didPop) _selectTab(0);
+        },
+        child: Scaffold(
+          backgroundColor: TelegramColors.bgApp,
+          body: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: AnimatedPadding(
+                  duration: _kPaneShift,
+                  curve: Curves.easeOutCubic,
+                  padding: EdgeInsets.only(bottom: contentBottom),
+                  child: pager,
+                ),
               ),
-            ),
-            // 手机底部 60dp 模糊遮罩：官方 fadeView =
-            // BlurredBackgroundWithFadeDrawable.setFadeHeight(dp(60), true)
-            // （MainTabsActivity.java:374-379），平板不显示（tabletLayout 时
-            // alpha=0，:1055-1071）。这里是真 blur（不做整屏模糊是因为
-            // BackdropFilter 每帧都要采样，代价大），随胶囊一起淡入淡出。
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 60 + bottomInset,
-              child: IgnorePointer(
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 380),
-                  curve: Curves.easeOut,
-                  opacity: showBar ? 1 : 0,
-                  // 真模糊 + 同色渐变淡出：官方 fadeView 是
-                  // BlurredBackgroundWithFadeDrawable（先 blur，再按高度把 alpha
-                  // 渐降到 0）。ClipRect 把 blur 限制在这 60dp 带内（否则会把整个
-                  // 列表糊掉），上面再叠 bgApp 透明→实色，顶部无缝、底部同底栏色。
-                  child: ClipRect(
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: <Color>[
-                              TelegramColors.bgApp.withValues(alpha: 0),
-                              TelegramColors.bgApp,
-                            ],
+              // 手机底部 60dp 模糊遮罩：官方 fadeView =
+              // BlurredBackgroundWithFadeDrawable.setFadeHeight(dp(60), true)
+              // （MainTabsActivity.java:374-379），平板不显示（tabletLayout 时
+              // alpha=0，:1055-1071）。这里是真 blur（不做整屏模糊是因为
+              // BackdropFilter 每帧都要采样，代价大），随胶囊一起淡入淡出。
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 380),
+                curve: Curves.easeOut,
+                left: 0,
+                right: 0,
+                // 官方进"我的"页时把整条 fade 下移 48dp
+                // （MainTabsActivity.java:1055-1071 `setTranslationY(isProfile * dp(48))`，
+                // isProfile = 1 - clamp(|POSITION_PROFILE - animatedPosition|, 0, 1)，
+                // POSITION_PROFILE = 3 即"我的"页），避免糊住个人页底部的入口。
+                bottom: _tab == 3 ? -48.0 : 0.0,
+                height: 60 + bottomInset,
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 380),
+                    curve: Curves.easeOut,
+                    opacity: showBar ? 1 : 0,
+                    // 真模糊 + 同色渐变淡出：官方 fadeView 是
+                    // BlurredBackgroundWithFadeDrawable（先 blur，再按高度把 alpha
+                    // 渐降到 0）。ClipRect 把 blur 限制在这 60dp 带内（否则会把整个
+                    // 列表糊掉），上面再叠 bgApp 渐变，顶部无缝、底部同底栏色。
+                    //
+                    // 渐变不是两色线性，而是官方 createGradient() 的 5 个 alpha
+                    // 停靠点（T/Components/blur3/BlurredBackgroundWithFadeDrawable.java:211-232）：
+                    // 0x00 / 0x60 / 0xB0 / 0xE8 / 0xFF，等距 0.0 / 0.25 / 0.5 / 0.75 / 1.0。
+                    // 前段压得低、后段陡升，才像"内容自然溶进底栏"而不是糊一层膜。
+                    child: ClipRect(
+                      child: BackdropFilter(
+                        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: <Color>[
+                                TelegramColors.bgApp.withValues(alpha: 0x00 / 255),
+                                TelegramColors.bgApp.withValues(alpha: 0x60 / 255),
+                                TelegramColors.bgApp.withValues(alpha: 0xB0 / 255),
+                                TelegramColors.bgApp.withValues(alpha: 0xE8 / 255),
+                                TelegramColors.bgApp.withValues(alpha: 0xFF / 255),
+                              ],
+                              stops: const <double>[0.0, 0.25, 0.5, 0.75, 1.0],
+                            ),
                           ),
+                          // 无 child 的 DecoratedBox 尺寸为 0，渐变画不出来。
+                          child: const SizedBox.expand(),
                         ),
-                        // 无 child 的 DecoratedBox 尺寸为 0，渐变画不出来。
-                        child: const SizedBox.expand(),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-            // 底栏常驻，用滑出+淡出退场：条件插入会让它在一帧内凭空出现，
-            // 和内容区的让位动画对不上。退场后必须 IgnorePointer，免得看不见还能点。
-            Positioned(
-              left: 8,
-              right: 8,
-              bottom: 8 + bottomInset,
-              child: IgnorePointer(
-                ignoring: !showBar,
-                child: AnimatedSlide(
-                  duration: _kPaneShift,
-                  curve: Curves.easeOutCubic,
-                  offset: showBar ? Offset.zero : const Offset(0, 0.35),
-                  child: AnimatedOpacity(
+              // 底栏常驻，用滑出+淡出退场：条件插入会让它在一帧内凭空出现，
+              // 和内容区的让位动画对不上。退场后必须 IgnorePointer，免得看不见还能点。
+              // 官方 tabsViewWrapper 是 MATCH_PARENT 贴底（MainTabsActivity.java:383
+              // `createFrame(MATCH_PARENT, 72, BOTTOM|CENTER_HORIZONTAL)`），左右不
+              // 留 margin —— 视觉缩进全部来自 tabsView 的 12dp padding（:311）与
+              // 背景 7.666dp 内缩（:368），所以这里也贴边、只让出导航栏高度。
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: bottomInset,
+                child: IgnorePointer(
+                  ignoring: !showBar,
+                  child: AnimatedSlide(
                     duration: _kPaneShift,
                     curve: Curves.easeOutCubic,
-                    opacity: showBar ? 1 : 0,
-                    child: Align(child: bar),
+                    offset: showBar ? Offset.zero : const Offset(0, 0.35),
+                    child: AnimatedOpacity(
+                      duration: _kPaneShift,
+                      curve: Curves.easeOutCubic,
+                      opacity: showBar ? 1 : 0,
+                      child: Align(child: bar),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /// 宽屏胶囊：外层定位在左栏，内部居中并夹在 min(344, 侧栏宽-16)。
-  /// 滚动收起 = 40dp 下移 + scale 0.85 + 淡出 + 禁点（同官方 checkUi_tabsPosition）。
-  Widget _collapsibleBar(double sidebarWidth, Widget bar, double bottomInset) {
+  /// 宽屏胶囊：外层定位在左栏，内部居中并夹在 min(344, 侧栏宽)。
+  ///
+  /// 不做"滚动收起"。官方底栏的显隐只由两个条件驱动，都不在滚动上：
+  /// ① 搜索态 ② 进会话转场时 blurredView 遮罩可见
+  /// （`T/DialogsActivity.java:14076-14082` `checkUi_mainTabsVisible()`：
+  /// `mainTabsVisible = !searching && (blurredView == null || getBackground() == null
+  ///  || getAlpha() < 0.01f || getVisibility() == GONE)`）。
+  /// 官方 `checkUi_tabsPosition`（MainTabsActivity.java:1073-1087）那套
+  /// 40dp 位移 + scale 0.85 + 淡出是给这两个条件用的，不是给滚动的。
+  Widget _sidebarBar(double sidebarWidth, Widget bar, double bottomInset) {
     return Positioned(
       left: 0,
       width: sidebarWidth,
-      bottom: bottomInset + 8,
-      child: IgnorePointer(
-        ignoring: _barHidden,
-        child: AnimatedSlide(
-          duration: const Duration(milliseconds: 380),
-          curve: Curves.easeOut,
-          offset: _barHidden ? const Offset(0, 0.72) : Offset.zero,
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 380),
-            curve: Curves.easeOut,
-            opacity: _barHidden ? 0 : 1,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: AnimatedScale(
-                  duration: const Duration(milliseconds: 380),
-                  curve: Curves.easeOut,
-                  scale: _barHidden ? 0.85 : 1,
-                  child: bar,
-                ),
-              ),
-            ),
-          ),
-        ),
+      bottom: bottomInset,
+      child: Center(
+        // 官方 tabsViewWrapper 左右不留 margin（MainTabsActivity.java:383），
+        // 视觉缩进全在 tabsView 的 12dp padding 与背景 7.666dp 内缩里。
+        child: bar,
       ),
     );
   }
@@ -355,9 +375,53 @@ class _MainTabBar extends StatefulWidget {
     this.selfName,
   });
 
-  static const double height = 56;
+  /// 外层槽高：官方 `MAIN_TABS_HEIGHT_WITH_MARGINS = 56 + 8*2 = 72`
+  /// （DialogsActivity.java:293），`tabsViewWrapper.addView(tabsView,
+  /// createFrame(MATCH_PARENT, 72, BOTTOM|CENTER_HORIZONTAL))`
+  /// （MainTabsActivity.java:383）。
+  static const double wrapperHeight = 72;
+
+  /// 背景相对外层的内缩：`tabsViewBackground.setPadding(dp(8 - 0.334f))`
+  /// （MainTabsActivity.java:368）。注意 `BlurredBackgroundDrawable.build()`
+  /// 里是 `boundsWithPadding.inset(padding, padding)`（:256-271）——是**内缩**，
+  /// 所以视觉胶囊 = 72 - 7.666*2 ≈ 56.67dp 高、宽 = 外层宽 - 15.33dp。
+  static const double capsuleInset = 7.666;
+
+  /// tab 内容区高度：官方 `tabHeight = height - paddingTop - paddingBottom`
+  /// （`MainTabsLayout.java:63`），即 72 - 12*2 = **48**。视觉胶囊高则由
+  /// [capsuleInset] 撑出 ≈ 56.67（= 72 - 7.666*2），不再单列常量。
+  static const double tabHeight = 48;
+
+  /// tab 内容区相对胶囊的内边距：官方 tabsView padding 12 四周
+  /// （MainTabsActivity.java:311），背景再内缩 7.666 → 12 - 7.666 = 4.334。
+  /// 等价于内容区高 48dp（= 72 - 12*2，MainTabsLayout.onMeasure 的
+  /// `tabHeight = height - paddingTop - paddingBottom`，:63）。
+  static const double contentPadding = 12 - capsuleInset;
+
+  /// 三档自适应（官方 MainTabsLayout.java:46-47）：
+  /// 文字 12→12→10dp、tab 内 padding 16→8→4dp，逐档试到能塞进可用宽为止。
+  static const List<double> passTextSizes = <double>[12, 12, 10];
+  static const List<double> passPaddings = <double>[16, 8, 4];
+
+  /// 可用宽不足时也要占满的最小总宽（`MainTabsLayout.java:69`
+  /// `minTotalWidthForTabs = Math.min(dp(320), maxTotalWidthForTabs)`）。
+  static const double minTotalWidth = 320;
+
+  /// 四个槽的文案（官方 MainTabsChats / MainTabsContacts / Settings /
+  /// MainTabsProfile）。
+  static const List<String> labels = <String>['聊天', '联系人', '设置', '我的'];
+
+  /// tab 内容区宽度 = 外层宽 - 24（官方 tabsView 四周 12dp padding）。
+  static const double contentInset = 12;
+
+  /// 外层槽最大宽：官方 `setMaxWidth(dp(328 + MAIN_TABS_MARGIN*2))` = 344
+  /// （MainTabsActivity.java:312）。
   static const double _maxWidth = 344;
-  static const double padding = 12;
+
+  /// 胶囊圆角：官方 `setRadius(dp(MAIN_TABS_HEIGHT/2f))` = 28
+  /// （MainTabsActivity.java:367）。注意胶囊实际高 56.67，官方仍写死 28，
+  /// 所以不是严格"高的一半"，照抄。
+  static const double radius = 28;
 
   final int index;
 
@@ -371,13 +435,76 @@ class _MainTabBar extends StatefulWidget {
   State<_MainTabBar> createState() => _MainTabBarState();
 }
 
-class _MainTabBarState extends State<_MainTabBar> {
-  static const Duration _kPressDuration = Duration(milliseconds: 120);
-  static const Duration _kLongPress = Duration(milliseconds: 750);
-  static const double _kPressScale = 1.012;
+class _MainTabBarState extends State<_MainTabBar>
+    with TickerProviderStateMixin {
+  /// 按下整体缩放：官方 `animatorIsScaled` 是
+  /// `BoolAnimator(0, setScaleX/Y(lerp(1, 1.019f, factor)),
+  /// CubicBezierInterpolator.EASE_OUT_QUINT, 380)`
+  /// （MainTabsLayout.java:436-439）—— 1.019、380ms、EASE_OUT_QUINT。
+  /// 以前写的 1.012 / 120ms / easeOut 是凭感觉定的，三项全偏。
+  static const Duration _kPressDuration = Duration(milliseconds: 380);
+  static const double _kPressScale = 1.019;
+  static const Curve _kEaseOutQuint = Cubic(0.22, 1, 0.36, 1);
 
-  bool _pressed = false;
+  /// 长按阈值：官方 `getLongPressDuration()` 返回
+  /// `ClickHelper.Delegate.super.getLongPressDuration() * 750 / 1000`
+  /// （MainTabsLayout.java:484-486），而父类默认是
+  /// `ViewConfiguration.getLongPressTimeout()` = 500ms（ClickHelper.java:49），
+  /// 所以真实值是 **375ms**。以前直接写 750 是把倍数当成了绝对值。
+  static const Duration _kLongPress = Duration(milliseconds: 375);
+
+  /// 长按松手后多久才恢复"每个 tab 自绘底板"：官方
+  /// `runOnUIThread(restoreDrawSelector, 450)`（MainTabsLayout.java:493）。
+  static const Duration _kRestoreSelectorDelay = Duration(milliseconds: 450);
+
+  /// 图标 outline↔filled 变形的时长。
+  ///
+  /// 官方是每条 tab 一支 lottie（`GlassTabView.checkPlayAnimation`，:280-398），
+  /// 选中时 `setCustomEndFrame(framesCount)` 正放、取消时
+  /// `setPlayInDirectionOfCustomEndFrame(true)` 倒放。本机 tgs 里帧数自相矛盾
+  /// （`tab_chats.json` 根节点 `op:6`、layer `op:179`），无法取证真实时长，
+  /// 所以 320ms 是**自定值**，取它只为和选中底板动画
+  /// （`isSelectedAnimator` 320ms DECELERATE，GlassTabView.java:67）同节拍。
+  static const Duration _kIconMorphDuration = Duration(milliseconds: 320);
+
+  /// 官方拖动 selector 的弹簧：`SpringForce(1).setStiffness(STIFFNESS_MEDIUM)
+  /// .setDampingRatio(DAMPING_RATIO_LOW_BOUNCY)`
+  /// （MainTabsLayout.java:356-369）。Android 的 STIFFNESS_MEDIUM = 1500、
+  /// DAMPING_RATIO_LOW_BOUNCY = 0.6，Flutter 的 SpringDescription.damping 是
+  /// 阻尼系数而不是比值，换算 `damping = ratio * 2 * sqrt(mass * stiffness)`。
+  static final SpringDescription _kSelectorSpring = SpringDescription(
+    mass: 1,
+    stiffness: 1500,
+    damping: 0.6 * 2 * math.sqrt(1500),
+  );
+
   Timer? _longPressTimer;
+  Timer? _restoreTimer;
+
+  /// 按下整体缩放（380ms EASE_OUT_QUINT，1→1.019）。
+  late final AnimationController _pressCtrl = AnimationController(
+    vsync: this,
+    duration: _kPressDuration,
+  );
+  late final Animation<double> _pressCurve = CurvedAnimation(
+    parent: _pressCtrl,
+    curve: _kEaseOutQuint,
+  );
+
+  /// 缩放的 pivot 偏移（绝对坐标，含官方纵向 3 倍放大）。
+  Offset _pivot = Offset.zero;
+
+  /// 长按拖动时 layout 自绘的 selector 中心 x（内容区坐标系）与宽度。
+  /// 官方 `drawCustomSelector`（MainTabsLayout.java:310-324）：
+  /// `sWidth = getInterpolatedWidthByX(x)`（在相邻两 tab 宽度间线性插值，
+  /// :672-718）、`sHeight = height - paddingTop - paddingBottom`、圆角
+  /// `sHeight/2`、色 `multAlpha(key_glass_tabSelected, 0.09f)`（:289）。
+  late final AnimationController _selectorCtrl = AnimationController.unbounded(
+    vsync: this,
+  );
+
+  /// 长按期间置真：各 tab 不再自绘底板，改由 [_dragSelector] 统一画。
+  bool _skipDrawSelector = false;
 
   /// 长按拖动中手指所在的槽（只做高亮，松手才真正切）。
   int? _dragIndex;
@@ -385,58 +512,226 @@ class _MainTabBarState extends State<_MainTabBar> {
   /// 胶囊实际宽度，用于把指针 x 换算成槽索引。
   double _barWidth = _MainTabBar._maxWidth;
 
+  /// 当前档位的文字大小（官方三档 12/12/10，MainTabsLayout.java:46）。
+  double _textSize = 12;
+
+  /// 各槽宽度与左边界（内容区坐标系，官方 onMeasure 的 tabsWidth/tabsLeftPos）。
+  List<double> _tabWidths = <double>[0, 0, 0, 0];
+  final List<double> _tabLefts = <double>[0, 0, 0, 0];
+
   @override
   void dispose() {
     _longPressTimer?.cancel();
+    _restoreTimer?.cancel();
+    _pressCtrl.dispose();
+    _selectorCtrl.dispose();
     super.dispose();
   }
 
   void _onDown(PointerDownEvent event) {
-    if (!_pressed) setState(() => _pressed = true);
+    _updatePivot(event.localPosition);
+    _pressCtrl.forward();
     _startLongPress();
+  }
+
+  /// 复刻官方 `checkPivot`（MainTabsLayout.java:563-604）：把按下点相对中心的
+  /// 偏移先归一化到椭圆边界，再用 `mappedR = 1.5r/(r+0.5)` 映射，最后
+  /// **纵向再放大 3 倍**（`pivotY = lerp(cy, pivotY, 3f)`），让 1.019 的缩放
+  /// 看起来是从底部弹起而不是原地膨胀。
+  void _updatePivot(Offset p) {
+    final double w = _barWidth;
+    final double h = _MainTabBar.wrapperHeight;
+    if (w <= 0 || h <= 0) return;
+    final double cx = w * 0.5;
+    final double cy = h * 0.5;
+    final double dx = p.dx - cx;
+    final double dy = p.dy - cy;
+    final double nx = dx / (w * 0.5);
+    final double ny = dy / (h * 0.5);
+    final double r = math.sqrt(nx * nx + ny * ny);
+    double pivotX = cx;
+    double pivotY = cy;
+    if (r > 1e-4) {
+      final double mappedR = 1.5 * r / (r + 0.5);
+      final double scale = mappedR / r;
+      pivotX = cx + dx * scale;
+      pivotY = cy + dy * scale;
+    }
+    _pivot = Offset(
+      cx + (pivotX - cx) * 1,
+      cy + (pivotY - cy) * 3,
+    );
   }
 
   void _startLongPress() {
     _longPressTimer?.cancel();
     _longPressTimer = Timer(_kLongPress, () {
       if (!mounted) return;
-      setState(() => _dragIndex = widget.index);
+      // 官方 onLongPressRequestedAt（MainTabsLayout.java:465-474）：
+      // setSkipDrawSelector(true) → 各 tab 不再自绘底板 → checkLongMove(start)
+      // → longTouchStart()。
+      _restoreTimer?.cancel();
+      _selectorCtrl.value = _centerOf(widget.index);
+      setState(() {
+        _skipDrawSelector = true;
+        _dragIndex = widget.index;
+      });
+      _selectorCtrl.animateWith(
+        SpringSimulation(
+          _kSelectorSpring,
+          _selectorCtrl.value,
+          _selectorCtrl.value,
+          0,
+        ),
+      );
     });
+  }
+
+  double _centerOf(int i) {
+    if (i < 0 || i >= _tabWidths.length) return 0;
+    return _tabLefts[i] + _tabWidths[i] / 2;
+  }
+
+  /// 官方 `getInterpolatedWidthByX`（MainTabsLayout.java:672-718）：拖动中
+  /// selector 的宽度在"左侧最近的 tab"与"右侧最近的 tab"宽度之间线性插值，
+  /// 不是固定取某一个 tab 的宽度。
+  double _widthAt(double x) {
+    int? left;
+    int? right;
+    for (int i = 0; i < _tabWidths.length; i++) {
+      if (_tabWidths[i] <= 0) continue;
+      final double c = _centerOf(i);
+      if (c <= x && (left == null || c > _centerOf(left))) left = i;
+      if (c >= x && (right == null || c < _centerOf(right))) right = i;
+    }
+    if (left == null && right == null) return 0;
+    if (left == null) return _tabWidths[right!];
+    if (right == null) return _tabWidths[left];
+    final double lx = _centerOf(left);
+    final double rx = _centerOf(right);
+    if (left == right || lx == rx) return _tabWidths[left];
+    final double ratio = (x - lx) / (rx - lx);
+    return _tabWidths[left] + (_tabWidths[right] - _tabWidths[left]) * ratio;
+  }
+
+  /// 官方 `clampXToChildrenCenters`（:613-643）：拖到首/末 tab 中心外就夹住。
+  double _clampToCenters(double x) {
+    double lo = double.infinity;
+    double hi = -double.infinity;
+    for (int i = 0; i < _tabWidths.length; i++) {
+      if (_tabWidths[i] <= 0) continue;
+      final double c = _centerOf(i);
+      if (c < lo) lo = c;
+      if (c > hi) hi = c;
+    }
+    if (lo > hi) return x;
+    return x.clamp(lo, hi);
   }
 
   void _onMove(PointerMoveEvent event) {
     if (_dragIndex == null) return;
+    final double x = _clampToCenters(
+      event.localPosition.dx - _MainTabBar.contentInset,
+    );
+    // 拖动中 selector 跟手指走（官方 `animatedLongSelectedViewCenterX = x`，
+    // :412-415），并同步高亮最近槽（`setTabSelected(found, true)`，:417-419）。
+    _selectorCtrl.value = x;
     final int i = _indexAt(event.localPosition.dx);
     if (i != _dragIndex) setState(() => _dragIndex = i);
   }
 
   void _onUp(PointerUpEvent event) {
     _longPressTimer?.cancel();
+    _pressCtrl.reverse();
     final int? drag = _dragIndex;
-    if (_pressed || drag != null) {
-      setState(() {
-        _pressed = false;
-        _dragIndex = null;
+    final bool wasDragging = _skipDrawSelector;
+    if (wasDragging) {
+      // 落定回弹：官方用 `selectedTabPositionX.animateToFinalPosition(cx)` +
+      // STIFFNESS_MEDIUM / DAMPING_RATIO_LOW_BOUNCY 弹簧（:421-427、:356-369）。
+      final int target = drag ?? widget.index;
+      _selectorCtrl.animateWith(
+        SpringSimulation(
+          _kSelectorSpring,
+          _selectorCtrl.value,
+          _centerOf(target),
+          0,
+        ),
+      );
+      // 450ms 后才恢复每 tab 自绘底板（`runOnUIThread(restoreDrawSelector, 450)`，
+      // :493），这期间仍由 layout 自绘 selector，视觉上不会闪。
+      _restoreTimer?.cancel();
+      _restoreTimer = Timer(_kRestoreSelectorDelay, () {
+        if (!mounted) return;
+        setState(() => _skipDrawSelector = false);
       });
+    }
+    if (drag != null) {
+      setState(() => _dragIndex = null);
     }
     if (drag != null && drag != widget.index) widget.onSelect(drag);
   }
 
   void _onCancel(PointerCancelEvent event) {
     _longPressTimer?.cancel();
-    if (_pressed || _dragIndex != null) {
+    _restoreTimer?.cancel();
+    _pressCtrl.reverse();
+    if (_dragIndex != null || _skipDrawSelector) {
       setState(() {
-        _pressed = false;
         _dragIndex = null;
+        _skipDrawSelector = false;
       });
     }
   }
 
   int _indexAt(double x) {
-    final double usable = _barWidth - _MainTabBar.padding * 2;
-    if (usable <= 0) return widget.index;
-    final int i = ((x - _MainTabBar.padding) / (usable / 4)).floor();
-    return i.clamp(0, 3);
+    if (_tabWidths.every((double w) => w <= 0)) return widget.index;
+    // Listener 挂在外层 72dp 槽上，而 _tabLefts 是内容区坐标系（相对胶囊
+    // 再缩 contentPadding）。两者原点差 = capsuleInset + contentPadding
+    // = 7.666 + 4.334 = 12（= contentInset）。
+    final double local = x - _MainTabBar.contentInset;
+    int best = 0;
+    double bestDist = double.infinity;
+    for (int i = 0; i < _tabWidths.length; i++) {
+      final double center = _tabLefts[i] + _tabWidths[i] / 2;
+      final double d = (local - center).abs();
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  /// 胶囊底色。
+  ///
+  /// 官方不是"直接叠 0.80 alpha"，而是反解源色后叠回去正好等于目标色
+  /// （`BlurredBackgroundProviderImpl.java:24-27` + `solveSrcColor` :304-332）。
+  /// 参数照官方取：alpha 0.76（未开 FLAG_LIQUID_GLASS 的普通档）、
+  /// bg = `key_windowBackgroundWhite`、target = `key_glass_targetMainTabs`。
+  /// 但我方主题的这两个值跟官方不同（官方暗色两者同为 0xFF181819，我方
+  /// bgApp 0xFF1D2733 / bgGlassPanel 0xFF212D3B），照搬绝对值会让胶囊比背景
+  /// 更暗像凹槽，所以这里喂我方主题色，只沿用算法。反解结果：亮 0xC2FFFFFF、
+  /// 暗 0xC2222F3E（见 docs/ui-parity-matrix.md A13 决策注记）。
+  Color _capsuleFill() {
+    return solveSrcColor(
+      TelegramColors.bgApp,
+      TelegramColors.bgGlassPanel,
+      0.76,
+    );
+  }
+
+  /// 上半段描边色。
+  ///
+  /// 官方亮色 `0x11000000`、暗色 `0x06FFFFFF`
+  /// （`BlurredBackgroundProviderImpl.java:29`）。用户明确不要暗色的白色描边
+  /// （m00304），所以暗色返回透明，等于不画这一段。
+  Color _capsuleStrokeTop() {
+    return TelegramColors.isDark ? Colors.transparent : const Color(0x11000000);
+  }
+
+  /// 下半段描边色。官方亮色 `0x20000000`、暗色 `0x11FFFFFF`（同上 :30）。
+  Color _capsuleStrokeBottom() {
+    return TelegramColors.isDark ? Colors.transparent : const Color(0x20000000);
   }
 
   @override
@@ -444,66 +739,99 @@ class _MainTabBarState extends State<_MainTabBar> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         _barWidth = math.min(constraints.maxWidth, _MainTabBar._maxWidth);
+        // 外层槽 72 高（官方 MAIN_TABS_HEIGHT_WITH_MARGINS），tab 内容区 48 高
+        // 由四周 12dp padding 让出来（MainTabsActivity.java:311/:383），胶囊背景
+        // 再相对外层内缩 7.666dp（:368 + BlurredBackgroundDrawable.java:256-271），
+        // 所以视觉胶囊比内容区每边大 4.334dp。
         return SizedBox(
+          key: const ValueKey<String>('main-tab-bar'),
           width: _barWidth,
-          height: _MainTabBar.height,
+          height: _MainTabBar.wrapperHeight,
           child: Listener(
             onPointerDown: _onDown,
             onPointerMove: _onMove,
             onPointerUp: _onUp,
             onPointerCancel: _onCancel,
-            child: AnimatedScale(
-              scale: _pressed ? _kPressScale : 1,
-              duration: _kPressDuration,
-              curve: Curves.easeOut,
-              child: Container(
-                key: const ValueKey<String>('main-tab-bar'),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                // 玻璃胶囊：底下的列表/内容透过 blur 浮上来，比单纯换个浅色更
-                // 接近 AyuGram 的观感。阴影留在最外层（ClipRRect 内的阴影会被裁）。
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(28),
-                  child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: _MainTabBar.padding,
+            child: AnimatedBuilder(
+              animation: _pressCurve,
+              builder: (BuildContext context, Widget? child) {
+                // 官方 setScaleX/Y 是整体缩放、pivot 由 checkPivot 定
+                // （MainTabsLayout.java:436-439 + :563-604）。
+                final double s = 1 + (_kPressScale - 1) * _pressCurve.value;
+                return Transform(
+                  transform: Matrix4.identity()
+                    ..translateByDouble(_pivot.dx, _pivot.dy, 0, 1)
+                    ..scaleByDouble(s, s, 1, 1)
+                    ..translateByDouble(-_pivot.dx, -_pivot.dy, 0, 1),
+                  child: child,
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(_MainTabBar.capsuleInset),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(_MainTabBar.radius),
+                    // 官方是"贴地薄影"：setShadowLayer(dpf2(2.667), 0, dpf2(0.85))
+                    // （BlurredBackgroundProviderImpl.java:32），色 0x20000000（亮）
+                    // / 0x04FFFFFF（暗）（:31）。Flutter 的 blurRadius 是"半径"，
+                    // 要换算成同样的 sigma：sigma = radius * 0.57735 + 0.5
+                    // （sky_engine/lib/ui/painting.dart convertRadiusToSigma），
+                    // 所以 2.667 对应 blurRadius = (2.667 - 0.5) / 0.57735 ≈ 3.75。
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: TelegramColors.isDark
+                            ? const Color(0x04FFFFFF)
+                            : const Color(0x20000000),
+                        blurRadius: 3.75,
+                        offset: const Offset(0, 0.85),
                       ),
-                      decoration: BoxDecoration(
-                        color: TelegramColors.bgHover.withValues(alpha: 0.80),
-                        borderRadius: BorderRadius.circular(28),
-                      ),
-                      foregroundDecoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: TelegramColors.divider),
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          _item(
-                            0,
-                            Icons.chat_bubble_outline,
-                            Icons.chat_bubble,
-                            '聊天',
-                            badge: widget.unreadTotal,
+                    ],
+                  ),
+                  // 玻璃胶囊：底下的列表/内容透过 blur 浮上来。阴影留在最外层
+                  // （ClipRRect 内的阴影会被裁）。blur 半径官方源码里查不到具体值
+                  // （BlurredBackgroundSourceRenderNode.setBlur 只收外部传参，
+                  // MainTabsActivity 未调用），20 是自定值，已登记在
+                  // docs/blur-parity.md §四。
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(_MainTabBar.radius),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: _capsuleFill(),
+                          borderRadius: BorderRadius.circular(_MainTabBar.radius),
+                        ),
+                        // 描边用自绘：官方是上下两段异色、0.4dp
+                        // （BlurredBackgroundProviderImpl.java:29-33），
+                        // BoxDecoration + borderRadius 只支持 uniform Border，
+                        // 做不出上下异色。
+                        child: GlassCapsuleBorder(
+                          radius: _MainTabBar.radius,
+                          topColor: _capsuleStrokeTop(),
+                          bottomColor: _capsuleStrokeBottom(),
+                          child: Padding(
+                            padding: const EdgeInsets.all(
+                              _MainTabBar.contentPadding,
+                            ),
+                            // 内容区高固定 48 = 72 - 12*2（官方 onMeasure
+                            // `tabHeight = height - paddingTop - paddingBottom`，
+                            // MainTabsLayout.java:63）。
+                            child: SizedBox(
+                              height: _MainTabBar.tabHeight,
+                              child: Stack(
+                                children: <Widget>[
+                                  // 长按拖动期间由"布局层"统一画一个 selector
+                                  // （官方 MainTabsLayout.dispatchDraw 在
+                                  // super.dispatchDraw 之前画，:310-324），
+                                  // 各 tab 自己的底板同时停画（setSkipDrawSelector）。
+                                  if (_skipDrawSelector)
+                                    Positioned.fill(child: _dragSelector()),
+                                  Row(children: _slots()),
+                                ],
+                              ),
+                            ),
                           ),
-                          _item(1, Icons.people_outline, Icons.people, '联系人'),
-                          _item(
-                            2,
-                            Icons.settings_outlined,
-                            Icons.settings,
-                            '设置',
-                          ),
-                          _profileItem(),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -516,15 +844,146 @@ class _MainTabBarState extends State<_MainTabBar> {
     );
   }
 
+  /// 长按拖动时由布局层统一绘制的 selector。
+  ///
+  /// 照官方 `MainTabsLayout.dispatchDraw`（:310-324）：
+  /// - `x = animatedLongSelectedViewCenterX + animatedLongSelectedViewOffsetX`
+  /// - `sWidth = getInterpolatedWidthByX(x, this)` —— 相邻两 tab 宽度线性插值
+  /// - `sHeight = getHeight() - paddingTop - paddingBottom` = 内容区高 48
+  /// - 圆角 `sHeight / 2` = 24
+  /// - 色 `multAlpha(key_glass_tabSelected, 0.09f)`（:289）
+  Widget _dragSelector() {
+    return AnimatedBuilder(
+      animation: _selectorCtrl,
+      builder: (BuildContext context, Widget? child) {
+        final double x = _selectorCtrl.value;
+        final double w = _widthAt(x);
+        if (w <= 0) return const SizedBox.shrink();
+        return Stack(
+          clipBehavior: Clip.none,
+          children: <Widget>[
+            Positioned(
+              left: x - w / 2,
+              top: 0,
+              width: w,
+              height: _MainTabBar.tabHeight,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  // 官方 selector 色 = multAlpha(key_glass_tabSelected, 0.09f)
+                  // （MainTabsLayout.java:289 setSkipDrawSelector 里设的
+                  // selectorPaint），不是 TelegramColors.accent。
+                  color: TelegramColors.glassTabSelected.withValues(alpha: 0.09),
+                  borderRadius: BorderRadius.circular(
+                    _MainTabBar.tabHeight / 2,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 四个槽 + 按官方算法算出来的每槽宽度。
+  ///
+  /// 宽度分配照抄 `MainTabsLayout.onMeasure`（:59-154）：
+  /// 1. 三档降级：文字 12/12/10dp、tab 内 padding 16/8/4dp，逐档试
+  ///    `Σ(文字宽 + padding*2) <= 可用宽`，第一档能塞下就用它（:73-90）；
+  /// 2. 超宽等比缩 `m = 可用宽 / 总宽`（:121-125）；
+  /// 3. 不足 `min(320, 可用宽)` 时按权重均分补齐（:126-133）。
+  List<Widget> _slots() {
+    final double contentWidth = _barWidth - _MainTabBar.contentInset * 2;
+    final List<double> textWidths = _measureTextWidths(
+      _MainTabBar.passTextSizes.first,
+    );
+
+    int chosen = _MainTabBar.passTextSizes.length - 1;
+    for (int pass = 0; pass < _MainTabBar.passTextSizes.length; pass++) {
+      final double pad = _MainTabBar.passPaddings[pass];
+      double total = 0;
+      for (final double w in textWidths) {
+        total += w + pad * 2;
+      }
+      if (total <= contentWidth ||
+          pass == _MainTabBar.passTextSizes.length - 1) {
+        chosen = pass;
+        break;
+      }
+    }
+    _textSize = _MainTabBar.passTextSizes[chosen];
+    final double tabPadding = _MainTabBar.passPaddings[chosen];
+    final double maxTabTextWidthIfEq = contentWidth / 4 - tabPadding * 2;
+
+    final List<double> widths = <double>[];
+    double totalWidth = 0;
+    int totalWeight = 0;
+    for (final double w in textWidths) {
+      final double withMargin = w + tabPadding * 2;
+      widths.add(withMargin);
+      totalWidth += withMargin;
+      totalWeight += w > maxTabTextWidthIfEq ? 0 : 1;
+    }
+    if (totalWeight == 0) totalWeight = 4;
+
+    if (totalWidth > contentWidth) {
+      final double m = contentWidth / totalWidth;
+      for (int i = 0; i < widths.length; i++) {
+        widths[i] *= m;
+      }
+    } else {
+      final double minTotal = math.min(_MainTabBar.minTotalWidth, contentWidth);
+      if (totalWidth < minTotal) {
+        final double growP = (minTotal - totalWidth) / totalWeight;
+        for (int i = 0; i < widths.length; i++) {
+          if (textWidths[i] <= maxTabTextWidthIfEq) widths[i] += growP;
+        }
+      }
+    }
+
+    _tabWidths = widths;
+    double left = 0;
+    for (int i = 0; i < widths.length; i++) {
+      _tabLefts[i] = left;
+      left += widths[i];
+    }
+
+    return <Widget>[
+      _slot(0, widths[0], (double t) => _item(0, Icons.chat_bubble_outline,
+          Icons.chat_bubble, _MainTabBar.labels[0], t, badge: widget.unreadTotal)),
+      _slot(1, widths[1], (double t) => _item(1, Icons.people_outline,
+          Icons.people, _MainTabBar.labels[1], t)),
+      _slot(2, widths[2], (double t) => _item(2, Icons.settings_outlined,
+          Icons.settings, _MainTabBar.labels[2], t)),
+      _slot(3, widths[3], _profileItem),
+    ];
+  }
+
+  List<double> _measureTextWidths(double fontSize) {
+    return <double>[
+      for (final String label in _MainTabBar.labels)
+        (TextPainter(
+          text: TextSpan(
+            text: label,
+            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w500),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout()).width,
+    ];
+  }
+
   /// 选中态的底板：官方 GlassTabView.dispatchDraw(:150-165) 用 9% 的强调色
   /// 画一个圆角块（320ms DECELERATE、scale lerp 0.6→1），label 始终显示、
   /// 选中时换 extra-bold（:233-237、:254-265 updateColors 让 label 与图标同色）。
-  Widget _slot(int i, Widget Function(BuildContext, double) builder) {
+  ///
+  /// 宽度由 [_slots] 按官方 onMeasure 算好后传进来（不再用 Expanded 均分）。
+  Widget _slot(int i, double width, Widget Function(double t) builder) {
     final bool active = widget.index == i;
     // 长按拖动时临时把高亮跟着手指走（官方 CheckHelper.checkLongMove 只移动
     // selector，松手才 performClick 真正切页）。
     final bool highlighted = _dragIndex == null ? active : _dragIndex == i;
-    return Expanded(
+    return SizedBox(
+      width: width,
       child: TweenAnimationBuilder<double>(
         tween: Tween<double>(begin: 0, end: highlighted ? 1 : 0),
         duration: const Duration(milliseconds: 320),
@@ -533,26 +992,38 @@ class _MainTabBarState extends State<_MainTabBar> {
           return Stack(
             fit: StackFit.expand,
             children: <Widget>[
-              if (t > 0.001)
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 2,
-                    horizontal: 2,
-                  ),
-                  child: Transform.scale(
-                    scale: 0.6 + 0.4 * t,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: TelegramColors.accent.withValues(
-                          alpha: 0.09 * t,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
+              // 官方 dispatchDraw 的条件是
+              // `selectedFactor > 0 && !skipDrawSelector`
+              // （GlassTabView.java:154）—— 长按期间各 tab 停画底板，
+              // 改由布局层 [_dragSelector] 统一画（MainTabsLayout.java:286-302）。
+              //
+              // 注意官方**不是**"一块底板在 tab 之间横移"：每个 tab 各持一个
+              // isSelectedAnimator（320ms DECELERATE，GlassTabView.java:67），
+              // 选中时本 tab 底板 alpha 0→0.09、scale lerp(0.6,1)（:157-163），
+              // 旧 tab 同时反向淡出缩小 —— 是两个胶囊原地交叉淡入淡出。
+              if (t > 0.001 && !_skipDrawSelector)
+                // 官方底板铺满整个 tab 宽高（GlassTabView.java:158
+                // `tmpRectF.set(0, 0, viewWidth, getHeight())`），圆角取
+                // 短边一半（:159 `r = min(width, height) / 2f`）——内容区高
+                // 48 恒小于槽宽，所以圆角恒 = 24，画出来是完整胶囊而非
+                // 圆角方块。以前内缩 2dp + radius 16 是"板感"主因之一。
+                Transform.scale(
+                  scale: 0.6 + 0.4 * t,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      // 同 _dragSelector：官方 multAlpha(glass_tabSelected, 0.09*alpha)
+                      // （GlassTabView.java:157）。
+                      color: TelegramColors.glassTabSelected.withValues(
+                        alpha: 0.09 * t,
                       ),
-                      child: const SizedBox.expand(),
+                      borderRadius: BorderRadius.circular(
+                        _MainTabBar.tabHeight / 2,
+                      ),
                     ),
+                    child: const SizedBox.expand(),
                   ),
                 ),
-              builder(context, t),
+              builder(t),
             ],
           );
         },
@@ -564,112 +1035,186 @@ class _MainTabBarState extends State<_MainTabBar> {
     int i,
     IconData icon,
     IconData activeIcon,
-    String label, {
+    String label,
+    double t, {
     int badge = 0,
   }) {
     final bool active = widget.index == i;
-    return _slot(i, (BuildContext context, double t) {
-      // 图标与文字颜色随选中因子 blend（GlassTabView.java:255-256 blendARGB）。
-      final Color color = Color.lerp(
-        TelegramColors.textSecondary,
-        TelegramColors.accent,
-        t,
-      )!;
-      return InkWell(
-        key: ValueKey<String>('main-tab-$i'),
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => widget.onSelect(i),
-        // 空 onLongPress：注册长按识别器，让 InkWell 在长按后让出 tap，
-        // 真正"长按拖动切 tab"由外层 Listener 计时 750ms 后处理。
-        onLongPress: () {},
+    // 官方是**两套插值端点**（GlassTabView.java:254-255 updateColors）：
+    // 图标 `blendARGB(colorDefault, colorSelected)`、
+    // 文字 `blendARGB(colorDefault, colorSelectedText)`，
+    // 起点都是 colorDefault = key_glass_tabUnselected。
+    // 真实主题下（Theme.java:3705-3716 fallback）：
+    //   glass_tabSelected = glass_tabSelectedText = chat_messagePanelSend = 0xFF229AF0
+    //   glass_tabUnselected = windowBackgroundWhiteBlackText（暗纯白 / 亮 0xFF333333）
+    // 以前这里用 textSecondary→accent 一个 lerp 同时喂图标和文字，暗色下
+    // 起点是灰蓝 0xFF8091A0（官方纯白）、终点是 0xFF61A3D7（官方 0xFF229AF0）。
+    final Color iconColor = Color.lerp(
+      TelegramColors.glassTabUnselected,
+      TelegramColors.glassTabSelected,
+      t,
+    )!;
+    final Color textColor = Color.lerp(
+      TelegramColors.glassTabUnselected,
+      TelegramColors.glassTabSelectedText,
+      t,
+    )!;
+    return InkWell(
+      key: ValueKey<String>('main-tab-$i'),
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => widget.onSelect(i),
+      // 空 onLongPress：注册长按识别器，让 InkWell 在长按后让出 tap，
+      // 真正"长按拖动切 tab"由外层 Listener 计时 375ms 后处理
+      // （官方 500ms × 750/1000，MainTabsLayout.java:484-486）。
+      onLongPress: () {},
+      child: Padding(
+        // 官方是绝对定位不是居中排版：图标 24×24 top 4（GlassTabView.java:406
+        // `createFrame(24, 24, ..., 0, 4, 0, 0)`），文字 top 28.33（:96），
+        // 两者间隙只有 0.33dp。这里用"顶部对齐 + 4dp 内边距 + 0.33 间隙"
+        // 复刻同一组基线，而不是 Column 居中（居中会整体下移约 3dp）。
+        padding: const EdgeInsets.only(top: 4),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: <Widget>[
             Stack(
               clipBehavior: Clip.none,
               children: <Widget>[
-                Icon(active ? activeIcon : icon, size: 22, color: color),
+                // 图标 outline↔filled 变形（A29）。
+                //
+                // 官方每条 tab 挂一支 lottie（`GlassTabView.checkPlayAnimation`，
+                // :280-398；资源 `res/raw/tab_{chats,contacts,settings,calls}.json`），
+                // 选中时 `setCustomEndFrame(framesCount)` 正放、取消时
+                // `setPlayInDirectionOfCustomEndFrame(true)` 倒放 —— 是**路径变形**，
+                // 中间帧能看到气泡分裂、齿轮咬合。
+                //
+                // 我方不做 lottie：本机 tgs 的帧数自相矛盾（`tab_chats.json` 根节点
+                // `op:6`、layer `op:179`，直接喂 lottie 只播前 6 帧），且要额外引
+                // 一个渲染器。按用户 2026-11-07 决策（m01702 选方案 B）用自带能力
+                // 近似：交叉淡入 + 0.82→1 缩放。**这是自定值，不是官方路径变形**，
+                // 已在 docs/ui-parity-matrix.md A29 标注。
+                AnimatedSwitcher(
+                  duration: _kIconMorphDuration,
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (Widget child, Animation<double> anim) {
+                    return FadeTransition(
+                      opacity: anim,
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.82, end: 1).animate(anim),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: Icon(
+                    active ? activeIcon : icon,
+                    key: ValueKey<bool>(active),
+                    size: 24,
+                    color: iconColor,
+                  ),
+                ),
                 if (badge > 0)
                   Positioned(
-                    right: -8,
-                    top: -4,
+                    // 官方角标相对 tab 定位：cx = viewWidth/2 + dpf2(11)、
+                    // cy = dpf2(10)（GlassTabView.java:179-180），即中心在图标
+                    // 右侧 11dp、顶部 10dp 处；换成相对 24dp 图标的左上角偏移
+                    // ≈ right: -11-8, top: 10-8 → 这里按图标中心 +11/+10 折算。
+                    right: -7,
+                    top: 2,
                     child: _TabBadge(count: badge),
                   ),
               ],
             ),
-            const SizedBox(height: 2),
+            // 官方 icon 底边 = 4+24 = 28，文字 top = 28.33，间隙 0.33。
+            const SizedBox(height: 0.33),
             Text(
               label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: active ? FontWeight.w800 : FontWeight.w400,
+                color: textColor,
+                fontSize: _textSize,
+                // 官方未选中是 bold()→medium(500)（AndroidUtilities.java:253-267），
+                // 选中换 rextrabold（GlassTabView.java:237）。
+                fontWeight: active ? FontWeight.w800 : FontWeight.w500,
               ),
             ),
           ],
         ),
-      );
-    });
+      ),
+    );
   }
 
-  /// 第 4 槽是头像（官方 createAvatar）：选中时套一圈强调色。
-  Widget _profileItem() {
+  /// 第 4 槽是头像（官方 createAvatar）：22×22、圆角 11、top 5、**无描边圈**
+  /// （GlassTabView.java:424-427）。选中态只换图标/文字颜色。
+  Widget _profileItem(double t) {
     final bool active = widget.index == 3;
-    const double size = 24;
-    return _slot(3, (BuildContext context, double t) {
-      return InkWell(
-        key: const ValueKey<String>('main-tab-3'),
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => widget.onSelect(3),
-        onLongPress: () {},
+    return InkWell(
+      key: const ValueKey<String>('main-tab-3'),
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => widget.onSelect(3),
+      onLongPress: () {},
+      child: Padding(
+        padding: const EdgeInsets.only(top: 5),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: <Widget>[
             Container(
-              width: size + 4,
-              height: size + 4,
+              width: 22,
+              height: 22,
+              // 官方 createAvatar 只做 `BackupImageView.setRoundRadius(dp(11))`
+              // + 22×22 top 5（GlassTabView.java:424-427），**没有**选中描边圈；
+              // 选中反馈只靠 9% 强调色底板 + 文字变色。以前套 28×28 圆 + 1.5dp
+              // 强调色圆环是自造样式，已按 A27 移除。
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: active ? TelegramColors.accent : Colors.transparent,
-                  width: 1.5,
-                ),
+                borderRadius: BorderRadius.circular(11),
               ),
               alignment: Alignment.center,
-              child: TelegramAvatar(
-                // 昵称未知时用「Q」当首字母兜底：以前写死 '我'，一进「我的」
-                // 页就显示成「我的昵称：我」（用户反馈第 1 条）。
-                name: (widget.selfName?.isNotEmpty ?? false)
-                    ? widget.selfName!
-                    : (widget.selfUin == null ? '?' : 'Q'),
-                size: size,
-                url: widget.selfUin == null
-                    ? null
-                    : qqAvatarUrl(widget.selfUin!, size: 100),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: TelegramAvatar(
+                  // 昵称未知时用「Q」当首字母兜底：以前写死 '我'，一进「我的」
+                  // 页就显示成「我的昵称：我」（用户反馈第 1 条）。
+                  name: (widget.selfName?.isNotEmpty ?? false)
+                      ? widget.selfName!
+                      : (widget.selfUin == null ? '?' : 'Q'),
+                  size: 22,
+                  url: widget.selfUin == null
+                      ? null
+                      : qqAvatarUrl(widget.selfUin!, size: 100),
+                ),
               ),
             ),
-            const SizedBox(height: 1),
+            const SizedBox(height: 0.33),
             Text(
-              '我的',
+              _MainTabBar.labels[3],
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
+                // 同 _item：文字端点用 glassTabSelectedText（fallback 同
+                // chat_messagePanelSend = 0xFF229AF0），起点 glassTabUnselected。
                 color: Color.lerp(
-                  TelegramColors.textSecondary,
-                  TelegramColors.accent,
+                  TelegramColors.glassTabUnselected,
+                  TelegramColors.glassTabSelectedText,
                   t,
                 ),
-                fontSize: 12,
-                fontWeight: active ? FontWeight.w800 : FontWeight.w400,
+                fontSize: _textSize,
+                fontWeight: active ? FontWeight.w800 : FontWeight.w500,
               ),
             ),
           ],
         ),
-      );
-    });
+      ),
+    );
   }
 }
 
 /// 未读徽章：380ms EASE_OUT_QUINT 从 0 放大到 1（GlassTabView.java:68/:167/:192），
 /// 数字变化走 160ms 交叉淡入，避免直接从 5 跳到 6。
+///
+/// 几何照官方 dispatchDraw（GlassTabView.java:178-184）：
+/// `height = dpf2(16)`、`rInner = dpf2(8)`、`width = max(height, 文字宽 + dp(8))`，
+/// 数字走 `LocaleController.formatNumber(unreadCount, ',')` —— **千位逗号、
+/// 无 99+ 上限**（MainTabsActivity.java:400-412）。
 class _TabBadge extends StatelessWidget {
   const _TabBadge({required this.count});
 
@@ -677,9 +1222,30 @@ class _TabBadge extends StatelessWidget {
 
   static const Curve _kEaseOutQuint = Cubic(0.22, 1, 0.36, 1);
 
+  /// 官方角标底色 = `blendARGB(key_telegram_color, key_fill_RedNormal, 错误因子)`
+  /// （`T/GlassTabView.java:208`），其中 `key_telegram_color = 0xFF229AF0`
+  /// （`T/ThemeColors.java:14,885`）、`key_fill_RedNormal = 0xffeb5e5e`（:98）。
+  ///
+  /// 静止态错误因子恒为 0，所以底色就是品牌蓝 `0xFF229AF0`——这是**固定品牌色**，
+  /// 不随明暗主题变化，所以不能取 `TelegramColors.accent`（我方强调色暗色
+  /// 0xFF61A3D7 / 亮色 0xFF3390EC，都不是官方品牌蓝）。我方暂无错误态角标，
+  /// 插值的第二个端点没有调用方，已在 ui-parity-matrix A42 登记。
+  static const Color _kBadgeFill = Color(0xFF229AF0);
+
+  /// 千位逗号，等价官方 `LocaleController.formatNumber(count, ',')`。
+  static String _format(int n) {
+    final String digits = n.abs().toString();
+    final StringBuffer out = StringBuffer();
+    for (int i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) out.write(',');
+      out.write(digits[i]);
+    }
+    return n < 0 ? '-$out' : out.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final String text = count > 99 ? '99+' : '$count';
+    final String text = _format(count);
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
       duration: const Duration(milliseconds: 380),
@@ -689,10 +1255,12 @@ class _TabBadge extends StatelessWidget {
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        constraints: const BoxConstraints(minWidth: 15),
-        height: 15,
+        constraints: const BoxConstraints(minWidth: 16),
+        height: 16,
         decoration: BoxDecoration(
-          color: TelegramColors.accent,
+          // 官方 blendARGB(key_telegram_color, key_fill_RedNormal, 错误因子)
+          // （GlassTabView.java:208）；静止态错误因子为 0 → 品牌蓝。
+          color: _kBadgeFill,
           borderRadius: BorderRadius.circular(8),
         ),
         alignment: Alignment.center,
@@ -701,6 +1269,7 @@ class _TabBadge extends StatelessWidget {
           child: Text(
             text,
             key: ValueKey<String>(text),
+            maxLines: 1,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 10,

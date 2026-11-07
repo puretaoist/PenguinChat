@@ -1,3 +1,5 @@
+import 'dart:async' show scheduleMicrotask;
+
 import 'package:flutter/widgets.dart';
 
 /// 水平滑动切页，参数照搬 Telegram 的 ViewPagerFixed.scrollToPosition：
@@ -15,11 +17,16 @@ class HorizontalPager extends StatefulWidget {
     required this.index,
     required this.children,
     this.duration = const Duration(milliseconds: 320),
+    this.onAnimatingChanged,
   });
 
   final int index;
   final List<Widget> children;
   final Duration duration;
+
+  /// 切页动画开始/结束回调。官方 `viewPager.isManualScrolling() || isTouch()`
+  /// 期间忽略 tab 点击（MainTabsActivity.java:334-349），主壳用它挂这个闸门。
+  final ValueChanged<bool>? onAnimatingChanged;
 
   @override
   State<HorizontalPager> createState() => _HorizontalPagerState();
@@ -58,9 +65,21 @@ class _HorizontalPagerState extends State<HorizontalPager>
   }
 
   void _onStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed && _previous != null) {
-      setState(() => _previous = null);
+    if (status == AnimationStatus.completed) {
+      if (_previous != null) setState(() => _previous = null);
+      _notifyAnimating(false);
     }
+  }
+
+  /// 官方 `viewPager.isManualScrolling() || isTouch()` 期间 tab 点击直接 return
+  /// （MainTabsActivity.java:334-349）。这里把"正在切页"这个事实抛给主壳。
+  ///
+  /// 用 microtask 派发：didUpdateWidget 仍处在 build 阶段，直接回调会让
+  /// 父组件在 build 中 setState 而触发断言。
+  void _notifyAnimating(bool value) {
+    final ValueChanged<bool>? cb = widget.onAnimatingChanged;
+    if (cb == null) return;
+    scheduleMicrotask(() => cb(value));
   }
 
   @override
@@ -72,6 +91,7 @@ class _HorizontalPagerState extends State<HorizontalPager>
       _current = widget.index;
       _built.add(widget.index);
       _controller.forward(from: 0);
+      _notifyAnimating(true);
     }
   }
 

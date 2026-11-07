@@ -52,6 +52,32 @@ class TelegramPalette {
   final Color badge;
   final Color danger;
 
+  /// 玻璃底栏：选中态图标色 / 选中态文字色 / 未选中态（图标与文字共用）。
+  ///
+  /// 官方三键取自 `T/ui/Components/glass/GlassTabView.java:270-276`
+  /// `updateColorsLottie()`：`key_glass_tabUnselected` / `key_glass_tabSelected` /
+  /// `key_glass_tabSelectedText`。这三个 key **在任何 .attheme 里都不存在**，
+  /// 所以实际生效的是 `T/ui/ActionBar/Theme.java:3705-3716` 的 fallback 链：
+  /// * `key_glass_tabSelected` → `key_chat_messagePanelSend`
+  /// * `key_glass_tabSelectedText` → `key_chat_messagePanelSend`
+  /// * `key_glass_tabUnselected` → `key_windowBackgroundWhiteBlackText`
+  ///
+  /// `assets/darkblue.attheme:155` 与 `assets/day.attheme:96` 的
+  /// `chat_messagePanelSend` 同为 `-14509328` = `0xFF229AF0`，所以两个选中色
+  /// 在两套主题下都是 `0xFF229AF0`（`ThemeColors.java:876-877` 的默认值
+  /// `0xFF1a91e6` / `0xFF0d7fcf` 在真实主题下永远走不到）。
+  ///
+  /// 未选中色：`darkblue.attheme:89` `windowBackgroundWhiteBlackText = -1`
+  /// = 纯白；`day.attheme:49` 同 key = `-13421773` = `0xFF333333`。
+  ///
+  /// 注意 `GlassTabView.java:254-255` 的插值端点：图标用
+  /// `blendARGB(colorDefault, colorSelected)`、文字用
+  /// `blendARGB(colorDefault, colorSelectedText)` —— **起点都是未选中色**，
+  /// 不是各自的独立默认色。所以暗色下未选中的文字也是纯白。
+  final Color glassTabSelected;
+  final Color glassTabSelectedText;
+  final Color glassTabUnselected;
+
   /// 是不是暗色基调。
   ///
   /// 不能再用 identical(_p, TelegramPalette.dark) 判暗色：主题色可配置后，
@@ -81,6 +107,9 @@ class TelegramPalette {
     required this.online,
     required this.badge,
     required this.danger,
+    required this.glassTabSelected,
+    required this.glassTabSelectedText,
+    required this.glassTabUnselected,
     this.isDark = false,
   });
 
@@ -109,6 +138,9 @@ class TelegramPalette {
     online: Color(0xFF0AC630),
     badge: Color(0xFF61A3D7),
     danger: Color(0xFFFF5C5C),
+    glassTabSelected: Color(0xFF229AF0), // chat_messagePanelSend
+    glassTabSelectedText: Color(0xFF229AF0), // 同上（fallback 同 key）
+    glassTabUnselected: Color(0xFFFFFFFF), // windowBackgroundWhiteBlackText
     isDark: true,
   );
 
@@ -135,6 +167,9 @@ class TelegramPalette {
     online: Color(0xFF0AC630),
     badge: Color(0xFF3390EC),
     danger: Color(0xFFE53935),
+    glassTabSelected: Color(0xFF229AF0), // chat_messagePanelSend
+    glassTabSelectedText: Color(0xFF229AF0),
+    glassTabUnselected: Color(0xFF333333), // windowBackgroundWhiteBlackText
     isDark: false,
   );
 
@@ -168,6 +203,9 @@ class TelegramPalette {
     online: online,
     badge: badge ?? this.badge,
     danger: danger,
+    glassTabSelected: glassTabSelected,
+    glassTabSelectedText: glassTabSelectedText,
+    glassTabUnselected: glassTabUnselected,
     isDark: isDark,
   );
 }
@@ -230,27 +268,49 @@ class TelegramColors {
   static Color get badge => _p.badge;
   static Color get danger => _p.danger;
 
+  /// 玻璃底栏三色，见 [TelegramPalette.glassTabSelected] 的文档注释。
+  static Color get glassTabSelected => _p.glassTabSelected;
+  static Color get glassTabSelectedText => _p.glassTabSelectedText;
+  static Color get glassTabUnselected => _p.glassTabUnselected;
+
   /// 群聊里发送者名字的 7 色轮转（TG UserObject.java:212-216 的
-  /// colorId = (int)(user.id % 7)，取 Theme.keys_avatar_nameInMessage 七色，
-  /// 色值见 ThemeColors.java:184-190）。
-  static const List<Color> nameColors = <Color>[
-    Color(0xFFCC5049),
-    Color(0xFFD67722),
-    Color(0xFF955CDB),
-    Color(0xFF40A920),
-    Color(0xFF309EBA),
-    Color(0xFF368AD1),
-    Color(0xFFC7508B),
+  /// colorId = (int)(user.id % 7)，取 Theme.keys_avatar_nameInMessage 七色）。
+  ///
+  /// 顺序固定为 Red, Orange, Violet, Green, Cyan, Blue, Pink——**不能改序**，
+  /// 否则同一个人的颜色会和官方对不上。两套真值直接抄主题文件，不做二次
+  /// 提亮/混合（以前在暗色下往白 lerp 18%，等于凭空改了官方色，已删）。
+  ///
+  /// * dark：darkblue.attheme 的 avatar_nameInMessage[0..6]
+  /// * light：day.attheme 只覆写 Violet/Pink/Blue 三个，其余取 ThemeColors
+  ///   的 default 值（day.attheme 里没有这几项 = 用内置默认）
+  static const List<Color> _nameColorsDark = <Color>[
+    Color(0xFFE88878), // Red
+    Color(0xFFE8AB5A), // Orange
+    Color(0xFF8C8DEA), // Violet
+    Color(0xFF7DD071), // Green
+    Color(0xFF53CCC6), // Cyan
+    Color(0xFF5CADEA), // Blue
+    Color(0xFFE8749A), // Pink
+  ];
+  static const List<Color> _nameColorsLight = <Color>[
+    Color(0xFFCC5049), // Red（default）
+    Color(0xFFD67722), // Orange（default）
+    Color(0xFF836FE6), // Violet（day.attheme 覆写）
+    Color(0xFF40A920), // Green（default）
+    Color(0xFF309EBA), // Cyan（default）
+    Color(0xFF2586D6), // Blue（day.attheme 覆写）
+    Color(0xFFCB4F86), // Pink（day.attheme 覆写）
   ];
 
+  /// 当前主题下的七色表。
+  static List<Color> get nameColors =>
+      current.isDark ? _nameColorsDark : _nameColorsLight;
+
   /// 按发送者 id 取名字颜色；非数字 id 退强调色。
-  ///
-  /// 暗色底上原始七色偏暗，按 TG 暗色主题的做法整体往白提亮 18%。
   static Color nameColorFor(String senderId) {
     final n = int.tryParse(senderId);
     if (n == null) return accent;
-    final c = nameColors[n.abs() % nameColors.length];
-    return current.isDark ? Color.lerp(c, Colors.white, 0.18)! : c;
+    return nameColors[n.abs() % nameColors.length];
   }
 }
 

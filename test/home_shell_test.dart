@@ -10,9 +10,9 @@ library;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Brightness, SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:penguinchat/client_api/objects.dart';
 import 'package:penguinchat/client_api/qq8_login_service.dart';
 import 'package:penguinchat/client_api/qq8_providers.dart';
 import 'package:penguinchat/client_api/session_providers.dart';
@@ -24,28 +24,34 @@ import 'package:penguinchat/ui/pages/friend_profile_page.dart';
 import 'package:penguinchat/ui/pages/home_shell.dart';
 import 'package:penguinchat/ui/pages/settings_page.dart';
 import 'package:penguinchat/ui/theme/telegram_theme.dart';
+import 'package:penguinchat/ui/theme/theme_mode.dart';
 
 final List<Qq8Friend> _friends = <Qq8Friend>[
   const Qq8Friend(uin: 20002, nick: '小明', remark: '', groupId: 1, sex: 1),
   const Qq8Friend(uin: 20003, nick: '小红', remark: '同事', groupId: 1, sex: 2),
 ];
 
-Widget _wrap(Widget child) => ProviderScope(
-      overrides: <Override>[
-        dataDirProvider.overrideWithValue(Directory.systemTemp),
-        backendRegistryProvider.overrideWithValue(
-          BackendProfileRegistry.fromJsonStrings(const <String>[]),
-        ),
-        safetyGateProvider.overrideWithValue(SafetyGate()),
-        qq8LoginServiceProvider.overrideWithValue(Qq8LoginService()),
-        qq8FriendsProvider.overrideWith((ref) async => _friends),
-      ],
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: buildTelegramTheme(),
-        home: child,
-      ),
-    );
+List<Override> _overrides({Directory? dataDir}) => <Override>[
+  dataDirProvider.overrideWithValue(dataDir ?? Directory.systemTemp),
+  backendRegistryProvider.overrideWithValue(
+    BackendProfileRegistry.fromJsonStrings(const <String>[]),
+  ),
+  safetyGateProvider.overrideWithValue(SafetyGate()),
+  qq8LoginServiceProvider.overrideWithValue(Qq8LoginService()),
+  qq8FriendsProvider.overrideWith((ref) async => _friends),
+];
+
+Widget _wrap(Widget child, {ProviderContainer? container}) {
+  final Widget app = MaterialApp(
+    debugShowCheckedModeBanner: false,
+    theme: buildTelegramTheme(),
+    home: child,
+  );
+  // 需要从外部改 provider（例如切主题）时传 container，否则用一次性 Scope。
+  return container == null
+      ? ProviderScope(overrides: _overrides(), child: app)
+      : UncontrolledProviderScope(container: container, child: app);
+}
 
 Future<void> _setView(WidgetTester tester) async {
   TelegramColors.use(TelegramPalette.dark);
@@ -56,6 +62,39 @@ Future<void> _setView(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('状态栏透明，图标亮度跟着主题走', (tester) async {
+    await _setView(tester);
+    // 走真实路径：改 themeModeProvider → HomeShell 重建 → applyThemePalette
+    // 换调色板 → AnnotatedRegion 重算。直接改 TelegramColors 不会触发重建。
+    // 独立数据目录：全量跑时 systemTemp 里的 ui_settings.json 可能已被别的
+    // 测试写成浅色，themeModeProvider.load() 会把它读回来污染本次断言。
+    final dir = Directory.systemTemp.createTempSync('home_shell_system_bars');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final container = ProviderContainer(overrides: _overrides(dataDir: dir));
+    addTearDown(container.dispose);
+    await tester.pumpWidget(_wrap(const HomeShell(), container: container));
+    await tester.pump();
+
+    SystemUiOverlayStyle style() => tester
+        .widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+          find.byType(AnnotatedRegion<SystemUiOverlayStyle>).first,
+        )
+        .value;
+
+    // 状态栏本身永远透明（AndroidUtilities.enableEdgeToEdge:6817-6822），
+    // 颜色由页面自己画到状态栏后面。
+    expect(style().statusBarColor, Colors.transparent);
+    expect(style().systemNavigationBarColor, Colors.transparent);
+    // 深色主题 → 白图标（setLightStatusBar(false) 的语义）。
+    expect(style().statusBarIconBrightness, Brightness.light);
+
+    // 浅色主题 → 图标必须转深色，否则状态栏上什么都看不见。
+    container.read(themeModeProvider.notifier).setDark(false);
+    await tester.pump();
+    expect(TelegramColors.isDark, isFalse);
+    expect(style().statusBarIconBrightness, Brightness.dark);
+  });
+
   testWidgets('底栏：4 个槽可切换，设置 tab 的页头没有返回箭头', (tester) async {
     await _setView(tester);
     await tester.pumpWidget(_wrap(const HomeShell()));
@@ -65,9 +104,9 @@ void main() {
     // 注意：四个 Tab 现在都有同名页头标题，所以这里必须**限定在底栏内**找，
     // 否则「聊天/联系人/我的」各会命中页头 + 标签两个。
     Finder inBar(String label) => find.descendant(
-          of: find.byKey(const ValueKey<String>('main-tab-bar')),
-          matching: find.text(label),
-        );
+      of: find.byKey(const ValueKey<String>('main-tab-bar')),
+      matching: find.text(label),
+    );
     expect(inBar('聊天'), findsOneWidget);
     expect(inBar('联系人'), findsOneWidget);
     expect(inBar('设置'), findsOneWidget);
@@ -117,13 +156,17 @@ void main() {
   testWidgets('资料页：备注与分组行按服务层数据渲染', (tester) async {
     await _setView(tester);
     await tester.pumpWidget(
-      _wrap(const FriendProfilePage(friend: Qq8Friend(
-        uin: 20003,
-        nick: '小红',
-        remark: '同事',
-        groupId: 1,
-        sex: 2,
-      ))),
+      _wrap(
+        const FriendProfilePage(
+          friend: Qq8Friend(
+            uin: 20003,
+            nick: '小红',
+            remark: '同事',
+            groupId: 1,
+            sex: 2,
+          ),
+        ),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -154,12 +197,13 @@ void main() {
     for (int i = 0; i < 4; i++) {
       expect(find.byKey(ValueKey<String>('main-tab-$i')), findsOneWidget);
     }
-    // 位置：左侧栏内居中、左右各留 8dp（官方 MAIN_TABS_MARGIN=8）；内部再做 12dp padding。
-    // 900dp → 侧栏 max(320,315)=320 → 胶囊 320-16=304。
+    // 位置：官方 tabsViewWrapper 贴边、MATCH_PARENT（MainTabsActivity.java:383），
+    // 视觉缩进全部来自 tabsView 的 12dp padding 与背景 7.666dp 内缩，
+    // 所以外层槽本身铺满侧栏：900dp → 侧栏 max(320,315)=320 → 槽宽 320。
     final rect = tester.getRect(bar);
-    expect(rect.left, 8);
-    expect(rect.width, 304);
-    expect(rect.right, 312, reason: '胶囊仍在左侧栏内，不越分界线');
+    expect(rect.left, 0);
+    expect(rect.width, 320);
+    expect(rect.right, 320, reason: '胶囊仍在左侧栏内，不越分界线');
 
     // 宽屏不再有整页 IndexedStack：主壳只渲染一个 HomePage，
     // 左栏按 wideTabProvider 切页（官方平板换 tab 只换左栏）。
@@ -198,18 +242,22 @@ void main() {
     await tester.pumpAndSettle();
 
     final AnimatedPadding pad = tester.widget<AnimatedPadding>(
-      find.ancestor(
-        of: find.byKey(const ValueKey<String>('tab-content-pager')),
-        matching: find.byType(AnimatedPadding),
-      ).first,
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey<String>('tab-content-pager')),
+            matching: find.byType(AnimatedPadding),
+          )
+          .first,
     );
     expect(pad.duration, const Duration(milliseconds: 150));
 
     final AnimatedOpacity bar = tester.widget<AnimatedOpacity>(
-      find.ancestor(
-        of: find.byKey(const ValueKey<String>('main-tab-bar')),
-        matching: find.byType(AnimatedOpacity),
-      ).first,
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey<String>('main-tab-bar')),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
     );
     expect(bar.duration, const Duration(milliseconds: 150));
     expect(bar.opacity, 1.0, reason: '列表态底栏必须可见');
