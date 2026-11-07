@@ -83,6 +83,7 @@ class HomePage extends ConsumerStatefulWidget {
     this.connecting = false,
     this.previewChats = const <Chat>[],
     this.onChatPaneVisibilityChanged,
+    this.onSearchVisibilityChanged,
     this.reverseMessageList = true,
     this.bottomContentInset = 0,
   });
@@ -108,6 +109,13 @@ class HomePage extends ConsumerStatefulWidget {
   ///
   /// 外壳（HomeShell）据此决定底栏显隐：进对话要让位给输入栏。
   final ValueChanged<bool>? onChatPaneVisibilityChanged;
+
+  /// 列表侧搜索是否展开。
+  ///
+  /// 外壳（HomeShell）据此藏掉底部胶囊：官方
+  /// `T/DialogsActivity.java:14076-14082 checkUi_mainTabsVisible()` 就是
+  /// `mainTabsVisible = !searching && (...)`，搜索态底栏必须不可见。
+  final ValueChanged<bool>? onSearchVisibilityChanged;
 
   /// 消息列表是否反向排（原型开关，**默认开**：Telegram 默认也是反向）。
   ///
@@ -513,6 +521,7 @@ class _HomePageState extends ConsumerState<HomePage> {
       _searchOpen = false;
       _chatSearchOpen = false;
     });
+    widget.onSearchVisibilityChanged?.call(false);
     widget.onChatPaneVisibilityChanged?.call(true);
     unawaited(_ensureOpened(chat.id));
     // 每次主动点开都允许重试一次（上次可能因为没上线 / 接口失败而没拉到）。
@@ -2348,7 +2357,12 @@ class _HomePageState extends ConsumerState<HomePage> {
   ///
   /// 官方是 ActionBar 原地变形（`DialogsActivity:3222` `setIsSearchField`），
   /// 不推页、没有转场——宽屏只换左栏，右栏保持不动。
-  void _openSearch() => setState(() => _searchOpen = true);
+  void _openSearch() {
+    setState(() => _searchOpen = true);
+    // 官方 checkUi_mainTabsVisible()：搜索展开时底栏 setVisibility(GONE)
+    // （T/DialogsActivity.java:14076-14082）。
+    widget.onSearchVisibilityChanged?.call(true);
+  }
 
   /// 打开会话内搜索（官方 `ChatActivity.openSearchWithText`，`:35364`）。
   ///
@@ -2378,10 +2392,13 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
   }
 
-  void _closeSearch() => setState(() {
-    _searchOpen = false;
-    _chatSearchOpen = false;
-  });
+  void _closeSearch() {
+    setState(() {
+      _searchOpen = false;
+      _chatSearchOpen = false;
+    });
+    widget.onSearchVisibilityChanged?.call(false);
+  }
 
   /// 搜索覆盖层：铺满它所在的那一栏（宽屏左/右栏，窄屏整屏）。
   ///

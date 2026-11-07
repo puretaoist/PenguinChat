@@ -90,6 +90,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// 打乱。由 [HorizontalPager.onAnimatingChanged] 驱动。
   bool _pagerAnimating = false;
 
+  /// 列表侧搜索是否展开（官方 `checkUi_mainTabsVisible` 的第一个条件）。
+  bool _searchOpen = false;
+
   /// 与 lib/ui/pages/home_page.dart 的 _kChatSwitchDuration 保持一致（150ms）：
   /// 转场和底栏/内容区让位必须同一个节拍，这是 Telegram ActionBarLayout 的做法。
   static const Duration _kPaneShift = Duration(milliseconds: 150);
@@ -171,10 +174,16 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                       key: const ValueKey<String>('tab-chats'),
                       connecting: widget.connecting,
                       previewChats: widget.previewChats,
+                      onSearchVisibilityChanged: _onSearchVisibility,
                       bottomContentInset: listBottomInset,
                     ),
                   ),
-                  _sidebarBar(sidebarWidth, bar, bottomInset),
+                  _sidebarBar(
+                    sidebarWidth,
+                    bar,
+                    bottomInset,
+                    show: !_searchOpen,
+                  ),
                 ],
               ),
             ),
@@ -183,7 +192,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       );
     }
 
-    final bool showBar = !(_tab == 0 && _chatPaneOpen);
+    // 官方 `T/DialogsActivity.java:14076-14082 checkUi_mainTabsVisible()`：
+    // `mainTabsVisible = !searching && (...)` —— 搜索态底栏必须不可见。
+    final bool showBar = !_searchOpen && !(_tab == 0 && _chatPaneOpen);
     // 留白传给列表而不是外层 Padding：滚动内容才能从胶囊下方穿过。
 
     // 四页常驻（HorizontalPager 用 Offstage 隐藏非当前页），切走再回来时页面
@@ -204,6 +215,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           connecting: widget.connecting,
           previewChats: widget.previewChats,
           onChatPaneVisibilityChanged: _onChatPaneVisibility,
+          onSearchVisibilityChanged: _onSearchVisibility,
           bottomContentInset: listBottomInset,
         ),
         ContactsPage(
@@ -277,17 +289,43 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   ///  || getAlpha() < 0.01f || getVisibility() == GONE)`）。
   /// 官方 `checkUi_tabsPosition`（MainTabsActivity.java:1073-1087）那套
   /// 40dp 位移 + scale 0.85 + 淡出是给这两个条件用的，不是给滚动的。
-  Widget _sidebarBar(double sidebarWidth, Widget bar, double bottomInset) {
+  Widget _sidebarBar(
+    double sidebarWidth,
+    Widget bar,
+    double bottomInset, {
+    required bool show,
+  }) {
     return Positioned(
       left: 0,
       width: sidebarWidth,
       bottom: bottomInset,
-      child: Center(
-        // 官方 tabsViewWrapper 左右不留 margin（MainTabsActivity.java:383），
-        // 视觉缩进全在 tabsView 的 12dp padding 与背景 7.666dp 内缩里。
-        child: bar,
+      child: IgnorePointer(
+        ignoring: !show,
+        child: AnimatedSlide(
+          duration: _kPaneShift,
+          curve: Curves.easeOutCubic,
+          offset: show ? Offset.zero : const Offset(0, 0.35),
+          child: AnimatedOpacity(
+            duration: _kPaneShift,
+            curve: Curves.easeOutCubic,
+            opacity: show ? 1 : 0,
+            child: Center(
+              // 官方 tabsViewWrapper 左右不留 margin（MainTabsActivity.java:383），
+              // 视觉缩进全在 tabsView 的 12dp padding 与背景 7.666dp 内缩里。
+              child: bar,
+            ),
+          ),
+        ),
       ),
     );
+  }
+
+  /// 列表侧搜索展开/收起：官方搜索态要藏掉底栏
+  /// （`T/DialogsActivity.java:14076-14082 checkUi_mainTabsVisible()`）。
+  void _onSearchVisibility(bool open) {
+    if (mounted && _searchOpen != open) {
+      setState(() => _searchOpen = open);
+    }
   }
 }
 

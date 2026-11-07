@@ -22,7 +22,19 @@ import 'telegram_avatar.dart';
 ///
 /// 头像 40（ChatAvatarContainer.java:668 dp(42)-2）、标题 17.5 / 副标题 13.5
 /// （:756-765 setGlassMode）、头像左 9（:767-774 onLayout 1+leftPadding）、
-/// 头像到文字 ≈9.66（57.66 - 8 - 40），文字右余量 18（getVisualWidth 的 dp(52+18)）。
+/// 头像到文字 ≈9.66（57.66 - 8 - 40）、文字右余量 18（getVisualWidth 的 dp(52+18)）。
+///
+/// ## 搜索态
+///
+/// 官方是 ActionBar **原地变形**：`ChatActivity.java:35364 openSearchWithText`
+/// 把头像+标题（`headerItem`）、附件（`attachItem`）、右侧菜单（`otherIcon`）、
+/// 输入框（`editTextItem`）都藏掉，只留 `searchItem` 那个搜索框；
+/// `ActionBarMenuItem.toggleSearch`（`:938-1051`）是 **150ms 纯 alpha 交叉**。
+///
+/// 这里没有 1:1 复刻那套 alpha 交叉，改成路径更直观的宽度动画：搜索图标
+/// 被点后，搜索框**从右往左展开**、群名胶囊被同一节拍挤到 0 宽、右侧菜单
+/// 淡出。参数取值仍照官方——搜索框高 46、圆角 23（跟中间那块胶囊同高同圆角）、
+/// hint 是 `R.string.Search`（`ChatActivity.java:4299`）。
 class ChatHeader extends StatelessWidget {
   const ChatHeader({
     super.key,
@@ -52,15 +64,7 @@ class ChatHeader extends StatelessWidget {
   /// 头部搜索（TG 顶栏右侧第一个图标就是放大镜）。
   final VoidCallback? onSearch;
 
-  /// 是否处于搜索态。
-  ///
-  /// 官方是 ActionBar **原地变形**：藏掉头像 + 标题（`headerItem`）、附件
-  /// （`attachItem`）、右侧菜单（`otherIcon`）与输入框（`editTextItem`），
-  /// 只留搜索框和左侧那个会从放大镜形变成返回箭头的按钮
-  /// （`ChatActivity.java:35364-35409`，`openSearchWithText`）。
-  /// 这里保留左侧胶囊的几何，把搜索框铺满它右边——官方展开后 ActionBar
-  /// 就只剩这两件东西，高度不变（`ActionBarMenuItem.toggleSearch` 是
-  /// 150ms 的 alpha 交叉，没有宽度动画）。
+  /// 是否处于搜索态。见类文档「搜索态」一节。
   final bool searching;
 
   /// 搜索态的输入控制器与焦点（[searching] 为真时必须提供）。
@@ -79,6 +83,14 @@ class ChatHeader extends StatelessWidget {
   /// 标题是否居中。抄 `ExteraConfig.centerTitle`。
   final bool centerTitle;
 
+  /// 搜索态切换时长。
+  ///
+  /// 官方 `ActionBar/ActionBarMenuItem.java:938-1051 toggleSearch` 就是
+  /// **150ms 纯 alpha 交叉**：`searchContainer` alpha 0↔1、菜单图标 alpha 1↔0，
+  /// 没有任何宽度动画；头像+标题则是在 `ChatActivity.openSearchWithText`
+  /// 里直接 `setVisibility(INVISIBLE)`。这里照抄这个节拍与做法。
+  static const Duration _morphDuration = Duration(milliseconds: 150);
+
   @override
   Widget build(BuildContext context) {
     // 全部单位 dp，数值来自上述官方源码。
@@ -86,60 +98,14 @@ class ChatHeader extends StatelessWidget {
     const double s = 46.0; // :2232 dp(46)
     const double capsuleH = s + 2 * p; // 58，与 s+2p 一致
 
-    if (searching && searchController != null && searchFocus != null) {
-      return SizedBox(
-        height: capsuleH,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            Positioned(
-              left: 0,
-              top: 0,
-              width: capsuleH,
-              height: capsuleH,
-              child: GlassSurface.capsule(
-                radius: 23,
-                alignment: Alignment.center,
-                padding: EdgeInsets.zero,
-                child: IconButton(
-                  key: const ValueKey<String>('chat-search-back'),
-                  onPressed: onExitSearch,
-                  tooltip: '退出搜索',
-                  icon: Icon(
-                    Icons.arrow_back,
-                    color: TelegramColors.textSecondary,
-                    size: 24,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              left: capsuleH,
-              right: p,
-              top: 0,
-              height: capsuleH,
-              child: Center(
-                child: SearchFieldBox(
-                  controller: searchController!,
-                  focusNode: searchFocus!,
-                  height: 46,
-                  radius: 23,
-                  hintText: '搜索本会话',
-                  onChanged: onSearchChanged,
-                  onCleared: () => onSearchChanged?.call(''),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
     const double iconSlot = 48.0; // 官方每个 action item 占 48dp（menuWidth）
     const double leftDefault = s + p; // 52，中胶囊左界（:2249）
 
+    // 官方顶栏右侧是「独立搜索图标（searchIconItem）+ ⋮（otherIcon）」两个
+    // action item（ChatActivity.java:4293-4295），固定占 2×48。
     final int menuItems =
         (onSearch != null ? 1 : 0) +
-        (chat.isGroup ? 1 : (onOpenSettings != null ? 1 : 0));
+        ((chat.isGroup || onOpenSettings != null) ? 1 : 0);
     final double menuWidth = menuItems * iconSlot;
     final double menuCapsuleW = (menuWidth > s ? menuWidth : s) + 2 * p;
     final double rightOffset = menuWidth + p; // 中胶囊右界让出菜单宽 + p
@@ -181,168 +147,233 @@ class ChatHeader extends StatelessWidget {
               ? leftDefault
               : centered;
 
-          return Stack(
-            clipBehavior: Clip.none,
-            children: <Widget>[
-              if (onBack != null)
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  width: capsuleH, // 官方 s+p*2 = 58，正方形
-                  height: capsuleH,
-                  child: GlassSurface.capsule(
-                    radius: 23,
-                    alignment: Alignment.center,
-                    padding: EdgeInsets.zero,
-                    child: IconButton(
-                      onPressed: onBack,
-                      tooltip: '返回',
-                      icon: Icon(
-                        Icons.arrow_back,
-                        color: TelegramColors.textSecondary,
-                        size: 24,
+          return TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: searching ? 1 : 0),
+            duration: _morphDuration,
+            curve: Curves.linear,
+            builder: (BuildContext context, double raw, Widget? _) {
+              final double t = raw.clamp(0.0, 1.0);
+
+              return Stack(
+                clipBehavior: Clip.none,
+                children: <Widget>[
+                  // 左侧返回胶囊：位置与尺寸都不动。进入搜索后同一个按钮
+                  // 改成「退出搜索」（官方那个按钮是同一个 view 在形变）。
+                  if (onBack != null || onExitSearch != null)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: capsuleH,
+                      height: capsuleH,
+                      child: GlassSurface.capsule(
+                        radius: 23,
+                        alignment: Alignment.center,
+                        padding: EdgeInsets.zero,
+                        child: IconButton(
+                          key: ValueKey<String>(
+                            searching ? 'chat-search-back' : 'chat-header-back',
+                          ),
+                          onPressed: searching ? onExitSearch : onBack,
+                          tooltip: searching ? '退出搜索' : '返回',
+                          icon: Icon(
+                            Icons.arrow_back,
+                            color: TelegramColors.textSecondary,
+                            size: 24,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-              Positioned(
-                left: middleLeft,
-                top: 0,
-                width: middleW,
-                height: capsuleH,
-                child: GlassSurface.capsule(
-                  radius: 23,
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.only(left: 8, right: 18),
-                  child: GestureDetector(
-                    key: const ValueKey('open-members'),
-                    onTap: chat.isGroup ? onOpenMembers : null,
-                    behavior: HitTestBehavior.opaque,
-                    child: Row(
-                      children: <Widget>[
-                        TelegramAvatar(
-                          name: chat.title,
-                          url: chat.avatarUrl,
-                          size: 40,
+                  // 群名胶囊：官方在 `ChatActivity.openSearchWithText` 里直接
+                  // `headerItem.setVisibility(INVISIBLE)`，没有过渡，所以这里
+                  // 搜索态下不渲染。
+                  if (!searching && middleW > 0)
+                    Positioned(
+                      left: middleLeft,
+                      top: 0,
+                      width: middleW,
+                      height: capsuleH,
+                      child: _middleCapsule(
+                        titleStyle: titleStyle,
+                        subStyle: subStyle,
+                        subText: subText,
+                      ),
+                    ),
+                  // 搜索框：位置与尺寸一开始就到位，只做 150ms alpha 淡入
+                  // ——官方 `toggleSearch` 里 `searchContainer` alpha 0→1。
+                  if (t > 0.002 &&
+                      searchController != null &&
+                      searchFocus != null)
+                    Positioned(
+                      left: capsuleH,
+                      right: p,
+                      top: 0,
+                      height: capsuleH,
+                      child: IgnorePointer(
+                        ignoring: t < 0.99,
+                        child: Opacity(
+                          opacity: t,
+                          child: Center(
+                            child: SearchFieldBox(
+                              controller: searchController!,
+                              focusNode: searchFocus!,
+                              height: 46,
+                              radius: 23,
+                              // ChatActivity.java:4299 setSearchFieldHint(R.string.Search)
+                              hintText: '搜索',
+                              onChanged: onSearchChanged,
+                              onCleared: () => onSearchChanged?.call(''),
+                            ),
+                          ),
                         ),
-                        const SizedBox(width: 9.66),
-                        Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: centerTitle
-                                ? CrossAxisAlignment.center
-                                : CrossAxisAlignment.start,
+                      ),
+                    ),
+                  // 右侧菜单胶囊：搜索框展开时淡出，把位置让给搜索框。
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    width: menuCapsuleW,
+                    height: capsuleH,
+                    child: IgnorePointer(
+                      ignoring: searching,
+                      child: Opacity(
+                        opacity: 1 - t,
+                        child: GlassSurface.capsule(
+                          radius: 23,
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: p),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: <Widget>[
-                              Text(
-                                chat.title,
-                                key: const ValueKey('chat-header-title'),
-                                maxLines: 1,
-                                textAlign: centerTitle
-                                    ? TextAlign.center
-                                    : null,
-                                overflow: TextOverflow.ellipsis,
-                                style: titleStyle,
-                              ),
-                              if (!hideStatus)
-                                Text(
-                                  subText,
-                                  key: const ValueKey('chat-header-subtitle'),
-                                  style: subStyle,
+                              if (onSearch != null)
+                                IconButton(
+                                  key: const ValueKey('chat-header-search'),
+                                  onPressed: onSearch,
+                                  tooltip: '搜索',
+                                  icon: Icon(
+                                    Icons.search,
+                                    color: TelegramColors.textSecondary,
+                                    size: 22,
+                                  ),
+                                ),
+                              if (chat.isGroup || onOpenSettings != null)
+                                PopupMenuButton<String>(
+                                  key: const ValueKey('group-menu'),
+                                  tooltip: '更多',
+                                  icon: Icon(
+                                    Icons.more_vert,
+                                    color: TelegramColors.textSecondary,
+                                    size: 22,
+                                  ),
+                                  onSelected: (String value) {
+                                    switch (value) {
+                                      case 'search':
+                                        onSearch?.call();
+                                      case 'files':
+                                        onOpenGroupFiles?.call();
+                                      case 'settings':
+                                        onOpenGroupSettings?.call();
+                                      case 'members':
+                                        onOpenMembers?.call();
+                                      case 'app-settings':
+                                        onOpenSettings?.call();
+                                    }
+                                  },
+                                  itemBuilder: (_) => <PopupMenuEntry<String>>[
+                                    // 官方把搜索放在头部菜单里
+                                    // （`ChatActivity.java:4467`
+                                    // `headerItem.lazilyAddSubItem(search, ...)`），
+                                    // 这里按同一意图放进 ⋮。
+                                    if (onSearch != null)
+                                      const PopupMenuItem<String>(
+                                        key: ValueKey('group-menu-search'),
+                                        value: 'search',
+                                        child: Text('搜索'),
+                                      ),
+                                    if (chat
+                                        .isGroup) ...<PopupMenuEntry<String>>[
+                                      const PopupMenuItem<String>(
+                                        key: ValueKey('group-menu-files'),
+                                        value: 'files',
+                                        child: Text('群文件'),
+                                      ),
+                                      const PopupMenuItem<String>(
+                                        key: ValueKey('group-menu-settings'),
+                                        value: 'settings',
+                                        child: Text('群设置'),
+                                      ),
+                                      const PopupMenuItem<String>(
+                                        key: ValueKey('group-menu-members'),
+                                        value: 'members',
+                                        child: Text('群成员'),
+                                      ),
+                                    ],
+                                    if (onOpenSettings != null)
+                                      const PopupMenuItem<String>(
+                                        key: ValueKey('chat-header-settings'),
+                                        value: 'app-settings',
+                                        child: Text('设置'),
+                                      ),
+                                  ],
                                 ),
                             ],
                           ),
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-              Positioned(
-                right: 0,
-                top: 0,
-                width: menuCapsuleW,
-                height: capsuleH,
-                child: GlassSurface.capsule(
-                  radius: 23,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: p),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      if (onSearch != null)
-                        IconButton(
-                          key: const ValueKey('chat-header-search'),
-                          onPressed: onSearch,
-                          tooltip: '搜索',
-                          icon: Icon(
-                            Icons.search,
-                            color: TelegramColors.textSecondary,
-                            size: 22,
-                          ),
-                        ),
-                      if (chat.isGroup)
-                        PopupMenuButton<String>(
-                          key: const ValueKey('group-menu'),
-                          tooltip: '更多',
-                          icon: Icon(
-                            Icons.more_vert,
-                            color: TelegramColors.textSecondary,
-                            size: 22,
-                          ),
-                          onSelected: (String value) {
-                            switch (value) {
-                              case 'files':
-                                onOpenGroupFiles?.call();
-                              case 'settings':
-                                onOpenGroupSettings?.call();
-                              case 'members':
-                                onOpenMembers?.call();
-                              case 'app-settings':
-                                onOpenSettings?.call();
-                            }
-                          },
-                          itemBuilder: (_) => <PopupMenuEntry<String>>[
-                            const PopupMenuItem<String>(
-                              key: ValueKey('group-menu-files'),
-                              value: 'files',
-                              child: Text('群文件'),
-                            ),
-                            const PopupMenuItem<String>(
-                              key: ValueKey('group-menu-settings'),
-                              value: 'settings',
-                              child: Text('群设置'),
-                            ),
-                            const PopupMenuItem<String>(
-                              key: ValueKey('group-menu-members'),
-                              value: 'members',
-                              child: Text('群成员'),
-                            ),
-                            if (onOpenSettings != null)
-                              const PopupMenuItem<String>(
-                                key: ValueKey('chat-header-settings'),
-                                value: 'app-settings',
-                                child: Text('设置'),
-                              ),
-                          ],
-                        )
-                      else if (onOpenSettings != null)
-                        IconButton(
-                          key: const ValueKey('chat-header-settings'),
-                          onPressed: onOpenSettings,
-                          tooltip: '设置',
-                          icon: Icon(
-                            Icons.settings,
-                            color: TelegramColors.textSecondary,
-                            size: 22,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+                ],
+              );
+            },
           );
         },
+      ),
+    );
+  }
+
+  /// 中间那块：头像 + 标题 + 副标题，整块可点（群聊时打开成员列表）。
+  Widget _middleCapsule({
+    required TextStyle titleStyle,
+    required TextStyle subStyle,
+    required String subText,
+  }) {
+    return GlassSurface.capsule(
+      radius: 23,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.only(left: 8, right: 18),
+      child: GestureDetector(
+        key: const ValueKey('open-members'),
+        onTap: chat.isGroup ? onOpenMembers : null,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          children: <Widget>[
+            TelegramAvatar(name: chat.title, url: chat.avatarUrl, size: 40),
+            const SizedBox(width: 9.66),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: centerTitle
+                    ? CrossAxisAlignment.center
+                    : CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    chat.title,
+                    key: const ValueKey('chat-header-title'),
+                    maxLines: 1,
+                    textAlign: centerTitle ? TextAlign.center : null,
+                    overflow: TextOverflow.ellipsis,
+                    style: titleStyle,
+                  ),
+                  if (!hideStatus)
+                    Text(
+                      subText,
+                      key: const ValueKey('chat-header-subtitle'),
+                      style: subStyle,
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

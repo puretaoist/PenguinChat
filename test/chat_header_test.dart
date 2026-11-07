@@ -14,6 +14,7 @@ import 'package:penguinchat/client_api/objects.dart';
 import 'package:penguinchat/ui/theme/telegram_theme.dart';
 import 'package:penguinchat/ui/widgets/chat_header.dart';
 import 'package:penguinchat/ui/widgets/glass_surface.dart';
+import 'package:penguinchat/ui/widgets/search_field_box.dart';
 import 'package:penguinchat/ui/widgets/telegram_avatar.dart';
 
 final bool goldenSkip = !Platform.isWindows;
@@ -158,6 +159,55 @@ void main() {
     await _pump(tester, ChatHeader(chat: _group(), onBack: () => back++));
     await tester.tap(find.byIcon(Icons.arrow_back));
     expect(back, 1);
+  });
+
+  testWidgets('搜索态：群名胶囊消失，搜索框铺到右边距', (tester) async {
+    final controller = TextEditingController();
+    final focus = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focus.dispose);
+
+    await _pump(
+      tester,
+      ChatHeader(
+        chat: _group(),
+        onBack: () {},
+        onSearch: () {},
+        onExitSearch: () {},
+        searching: true,
+        searchController: controller,
+        searchFocus: focus,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 官方 ChatActivity.openSearchWithText 里 headerItem 直接 INVISIBLE。
+    expect(find.text('产品讨论组'), findsNothing);
+    expect(find.byKey(const ValueKey('chat-search-back')), findsOneWidget);
+
+    // 搜索框从左侧胶囊右边（58）铺到右边距 6：官方 toggleSearch 只做 alpha
+    // 交叉，没有任何宽度动画，所以位置上就该一步到位。
+    final double w = tester.getSize(find.byType(ChatHeader)).width;
+    final Rect field = tester.getRect(find.byType(SearchFieldBox));
+    expect(field.left, 58);
+    expect(field.right, w - 6);
+
+    // 收起搜索（searching 为假）时反过来：胶囊回来、搜索框消失。
+    await _pump(tester, ChatHeader(chat: _group(), onBack: () {}));
+    await tester.pumpAndSettle();
+    expect(find.text('产品讨论组'), findsOneWidget);
+    expect(find.byType(SearchFieldBox), findsNothing);
+  });
+
+  testWidgets('⋮ 菜单里有搜索，点了走 onSearch', (tester) async {
+    var searched = 0;
+    await _pump(tester, ChatHeader(chat: _group(), onSearch: () => searched++));
+    await tester.tap(find.byKey(const ValueKey('group-menu')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('group-menu-search')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('group-menu-search')));
+    await tester.pumpAndSettle();
+    expect(searched, 1);
   });
 
   testWidgets('金样：群聊头部（暗）', (tester) async {

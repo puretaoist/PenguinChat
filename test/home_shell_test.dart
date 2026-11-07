@@ -134,6 +134,36 @@ void main() {
     );
   });
 
+  testWidgets('列表搜索展开时底部胶囊隐藏', (tester) async {
+    await _setView(tester);
+    await tester.pumpWidget(_wrap(const HomeShell()));
+    await tester.pumpAndSettle();
+
+    final Finder bar = find.byKey(const ValueKey<String>('main-tab-bar'));
+    expect(bar, findsOneWidget);
+
+    // 底栏是常驻的（滑出+淡出退场，见 home_shell 里的注释），所以判可见性
+    // 要看包着它的 AnimatedOpacity，而不是在树里找不着。
+    double barOpacity() => tester
+        .widget<AnimatedOpacity>(
+          find.ancestor(of: bar, matching: find.byType(AnimatedOpacity)).first,
+        )
+        .opacity;
+    expect(barOpacity(), 1.0);
+
+    await tester.tap(find.byIcon(Icons.search_rounded));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('search-input')), findsOneWidget);
+
+    // 官方 T/DialogsActivity.java:14076-14082 checkUi_mainTabsVisible():
+    // `mainTabsVisible = !searching && ...` —— 搜索态底栏必须不可见。
+    expect(barOpacity(), 0.0);
+
+    await tester.tap(find.byKey(const ValueKey('search-cancel')));
+    await tester.pumpAndSettle();
+    expect(barOpacity(), 1.0);
+  });
+
   testWidgets('联系人：点行进资料页，「发消息」在没有会话时给提示', (tester) async {
     await _setView(tester);
     await tester.pumpWidget(_wrap(const ContactsPage()));
