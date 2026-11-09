@@ -1516,8 +1516,31 @@ abstract final class Qq8FaceNames {
     '热化了': 340,
   };
 
+  /// 运行期补充的名字别名（表情资源包里的名字）。
+  ///
+  /// 为什么要有这一层：`_byName` 是抄 oicq facemap 的常量表，只覆盖 id ≤ 340
+  /// 的那一段；而资源包里有 333 个表情，其中 106 个（341+ 的超级表情、179
+  /// `doge` 等）在常量表里根本没有名字。不补的话，从面板点出来会插进
+  /// `/doge` 这种文本，发送侧解析不出来，最后当普通文字发出去。
+  ///
+  /// 由 `main()` 在加载完表情包后调 [registerAliases] 灌进来——内核层不依赖
+  /// UI 层，所以只能这样反向注入。
+  static final Map<String, int> _aliases = <String, int>{};
+
+  /// 注册一批「名字 → id」别名（不覆盖常量表里已有的写法）。
+  static void registerAliases(Map<String, int> aliases) {
+    for (final e in aliases.entries) {
+      final key = e.key.trim();
+      if (key.isEmpty || _byName.containsKey(key)) continue;
+      _aliases[key] = e.value;
+    }
+  }
+
   /// 表情名 → id（发送 `/名字` 用）。找不到返回 null。
-  static int? idOf(String name) => _byName[name.trim()];
+  static int? idOf(String name) {
+    final key = name.trim();
+    return _byName[key] ?? _aliases[key];
+  }
 
   /// id → 表情名（展示用）。找不到返回 null。
   static String? nameOf(String id) {

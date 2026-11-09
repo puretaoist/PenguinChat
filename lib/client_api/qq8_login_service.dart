@@ -50,6 +50,7 @@ import 'dart:typed_data';
 import '../infra/log/logger.dart';
 import '../kernel/crypto/digest.dart';
 import '../kernel/crypto/ecdh.dart';
+import '../kernel/safety/device_login_guard.dart';
 import '../kernel/safety/login_policy.dart';
 import '../kernel/safety/safety_gate.dart';
 import '../kernel/wlogin8/qq8_config.dart';
@@ -443,6 +444,96 @@ class Qq8LoginService {
   Duration reconnectOfflineGiveUpAfter = const Duration(minutes: 30);
 
   bool _reconnecting = false;
+
+  /// 上一次**真正发出**登录包（`subCmd=11` 票据续期 / `subCmd=15` A1）的时刻。
+  ///
+  /// 用来做「续期节流」。为什么必须有这一层（2026-11-08 真机事故）：
+  /// 断线恢复的每一轮都调 `loginWithToken`，而那在协议上是一次**完整的
+  /// 登录会话**，不是心跳。连接一抖就重登，真机上一天能登几十次——
+  /// 8 天累计 **196 次登录 / 253 次断线重连**，最终被服务端判为自动化
+  /// 异常行为（`-10203` 禁发消息 → 账号实名认证）。
+  ///
+  /// 参照系：官方 `iHelloInterval=270`（真机日志里的上线注册应答），
+  /// oicq `core/base-client.ts:768-770` 的 `refreshToken` 有 14 秒节流。
+  /// 我们取 60 秒——比 oicq 保守，比官方 270 秒激进，落在「人类手动重连」
+  /// 的合理区间内，又不至于让正常断线恢复等太久。
+  DateTime? _lastLoginPacketAt;
+
+  /// 续期最小间隔（见 [_lastLoginPacketAt]）。
+  ///
+  /// **只拦「用户/定时器重复触发的续期」，不拦断线恢复的第一轮。**
+  /// 原因：断线是客观发生的，必须能重连一次；真正该拦的是
+  /// 「连上了又立刻断、然后又重登」这种抖动循环（真机 8 天 196 次的形态）。
+  /// 具体规则见 [_allowLoginPacket]。
+  Duration loginThrottle = const Duration(seconds: 60);
+
+  /// 断线恢复可以突破节流的次数（每次成功上线后重置）。
+  ///
+  /// 给「刚上线就被踢」留出一次自愈机会，但连续抖动 3 次就停手——
+  /// 那已经不是网络问题，是账号/服务端在拒绝。
+  static const int loginThrottleBurst = 3;
+  int _throttleBurstLeft = loginThrottleBurst;
+
+  // ---- 会话保活（2026-11-08）-------------------------------------------
+  //
+  // ## 问题
+  //
+  // `reconnect()` 原来每一轮都调 `loginWithToken`，而那在协议上是**一次
+  // 完整的登录会话**（子命令 11）。连接一抖就重登，真机 8 天累积 196 次
+  // 登录——这是把「网络抖动」翻译成「反复向服务端表明身份」。
+  //
+  // ## 官方的做法
+  //
+  // 登录一次后靠**长连接 + 心跳**维持；TCP 断了就重建 TCP，然后重新
+  // register（`StatSvc.register`）+ 心跳，**不重新登录**。会话材料
+  // （sessionId / ECDH 共享密钥 / randomKey）在内存里是复用的。
+  //
+  // ## 我方为什么可行
+  //
+  // `_login` 里 `_sessionId`/`_ecdh`/`_randomKey` 只在**新流程**时重新生成，
+  // 而 `_teardownConnection()` 只清 `_session`/`_tran`，**不清这三样**。
+  // 所以断线后它们还在，`_goOnline(uin, bundle)` 可以直接拿来重建会话。
+  //
+  // ## 安全边界
+  //
+  // 只在 [sessionReuseWindow] 内复用（票据可能过期），且 uin 必须一致；
+  // 复用失败**一律降级**到完整登录，绝不让保活成为新的失败点。
+  Qq8SigBundle? _lastSigBundle;
+  int? _lastBundleUin;
+  DateTime? _lastOnlineAt;
+
+  /// 会话复用窗口。超过它就降级重新登录——票据有寿命，长期断线后
+  /// 复用旧会话没有意义，且服务端多半已经不认。
+  Duration sessionReuseWindow = const Duration(minutes: 30);
+
+  /// 是否启用会话保活。测试里可关掉以覆盖「完整重登」那条路径。
+  bool sessionReuseEnabled = true;
+
+  /// 诊断：会话保活成功次数 / 尝试次数。
+  int get debugSessionReuseOk => _sessionReuseOk;
+  int get debugSessionReuseTried => _sessionReuseTried;
+  int _sessionReuseOk = 0;
+  int _sessionReuseTried = 0;
+
+  /// 被节流拦下的次数（只读，供自测与诊断）。
+  int get debugThrottledLogins => _throttledLogins;
+  int _throttledLogins = 0;
+
+  /// 这次要不要发包。
+  ///
+  /// [fromReconnect] 为真时（断线恢复路径）可以消耗一次 [loginThrottleBurst]；
+  /// 其余调用（用户点重试、定时对账）一律按 [loginThrottle] 拦。
+  bool _allowLoginPacket({required bool fromReconnect}) {
+    final last = _lastLoginPacketAt;
+    final now = DateTime.now();
+    final tooSoon = last != null && now.difference(last) < loginThrottle;
+    if (!tooSoon) return true;
+    if (fromReconnect && _throttleBurstLeft > 0) {
+      _throttleBurstLeft--;
+      return true;
+    }
+    return false;
+  }
 
   /// 会话代际：每建一次新会话 / 拆一次连接就 +1。
   ///
@@ -846,9 +937,24 @@ class Qq8LoginService {
     this.allowExperimentalRecovery = false,
     this.timeout = const Duration(seconds: 15),
     this.registerTimeout = const Duration(seconds: 30),
+    this.deviceGuard,
   }) : profile = profile ?? qq8DefaultProfile,
        tokenStore = tokenStore ?? _MemoryTokenStore(),
        transportBuilder = transportBuilder ?? (() => Qq8TcpTransport());
+
+  /// 设备维度的登录节流（可选）。
+  ///
+  /// 不注入时用内存版（额度与规则一致，只是不跨进程持久化）——
+  /// 这样既有测试不需要额外 DI，而真机由 providers 注入持久化版。
+  /// 为什么需要它见 [DeviceLoginGuard] 的类注释（图灵盾 `b2.402` 的
+  /// 30 条时间戳 + 真机 8 天 196 次登录的证据）。
+  final DeviceLoginGuard? deviceGuard;
+  DeviceLoginGuard get _deviceGuard =>
+      deviceGuard ?? (_memoryDeviceGuard ??= DeviceLoginGuard());
+  DeviceLoginGuard? _memoryDeviceGuard;
+
+  /// 设备 guard 的持久化文件只读一次（`load` 幂等，避免每轮登录都读盘）。
+  bool _deviceGuardLoaded = false;
 
   /// 诊断钩子（可选）：每收到一条登录/验证类的**原始响应帧**就回调一次。
   ///
@@ -936,7 +1042,10 @@ class Qq8LoginService {
   }) => _login(uin: uin, passwordMd5: passwordMd5);
 
   /// 用已存的票据续期登录（不需要口令）。
-  Future<void> loginWithToken({required int uin}) async {
+  Future<void> loginWithToken({
+    required int uin,
+    bool fromReconnect = false,
+  }) async {
     final token = await tokenStore.load(uin);
     // 闸门只看「有没有任何一条免密材料」：D2 链（子命令 11）或 A1 对
     // （子命令 15）。两者都没有才是真的没料——这时才报错，具体走哪条由
@@ -1007,6 +1116,68 @@ class Qq8LoginService {
     // 记下这次实际走的材料：一旦服务端回 16/155，失效结论只限定在这一条上。
     _attemptMaterial = qq8RecoveryMaterialName(material);
     _log.i('免密恢复选择材料=$material（${decision.why}）');
+
+    // ---- 续期节流（2026-11-08 事故的防线）-------------------------------
+    // 走到这里说明确实要发一个**完整登录包**了。若距上次发包不足
+    // [loginThrottle]，直接放弃这一轮，不再向服务端表明身份。
+    //
+    // 为什么放在「选完材料之后」而不是方法开头：前面那些闸门（没票 /
+    // 本地已知失效 / 材料不足）本来就不发包，不该被节流拦成「稍后再试」，
+    // 否则用户会看到错误的原因提示。只有真要发包时才需要节流。
+    final lastPacket = _lastLoginPacketAt;
+    if (!_allowLoginPacket(fromReconnect: fromReconnect)) {
+      _throttledLogins++;
+      final since = lastPacket == null
+          ? Duration.zero
+          : DateTime.now().difference(lastPacket);
+      final wait = (loginThrottle - since).inSeconds;
+      _log.w(
+        '续期节流：距上次登录包仅 ${since.inSeconds}s（下限 ${loginThrottle.inSeconds}s），'
+        '本轮不发包，${wait}s 后再试',
+      );
+      // 保持 disconnected 而不是 failed：这是「我们自己主动等」，
+      // 不是登录失败，更不该触发下一轮重连。
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.disconnected,
+          uin: uin,
+          networkIssue: true,
+          error: '重连过于频繁，${wait}s 后自动重试',
+        ),
+      );
+      return;
+    }
+    _lastLoginPacketAt = DateTime.now();
+
+    // ---- 设备维度节流（2026-11-08，图灵盾逆向 + 真机证据）-----------------
+    // 单号节流只防「同一个号短时间反复登录」。服务端真正聚合看的是
+    // **设备维度**：图灵盾 `b2.java` 的 `402` 键存 30 条时间戳，而真机
+    // 8 天在同一设备上登了 196 次、换过多个账号。这一层补的就是这个缺口。
+    //
+    // 放在单号节流**之后**：单号节流拦下时本轮根本不发包，不该记设备的账。
+    if (!_deviceGuardLoaded) {
+      await _deviceGuard.load();
+      _deviceGuardLoaded = true;
+    }
+    final deviceDecision = _deviceGuard.check(uin: uin);
+    if (!deviceDecision.allowed) {
+      final wait = deviceDecision.waitFor;
+      _log.w('设备维度节流：${deviceDecision.reason}');
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.disconnected,
+          uin: uin,
+          networkIssue: true,
+          error: wait == null
+              ? deviceDecision.reason
+              : '${deviceDecision.reason}（约 ${wait.inMinutes} 分钟后可试）',
+        ),
+      );
+      return;
+    }
+    // 真正要发包了，记一笔设备的账（跨进程持久化）。
+    await _deviceGuard.record(uin: uin);
+
     switch (material) {
       case Qq8RecoveryMaterial.d2Key:
         // 已接线：`_login` 里 tgtgt = MD5(token.d2key)（见 :666）。
@@ -4174,6 +4345,40 @@ class Qq8LoginService {
                 }),
           );
         }
+        // OnlinePush.SidTicketExpired = 「本次会话的票据已失效」。
+        //
+        // **官方语义（逐行核过，jadx-main）**：`msf/core/ah.java:367-380`
+        // 收到它之后只做两件事 ——
+        //   ① 组一个 ToServiceMsg（serviceCmd 仍是它自己、`setRequestSsoSeq`
+        //      原样带回、`setNeedCallback(false)`）然后 `sendSsoMsg`，
+        //      即**回一个空 body 的 ack，只发不等**；
+        //   ② `handler.sendMessageDelayed(what=1000, 3000)`，而 `ai.java:16`
+        //      的 handler 只调 `refreshWebviewTickets(uin, "SidExpiredPush")`
+        //      ——**只刷新 WebView 的票据，不登出、不断线、不重连**。
+        // oicq 同款（`core/base-client.ts:603-605`：`writeUni(cmd, BUF0, seq)`）。
+        //
+        // **我方此前把它当未知推送丢弃**（真机 2026-11-08 全天 8 次），于是：
+        // 不回 ack → 服务端认为客户端没响应 → 心跳失败 → `reconnect()` →
+        // `loginWithToken` 走 subCmd=11 **完整重登** → 又被推 → 再断 → 再重登。
+        // 当天因此累积 4 次上线 / 8 次被推 / 253 次断线重连，最终被服务端
+        // 判为自动化异常行为（-10203 禁发消息 → 账号实名认证）。
+        //
+        // 所以这里必须回 ack，且**绝不能**顺势触发重连。
+        if (cmd == 'OnlinePush.SidTicketExpired') {
+          _log.i('SidTicketExpired → 回空包 ack（官方语义：只刷新票据，不断线不重登）');
+          if (_session != null) {
+            unawaited(
+              _session!
+                  .sendUniNoReply(cmd, Uint8List(0), seq: r.seq)
+                  .then((_) => _log.d('SidTicketExpired ack 已发出'))
+                  .catchError((Object e) {
+                    _log.d('SidTicketExpired ack 失败', error: e);
+                  }),
+            );
+          }
+          // 官方只刷新 WebView 票据（我们这条线没有 WebView 登录态），
+          // 等价动作 = 不做事。**不重连、不改 stage、不发任何请求。**
+        }
         // 官方对 StatSvc.QueryHB 的处理就是"重新注册推送"
         // （jadx-main msf/core/push/g.java:601-607，RegPushReason.serverPush）。
         // 服务端发 QueryHB 意思是"你还在吗，需要继续收推送吗"——
@@ -5033,9 +5238,18 @@ class Qq8LoginService {
   }
 
   /// 注册上线 + 起心跳；成功则进入 [Qq8LoginStage.online]。
-  Future<void> _goOnline(int uin, Qq8SigBundle bundle) async {
+  /// [skipAutoRegister] 为真时不在这里发后台 register——会话保活路径要用它
+  /// 自己 `await` 一次 register 来**校验服务端是否认这个旧会话**
+  /// （否则 TCP 通了但服务端不认，会「假上线」：状态 online 却收不到任何消息）。
+  Future<void> _goOnline(
+    int uin,
+    Qq8SigBundle bundle, {
+    bool skipAutoRegister = false,
+  }) async {
     // 新会话 = 新票据：上一次的「身份失效」结论作废。
     _authLost = false;
+    // 成功上线 = 这一轮抖动结束了，把断线恢复的节流豁免额度还回去。
+    _throttleBurstLeft = loginThrottleBurst;
     final tran = _tran!;
     final session = Qq8Session(
       transport: tran,
@@ -5087,7 +5301,7 @@ class Qq8LoginService {
     // 只有「拿到应答且 cReplyCode 非 0」（明确被拒）才把状态改回 failed。
     // 判据出处：SvcRespRegister.java:63-85 的 tag2 = cReplyCode，官方
     // msf/core/push/e.java:196-235 判 `cReplyCode == 0`。
-    unawaited(_registerInBackground(session, uin, epoch));
+    if (!skipAutoRegister) unawaited(_registerInBackground(session, uin, epoch));
     // 官方登录后立刻发这两个 JCE 检查（见 [Qq8OnlineCheck] 的注释）。
     // 我们从不发它们时，服务端只推配置类推送——`OnlinePush.*` /
     // `MessageSvc.PushNotify` 一条都不来（真机全量日志 0 命中）。
@@ -5113,6 +5327,12 @@ class Qq8LoginService {
     if (!identical(_session, session) || epoch != _sessionEpoch) return;
     _emit(Qq8LoginSnapshot(stage: Qq8LoginStage.online, uin: uin));
     _log.i('已上线 uin=$uin');
+
+    // 会话保活：记下这次上线用的材料，断线后可以据此复用会话而不重登。
+    // 只记「成功上线」的那一份——失败/半途的会话不该被复用。
+    _lastSigBundle = bundle;
+    _lastBundleUin = uin;
+    _lastOnlineAt = DateTime.now();
 
     // 上线先拉一次漏掉的消息：PushNotify 推送在真机上并不可靠
     // （2026-10-24 11:41 真机：上线后服务端只推了 StatSvc.QueryHB，
@@ -5479,6 +5699,66 @@ class Qq8LoginService {
       text.contains('连接已断开') ||
       text.contains('No route to host');
 
+  /// 尝试「复用会话」重连（**不重新登录**）。
+  ///
+  /// 条件：上次上线成功、uin 一致、还在 [sessionReuseWindow] 内、
+  /// 内存里仍有 sessionId / ECDH / randomKey。
+  ///
+  /// 做法：拆掉坏连接 → 建新 TCP → 直接 `_goOnline(uin, bundle)` 重建会话
+  /// （register + 心跳），全程**不发子命令 11 登录包**。
+  ///
+  /// 返回 true = 已经上线；false = 没成功，调用方降级到完整重登。
+  Future<bool> _tryReuseSession(int uin) async {
+    if (!sessionReuseEnabled) return false;
+    final bundle = _lastSigBundle;
+    final at = _lastOnlineAt;
+    if (bundle == null || at == null) return false;
+    if (_lastBundleUin != uin) return false;
+    if (DateTime.now().difference(at) > sessionReuseWindow) {
+      _log.i('会话保活：距上次上线超过 ${sessionReuseWindow.inMinutes} 分钟，改走重新登录');
+      return false;
+    }
+    if (_sessionId == null || _ecdh == null || _randomKey == null) return false;
+    if (_states.isClosed) return false;
+
+    _sessionReuseTried++;
+    _log.i('会话保活：尝试复用会话（不发登录包，直接重建 TCP + register）');
+    // 拆旧连接，但**保留**内存里的 sessionId/ecdh/randomKey/bundle。
+    await _teardownConnection();
+    try {
+      final tran = transportBuilder();
+      await tran.connect();
+      _tran = tran;
+      // 跳过 _goOnline 内部的后台 register，改由下面**显式等一次**：
+      // 只有服务端认这个旧会话（register 不是 rejected），才算保活成功。
+      // 否则会出现「TCP 通了、状态 online、但收不到任何消息」的假上线。
+      await _goOnline(uin, bundle, skipAutoRegister: true);
+      final s = _session;
+      if (s != null && _snapshot.stage == Qq8LoginStage.online) {
+        final outcome = await s.registerWithOutcome(timeout: registerTimeout);
+        if (outcome == Qq8RegisterOutcome.rejected) {
+          _log.w('会话保活：register 被服务端拒绝，降级完整登录');
+          await _teardownConnection();
+          return false;
+        }
+        // confirmed / unconfirmed 都算成功：官方服务端本就可能不回 ack
+        // （`SvcRespRegister` 三态判据），unconfirmed 是正常形态。
+        _sessionReuseOk++;
+        _log.i(
+          '会话保活成功：已上线（本轮未发登录包，register=${outcome.name}）',
+        );
+        return true;
+      }
+      _log.w(
+        '会话保活后未上线（stage=${_snapshot.stage.name}），降级完整登录',
+      );
+    } on Object catch (e) {
+      _log.w('会话保活失败，降级完整登录', error: e);
+    }
+    await _teardownConnection();
+    return false;
+  }
+
   /// 断线自动恢复：重连 + 用已存票据续期重上线（不用密码）。
   ///
   /// 官方对照（wtlogin 日志）：连接断了会自动重建并用已有票据续登，
@@ -5492,6 +5772,12 @@ class Qq8LoginService {
     if (_reconnecting) return;
     _reconnecting = true;
     try {
+      // ---- 会话保活优先（2026-11-08）---------------------------------
+      // 断线大多是网络抖动。先尝试「重建 TCP + 复用会话材料」，**不发登录包**。
+      // 这直接对应官方行为（长连接 + register + 心跳，不重新登录），也是
+      // 把「8 天 196 次登录」压下来的关键一步。失败一律降级到下面的完整重登。
+      if (await _tryReuseSession(uin)) return;
+
       // **每轮都换一条新连接**。
       // 真机 2026-10-26 21:47:57 现场：服务端 abort 后我们复用旧 transport，
       // 那句「[连接] 已建立 msfwifi.3g.qq.com:8080」其实是旧 socket 的地址被重印，
@@ -5532,7 +5818,7 @@ class Qq8LoginService {
               : '断线恢复：第 ${attempt + 1}/$reconnectAttempts 次（票据续期）',
         );
         try {
-          await loginWithToken(uin: uin);
+          await loginWithToken(uin: uin, fromReconnect: true);
         } on Object catch (e) {
           offline = _networkUnavailable(e.toString());
           if (!offline) attempt++;

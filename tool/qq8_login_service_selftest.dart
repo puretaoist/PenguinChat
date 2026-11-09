@@ -622,7 +622,10 @@ Future<void> main() async {
       reportOnlineStatus: false,
       timeout: const Duration(milliseconds: 300),
       heartbeatInterval: const Duration(hours: 1), // 测试里不让心跳干扰
-    )..reconnectBaseDelay = const Duration(milliseconds: 10);
+    )..reconnectBaseDelay = const Duration(milliseconds: 10)
+      // 本段测「票据续期」这条完整重登路径，关掉会话保活，
+      // 让 reconnect 走 loginWithToken（会话保活另有第 13 段覆盖）。
+      ..sessionReuseEnabled = false;
     await svc.loginWithPassword(uin: 10001, password: 'hunter2');
     await svc.submitSmsCode('654321');
     check('前置：已上线', svc.snapshot.stage == Qq8LoginStage.online,
@@ -1774,7 +1777,10 @@ Future<void> main() async {
       reportOnlineStatus: false,
       heartbeatInterval: const Duration(milliseconds: 30),
       timeout: const Duration(milliseconds: 150),
-    );
+    )
+      // 本段测「心跳连败必须上报 disconnected」。会话保活会把这条断线
+      // 自愈回 online，掩盖掉要验证的信号，所以这里关掉它。
+      ..sessionReuseEnabled = false;
     final store = svc.tokenStore as _MemStore;
     store.data = Qq8TokenData(
       uin: 10001,
@@ -2147,6 +2153,189 @@ Future<void> main() async {
       check('该用例确实跑到了线上流程（不是提前失败的空转）',
           seen.contains(Qq8LoginStage.connecting), seen.map((s) => s.name).join('>'));
     }
+  }
+
+  section('12. 续期节流：60 秒内第二次续期必须一个包都不发');
+  {
+    // 真机事故（2026-11-08）：断线恢复的每一轮都调 loginWithToken，而那在
+    // 协议上是**一次完整登录会话**（subCmd=11），不是心跳。连接一抖就重登，
+    // 8 天累计 196 次登录 / 253 次断线重连，最终被服务端判为自动化异常行为
+    // （-10203 禁发消息 → 账号实名认证）。参照系：官方 iHelloInterval=270s、
+    // oicq refreshToken 有 14 秒节流；我们取 60 秒。
+    Qq8TokenData token() => Qq8TokenData(
+          uin: 10001,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        );
+    Qq8LoginService build(Qq8ScriptedTransport t) => Qq8LoginService(
+          tokenStore: _MemStore()..data = token(),
+          deviceBuilder: _fixtureDevice,
+          ecdhBuilder: () => _fixedEcdh,
+          transportBuilder: () => t,
+          reportOnlineChecks: false,
+          reportOnlineStatus: false,
+          primeGroupSeqs: false,
+          startupPullDelay: const Duration(seconds: 30),
+          heartbeatInterval: const Duration(minutes: 5),
+          timeout: const Duration(seconds: 2),
+        );
+
+    final t1 = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+    ]);
+    final s1 = build(t1);
+    await s1.loginWithToken(uin: 10001);
+    check('首次续期照常发出一个登录包', t1.sent.isNotEmpty,
+        '发出 ${t1.sent.length} 个');
+    check('首次续期后 stage=online', s1.snapshot.stage == Qq8LoginStage.online,
+        s1.snapshot.stage.name);
+
+    // 立刻再登一次：必须被节流拦下，**一个包都不发**。
+    final sentBefore = t1.sent.length;
+    await s1.loginWithToken(uin: 10001);
+    check('60 秒内第二次续期：一个包都没发', t1.sent.length == sentBefore,
+        '又发了 ${t1.sent.length - sentBefore} 个');
+    check('被节流计数 +1', s1.debugThrottledLogins >= 1,
+        '${s1.debugThrottledLogins}');
+    check('节流后停在 disconnected（不是 failed，避免触发下一轮重连）',
+        s1.snapshot.stage == Qq8LoginStage.disconnected,
+        s1.snapshot.stage.name);
+    check('节流文案点明「过于频繁」',
+        (s1.snapshot.error ?? '').contains('过于频繁'), s1.snapshot.error ?? '');
+    await s1.close();
+
+    // 节流窗口设 0：同一对象再登一次必须放行（证明可配置、不是永久锁死）。
+    final t2 = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+    ]);
+    final s2 = build(t2);
+    s2.loginThrottle = Duration.zero;
+    await s2.loginWithToken(uin: 10001);
+    final n1 = t2.sent.length;
+    await s2.loginWithToken(uin: 10001);
+    check('节流窗口设 0 时第二次照常发包（不是永久锁死）',
+        t2.sent.length > n1, '第二次发了 ${t2.sent.length - n1} 个');
+    await s2.close();
+  }
+
+  section('13. 会话保活：断线优先复用会话，不重发登录包');
+  {
+    // 场景：登录成功 → 断线 → reconnect 走「重建 TCP + 复用会话」，
+    // 而不是再来一次完整登录（子命令 11）。
+    //
+    // 判据用 `debugSessionReuseTried/Ok`：走没走复用路径、成没成功。
+    // 「实际少发了登录包」这一点离线难直接数（登录包在加密 SSO 信封里，
+    // 脚本也看不出命令字），所以靠「不经过 loginWithToken」间接证明——
+    // 复用路径只调 `_goOnline`，不进 `_login`。真机再验一次即可。
+    final t1 = Qq8ScriptedTransport(<Uint8List>[
+      _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+      _registerFrame(1),
+    ]);
+    // 保活用的第二条连接：**不给任何响应**，`registerWithOutcome` 走超时
+    // → unconfirmed。官方三态里 unconfirmed 是正常形态（服务端本就可能
+    // 不回 ack），所以算保活成功。
+    final t2 = Qq8ScriptedTransport(<Uint8List>[]);
+    var built = 0;
+    final svc = Qq8LoginService(
+      tokenStore: _MemStore()
+        ..data = Qq8TokenData(
+          uin: 10001,
+          savedAt: 'test',
+          tgt: _hex('1122334455667788'),
+          d2: _hex('a2' * 64),
+          d2key: _hex('a3' * 16),
+          sigKey: _hex('a4' * 48),
+          ticketKey: _hex('a5' * 16),
+          srmToken: _hex('a6' * 56),
+        ),
+      deviceBuilder: _fixtureDevice,
+      ecdhBuilder: () => _fixedEcdh,
+      transportBuilder: () {
+        final t = built == 0 ? t1 : t2;
+        built++;
+        return t;
+      },
+      reportOnlineChecks: false,
+      reportOnlineStatus: false,
+      timeout: const Duration(milliseconds: 150),
+      heartbeatInterval: const Duration(hours: 1),
+    )..reconnectBaseDelay = const Duration(milliseconds: 10);
+
+    await svc.loginWithToken(uin: 10001);
+    check('前置：已上线', svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+    check('前置：还没试过保活', svc.debugSessionReuseTried == 0,
+        '${svc.debugSessionReuseTried}');
+
+    await svc.reconnect(uin: 10001);
+    check('断线后尝试了会话保活（tried=1）', svc.debugSessionReuseTried == 1,
+        '${svc.debugSessionReuseTried}');
+    check('会话保活成功（未走完整重登）', svc.debugSessionReuseOk == 1,
+        '${svc.debugSessionReuseOk}');
+    check('保活后仍在线', svc.snapshot.stage == Qq8LoginStage.online,
+        svc.snapshot.stage.name);
+    check('保活只建了两条连接（首次 + 复用）', built == 2, '$built');
+    await svc.close();
+  }
+
+  section('14. 会话保活：门口三条硬门槛（关开关 / 换号 / 超窗口 都不复用）');
+  {
+    // 这里只验「不该复用的时候确实没尝试」——门槛逻辑是纯条件判断，
+    // 不需要真实网络。`tried` 恒为 0 就说明 `_tryReuseSession` 早退。
+    Qq8LoginService build() => Qq8LoginService(
+          tokenStore: _MemStore()
+            ..data = Qq8TokenData(
+              uin: 10001,
+              savedAt: 'test',
+              tgt: _hex('1122334455667788'),
+              d2: _hex('a2' * 64),
+              d2key: _hex('a3' * 16),
+              sigKey: _hex('a4' * 48),
+              ticketKey: _hex('a5' * 16),
+              srmToken: _hex('a6' * 56),
+            ),
+          deviceBuilder: _fixtureDevice,
+          ecdhBuilder: () => _fixedEcdh,
+          transportBuilder: () => Qq8ScriptedTransport(<Uint8List>[
+            _successFrame(1, key: md5Bytes(_hex('a3' * 16))),
+            _registerFrame(1),
+          ]),
+          reportOnlineChecks: false,
+          reportOnlineStatus: false,
+          timeout: const Duration(milliseconds: 150),
+          heartbeatInterval: const Duration(hours: 1),
+        );
+
+    // 14a：开关关闭 → 一次都不尝试。
+    final a = build()..sessionReuseEnabled = false;
+    await a.loginWithToken(uin: 10001);
+    await a.reconnect(uin: 10001);
+    check('开关关闭 → 保活一次都没试', a.debugSessionReuseTried == 0,
+        '${a.debugSessionReuseTried}');
+    await a.close();
+
+    // 14b：窗口过期 → 不尝试（把窗口设成 0，模拟「断线很久了」）。
+    final b = build()..sessionReuseWindow = Duration.zero;
+    await b.loginWithToken(uin: 10001);
+    // 让「上次上线时刻」与「现在」拉开几毫秒，确保 > 窗口（0）。
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await b.reconnect(uin: 10001);
+    check('超过复用窗口 → 保活不尝试', b.debugSessionReuseTried == 0,
+        '${b.debugSessionReuseTried}');
+    await b.close();
+
+    // 14c：没登录过（没有缓存材料）→ 不尝试。
+    final c = build();
+    await c.reconnect(uin: 10001);
+    check('无缓存材料 → 保活不尝试', c.debugSessionReuseTried == 0,
+        '${c.debugSessionReuseTried}');
+    await c.close();
   }
 
   stdout.writeln('\n${'=' * 62}');  stdout.writeln('通过 $_pass 项，失败 $_fail 项');

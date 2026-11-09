@@ -473,6 +473,21 @@ Future<void> main() async {
       checkEq('retcode=$code **不**归入「身份失效」',
           Qq8ServerRetcodeException(retcode: code, seq: 0).authDead, false);
     }
+
+    // 「账号被限制」是**另一类**：换票/重连/重试全都无效，只能停手。
+    // 真机 2026-11-08：账号被处置当天，能上线、能收消息、能换图链，
+    // 唯独发消息回 -10203（官方客户端同时提示「社交功能受限」）。
+    // 判反了就会「账号已被限制，我们还在每 15 秒重登一次」——加重标记。
+    checkEq('-10203 归入「账号被限制」',
+        Qq8ServerRetcodeException(retcode: -10203, seq: 0).accountRestricted,
+        true);
+    checkEq('-10203 **不**归入「身份失效」（两者处置动作不同）',
+        Qq8ServerRetcodeException(retcode: -10203, seq: 0).authDead, false);
+    for (final code in <int>[-10003, -10009, 0, -10008]) {
+      checkEq('retcode=$code **不**归入「账号被限制」',
+          Qq8ServerRetcodeException(retcode: code, seq: 0).accountRestricted,
+          false);
+    }
   }
   section('6. 心跳失败的降级');
   // 脚本已用尽 → 下一次 uniHeartbeat 会抛错；再调一次仍失败 → onOffline

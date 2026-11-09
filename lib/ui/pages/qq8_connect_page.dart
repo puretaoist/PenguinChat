@@ -30,6 +30,7 @@ library;
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,10 +41,13 @@ import '../../client_api/qq8_providers.dart';
 import '../../client_api/session_providers.dart'
     show dataDirProvider, deviceInfoProvider;
 import '../../infra/log/log_file.dart';
+import '../../infra/log/logger.dart';
 import '../../kernel/wlogin8/qq8_profiles.dart';
+import '../../kernel/wlogin8/pc/pc_sign.dart';
 import '../theme/telegram_theme.dart';
 import '../widgets/real_server_panel.dart';
 import 'home_page.dart';
+import 'pc_scan_page.dart';
 import 'qq8_verify_page.dart';
 
 /// 协议线登录页（把 [Qq8ConnectView] 接到 provider 上）。
@@ -78,7 +82,18 @@ class Qq8ConnectPage extends ConsumerWidget {
     final dataDir = ref.read(dataDirProvider);
     final logDir = Directory('${dataDir.path}${Platform.pathSeparator}logs');
     return Scaffold(
-      appBar: AppBar(title: const Text('QQ 账号登录')),
+      appBar: AppBar(
+        title: const Text('QQ 账号登录'),
+        actions: <Widget>[
+          TextButton(
+            key: const ValueKey('qq8-pc-scan-entry'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const PcScanPage()),
+            ),
+            child: const Text('PC 扫码'),
+          ),
+        ],
+      ),
       body: Qq8ConnectView(
         key: const ValueKey('qq8-connect-view'),
         status: status,
@@ -234,6 +249,22 @@ class _Qq8ConnectViewState extends State<Qq8ConnectView> {
   void initState() {
     super.initState();
     _syncQrPoll();
+    Future.microtask(_pcSignSelfTest);
+  }
+
+  /// 临时自检：纯 Dart 签名与 Node(sign.js) 固定输入结果比对。
+  Future<void> _pcSignSelfTest() async {
+    final log = Log.get('PCSign');
+    try {
+      final body = Uint8List.fromList(List<int>.generate(20, (i) => i + 1));
+      final rnd = Uint8List.fromList(List<int>.filled(16, 7));
+      final r = PcSign.computeSign(body: body, us: 123456, rand16: rnd);
+      const expect =
+          '9edc6f7aaf7f560cdb0cec6f773cbda0acb0f2ac797eb2d4322f443d5e26cc44995a64c00ec1bfbb42546d7f97e8a29d';
+      log.i('PC_SIGN_SELFTEST sign=${r.signHex} match=${r.signHex == expect}');
+    } catch (err, st) {
+      log.e('PC_SIGN_SELFTEST_error', error: err, stack: st);
+    }
   }
 
   @override

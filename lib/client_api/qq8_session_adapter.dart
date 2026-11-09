@@ -40,6 +40,7 @@ import '../kernel/wlogin8/qq8_push.dart';
 import 'deleted_placeholder.dart';
 import 'objects.dart';
 import 'qq8_login_service.dart';
+import 'face_tokens.dart' as face_tokens;
 import 'segment.dart';
 import 'session.dart';
 
@@ -1015,56 +1016,10 @@ class Qq8SessionAdapter implements Session {
 
   /// 按 QQ 的输入约定把 `/表情名` 切成"文本 / 表情 id"两类片段。
   ///
-  /// 返回值里 `String` = 文本片段，`int` = 表情 id，顺序即消息顺序。
-  /// 只有名字表（[Qq8FaceNames]）里查得到的才当表情——`/notaface` 这种
-  /// 原样当文本，不能把用户打的斜杠命令吞掉。
-  ///
-  /// 名字后面紧跟标点也认：`/微笑，你好` → 表情 + `，你好`。做法是从长到短
-  /// 试名字（名字最长几个字，代价可忽略），而不是要求用空格隔开——QQ 用户
-  /// 不会专门为表情加空格。
-  static List<Object> splitFaceTokens(String text) {
-    final out = <Object>[];
-    final buf = StringBuffer();
-    var i = 0;
-    while (i < text.length) {
-      final slash = text.indexOf('/', i);
-      if (slash < 0) {
-        buf.write(text.substring(i));
-        break;
-      }
-      // 候选名字：斜杠后面到空白/下一个斜杠为止
-      var end = slash + 1;
-      while (end < text.length &&
-          text[end] != '/' &&
-          !_faceNameStop.hasMatch(text[end])) {
-        end++;
-      }
-      int? id;
-      var nameEnd = end;
-      while (nameEnd > slash + 1) {
-        id = Qq8FaceNames.idOf(text.substring(slash + 1, nameEnd));
-        if (id != null) break;
-        nameEnd--;
-      }
-      if (id == null) {
-        buf.write(text.substring(i, slash + 1));
-        i = slash + 1;
-        continue;
-      }
-      if (slash > i) buf.write(text.substring(i, slash));
-      if (buf.isNotEmpty) {
-        out.add(buf.toString());
-        buf.clear();
-      }
-      out.add(id);
-      i = nameEnd;
-    }
-    if (buf.isNotEmpty) out.add(buf.toString());
-    return out;
-  }
-
-  /// 表情名候选的终止符（空白与常见标点）。
-  static final RegExp _faceNameStop = RegExp(r'[\s\u3000，。！？、,.!?~～:：;；]');
+  /// 实现已移到 [splitFaceTokens]（`lib/client_api/face_tokens.dart`）——
+  /// 本地回显也要用同一套切分，放在这里会让 L3 反过来依赖适配器。
+  /// 这里保留同名转发，只为不打断既有调用点与自测。
+  static List<Object> splitFaceTokens(String text) => face_tokens.splitFaceTokens(text);
 
   void _log(String level, String message, [Object? detail]) {
     onLog?.call(level, message, detail);

@@ -49,6 +49,7 @@ import 'package:riverpod/riverpod.dart';
 import '../infra/device/device_info.dart';
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
+import '../kernel/safety/device_login_guard.dart';
 import '../kernel/wlogin8/qq8_device.dart';
 import '../kernel/wlogin8/qq8_list.dart';
 import '../kernel/wlogin8/qq8_login.dart';
@@ -382,11 +383,24 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
   // ⚠️ 用 [Qq8ClientProfile.describe]：该类**没有**重写 toString()，
   // 第一版写成 `$profile` 只印出 `Instance of 'Qq8ClientProfile'`（等于没记）。
   Log.get('QQ8').i('客户端档案: ${profile.describe()}');
+  // 设备维度节流：持久化到 `<dataDir>/qq8/device-login-guard.json`。
+  //
+  // 为什么必须持久化：图灵盾 `b2.java` 的 `402` 键存 30 条时间戳，
+  // 服务端按设备维度聚合行为；我方若重启就清零，等于每开一次 App 就
+  // 「重置设备的登录记录」，而真机 8 天 196 次登录正是这样累积的。
+  final guardDir = ref.watch(dataDirProvider);
+  final deviceGuard = DeviceLoginGuard(
+    persistFile: File(
+      '${guardDir.path}${Platform.pathSeparator}qq8'
+      '${Platform.pathSeparator}device-login-guard.json',
+    ),
+  );
   final svc = Qq8LoginService(
     profile: profile,
     tokenStore: ref.watch(qq8TokenStoreProvider),
     transportBuilder: ref.watch(qq8TransportBuilderProvider),
     gate: ref.watch(safetyGateProvider),
+    deviceGuard: deviceGuard,
     // 有真机身份就用它，否则沿用默认的 uin 派生
     deviceBuilder: identity == null
         ? null

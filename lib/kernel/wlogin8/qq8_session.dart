@@ -73,6 +73,34 @@ const Set<int> qq8RetcodesAuthDead = <int>{
   -10103,
 };
 
+/// 服务端返回「账号被限制，这个动作做不了」的码。
+///
+/// ## 为什么单独一类，不并进 [qq8RetcodesAuthDead]
+///
+/// 两者的**处置动作不同**：
+/// - [qq8RetcodesAuthDead]（身份/票据失效）→ 换一张票再登一次有意义；
+/// - 这一类是**账号级处置**：换票、重连、重试全都无效，唯一正确的动作是
+///   **停手**，把结论原样交给用户（让他去官方客户端处理）。
+///
+/// 把它们混在一起，就会出现「账号已被限制，我们还在每 15 秒重登一次」的
+/// 行为——那正是加重标记的信号。
+///
+/// ## 取证边界（诚实标注）
+///
+/// `-10203` 的**确切语义在官方反编译树里没有找到**：
+/// `msf/core/ah.java:36` 的认证失效集合（-12003/210/-10001/-10003/-10004/
+/// -10006/-10106）与 `:123` 的连接已死集合（-10009/-10102/-10103）
+/// **都不含它**。9.3.60 的树不完整（`WtloginHelper`/`oicq_request` 全缺，
+/// 见 `docs/PITFALLS.md` §8.7），无法交叉验证。
+///
+/// 归类依据是**真机行为**（2026-11-08，账号被处置当天）：
+/// 上线成功、注册成功、能收群消息、能换图链，**唯独发消息回 -10203**，
+/// 且此时官方客户端提示「社交功能受限」。所以它是**操作级拒绝**，
+/// 不是连接层或票据层的问题。
+const Set<int> qq8RetcodesAccountRestricted = <int>{
+  -10203,
+};
+
 /// 服务端用 SSO 返回码拒绝了一个请求（不是网络故障）。
 ///
 /// 与 [Qq8TransportException] 分开是必须的：传输异常意味着"这条连接可能坏了"，
@@ -96,6 +124,11 @@ class Qq8ServerRetcodeException implements Exception {
   /// 判据见 [qq8RetcodesAuthDead]。上层据此停止轮询并提示重登，
   /// 而不是把 -10003 当普通失败一直重试。
   bool get authDead => qq8RetcodesAuthDead.contains(retcode);
+
+  /// 这个返回码是否属于「账号被限制，重试无用」。
+  ///
+  /// 判据见 [qq8RetcodesAccountRestricted]。
+  bool get accountRestricted => qq8RetcodesAccountRestricted.contains(retcode);
 
   const Qq8ServerRetcodeException({
     required this.retcode,
