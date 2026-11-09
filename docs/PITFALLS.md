@@ -4862,3 +4862,79 @@ v5 照 `ActionBar.dispatchDraw` 重写才一次通过。用户原话：
 4. **框架不是瓶颈**。同样的活换 Compose 一样要手写还原那 3000 行
    `dispatchDraw`；真正的框架边界只有液态玻璃折射（`LiteMode.FLAG_LIQUID_GLASS`
    的 RenderNode + RenderScript），Flutter 的 `BackdropFilter` 做不到。
+
+---
+
+## C125 把「票据失效提示」当垃圾丢掉，8 天把账号送进实名认证（2026-11-08）
+
+**现象**：账号 `3880159487` 被服务端处置，官方客户端提示
+「社交功能限制，你的账号近期存在安全风险，部分功能使用受限」，
+要求**实名认证**才能解除。
+
+**真机数据（8 天，全部来自 `files/logs/qqclient-2026-11-0*.log`）**：
+
+| 指标 | 数值 |
+|---|---|
+| 登录包（`subCmd=11` 票据续期） | **196 次 / 8 天** |
+| 单日最高（11-06） | **52 次**（17:01:10 / 17:01:50 / 17:02:00 —— 50 秒内 3 次） |
+| 口令链（`subCmd=9`） | **0 次**（`allowUnattestedPasswordLogin=false` 生效了） |
+| 「网络不可用」断线 | 253 次 |
+| `Software caused` / `等待响应超时` | 110 / 346 次 |
+| 被处置当天 | `已上线` 4 次、`SidTicketExpired` 8 次、`-10203` 5 次 |
+
+**根因（两层，缺一不成）**：
+
+1. **`OnlinePush.SidTicketExpired` 被当未知推送丢弃**。
+   我方 `qq8_login_service.dart` 的 `Qq8UnknownPush` 分支只记一行
+   `未处理的推送 cmd=...（命令字未注册）` 就返回。
+2. **`reconnect()` 把「重连」实现成了「重新登录」**：每一轮都调
+   `loginWithToken`，而那在协议上是**一次完整的登录会话**，不是心跳。
+   于是「连接一抖 → 断线 → 重登」形成正反馈。
+
+**官方语义（逐行核过）**：
+
+`msf/core/ah.java:367-380` 收到 `CMD_PUSH_SID_EXPIRED` 后只做两件事：
+```java
+toServiceMsg2.setRequestSsoSeq(fromServiceMsg.getRequestSsoSeq()); // seq 原样
+toServiceMsg2.setNeedCallback(false);                              // 只发不等
+this.s.sendSsoMsg(toServiceMsg2);                                  // ← 回空 body ack
+handler.sendMessageDelayed(msg(1000, uin), 3000L);                 // 3 秒后
+```
+而 `ai.java:16` 的 handler 只调 `refreshWebviewTickets(uin, "SidExpiredPush")`
+—— **只刷新 WebView 票据，不登出、不断线、不重连**。
+oicq 同款：`core/base-client.ts:603-605` 的 `writeUni(cmd, BUF0, seq)`。
+
+**修法（已落地）**：
+
+1. `qq8_login_service.dart` 的 `_onPush` 新增 `SidTicketExpired` 分支：
+   `sendUniNoReply(cmd, Uint8List(0), seq: r.seq)` 回空包，
+   **不重连、不改 stage、不发任何请求**。
+2. `loginWithToken` 新增续期节流 `loginThrottle`（默认 60 秒）+
+   `fromReconnect` 参数：断线恢复可消耗 `loginThrottleBurst`（3 次）豁免，
+   其余调用一律拦；每次成功上线（`_goOnline`）把额度还回去。
+   参照系：官方 `iHelloInterval=270`、oicq `refreshToken` 14 秒节流。
+3. `qq8RetcodesAccountRestricted`（`-10203`）与 `qq8RetcodesAuthDead` **分成两类**：
+   前者是账号级处置（换票/重连/重试全无效，只能停手），后者是凭证失效（重登有意义）。
+   `chat_store._explainSendError` 据此给用户明确文案，不再笼统「发送失败」。
+
+**教训**：
+
+1. **「未处理的推送」这类 debug 行要定期按频次排序看**。
+   `SidTicketExpired` 一天出现 8 次，混在几百条日志里，看单条永远发现不了。
+   C34（HelloPush 被丢 12 次）、C88（QueryHB 被忽略）是同一类错的第三次。
+2. **协议里「提示类」推送比「命令类」更危险**。命令类丢了一般只是慢，
+   提示类丢了会让我们对服务端状态产生错误认知，进而做出错误的自动化动作。
+3. **`reconnect()` 和「重新登录」必须是两个动作**。把重登塞进重连循环，
+   等于把「网络抖动」翻译成「反复向服务端表明身份」——风控视角下这是
+   最典型的机器人特征。
+4. **判据要按「我该做什么」分类，不是按「哪里出错了」分类**。
+   `-10203` 和 `-10003` 都是「服务端拒绝」，但一个该停手、一个该重登。
+   混在一起就是「账号已被限制，我们还在每 15 秒重登一次」。
+5. **离线自测全绿 ≠ 线上行为正确**。这条链路的 196 次登录，
+   每一轮的组包都是对的、每一轮的自测都是绿的。
+   问题在**频率**，而频率不在任何单测的覆盖范围内。
+
+**未取证（诚实标注）**：`-10203` 的确切语义在官方树里没找到
+（`ah.java:36` 的认证失效集合与 `:123` 的连接已死集合都不含它；
+9.3.60 的树不完整，见 §8.7）。归类依据是真机行为：
+能上线、能收消息、能换图链，**唯独发消息回 -10203**。
