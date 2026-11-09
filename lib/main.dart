@@ -37,11 +37,13 @@ import 'infra/log/log_file.dart';
 import 'infra/log/logger.dart';
 import 'kernel/onebot/backend_profile.dart';
 import 'kernel/safety/safety_gate.dart';
+import 'ui/face/face_pack.dart';
 import 'ui/lifecycle/keep_alive_scope.dart';
 import 'ui/lifecycle/message_notify_scope.dart';
 import 'ui/pages/app_bootstrap.dart';
 import 'ui/prefs/ui_prefs.dart';
 import 'ui/platform/android_device_info.dart';
+import 'ui/platform/android_qq8_token_key_provider.dart';
 import 'ui/platform/foreground_keep_alive.dart';
 import 'ui/theme/telegram_theme.dart';
 import 'ui/theme/theme_mode.dart';
@@ -110,6 +112,18 @@ Future<void> main() async {
     '会话预览: ${preview == null ? "无（将显示品牌页）" : "uin=${preview.uin} 会话数=${preview.chats.length}"}',
   );
 
+  // 表情资源包：一次 11MB 的 asset 读取 + 一张索引表解析，几十毫秒。
+  // 失败不阻断启动（表情退化成 `[名字]` 文字），所以这里吞掉异常只记日志。
+  try {
+    final pack = await FacePack.ensureLoaded();
+    // 把包里的名字补进协议名字表：资源包覆盖 333 个，而常量名字表只到 id 340
+    // 那一段，不补的话 106 个表情从面板点出来会是无法解析的 `/名字` 文本。
+    pack.registerProtocolAliases();
+    Log.get('Main').i('表情包: ${pack.all.length} 条 / ${pack.byteLength} 字节');
+  } catch (e) {
+    Log.get('Main').w('表情包加载失败，表情将退化为文字: $e');
+  }
+
   runApp(
     ProviderScope(
       overrides: [
@@ -118,7 +132,7 @@ Future<void> main() async {
         safetyGateProvider.overrideWithValue(gate),
         // 协议线的票据存储：需要可写目录（不注入会在首次 watch 时抛错 → 白屏）
         qq8TokenStoreProvider.overrideWithValue(
-          FileQq8TokenStore(
+          _buildQq8TokenStore(
             Directory('${dataDir.path}${Platform.pathSeparator}qq8'),
           ),
         ),
@@ -155,6 +169,18 @@ Future<Directory> _resolveDataDir() async {
     Log.get('Main').w('取应用私有目录失败，退化到临时目录（数据可能被系统清理）', error: e);
     return fallback;
   }
+}
+
+/// 生产票据存储：Android 走 Keystore 包裹密钥的 AES-GCM；
+/// 其它平台退回同目录随机密钥加密（强度差一节，但绝不退回明文）。
+Qq8TokenStore _buildQq8TokenStore(Directory dir) {
+  if (Platform.isAndroid) {
+    return EncryptedFileQq8TokenStore(
+      dir,
+      keyProvider: AndroidQq8TokenKeyProvider(dir).call,
+    );
+  }
+  return EncryptedFileQq8TokenStore(dir);
 }
 
 void _installLogging(Directory dataDir) {

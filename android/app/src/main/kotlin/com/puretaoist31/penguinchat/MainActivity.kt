@@ -42,6 +42,9 @@ class MainActivity : FlutterActivity() {
 
         /** 新消息通知通道（见 [MessageNotifier]）。 */
         private const val NOTIFY_CHANNEL = "penguinchat/notify"
+
+        /** 票据加密密钥通道（见 [TokenKeyStore]）。 */
+        private const val TOKEN_KEYSTORE_CHANNEL = "penguinchat/token_keystore"
     }
 
     /** 等待系统权限对话框结果的 MethodChannel result；null 表示没有挂起的请求。 */
@@ -201,6 +204,31 @@ class MainActivity : FlutterActivity() {
 
                     "hasLocationPermission" ->
                         result.success(DeviceProbe.hasLocationPermission(this))
+
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 票据加密密钥通道。Keystore 里的包裹密钥不出系统，只把解开的数据
+        // 密钥交给 Dart 做 AES-GCM；已有密文时拒绝生成新密钥，避免旧票据报废。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, TOKEN_KEYSTORE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getOrCreateDataKey" -> {
+                        val hasEncrypted =
+                            call.argument<Boolean>("hasEncryptedTokens") ?: false
+                        try {
+                            result.success(TokenKeyStore.getOrCreateDataKey(this, hasEncrypted))
+                        } catch (e: Exception) {
+                            val message = e.message ?: ""
+                            val code = when {
+                                message.contains("requires API 23") -> "unsupported"
+                                message.contains("metadata is missing") -> "key_conflict"
+                                else -> "key_unavailable"
+                            }
+                            result.error(code, message, e.javaClass.simpleName)
+                        }
+                    }
 
                     else -> result.notImplemented()
                 }

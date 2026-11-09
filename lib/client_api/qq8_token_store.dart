@@ -547,8 +547,10 @@ class EncryptedFileQq8TokenStore implements Qq8TokenStore {
     }
   }
 
-  @override
-  Future<Qq8TokenData?> load(int uin) async {
+  File _legacyFile(int uin) =>
+      File('${dir.path}${Platform.pathSeparator}qq8-token-$uin.json');
+
+  Future<Qq8TokenData?> _readEncrypted(int uin) async {
     final f = _file(uin);
     if (!await f.exists()) return null;
     try {
@@ -564,43 +566,112 @@ class EncryptedFileQq8TokenStore implements Qq8TokenStore {
         secretKey: SecretKey(await _key()),
       );
       final decoded = jsonDecode(utf8.decode(clear));
-      if (decoded is Map<String, dynamic>)
+      if (decoded is Map<String, dynamic>) {
         return Qq8TokenData.fromJson(decoded);
+      }
+    } on Qq8TokenStoreKeyUnavailable {
+      rethrow;
     } on Object catch (e) {
-      // 密钥不对 / 密文被改 / 文件损坏都落这里：**一律当作没有票据**，
-      // 由上层走"重新登录"，绝不把半截数据交给协议层。
       _log.w('票据解密失败（密钥不对或文件被改），按没有处理', error: e);
     }
     return null;
   }
 
+  Future<Qq8TokenData?> _readLegacy(int uin) async {
+    final f = _legacyFile(uin);
+    if (!await f.exists()) return null;
+    try {
+      final raw = jsonDecode(await f.readAsString());
+      if (raw is Map<String, dynamic>) return Qq8TokenData.fromJson(raw);
+    } on Object catch (e) {
+      _log.w('旧明文票据解析失败', error: e);
+    }
+    return null;
+  }
+
+  @override
+  Future<Qq8TokenData?> load(int uin) async {
+    // 已有密文优先。密文解不开时不再信任旧明文：那可能是更早、已被轮换
+    // 掉的票据，拿它上线比"当作没有票"更危险。
+    if (await _file(uin).exists()) {
+      try {
+        return await _readEncrypted(uin);
+      } on Qq8TokenStoreKeyUnavailable catch (e) {
+        // 密钥库暂不可用（例如系统锁屏状态变化、备份恢复）：退回明文，
+        // 仅当明文仍在时返回，绝不覆盖或删除任何文件。
+        _log.w('密钥库不可用，尝试旧明文 uin=$uin: $e');
+        return _readLegacy(uin);
+      }
+    }
+    // 无密文：读旧明文并尝试迁移（写密文 → 回读校验 → 删明文）。
+    final legacy = await _readLegacy(uin);
+    if (legacy == null) return null;
+    try {
+      await save(legacy);
+      final verified = await _readEncrypted(uin);
+      if (verified != null) {
+        try {
+          await _legacyFile(uin).delete();
+          _log.i('旧明文票据已迁移为密文 uin=$uin');
+        } on Object catch (e) {
+          _log.w('迁移后删除旧明文失败（不影响使用）', error: e);
+        }
+      } else {
+        _log.w('迁移回读校验失败，保留明文票据 uin=$uin');
+      }
+    } on Qq8TokenStoreKeyUnavailable catch (e) {
+      _log.w('密钥库不可用，保留明文票据继续使用 uin=$uin: $e');
+    } on Object catch (e) {
+      _log.w('票据迁移失败，保留明文 uin=$uin', error: e);
+    }
+    return legacy;
+  }
+
   @override
   Future<void> clear(int uin) async {
-    final f = _file(uin);
-    if (await f.exists()) await f.delete();
+    for (final f in <File>[_file(uin), _legacyFile(uin)]) {
+      if (await f.exists()) await f.delete();
+    }
   }
 
   static final _encName = RegExp(r'^qq8-token-(\d+)\.json\.enc$');
+  static final _legacyName = RegExp(r'^qq8-token-(\d+)\.json$');
 
   @override
   Future<DateTime?> lastModified(int uin) async {
-    final f = _file(uin);
-    if (!await f.exists()) return null;
-    return f.lastModifiedSync();
+    DateTime? latest;
+    for (final f in <File>[_file(uin), _legacyFile(uin)]) {
+      if (!await f.exists()) continue;
+      final t = f.lastModifiedSync();
+      if (latest == null || t.isAfter(latest)) latest = t;
+    }
+    return latest;
   }
 
   @override
   Future<List<int>> listUins() async {
     if (!await dir.exists()) return const <int>[];
-    final uins = <int>[];
+    final uins = <int>{};
     await for (final e in dir.list()) {
       if (e is! File) continue;
-      final m = _encName.firstMatch(e.uri.pathSegments.last);
+      final name = e.uri.pathSegments.last;
+      final m = _encName.firstMatch(name) ?? _legacyName.firstMatch(name);
       if (m != null) uins.add(int.parse(m.group(1)!));
     }
-    uins.sort();
-    return uins;
+    final sorted = uins.toList()..sort();
+    return sorted;
   }
+}
+
+/// 平台密钥库不可用（Keystore 缺失 / 密钥被系统失效 / 低于 API 23）。
+///
+/// 调用方应保留明文票据继续工作，而不是把它当成"没有票据"——后者会让
+/// 用户被迫重新登录，等于因为加密改造丢了一次可用会话。
+class Qq8TokenStoreKeyUnavailable implements Exception {
+  const Qq8TokenStoreKeyUnavailable(this.message);
+  final String message;
+  @override
+  String toString() => 'Qq8TokenStoreKeyUnavailable: $message';
 }
 
 Uint8List _randomBytes(int n) {
