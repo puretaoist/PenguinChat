@@ -68,6 +68,7 @@ dependencies:
   # （AGENTS.md §1.1），而压缩必须放在 infra 层给协议层复用。
   # 代价：大图解码在纯 Dart 里慢几秒，所以统一丢进 Isolate.run 跑。
   image: ^4.3.0
+  lottie: ^3.8.2
 
 dev_dependencies:
   flutter_test:
@@ -80,3 +81,5 @@ flutter:
     - assets/theme.json
     # 后端适配表（OneBot 各实现的字段差异，数据驱动；见 lib/kernel/onebot/backend_profile.dart）
     - assets/backends/
+    # QQ 表情资源包（单文件二进制，格式见 lib/ui/face/face_pack.dart）
+    - assets/faces/
