@@ -18,6 +18,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:penguinchat/client_api/chat_store.dart';
 import 'package:penguinchat/client_api/objects.dart';
 import 'package:penguinchat/client_api/segment.dart';
+import 'package:penguinchat/ui/face/face_image.dart';
+import 'package:penguinchat/ui/face/face_pack.dart';
 import 'package:penguinchat/client_api/session.dart';
 import 'package:penguinchat/kernel/wlogin8/qq8_list.dart';
 import 'package:penguinchat/ui/theme/telegram_theme.dart';
@@ -577,7 +579,10 @@ void main() {
       expect(find.byIcon(Icons.visibility_off), findsOneWidget);
     });
 
-    testWidgets('表情段：用名字表显示 [微笑]，名字查不到退回 [表情]', (tester) async {
+    testWidgets('表情段：有资源包就画图，名字查不到退回 [表情]', (tester) async {
+      // 这条用例依赖真实表情包（test 环境会加载 assets/faces/faces.pqf）。
+      // 有包时 14 会渲染成 FaceImage（WidgetSpan），不再有 `[微笑]` 文本。
+      await FacePack.ensureLoaded();
       final msg = _msg(
         'face1',
         '[表情]',
@@ -592,8 +597,8 @@ void main() {
       await tester.pumpWidget(_wrap(_row(singleOf(msg))));
       await tester.pumpAndSettle();
 
-      // 行内混排（文本+表情）走 Text.rich，所以查 span 要 findRichText
-      expect(find.textContaining('[微笑]', findRichText: true), findsOneWidget);
+      // 有包：14 走图片，999999 查不到仍回退文本。
+      expect(find.byType(FaceImage), findsOneWidget);
       expect(
         find.textContaining('[表情]', findRichText: true),
         findsOneWidget,

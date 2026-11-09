@@ -186,4 +186,41 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(find.textContaining('图片链接已过期'), findsNothing);
   });
+
+  // ---------------------------------------------------------------------
+  // 行内表情跟随字号（TG `AnimatedEmojiSpan.java:171-175`：
+  // `size = |descent| + |ascent|`）。旧实现是硬编码
+  // `TelegramMetrics.fontBody * 1.15`，用户调「文字大小」时表情不跟着变。
+  // ---------------------------------------------------------------------
+  group('行内表情跟随字号', () {
+    test('字号变大 → 表情边长变大（按 fontMetrics，不是固定常量）', () {
+      const small = TextStyle(fontSize: 12, height: 1.35);
+      const large = TextStyle(fontSize: 24, height: 1.35);
+      final s = MessageContent.inlineFaceSizeFor(small);
+      final l = MessageContent.inlineFaceSizeFor(large);
+      expect(l, greaterThan(s), reason: '字号翻倍时表情也应明显变大');
+      // 比例应接近字号比例（fontMetrics 是线性于 fontSise 的）。
+      expect(l / s, closeTo(2.0, 0.35));
+    });
+
+    test('同一字号下结果稳定（不随调用漂移）', () {
+      const style = TextStyle(fontSize: 16, height: 1.35);
+      final a = MessageContent.inlineFaceSizeFor(style);
+      final b = MessageContent.inlineFaceSizeFor(style);
+      expect(a, b);
+    });
+
+    test('异常字号退回旧常量，不会算出 0 或离谱值', () {
+      // fontSize 0 / 负数这类脏数据不该让表情消失。
+      final zero = MessageContent.inlineFaceSizeFor(
+        const TextStyle(fontSize: 0),
+      );
+      expect(zero, greaterThan(0));
+      expect(zero, MessageContent.inlineFaceSize);
+      final huge = MessageContent.inlineFaceSizeFor(
+        const TextStyle(fontSize: 5000),
+      );
+      expect(huge, MessageContent.inlineFaceSize);
+    });
+  });
 }

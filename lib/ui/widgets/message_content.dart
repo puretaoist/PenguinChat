@@ -23,6 +23,8 @@ import '../../client_api/objects.dart';
 import '../../client_api/segment.dart';
 import '../../infra/net/media_fetcher.dart';
 import '../../kernel/wlogin8/qq8_elem.dart';
+import '../face/face_image.dart';
+import '../face/face_pack.dart';
 import '../theme/telegram_theme.dart';
 import 'blur_up_image.dart';
 import 'voice_message.dart';
@@ -151,15 +153,34 @@ class MessageContent extends StatelessWidget {
             ),
           );
         case FaceSegment(:final id):
-          // 表情名是给人看的（id 是给协议看的）；名字表里没有就退回 [表情]。
+          // 有资源包就画图，没有就退回名字文字——测试与无包环境都靠这条回退。
+          final entry = FacePack.instance?.byId(id);
           final name = Qq8FaceNames.nameOf(id);
           plain = false;
-          spans.add(
-            TextSpan(
-              text: name == null ? '[表情]' : '[$name]',
-              style: TextStyle(color: _linkColor()),
-            ),
-          );
+          if (entry != null) {
+            // 表情边长跟随**实际字号**（见 [inlineFaceSizeFor] 的出处）：
+            // 用户把文字调到「特大」时表情也一起变大，而不是固定的 22dp。
+            final faceSize = inlineFaceSizeFor(
+              _base.copyWith(color: bodyColor),
+            );
+            spans.add(
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 1),
+                  child: FaceImage.inline(entry, size: faceSize),
+                ),
+              ),
+            );
+          } else {
+            // 表情名是给人看的（id 是给协议看的）；名字表里没有就退回 [表情]。
+            spans.add(
+              TextSpan(
+                text: name == null ? '[表情]' : '[$name]',
+                style: TextStyle(color: _linkColor()),
+              ),
+            );
+          }
         case AtSegment(:final qq, :final name):
           plain = false;
           spans.add(
@@ -279,6 +300,45 @@ class MessageContent extends StatelessWidget {
     fontSize: TelegramMetrics.fontBody,
     height: 1.35,
   );
+
+  /// 行内表情的边长（旧常量，保留给「拿不到 fontMetrics」的兜底）。
+  ///
+  /// **2026-11-08 变更**：改成跟随**实际字号**算，见 [inlineFaceSizeFor]。
+  /// 旧实现是 `TelegramMetrics.fontBody * 1.15` 的硬编码常量，用户调
+  /// 「文字大小」（`uiPrefs.fontScale` 0.9~1.2）时表情不跟着变——
+  /// 特大字号下表情显得偏小、小字号下偏大。
+  static const double inlineFaceSize = TelegramMetrics.fontBody * 1.15;
+
+  /// 按 [style] 的实际行高算出行内表情边长。
+  ///
+  /// ## 出处（TG `AnimatedEmojiSpan.java:171-175`）
+  ///
+  /// ```java
+  /// if (fontMetrics != null) {
+  ///     size = Math.abs(fontMetrics.descent) + Math.abs(fontMetrics.ascent);
+  ///     if (size == 0) size = AndroidUtilities.dp(20);
+  /// }
+  /// ```
+  ///
+  /// 即 **`|descent| + |ascent|`**（不含 leading），拿不到就兜底 20dp。
+  /// 这比「字号 × 系数」准：不同字体的 ascent/descent 占比不同，
+  /// 用 fontMetrics 才能真正和文字行高一致。
+  ///
+  /// Flutter 侧对应做法：用 `TextPainter` 量一次 [style] 的
+  /// `preferredLineHeight`——它就是 `ascent + descent` 的等价值。
+  /// 量不到（空文本、字体未就绪）时退回旧常量，绝不让表情消失。
+  static double inlineFaceSizeFor(TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: 'M', style: style),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final h = painter.preferredLineHeight;
+    painter.dispose();
+    // 20 是官方兜底值（`:174` `size = dp(20)`）；这里换算成「行高」量纲：
+    // 行高正常时用它，异常（0 / NaN / 离谱大）才退常量。
+    if (h.isFinite && h > 4 && h < 200) return h;
+    return inlineFaceSize;
+  }
 
   /// 卡片摘要（两种卡片都有 [summary]，但类型不同，用模式匹配取）。
   static String _cardSummary(Segment s) => switch (s) {

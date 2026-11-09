@@ -893,7 +893,49 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 不直接塞 FaceSegment，是因为输入框里只有文本——协议层本来就认 `/名字`
   /// （官方客户端的输入约定），走同一条路，用户也能自己手打或删改。
   void _openFacePicker() {
-    unawaited(showFacePicker(context, onPick: _insertAtCursor));
+    final dir = ref.read(dataDirProvider);
+    unawaited(
+      showFacePicker(
+        context,
+        onPick: _insertAtCursor,
+        // 退格键（`EmojiView.java:2650` 的 backspaceButton）：
+        // 面板本身不认识输入框，删除动作由这里注入——与官方把点击转给
+        // delegate 的做法一致。
+        onBackspace: _deleteBeforeCursor,
+        recentsFile: File(
+          '${dir.path}${Platform.pathSeparator}face_recents.json',
+        ),
+      ),
+    );
+  }
+
+  /// 退格：删掉光标前一个字符（有选区就先删选区）。
+  ///
+  /// 与输入框自己的退格语义保持一致，不额外做「整词删除」之类的猜测。
+  void _deleteBeforeCursor() {
+    final text = _inputController.text;
+    final sel = _inputController.selection;
+    if (!sel.isValid) {
+      // 没有光标信息时删末尾一个字符（用户刚打完字最常见）。
+      if (text.isEmpty) return;
+      _inputController.value = TextEditingValue(
+        text: text.substring(0, text.length - 1),
+        selection: TextSelection.collapsed(offset: text.length - 1),
+      );
+      return;
+    }
+    if (!sel.isCollapsed) {
+      _inputController.value = TextEditingValue(
+        text: text.replaceRange(sel.start, sel.end, ''),
+        selection: TextSelection.collapsed(offset: sel.start),
+      );
+      return;
+    }
+    if (sel.start <= 0) return;
+    _inputController.value = TextEditingValue(
+      text: text.replaceRange(sel.start - 1, sel.start, ''),
+      selection: TextSelection.collapsed(offset: sel.start - 1),
+    );
   }
 
   void _insertAtCursor(String token) {

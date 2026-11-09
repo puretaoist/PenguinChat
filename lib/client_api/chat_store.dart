@@ -64,7 +64,10 @@ import 'dart:isolate';
 import '../infra/log/logger.dart';
 import '../infra/net/media_fetcher.dart';
 import '../infra/storage/media_cache.dart';
+// 只为 `_explainSendError` 里判断「账号被限制」的返回码类型（L3 → L2 是合规方向）。
+import '../kernel/wlogin8/qq8_session.dart';
 import 'deleted_placeholder.dart';
+import 'face_tokens.dart';
 import 'objects.dart';
 import 'media_refs.dart';
 import 'segment.dart';
@@ -398,9 +401,16 @@ class ChatStore {
   Future<void> send(String chatId, List<Segment> segments) async {
     await _ensureDiskLoaded(chatId);
     final uin = session.account?.uin ?? '';
+    // 先把文本里的 `/表情名` 切成表情段，再插本地消息。
+    //
+    // 为什么必须在插入之前做：用户从表情面板点进来的是 `/微笑` 这段**文本**，
+    // 若原样存进本地消息，气泡里就是斜杠加中文，而不是表情图——只有等服务器
+    // 回推才可能变。切分本身是后端无关的纯函数（[expandFaceTokens]），
+    // 协议层发送时仍会照旧处理（它对 FaceSegment 与 `/名字` 两种输入都认）。
+    final expanded = expandFaceTokens(segments);
     final local = ChatMessage.fromSegments(
       id: 'local:${++_localSeq}',
-      segments: segments,
+      segments: expanded,
       time: DateTime.now(),
       outgoing: true,
       chatId: chatId,
@@ -416,6 +426,33 @@ class ChatStore {
     _emit(ChatStoreChangeKind.chats);
 
     await _dispatch(chatId, local);
+  }
+
+  /// 把 [segments] 里文本段中的 `/表情名` 展开成 [FaceSegment]。
+  ///
+  /// 只动 [TextSegment]：其他段原样保留，顺序不变。文本里没有可识别的表情时
+  /// 返回原列表（同一个对象），调用方不必担心多余分配。
+  static List<Segment> expandFaceTokens(List<Segment> segments) {
+    var changed = false;
+    final out = <Segment>[];
+    for (final s in segments) {
+      if (s is TextSegment) {
+        final pieces = splitFaceTokens(s.text);
+        if (pieces.length != 1 || pieces.first is! String) {
+          changed = true;
+          for (final piece in pieces) {
+            if (piece is int) {
+              out.add(FaceSegment('$piece'));
+            } else {
+              out.add(TextSegment(piece as String));
+            }
+          }
+          continue;
+        }
+      }
+      out.add(s);
+    }
+    return changed ? out : segments;
   }
 
   /// 重发一条失败的消息。非失败态或 ID 不存在时是空操作。
@@ -1206,7 +1243,7 @@ class ChatStore {
     } on SessionException catch (e) {
       _markFailed(chatId, message.id, e.message);
     } catch (e) {
-      _markFailed(chatId, message.id, '$e');
+      _markFailed(chatId, message.id, _explainSendError(e));
     }
   }
 
@@ -1226,8 +1263,24 @@ class ChatStore {
     _emit(ChatStoreChangeKind.messages, chatId);
   }
 
-  void _markFailed(String chatId, String messageId, String reason) {
-    _log.w('发送失败（$reason），消息保留待重试');
+  /// 把「发送异常」翻译成用户能看懂的一句话。
+  ///
+  /// 目前只特判一类：**账号被限制**（`-10203`）。真机 2026-11-08 现场：
+  /// 账号已被服务端限制社交功能，能收消息、能换图链、能上线，**唯独发消息
+  /// 回 -10203**；而当时 UI 只显示笼统的「发送失败」，用户会以为是自己
+  /// 网络问题，于是反复点重试——每一次都在给已经受限的账号再加一条记录。
+  ///
+  /// 所以这里必须说清楚「是账号的问题、重试没用」，并把用户导向官方客户端。
+  /// 判据收在 `Qq8ServerRetcodeException.accountRestricted`（唯一出处）。
+  static String _explainSendError(Object e) {
+    if (e is Qq8ServerRetcodeException && e.accountRestricted) {
+      return '发送被服务端拒绝（账号功能受限）。请用官方客户端处理后再试，'
+          '重复点重试不会成功';
+    }
+    return '$e';
+  }
+
+  void _markFailed(String chatId, String messageId, String reason) {    _log.w('发送失败（$reason），消息保留待重试');
     final idx = _indexOf(chatId, messageId);
     if (idx < 0) return;
     _messages[chatId]![idx] = _messages[chatId]![idx].copyWith(

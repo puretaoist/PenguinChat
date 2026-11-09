@@ -588,10 +588,18 @@ Future<void> testFaceEcho() async {
   // 所以 echo 配对是唯一的去重手段——这正是 bug 现场。
   session.replyNull = true;
 
-  // 本地：表情面板把 `/开枪` 当文本插进输入框，plainText 就存这个原文。
+  // 本地：表情面板把 `/开枪` 当文本插进输入框。
+  //
+  // **2026-11-08 变更**：`ChatStore.send` 现在会先调 `expandFaceTokens`
+  // 把文本里的 `/表情名` 展开成 `FaceSegment`（否则本地气泡会显示一串
+  // 斜杠加中文，只有等服务端回推才变表情）。所以本地条目的 `text` 是
+  // `[表情]` 而不是 `/开枪`——断言跟着实现走，但**下面两条仍然成立**：
+  // 它是乐观插入的、还没有服务端 ID。
   await store.send('group_12345', const [TextSegment('/开枪')]);
   final local = store.messagesOf('group_12345').single;
-  check('本地乐观条目文本是 /开枪', local.text == '/开枪', local.text);
+  check('本地乐观条目已展开成表情段（不再是 /开枪 原文）',
+      local.text == '[表情]' && local.segments.any((s) => s is FaceSegment),
+      'text=${local.text} segs=${local.segments.map((s) => s.runtimeType)}');
   check('本地条目还没有服务端 ID', local.id.startsWith('local:'), local.id);
 
   // 服务端回显：内核把 Elem.face 统一写成 `[表情]`，同时带 FaceSegment。
@@ -628,7 +636,11 @@ Future<void> testFaceEcho() async {
           store.messagesOf('group_12345').any((m) => m.id == 'srv-plain-1')));
 
   // 回显不带表情段时不做形状配对：宁可多一条，也不能把真消息吃掉。
-  await store.send('group_12345', const [TextSegment('/微笑')]);
+  //
+  // **2026-11-08 变更**：本地 `/微笑` 现在会被展开成 FaceSegment，
+  // 所以「本地是 /名字 文本、回显是 [表情] 纯文本」这个组合在真实链路里
+  // **已经不会出现**了。要验证的语义因此改成：**纯文本回显不与表情本地条目
+  // 形状配对**——本地是表情段、回显是纯文本 `[表情]`，两者不该被吃掉。
   final before = store.messagesOf('group_12345').length;
   session.emit(SessionMessage(ChatMessage(
     id: 'srv-plain-2',
