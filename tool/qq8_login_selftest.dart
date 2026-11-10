@@ -418,6 +418,21 @@ Future<void> main() async {
     check('token：帧头与控制号是两个值，不允许相等',
         Qq8SubCmd.token != Qq8SubCmd.tokenControl, '');
     check(
+      'D2 续期的 0x544 实际控制号=10',
+      qq8T544ControlForMaterials(isTokenExchange: true, isA1Exchange: false) ==
+          Qq8SubCmd.tokenControl,
+    );
+    check(
+      'A1 快登的 0x544 实际控制号=15',
+      qq8T544ControlForMaterials(isTokenExchange: false, isA1Exchange: true) ==
+          Qq8SubCmd.a1Exchange,
+    );
+    check(
+      '口令登录的 0x544 控制号=9',
+      qq8T544ControlForMaterials(isTokenExchange: false, isA1Exchange: false) ==
+          Qq8SubCmd.password,
+    );
+    check(
       // 官方 m.java 的顺序表是 21 项（2026-10-22 据 `m.java` 的 arraycopy
       // 拼接序更正，含 0x108/0x544 并修了 0x511 的位置）。本夹具的
       // Qq8LoginConditions 会 guard 掉 0x172/0x194/0x201，故实发 18 项。

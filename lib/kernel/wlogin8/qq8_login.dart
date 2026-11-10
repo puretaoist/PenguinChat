@@ -110,6 +110,17 @@ abstract final class Qq8SubCmd {
   static const int a1Exchange = 15;
 }
 
+/// 0x544 的控制号（不是 body 帧头子命令）。D2/A2Key 走官方 tokenControl=10，
+/// A1 快走 15，口令及其验证分支由调用方另外指定（9/2/7/8）。
+int qq8T544ControlForMaterials({
+  required bool isTokenExchange,
+  required bool isA1Exchange,
+}) {
+  if (isA1Exchange) return Qq8SubCmd.a1Exchange;
+  if (isTokenExchange) return Qq8SubCmd.tokenControl;
+  return Qq8SubCmd.password;
+}
+
 /// 登录响应第 3 字节的类型（官方 `oicq_request.c()` 里的 `iB`，
 /// 即明文偏移 2 的无符号字节）。
 abstract final class Qq8LoginResultType {

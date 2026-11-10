@@ -339,6 +339,13 @@ class Qq8LoginService {
   /// 启动/登录时发现 mac/androidId/guid 变化会 log.w 告警。
   final Qq8DeviceStore? deviceStore;
 
+  /// 是否允许在拿不到真机身份时回退到**合成设备**（`brand=OICQX / model=Konata 2020`）。
+  ///
+  /// Android 日用**必须**为 false：合成设备是"现实里不存在的机型"，一旦被服务端
+  /// 比对机型库就会加重风险；采集失败时应 fail-closed 停止登录，而不是悄悄用假设备。
+  /// 桌面/离线研究允许 true（本来就没有真机采集）。
+  final bool allowSyntheticDevice;
+
   /// ECDH 构造器——默认随机密钥对；测试注入固定私钥以便预先造出密文。
   final EcdhKeyPair Function()? ecdhBuilder;
 
@@ -930,6 +937,7 @@ class Qq8LoginService {
     this.qimeiFetcher,
     this.deviceStateRecorder,
     this.deviceStore,
+    this.allowSyntheticDevice = true,
     this.protocolDetBuilder,
     this.protocolDetRecorder,
     this.ecdhBuilder,
@@ -1255,6 +1263,19 @@ class Qq8LoginService {
   }) async {
     // 换号登录：先清掉上一个账号的联系人/分组缓存，避免串号显示。
     if (_snapshot.uin != uin) _clearCachedLists();
+    // 设备身份 fail-closed：Android 生产不允许回退合成设备（详见 allowSyntheticDevice）。
+    if (!allowSyntheticDevice && deviceBuilder == null) {
+      _log.w('本机设备身份不可用，且不允许合成设备，拒绝登录');
+      _emit(
+        Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          uin: uin,
+          error: '本机设备身份不可用（采集失败），已停止登录以免暴露假设备。'
+              '请检查设备信息采集权限后重试。',
+        ),
+      );
+      return;
+    }
     // 闸门：口令链（token == null 且没有 A1，含手机号验证登录）没有官方 native
     // 真签时默认禁止。理由见 lib/kernel/safety/login_policy.dart 与
     // docs/RESEARCH-code45.md。
@@ -1351,6 +1372,10 @@ class Qq8LoginService {
         passwordMd5: passwordMd5,
         token: token,
         smsLogin: smsLogin,
+        t544SubCmd: qq8T544ControlForMaterials(
+          isTokenExchange: token != null || a2Key != null,
+          isA1Exchange: a1 != null,
+        ),
       );
       // QIMEI：优先用手工/身份文件注入的值；没有才去灯塔取号（只取一次）。
       // 取号失败不阻断登录——官方取不到 0x545 就整条不发（`k.java` case 1349）。
@@ -3982,6 +4007,15 @@ class Qq8LoginService {
   /// [expectedUin] 传非 0 时会校验"扫出来的账号就是它"；传 0 则采用扫码账号。
   Future<void> fetchQrcode({int expectedUin = 0}) async {
     if (!_passGate()) return;
+    if (!allowSyntheticDevice && deviceBuilder == null) {
+      _emit(
+        const Qq8LoginSnapshot(
+          stage: Qq8LoginStage.failed,
+          error: '本机设备身份不可用（采集失败），已停止扫码登录以免暴露假设备。',
+        ),
+      );
+      return;
+    }
     _emit(const Qq8LoginSnapshot(stage: Qq8LoginStage.connecting));
     try {
       _expectedUin = expectedUin;
@@ -4562,6 +4596,7 @@ class Qq8LoginService {
     int uin, {
     required Uint8List? passwordMd5,
     required Qq8TokenData? token,
+    bool? guidNew,
     bool smsLogin = false,
     bool da2BitActive = true,
     // 0x544 的签要区分「这条请求是哪个子命令」（salt 里含子命令号）。
@@ -4647,6 +4682,8 @@ class Qq8LoginService {
       prevMacMd5: ds?.lastMacMd5,
       prevAndroidIdMd5: ds?.lastAndroidIdMd5,
       prevGuidMd5: ds?.lastGuidMd5,
+      guidNew: guidNew ??
+          (ds?.lastGuidMd5 == null || ds!.lastGuidMd5!.isEmpty),
     );
   }
 

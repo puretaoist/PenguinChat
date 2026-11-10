@@ -401,6 +401,8 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
     transportBuilder: ref.watch(qq8TransportBuilderProvider),
     gate: ref.watch(safetyGateProvider),
     deviceStore: ref.watch(qq8DeviceStoreProvider),
+    // Android 日用禁止合成设备回退（fail-closed）；桌面/离线研究允许。
+    allowSyntheticDevice: !Platform.isAndroid,
     deviceGuard: deviceGuard,
     // 有真机身份就用它，否则沿用默认的 uin 派生
     deviceBuilder: identity == null
@@ -798,12 +800,9 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
   // （16 身份失效 / 155）不在此列，那是票的问题，重登一次换票是正常动作。
   static const Duration rejectedCooldown = Duration(minutes: 30);
 
-  /// 冷却截止时间（null = 没有冷却）。
-  DateTime? _cooldownUntil;
-
-  /// 冷却针对的账号与拒绝码（只用于文案，不参与判断）。
-  int? _cooldownUin;
-  int? _cooldownType;
+  /// 冷却按账号隔离；0 用于「还不知道 uin」的扫码/手机号流程。
+  final Map<int, DateTime> _cooldownUntilByUin = <int, DateTime>{};
+  final Map<int, int> _cooldownTypeByUin = <int, int>{};
 
   File get _cooldownFile =>
       File('${dataDir.path}${Platform.pathSeparator}qq8-login-cooldown.json');
@@ -824,16 +823,36 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
       if (raw.trim().isEmpty) return;
       final j = jsonDecode(raw);
       if (j is! Map) return;
-      final until = DateTime.tryParse('${j['until'] ?? ''}');
-      if (until == null) return;
-      _cooldownUntil = until;
-      _cooldownUin = (j['uin'] as num?)?.toInt();
-      _cooldownType = (j['type'] as num?)?.toInt();
-      if (DateTime.now().isBefore(until)) {
+      // v2：按账号保存。旧版单账号格式继续可读，避免升级后冷却失效。
+      final items = j['items'];
+      if (items is List) {
+        for (final item in items) {
+          if (item is! Map) continue;
+          final uin = (item['uin'] as num?)?.toInt();
+          final type = (item['type'] as num?)?.toInt();
+          final until = DateTime.tryParse('${item['until'] ?? ''}');
+          if (uin != null && type != null && until != null) {
+            _cooldownUntilByUin[uin] = until;
+            _cooldownTypeByUin[uin] = type;
+          }
+        }
+      } else {
+        final uin = (j['uin'] as num?)?.toInt();
+        final type = (j['type'] as num?)?.toInt();
+        final until = DateTime.tryParse('${j['until'] ?? ''}');
+        if (uin != null && type != null && until != null) {
+          _cooldownUntilByUin[uin] = until;
+          _cooldownTypeByUin[uin] = type;
+        }
+      }
+      final active = _cooldownUntilByUin.entries
+          .where((e) => DateTime.now().isBefore(e.value))
+          .toList();
+      for (final e in active) {
         log?.call(
           'w',
-          '上次被服务端拒绝（type=$_cooldownType），冷却到 '
-              '${until.toIso8601String()}，期间不自动登录',
+          '账号 ${e.key} 上次被服务端拒绝（type=${_cooldownTypeByUin[e.key]}），'
+              '冷却到 ${e.value.toIso8601String()}，期间不自动登录',
         );
       }
     } on Object catch (e) {
@@ -843,16 +862,25 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   Future<void> _recordCooldown(int uin, int type) async {
     final until = DateTime.now().add(rejectedCooldown);
-    _cooldownUntil = until;
-    _cooldownUin = uin;
-    _cooldownType = type;
+    _cooldownUntilByUin[uin] = until;
+    _cooldownTypeByUin[uin] = type;
+    await _saveCooldowns();
+  }
+
+  Future<void> _saveCooldowns() async {
     try {
       await _cooldownFile.parent.create(recursive: true);
       await _cooldownFile.writeAsString(
         jsonEncode(<String, Object?>{
-          'uin': uin,
-          'type': type,
-          'until': until.toIso8601String(),
+          'v': 2,
+          'items': <Map<String, Object?>>[
+            for (final e in _cooldownUntilByUin.entries)
+              <String, Object?>{
+                'uin': e.key,
+                'type': _cooldownTypeByUin[e.key],
+                'until': e.value.toIso8601String(),
+              },
+          ],
         }),
       );
     } on Object catch (e) {
@@ -860,20 +888,27 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     }
   }
 
-  Future<void> _clearCooldown() async {
-    _cooldownUntil = null;
-    _cooldownUin = null;
-    _cooldownType = null;
+  Future<void> _clearCooldown([int? uin]) async {
+    if (uin == null) {
+      _cooldownUntilByUin.clear();
+      _cooldownTypeByUin.clear();
+    } else {
+      _cooldownUntilByUin.remove(uin);
+      _cooldownTypeByUin.remove(uin);
+    }
     try {
-      if (await _cooldownFile.exists()) await _cooldownFile.delete();
+      if (_cooldownUntilByUin.isEmpty) {
+        if (await _cooldownFile.exists()) await _cooldownFile.delete();
+      } else {
+        await _saveCooldowns();
+      }
     } on Object catch (_) {}
   }
 
   /// 当前生效的冷却（对该账号）；返回 null = 不冷却。
   Duration? _activeCooldown(int uin) {
-    final until = _cooldownUntil;
+    final until = _cooldownUntilByUin[uin];
     if (until == null) return null;
-    if (_cooldownUin != null && _cooldownUin != uin) return null;
     final left = until.difference(DateTime.now());
     return left.isNegative ? null : left;
   }
@@ -932,13 +967,13 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     final left = _activeCooldown(uin);
     if (left != null) {
       final mins = (left.inSeconds / 60).ceil();
-      log?.call('w', '登录冷却中（type=$_cooldownType，还剩 $mins 分钟），本次不发起网络请求');
+      final ct = _cooldownTypeByUin[uin];
+      log?.call('w', '登录冷却中（type=$ct，还剩 $mins 分钟），本次不发起网络请求');
       _snap = Qq8LoginSnapshot(
         stage: Qq8LoginStage.rejected,
         uin: uin,
-        resultType: _cooldownType,
-        error:
-            '服务端上次拒绝了这个账号（type=$_cooldownType）。'
+        resultType: ct,
+        error: '服务端上次拒绝了这个账号（type=$ct）。'
             '短时间内重复尝试会让风控升级，请等约 $mins 分钟后再试一次。',
       );
       _emit();
@@ -949,39 +984,41 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
 
   /// 用本地票据登录（不需要口令）。
   Future<void> loginWithToken(int uin) =>
-      _run(() => service.loginWithToken(uin: uin));
+      _runGuarded(uin, () => service.loginWithToken(uin: uin));
 
   /// 提交滑动验证票据（人工在浏览器解出来之后填回来）。
   Future<void> submitSliderTicket(String ticket) =>
-      _run(() => service.submitSliderTicket(ticket));
+      _runGuarded(_snap.uin ?? 0, () => service.submitSliderTicket(ticket));
 
   /// 手机号短信登录第一步：检查手机号（子命令 17，不需要 uin）。
   Future<void> loginWithPhone(String phone) =>
-      _run(() => service.loginWithPhone(phone: phone));
+      _runGuarded(0, () => service.loginWithPhone(phone: phone));
 
   /// 手机号短信登录：请求下发验证码（子命令 19）。
   Future<void> refreshSmsLoginCode() =>
-      _run(() => service.refreshSmsLoginCode());
+      _runGuarded(0, () => service.refreshSmsLoginCode());
 
   /// 手机号短信登录：提交验证码（子命令 18，通过后服务自动续一次口令登录）。
   Future<void> submitSmsLoginCode(String code) =>
-      _run(() => service.submitSmsLoginCode(code));
+      _runGuarded(_snap.uin ?? 0, () => service.submitSmsLoginCode(code));
 
   /// 请求下发短信验证码（密码登录那条线的子命令 8）。
-  Future<void> requestSmsCode() => _run(() => service.requestSmsCode());
+  Future<void> requestSmsCode() =>
+      _runGuarded(_snap.uin ?? 0, () => service.requestSmsCode());
 
   /// 提交短信验证码。
   Future<void> submitSmsCode(String code) =>
-      _run(() => service.submitSmsCode(code));
+      _runGuarded(_snap.uin ?? 0, () => service.submitSmsCode(code));
 
   /// 设备锁解锁。
-  Future<void> unlockDevice() => _run(() => service.unlockDevice());
+  Future<void> unlockDevice() =>
+      _runGuarded(_snap.uin ?? 0, () => service.unlockDevice());
 
   /// 取登录二维码（扫码登录第一步）。
-  Future<void> fetchQrcode() => _run(() => service.fetchQrcode());
+  Future<void> fetchQrcode() => _runGuarded(0, () => service.fetchQrcode());
 
   /// 轮询扫码状态（UI 按秒级节奏调）。
-  Future<void> pollQrcode() => _run(() => service.pollQrcode());
+  Future<void> pollQrcode() => _runGuarded(0, () => service.pollQrcode());
 
   /// 断开并回到未连接（票据保留，下次可 [loginWithToken]）。
   Future<void> disconnect() async {
@@ -1030,6 +1067,35 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     return _shutdown = work();
   }
 
+  /// 冷却命中就发 rejected 快照并返回 true（调用方据此停止动作）。
+  bool _cooldownBlocked(int uin) {
+    final left = _activeCooldown(uin);
+    if (left == null) return false;
+    final mins = (left.inSeconds / 60).ceil();
+    final ct = _cooldownTypeByUin[uin];
+    log?.call('w', '登录冷却中（type=$ct，还剩 $mins 分钟），本次不发起网络请求');
+    _snap = Qq8LoginSnapshot(
+      stage: Qq8LoginStage.rejected,
+      uin: uin == 0 ? null : uin,
+      resultType: ct,
+      error: '服务端上次拒绝了这个账号（type=$ct）。'
+          '短时间内重复尝试会让风控升级，请等约 $mins 分钟后再试一次。',
+    );
+    _emit();
+    return true;
+  }
+
+  /// 带冷却闸门的动作执行：所有登录入口都走这里，避免绕过冷却发包。
+  ///
+  /// [uin] 传 0 表示"账号尚未确定"（扫码取码 / 手机号第一步）——服务端对
+  /// 这类请求给的 45 也记在 0 名下，所以合并检查。
+  Future<void> _runGuarded(int uin, Future<void> Function() action) async {
+    await _cooldownReady;
+    if (!_alive) return;
+    if (_cooldownBlocked(uin)) return;
+    await _run(action);
+  }
+
   Future<void> _run(Future<void> Function() action) async {
     if (_closed || _busy) return;
     // 记一次「用户动作」：会话适配器据此让同样的失败再报一次。
@@ -1056,7 +1122,7 @@ class Qq8ConnectController extends StateNotifier<Qq8ConnectStatus> {
     _snap = s;
     // 上线 = 这个账号现在放行了，冷却作废。
     if (s.stage == Qq8LoginStage.online) {
-      unawaited(_clearCooldown());
+      unawaited(_clearCooldown(s.uin));
     }
     // 风控类拒绝 → 记一条冷却，跨进程生效。
     if (s.stage == Qq8LoginStage.rejected &&
