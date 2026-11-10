@@ -50,6 +50,7 @@ import 'dart:typed_data';
 import '../infra/log/logger.dart';
 import '../kernel/crypto/digest.dart';
 import '../kernel/crypto/ecdh.dart';
+import 'qq8_device_store.dart';
 import '../kernel/safety/device_login_guard.dart';
 import '../kernel/safety/login_policy.dart';
 import '../kernel/safety/safety_gate.dart';
@@ -332,6 +333,11 @@ class Qq8LoginService {
   ///
   /// `qimei` 同理：每次启动都换号 = 设备标识漂移。
   final void Function({String? ksid, String? qimei})? deviceStateRecorder;
+
+  /// 设备状态存储（`<dataDir>/qq8/device.json`）。用于 0x128 一致性位：
+  /// 读上次快照算 Y、存本次为 baseline（官方 t.c() 每登录存 cur 同语义）；
+  /// 启动/登录时发现 mac/androidId/guid 变化会 log.w 告警。
+  final Qq8DeviceStore? deviceStore;
 
   /// ECDH 构造器——默认随机密钥对；测试注入固定私钥以便预先造出密文。
   final EcdhKeyPair Function()? ecdhBuilder;
@@ -923,6 +929,7 @@ class Qq8LoginService {
     this.qimei,
     this.qimeiFetcher,
     this.deviceStateRecorder,
+    this.deviceStore,
     this.protocolDetBuilder,
     this.protocolDetRecorder,
     this.ecdhBuilder,
@@ -4563,6 +4570,34 @@ class Qq8LoginService {
     int t544SubCmd = 9,
   }) {
     final device = _device!;
+    // 设备一致性位（0x128 的 Y）：读上次快照→算 bits（漂移告警）→存本次为 baseline。
+    // 首登无 prev → bits=0（不变，与旧行为逐字节一致）。
+    final ds = deviceStore?.loadSync();
+    String hexMd5(List<int> b) =>
+        md5Bytes(b).map((x) => x.toRadixString(16).padLeft(2, '0')).join();
+    final curMacMd5 = hexMd5(utf8.encode(device.macAddress));
+    final curAidMd5 = hexMd5(utf8.encode(device.androidId));
+    final curGuidMd5 = hexMd5(device.guid);
+    if (ds != null) {
+      final bits = qq8DeviceConsistencyBits(
+        prevMacMd5: ds.lastMacMd5,
+        prevAndroidIdMd5: ds.lastAndroidIdMd5,
+        prevGuidMd5: ds.lastGuidMd5,
+        curMacMd5: curMacMd5,
+        curAndroidIdMd5: curAidMd5,
+        curGuidMd5: curGuidMd5,
+      );
+      if (bits != 0) {
+        _log.w('设备一致性变化 bits=$bits'
+            '(mac=${bits & 1},androidId=${bits & 2},guid=${bits & 4})'
+            '——非换机/清数据请警惕');
+      }
+      deviceStore!.saveSync(ds.copyWith(
+        lastMacMd5: curMacMd5,
+        lastAndroidIdMd5: curAidMd5,
+        lastGuidMd5: curGuidMd5,
+      ));
+    }
     return Qq8TlvContext(
       uin: uin,
       da2BitActive: da2BitActive,
@@ -4609,6 +4644,9 @@ class Qq8LoginService {
       // 0x525 内嵌 0x536：官方 ProtocolDet 的历史出口 IP 缓存。
       // 未注入构造器（或构造器返回空）时由 TLV 层退回官方空形态 `01 00`。
       protocolDet: _buildProtocolDet(),
+      prevMacMd5: ds?.lastMacMd5,
+      prevAndroidIdMd5: ds?.lastAndroidIdMd5,
+      prevGuidMd5: ds?.lastGuidMd5,
     );
   }
 

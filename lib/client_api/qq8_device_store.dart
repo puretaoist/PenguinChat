@@ -63,13 +63,36 @@ class Qq8DeviceState {
   /// 灯塔签发的 QIMEI 原文（36 字符）。
   final String? qimei;
 
-  const Qq8DeviceState({this.androidId, this.ksid, this.qimei});
+  /// 上一次登录时的设备一致性快照（mac/androidId/guid 的 MD5 十六进制）。
+  /// 用于下次登录算 0x128 一致性位（官方 t.c() 的 Y）并检测设备漂移；首登为空。
+  final String? lastMacMd5;
+  final String? lastAndroidIdMd5;
+  final String? lastGuidMd5;
 
-  Qq8DeviceState copyWith({String? androidId, String? ksid, String? qimei}) =>
+  const Qq8DeviceState({
+    this.androidId,
+    this.ksid,
+    this.qimei,
+    this.lastMacMd5,
+    this.lastAndroidIdMd5,
+    this.lastGuidMd5,
+  });
+
+  Qq8DeviceState copyWith({
+    String? androidId,
+    String? ksid,
+    String? qimei,
+    String? lastMacMd5,
+    String? lastAndroidIdMd5,
+    String? lastGuidMd5,
+  }) =>
       Qq8DeviceState(
         androidId: androidId ?? this.androidId,
         ksid: ksid ?? this.ksid,
         qimei: qimei ?? this.qimei,
+        lastMacMd5: lastMacMd5 ?? this.lastMacMd5,
+        lastAndroidIdMd5: lastAndroidIdMd5 ?? this.lastAndroidIdMd5,
+        lastGuidMd5: lastGuidMd5 ?? this.lastGuidMd5,
       );
 
   static Qq8DeviceState fromJson(Map<String, Object?> json) {
@@ -84,6 +107,9 @@ class Qq8DeviceState {
       androidId: s('android_id'),
       ksid: s('ksid'),
       qimei: s('qimei'),
+      lastMacMd5: s('last_mac_md5'),
+      lastAndroidIdMd5: s('last_android_id_md5'),
+      lastGuidMd5: s('last_guid_md5'),
     );
   }
 
@@ -91,6 +117,9 @@ class Qq8DeviceState {
     if (androidId != null) 'android_id': androidId,
     if (ksid != null) 'ksid': ksid,
     if (qimei != null) 'qimei': qimei,
+    if (lastMacMd5 != null) 'last_mac_md5': lastMacMd5,
+    if (lastAndroidIdMd5 != null) 'last_android_id_md5': lastAndroidIdMd5,
+    if (lastGuidMd5 != null) 'last_guid_md5': lastGuidMd5,
   };
 
   /// 诊断用。**不打印 qimei 全值**（它是跨业务共享的设备标识）。
@@ -99,7 +128,35 @@ class Qq8DeviceState {
       'Qq8DeviceState('
       'androidId=${androidId ?? '无'}, '
       'ksid=${ksid == null ? '无' : '有'}, '
-      'qimei=${qimei == null ? '无' : '${qimei!.length}字符'})';
+      'qimei=${qimei == null ? '无' : '${qimei!.length}字符'}, '
+      'snap=${lastMacMd5 == null ? '无' : '有'})';
+}
+
+/// 计算设备一致性位（官方 `t.c()` 的 Y）：bit1=mac 变、bit2=androidId 变、bit4=guid 变。
+///
+/// `prev*` 全空（首登/无快照）→ 返回 0（等价官方去年首次，无旧值可比）。
+/// 纯函数：只比对已算好的 MD5 十六进制串，不碰 IO，供 0x128 与启动漂移自检共用。
+int qq8DeviceConsistencyBits({
+  String? prevMacMd5,
+  String? prevAndroidIdMd5,
+  String? prevGuidMd5,
+  required String curMacMd5,
+  required String curAndroidIdMd5,
+  required String curGuidMd5,
+}) {
+  var bits = 0;
+  if (prevMacMd5 != null && prevMacMd5.isNotEmpty && prevMacMd5 != curMacMd5) {
+    bits |= 1;
+  }
+  if (prevAndroidIdMd5 != null &&
+      prevAndroidIdMd5.isNotEmpty &&
+      prevAndroidIdMd5 != curAndroidIdMd5) {
+    bits |= 2;
+  }
+  if (prevGuidMd5 != null && prevGuidMd5.isNotEmpty && prevGuidMd5 != curGuidMd5) {
+    bits |= 4;
+  }
+  return bits;
 }
 
 /// 设备状态的读写接口。
@@ -141,6 +198,9 @@ class MemoryQq8DeviceStore implements Qq8DeviceStore {
       androidId: state.androidId,
       ksid: state.ksid,
       qimei: state.qimei,
+      lastMacMd5: state.lastMacMd5,
+      lastAndroidIdMd5: state.lastAndroidIdMd5,
+      lastGuidMd5: state.lastGuidMd5,
     );
   }
 }
@@ -186,6 +246,9 @@ class FileQq8DeviceStore implements Qq8DeviceStore {
       androidId: state.androidId,
       ksid: state.ksid,
       qimei: state.qimei,
+      lastMacMd5: state.lastMacMd5,
+      lastAndroidIdMd5: state.lastAndroidIdMd5,
+      lastGuidMd5: state.lastGuidMd5,
     );
     try {
       if (!dir.existsSync()) dir.createSync(recursive: true);

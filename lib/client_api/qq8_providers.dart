@@ -400,6 +400,7 @@ final qq8LoginServiceProvider = Provider<Qq8LoginService>((ref) {
     tokenStore: ref.watch(qq8TokenStoreProvider),
     transportBuilder: ref.watch(qq8TransportBuilderProvider),
     gate: ref.watch(safetyGateProvider),
+    deviceStore: ref.watch(qq8DeviceStoreProvider),
     deviceGuard: deviceGuard,
     // 有真机身份就用它，否则沿用默认的 uin 派生
     deviceBuilder: identity == null

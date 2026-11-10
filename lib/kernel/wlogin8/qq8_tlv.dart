@@ -744,6 +744,10 @@ enum Qq8T544Mode {
 ///
 /// 随机源与时间源均可注入——**这是让 TLV 输出可复现、可对照参考实现的前提**
 /// （0x01 / 0x106 / 0x400 / 0x401 都含随机字节，0x01 / 0x106 / 0x400 含时间戳）。
+/// md5(bytes) → 小写 hex 串。设备一致性位比对用（官方 `t.c()` 比对的是 MD5）。
+String _md5Hex(List<int> bytes) =>
+    md5Bytes(bytes).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
 class Qq8TlvContext {
   final int uin;
   final Qq8ApkInfo apk;
@@ -855,6 +859,14 @@ class Qq8TlvContext {
   /// 出处：t.java:230-283（t.d() 设 X/V）+ 官方日志 wtlogin_20260919.txt:20 `guid src 17`。
   final bool guidNew;
 
+  /// 上一次登录时 mac/androidId/guid 的 MD5（hex）。用于算 0x128 一致性位 Y。
+  ///
+  /// null/空 = 首登（无旧值可比，Y=0，等价官方首次）。**用原始 MD5 串而不是
+  /// Qq8DeviceState 对象**：本文件是 L2，不能反向依赖 L3 的 client_api 类型。
+  final String? prevMacMd5;
+  final String? prevAndroidIdMd5;
+  final String? prevGuidMd5;
+
   /// TLV `0x116` 的 bitmap 是否叠加 `WLOGIN_DA2` 位。
   ///
   /// 官方两条路径用的**不是同一个值**：
@@ -898,6 +910,9 @@ class Qq8TlvContext {
     this.t544NativeBody,
     this.protocolDet,
     this.guidNew = true,
+    this.prevMacMd5,
+    this.prevAndroidIdMd5,
+    this.prevGuidMd5,
     this.da2BitActive = true,
     this.seqId = 0,
     this.msfSsoSeq = 0,
@@ -1403,13 +1418,31 @@ abstract final class Qq8Tlv {
         // ⇒ U=1,V=1,W=0,Z=0x11000000；旧 guid 文件复用才是 U=0,V=1,W=0,Z=0x01000000。
         // 默认按「现算」（首登语义）发，与 identity 注入（无设备 guid 文件）对齐；
         // ctx.guidNew=false 可切回文件命中形态。出处：t.java:230-283 + 官方日志 L20。
+        // 设备一致性位 Y（官方 t.c()）：bit1 mac 变 / bit2 androidId 变 / bit4 guid 变。
+        // prev 全空（首登）→ 0，与原实现等价；有 prev 才真比对。
+        var yBits = 0;
+        final pm = ctx.prevMacMd5, pa = ctx.prevAndroidIdMd5, pg = ctx.prevGuidMd5;
+        if (pm != null || pa != null || pg != null) {
+          final curM = _md5Hex(utf8.encode(d.macAddress));
+          final curA = _md5Hex(utf8.encode(d.androidId));
+          final curG = _md5Hex(d.guid);
+          if (pm != null && pm.isNotEmpty && pm != curM) {
+            yBits |= 1;
+          }
+          if (pa != null && pa.isNotEmpty && pa != curA) {
+            yBits |= 2;
+          }
+          if (pg != null && pg.isNotEmpty && pg != curG) {
+            yBits |= 4;
+          }
+        }
         w.u16(0);
         w.u8(ctx.guidNew ? 1 : 0); // U: 现算=1 / 文件复用=0
         w.u8(1); // V: guid available
-        w.u8(0); // W: guid changed（首登无旧值可比）
+        w.u8((yBits & 4) != 0 ? 1 : 0); // W: guid changed（Y bit4）
         w.u32(
-          ctx.guidNew ? 0x11000000 : 0x01000000,
-        ); // Z = (X<<24)：X=17 现算 / X=1 文件
+          (ctx.guidNew ? 0x11000000 : 0x01000000) | ((yBits & 0xff) << 8),
+        ); // Z = (X<<24) | (Y<<8)：X=17 现算/1 文件，Y=一致性位
         _tlv(w, _cut(d.model, 32));
         _tlv(w, _cutBytes(d.guid, 16));
         _tlv(w, _cut(d.brand, 16));
